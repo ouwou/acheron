@@ -1,0 +1,253 @@
+#pragma once
+
+namespace Acheron {
+namespace Discord {
+
+enum class OpCode {
+    DISPATCH = 0,
+    HEARTBEAT = 1,
+    IDENTIFY = 2,
+    PRESENCE_UPDATE = 3,
+    VOICE_STATE_UPDATE = 4,
+    VOICE_SERVER_PING = 5,
+    RESUME = 6,
+    RECONNECT = 7,
+    REQUEST_GUILD_MEMBERS = 8,
+    INVALID_SESSION = 9,
+    HELLO = 10,
+    HEARTBEAT_ACK = 11,
+    GUILD_SYNC = 12,
+    CALL_CONNECT = 13,
+    GUILD_SUBSCRIPTIONS = 14,
+    LOBBY_CONNECT = 15,
+    LOBBY_DISCONNECT = 16,
+    LOBBY_VOICE_STATES = 17,
+    STREAM_CREATE = 18,
+    STREAM_DELETE = 19,
+    STREAM_WATCH = 20,
+    STREAM_PING = 21,
+    STREAM_SET_PAUSED = 22,
+    LFG_SUBSCRIPTIONS = 23,
+    REQUEST_GUILD_APPLICATION_COMMANDS = 24,
+    EMBEDDED_ACTIVITY_CREATE = 25,
+    EMBEDDED_ACTIVITY_DELETE = 26,
+    EMBEDDED_ACTIVITY_UPDATE = 27,
+    REQUEST_FORUM_UNREADS = 28,
+    REMOTE_COMMAND = 29,
+    REQUEST_DELETED_ENTITY_IDS = 30,
+    REQUEST_SOUNDBOARD_SOUNDS = 31,
+    SPEED_TEST_CREATE = 32,
+    SPEED_TEST_DELETE = 33,
+    REQUEST_LAST_MESSAGES = 34,
+    SEARCH_RECENT_MEMBERS = 35,
+    REQUEST_CHANNEL_STATUSES = 36,
+    GUILD_SUBSCRIPTIONS_BULK = 37,
+    GUILD_CHANNELS_RESYNC = 38,
+    REQUEST_CHANNEL_MEMBER_COUNT = 39,
+    QOS_HEARTBEAT = 40,
+    UPDATE_TIME_SPENT_SESSION_ID = 41,
+    LOBBY_VOICE_SERVER_PING = 42,
+    REQUEST_CHANNEL_INFO = 43,
+};
+
+enum class CloseCode {
+    INTERNAL = 0,
+
+    UNKNOWN_ERROR = 4000,
+    UNKNOWN_OPCODE = 4001,
+    DECODE_ERROR = 4002,
+    NOT_AUTHENTICATED = 4003,
+    AUTHENTICATION_FAILED = 4004,
+    ALREADY_AUTHENTICATED = 4005,
+    SESSION_NO_LONGER_VALID = 4006,
+    INVALID_SEQ = 4007,
+    RATE_LIMITED = 4008,
+    SESSION_TIMED_OUT = 4009,
+    INVALID_SHARD = 4010,
+    SHARDING_REQUIRED = 4011,
+    INVALID_API_VERSION = 4012,
+    INVALID_INTENTS = 4013,
+    DISALLOWED_INTENTS = 4014,
+    TOO_MANY_SESSIONS = 4015,
+    CONNECTION_REQUEST_CANCELED = 4016,
+};
+inline QDebug operator<<(QDebug dbg, CloseCode code)
+{
+    return dbg << static_cast<int>(code);
+}
+
+enum class Capability : quint32 {
+    LAZY_USER_NOTES = 1 << 0,
+    NO_AFFINE_USER_IDS = 1 << 1,
+    VERSIONED_READ_STATES = 1 << 2,
+    VERSIONED_USER_GUILD_SETTINGS = 1 << 3,
+    DEDUPE_USER_OBJECTS = 1 << 4,
+    PRIORITIZED_READY_PAYLOAD = 1 << 5,
+    MULTIPLE_GUILD_EXPERIMENT_POPULATIONS = 1 << 6,
+    NON_CHANNEL_READ_STATES = 1 << 7,
+    AUTH_TOKEN_REFRESH = 1 << 8,
+    USER_SETTINGS_PROTO = 1 << 9,
+    CLIENT_STATE_V2 = 1 << 10,
+    PASSIVE_GUILD_UPDATE = 1 << 11,
+    AUTO_CALL_CONNECT = 1 << 12,
+    DEBOUNCE_MESSAGE_REACTIONS = 1 << 13,
+    PASSIVE_GUILD_UPDATE_V2 = 1 << 14,
+    // 15
+    AUTO_LOBBY_CONNECT = 1 << 16,
+    UNK17 = 1 << 17,
+    UNK18 = 1 << 18,
+    UNK19 = 1 << 19,
+    UNK20 = 1 << 20,
+};
+Q_DECLARE_FLAGS(Capabilities, Capability);
+Q_DECLARE_OPERATORS_FOR_FLAGS(Capabilities);
+
+// clang-format off
+constexpr static auto CURRENT_CAPABILITIES = Capability::LAZY_USER_NOTES |
+                                             Capability::VERSIONED_READ_STATES  |
+                                             Capability::VERSIONED_USER_GUILD_SETTINGS |
+                                             Capability::DEDUPE_USER_OBJECTS  |
+                                             Capability::PRIORITIZED_READY_PAYLOAD       |
+                                             Capability::MULTIPLE_GUILD_EXPERIMENT_POPULATIONS  |
+                                             Capability::NON_CHANNEL_READ_STATES    |
+                                             Capability::AUTH_TOKEN_REFRESH  |
+                                             Capability::USER_SETTINGS_PROTO |
+                                             Capability::CLIENT_STATE_V2  |
+                                             Capability::AUTO_CALL_CONNECT |
+                                             Capability::DEBOUNCE_MESSAGE_REACTIONS  |
+                                             Capability::PASSIVE_GUILD_UPDATE_V2 |
+                                             Capability::UNK17  |
+                                             Capability::UNK19  |
+                                             Capability::UNK20;
+// clang-format on
+
+enum class GatewayEvent {
+    UNKNOWN,
+    READY,
+    READY_SUPPLEMENTAL,
+    MESSAGE_CREATE,
+};
+
+inline GatewayEvent parseGatewayEvent(const QString &event)
+{
+    static const QHash<QString, GatewayEvent> events = {
+        { "READY", GatewayEvent::READY },
+        { "READY_SUPPLEMENTAL", GatewayEvent::READY_SUPPLEMENTAL },
+        { "MESSAGE_CREATE", GatewayEvent::MESSAGE_CREATE },
+    };
+
+    return events.value(event, GatewayEvent::UNKNOWN);
+};
+
+enum class ChannelType {
+    GUILD_TEXT = 0,
+    DM = 1,
+    GUILD_VOICE = 2,
+    GROUP_DM = 3,
+    GUILD_CATEGORY = 4,
+    GUILD_NEWS = 5,
+    GUILD_STORE = 6,
+    GUILD_LFG = 7,
+    LFG_GROUP_DM = 8,
+    THREAD_ALPHA = 9,
+    NEWS_THREAD = 10,
+    PUBLIC_THREAD = 11,
+    PRIVATE_THREAD = 12,
+    GUILD_STAGE_VOICE = 13,
+    GUILD_DIRECTORY = 14,
+    GUILD_FORUM = 15,
+    GUILD_MEDIA = 16,
+    LOBBY = 17,
+    EPHEMERAL_DM = 18,
+};
+
+enum class MessageType {
+    DEFAULT = 0,
+    RECIPIENT_ADD = 1,
+    RECIPIENT_REMOVE = 2,
+    CALL = 3,
+    CHANNEL_NAME_CHANGE = 4,
+    CHANNEL_ICON_CHANGE = 5,
+    CHANNEL_PINNED_MESSAGE = 6,
+    USER_JOIN = 7,
+    PREMIUM_GUILD_SUBSCRIPTION = 8,
+    PREMIUM_GUILD_SUBSCRIPTION_TIER_1 = 9,
+    PREMIUM_GUILD_SUBSCRIPTION_TIER_2 = 10,
+    PREMIUM_GUILD_SUBSCRIPTION_TIER_3 = 11,
+    CHANNEL_FOLLOW_ADD = 12,
+    GUILD_STREAM = 13,
+    GUILD_DISCOVERY_DISQUALIFIED = 14,
+    GUILD_DISCOVERY_REQUALIFIED = 15,
+    GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING = 16,
+    GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING = 17,
+    THREAD_CREATED = 18,
+    REPLY = 19,
+    CHAT_IBPUT_COMMAND = 20,
+    THREAD_STARTER_MESSAGE = 21,
+    GUILD_INVITE_REMINDER = 22,
+    CONTEXT_MENU_COMMAND = 23,
+    AUTO_MODERATION_ACTION = 24,
+    ROLE_SUBSCRIPTION_PURCHASE = 25,
+    INTERACTION_PREMIUM_UPSELL = 26,
+    STAGE_START = 27,
+    STAGE_END = 28,
+    STAGE_SPEAKER = 29,
+    STAGE_RAISE_HAND = 30,
+    STAGE_TOPIC = 31,
+    GUILD_APPLICATION_PREMIUM_SUBSCRIPTION = 32,
+    PRIVATE_CHANNEL_INTEGRATION_ADDED = 33,
+    PRIVATE_CHANNEL_INTEGRATION_REMOVED = 34,
+    PREMIUM_REFERRAL = 35,
+    GUILD_INCIDENT_ALERT_MODE_ENABLED = 36,
+    GUILD_INCIDENT_ALERT_MODE_DISABLED = 37,
+    GUILD_INCIDENT_REPORT_RAID = 38,
+    GUILD_INCIDENT_REPORT_FALSE_ALARM = 39,
+    GUILD_DEADCHAT_REVIVE_PROMPT = 40,
+    CUSTOM_GIFT = 41,
+    GUILD_GAMING_STATS_PROMPT = 42,
+    POLL = 43,
+    PURCHASE_NOTIFICATION = 44,
+    VOICE_HANGOUT_INVITE = 45,
+    POLL_RESULT = 46,
+    CHANGELOG = 47,
+    NITRO_NOTIFICATION = 48,
+    CHANNEL_LINKED_TO_LOBBY = 49,
+    GIFTING_PROMPT = 50,
+    IN_GAME_MESSAGE_NUX = 51,
+    GUILD_JOIN_REQUEST_ACCEPT_NOTIFICATION = 52,
+    GUILD_JOIN_REQUEST_REJECT_NOTIFICATION = 53,
+    GUILD_JOIN_REQUEST_WITHDRAWN_NOTIFICATION = 54,
+    HD_STREAMING_UPGRADED = 55,
+    CHAT_WALLPAPER_SET = 56,
+    CHAT_WALLPAPER_REMOVE = 57,
+    REPORT_TO_MOD_DELETED_MESSAGE = 58,
+    REPORT_TO_MOD_TIMEOUT_USER = 59,
+    REPORT_TO_MOD_KICK_USER = 60,
+    REPORT_TO_MOD_BAN_USER = 61,
+    REPORT_TO_MOD_CLOSED_REPORT = 62,
+    EMOJI_ADDED = 63,
+};
+
+enum class MessageFlag {
+    CROSSPOSTED = 1 << 0,
+    IS_CROSSPOST = 1 << 1,
+    SUPPRESS_EMBEDS = 1 << 2,
+    SOURCE_MESSAGE_DELETED = 1 << 3,
+    URGENT = 1 << 4,
+    HAS_THREAD = 1 << 5,
+    EPHEMERAL = 1 << 6,
+    LOADING = 1 << 7,
+    FAILED_TO_MENTION_SOME_ROLES_IN_THREAD = 1 << 8,
+    GUILD_FEED_HIDDEN = 1 << 9,
+    SHOULD_SHOW_LINK_NOT_DISCORD_WARNING = 1 << 10,
+    SUPPRESS_NOTIFICATIONS = 1 << 12,
+    IS_VOICE_MESSAGE = 1 << 13,
+    HAS_SNAPSHOT = 1 << 14,
+    IS_COMPONENTS_V2 = 1 << 15,
+    SENT_BY_SOCIAL_LAYER_INTEGRATION = 1 << 16,
+};
+Q_DECLARE_FLAGS(MessageFlags, MessageFlag);
+Q_DECLARE_OPERATORS_FOR_FLAGS(MessageFlags);
+
+} // namespace Discord
+} // namespace Acheron

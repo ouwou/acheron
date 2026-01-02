@@ -1,0 +1,5 @@
+scripts/
+out/
+acheron.slnx
+CMakeUserPresets.json
+.vs/
