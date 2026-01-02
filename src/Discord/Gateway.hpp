@@ -69,6 +69,7 @@ private:
     std::chrono::steady_clock::time_point closeTime;
     static constexpr std::chrono::milliseconds closeTimeout = std::chrono::milliseconds(1000);
 
+    QString launchId;
     QString launchSignature;
 
     std::atomic<int> lastReceivedSequence = 0;

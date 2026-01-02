@@ -207,6 +207,7 @@ void Gateway::handleHello(const Inbound &data)
 void Gateway::identify()
 {
     launchSignature = generateLaunchSignature();
+    launchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     ClientProperties properties;
     properties.os = "Windows";
@@ -225,7 +226,7 @@ void Gateway::identify()
     properties.releaseChannel = "stable";
     properties.clientBuildNumber = 482285;
     properties.clientEventSource = nullptr;
-    properties.clientLaunchId = "698dbe61-0641-4cbc-a913-b678c789ef47";
+    properties.clientLaunchId = launchId;
     properties.launchSignature = launchSignature;
     properties.clientAppState = "unfocused";
 
