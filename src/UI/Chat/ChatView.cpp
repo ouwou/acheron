@@ -187,6 +187,9 @@ void ChatView::onHistoryRequestFinished()
 
 void ChatView::onRowsAboutToBeInserted(const QModelIndex &parent, int start, int end)
 {
+    QScrollBar *vbar = verticalScrollBar();
+    atBottom = (vbar->value() + vbar->pageStep() >= vbar->maximum());
+
     if (start == 0) {
         QPoint topPoint(5, 5);
         QModelIndex topVisible = indexAt(topPoint);
@@ -200,7 +203,9 @@ void ChatView::onRowsAboutToBeInserted(const QModelIndex &parent, int start, int
 
 void ChatView::onRowsInserted(const QModelIndex &parent, int start, int end)
 {
-    if (start == 0 && anchorIndex.isValid()) {
+    if (atBottom) {
+        scrollToBottom();
+    } else if (start == 0 && anchorIndex.isValid()) {
         setUpdatesEnabled(false);
 
         scrollTo(anchorIndex, QAbstractItemView::PositionAtTop);

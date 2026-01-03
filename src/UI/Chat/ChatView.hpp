@@ -72,6 +72,8 @@ private:
 
     QPersistentModelIndex anchorIndex;
     int anchorDistanceFromBottom = 0;
+
+    bool atBottom = false;
 };
 } // namespace UI
 } // namespace Acheron
