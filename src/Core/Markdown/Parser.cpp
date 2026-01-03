@@ -111,6 +111,25 @@ QString Parser::toHtml(const QList<AstNode> &nodes)
 
 void Parser::setupDefaultRules()
 {
+    MarkdownRule url;
+    url.name = "url";
+    url.order = 16;
+    url.regex = QRegularExpression(R"(^(https?:\/\/[^\s<]+[^<.,:;"')\]\s]))");
+    url.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "url";
+        node.content = match.captured(1);
+        node.attributes["href"] = node.content;
+        return node;
+    };
+    url.html = [](const AstNode &node,
+                  std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        return QString("<a href=\"%1\">%2</a>")
+                .arg(node.attributes["href"].toString().toHtmlEscaped())
+                .arg(node.content.toHtmlEscaped());
+    };
+    rules.append(url);
+
     MarkdownRule em;
     em.name = "em";
     em.order = 20;
