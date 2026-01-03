@@ -25,6 +25,8 @@ public:
     [[nodiscard]] Discord::Client *discord() const;
     [[nodiscard]] MessageManager *messages() const;
 
+    [[nodiscard]] ConnectionState state() const;
+
     Snowflake accountId() const;
     const AccountInfo &accountInfo() const;
 

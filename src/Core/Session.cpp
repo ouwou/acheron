@@ -35,8 +35,15 @@ void Session::shutdown()
 void Session::connectAccount(Snowflake accountId)
 {
     if (clients.contains(accountId)) {
-        qCWarning(LogCore) << "Account already connected or connecting:" << accountId;
-        return;
+        ClientInstance *existing = clients.value(accountId);
+
+        if (existing->state() != ConnectionState::Disconnected) {
+            qCWarning(LogCore) << "Account already connected or connecting:" << accountId;
+            return;
+        }
+
+        // were dead
+        clients.take(accountId)->deleteLater();
     }
 
     AccountInfo acc = repo.getAccount(accountId);
@@ -48,8 +55,14 @@ void Session::connectAccount(Snowflake accountId)
     auto *instance = new ClientInstance(acc, this);
 
     connect(instance, &ClientInstance::stateChanged, this,
-            [this, accountId](ConnectionState state) {
+            [this, accountId, instance](ConnectionState state) {
                 emit connectionStateChanged(accountId, state);
+
+                if (state == ConnectionState::Disconnected) {
+                    if (clients.value(accountId) == instance) {
+                        clients.take(accountId)->deleteLater();
+                    }
+                }
             });
 
     connect(instance, &ClientInstance::detailsUpdated, this, [this](const AccountInfo &info) {
@@ -73,12 +86,6 @@ void Session::disconnectAccount(Snowflake accountId)
     ClientInstance *instance = clients.take(accountId);
 
     instance->stop();
-
-    connect(instance->discord(), &Discord::Client::stateChanged, instance,
-            [instance](ConnectionState state) {
-                if (state == ConnectionState::Disconnected)
-                    instance->deleteLater();
-            });
 }
 
 ClientInstance *Session::client(Snowflake accountId) const

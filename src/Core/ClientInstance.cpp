@@ -72,6 +72,11 @@ MessageManager *ClientInstance::messages() const
     return messageManager;
 }
 
+ConnectionState ClientInstance::state() const
+{
+    return client->getState();
+}
+
 Snowflake ClientInstance::accountId() const
 {
     return account.id;
