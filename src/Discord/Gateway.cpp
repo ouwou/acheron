@@ -16,8 +16,8 @@ static size_t write_cb(char *b, size_t size, size_t nmemb, void *userdata)
     return size * nmemb;
 }
 
-Gateway::Gateway(const QString &token, QObject *parent)
-    : QObject(parent), token(token), running(false)
+Gateway::Gateway(const QString &token, const QString &gatewayUrl, QObject *parent)
+    : QObject(parent), token(token), gatewayUrl(gatewayUrl), running(false)
 {
 }
 
@@ -284,8 +284,7 @@ void Gateway::networkLoop()
     curl_version_info_data *info = curl_version_info(CURLVERSION_NOW);
     printf("SSL backend: %s\n", info->ssl_version);
 
-    curl_easy_setopt(curl, CURLOPT_URL,
-                     "wss://gateway.discord.gg/?encoding=json&v=9&compress=zlib-stream");
+    curl_easy_setopt(curl, CURLOPT_URL, gatewayUrl.toUtf8().constData());
     curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
     // curl_easy_setopt(curl, CURLOPT_PROXY, "http://127.0.0.1:8888");
     // dont verify

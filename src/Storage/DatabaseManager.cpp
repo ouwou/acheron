@@ -97,7 +97,10 @@ void DatabaseManager::setupPersistentTables()
             username TEXT,
             display_name TEXT,
             token TEXT,
-            avatar TEXT
+            avatar TEXT,
+            gateway_url TEXT,
+            rest_url TEXT,
+            cdn_url TEXT
         )
     )");
 }

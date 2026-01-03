@@ -19,7 +19,7 @@ class Gateway : public QObject
 {
     Q_OBJECT
 public:
-    explicit Gateway(const QString &token, QObject *parent = nullptr);
+    explicit Gateway(const QString &token, const QString &gatewayUrl, QObject *parent = nullptr);
     ~Gateway();
 
     void start();
@@ -56,6 +56,8 @@ private:
 
 private:
     QString token;
+    QString gatewayUrl;
+
     std::atomic<bool> running;
 
     std::mutex curlMutex;

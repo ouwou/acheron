@@ -9,7 +9,7 @@ namespace Core {
 ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
     : QObject(parent), account(info)
 {
-    client = new Discord::Client(info.token, this);
+    client = new Discord::Client(info.token, info.gatewayUrl, info.restUrl, this);
     messageManager = new MessageManager(info.id, client, this);
 
     Storage::DatabaseManager::instance().openCacheDatabase(info.id);

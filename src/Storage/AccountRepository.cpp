@@ -16,8 +16,8 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     QSqlQuery query(db);
     query.prepare(R"(
             INSERT OR REPLACE INTO accounts 
-            (id, username, display_name, token, avatar)
-            VALUES (:id, :username, :display_name, :token, :avatar)
+            (id, username, display_name, token, avatar, gateway_url, rest_url, cdn_url)
+            VALUES (:id, :username, :display_name, :token, :avatar, :gateway_url, :rest_url, :cdn_url)
         )");
 
     query.bindValue(":id", static_cast<qint64>(acc.id));
@@ -25,6 +25,9 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     query.bindValue(":display_name", acc.displayName);
     query.bindValue(":token", acc.token);
     query.bindValue(":avatar", acc.avatar);
+    query.bindValue(":gateway_url", acc.gatewayUrl);
+    query.bindValue(":rest_url", acc.restUrl);
+    query.bindValue(":cdn_url", acc.cdnUrl);
 
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Save failed:" << query.lastError().text();
@@ -56,6 +59,9 @@ Core::AccountInfo AccountRepository::getAccount(quint64 id)
     acc.displayName = query.value("display_name").toString();
     acc.token = query.value("token").toString();
     acc.avatar = query.value("avatar").toString();
+    acc.gatewayUrl = query.value("gateway_url").toString();
+    acc.restUrl = query.value("rest_url").toString();
+    acc.cdnUrl = query.value("cdn_url").toString();
 
     return acc;
 }
@@ -79,6 +85,9 @@ QVector<Core::AccountInfo> AccountRepository::getAllAccounts()
         acc.displayName = query.value("display_name").toString();
         acc.token = query.value("token").toString();
         acc.avatar = query.value("avatar").toString();
+        acc.gatewayUrl = query.value("gateway_url").toString();
+        acc.restUrl = query.value("rest_url").toString();
+        acc.cdnUrl = query.value("cdn_url").toString();
 
         acc.state = Core::ConnectionState::Disconnected;
 

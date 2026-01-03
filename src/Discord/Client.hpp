@@ -33,7 +33,8 @@ public:
     };
     Q_ENUM(MessageLoadType)
 
-    explicit Client(const QString &token, QObject *parent = nullptr);
+    explicit Client(const QString &token, const QString &gatewayUrl, const QString &baseUrl,
+                    QObject *parent = nullptr);
 
     void start();
     void stop();
@@ -75,7 +76,7 @@ private:
     Core::ConnectionState state = Core::ConnectionState::Disconnected;
 
     QNetworkAccessManager *netManager;
-    const QString baseUrl = "https://discord.com/api/v9";
+    QString baseUrl;
     QString m_token;
 
     HttpClient *httpClient;

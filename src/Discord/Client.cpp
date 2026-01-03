@@ -8,11 +8,13 @@
 namespace Acheron {
 namespace Discord {
 
-Client::Client(const QString &token, QObject *parent) : QObject(parent), m_token(token)
+Client::Client(const QString &token, const QString &gatewayUrl, const QString &baseUrl,
+               QObject *parent)
+    : QObject(parent), m_token(token), baseUrl(baseUrl)
 {
     netManager = new QNetworkAccessManager(this);
 
-    gateway = new Gateway(token, this);
+    gateway = new Gateway(token, gatewayUrl, this);
     httpClient = new HttpClient(baseUrl, token, this);
 
     connect(gateway, &Gateway::connected, this, &Client::onConnected);

@@ -16,6 +16,11 @@ struct AccountInfo
     QString displayName;
     QString token;
     QString avatar;
+
+    QString gatewayUrl = "wss://gateway.discord.gg/?encoding=json&v=9&compress=zlib-stream";
+    QString restUrl = "https://discord.com/api/v9";
+    QString cdnUrl = "https://cdn.discordapp.com";
+
     ConnectionState state = ConnectionState::Disconnected;
 };
 } // namespace Core
