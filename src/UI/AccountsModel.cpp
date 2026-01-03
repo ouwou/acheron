@@ -68,10 +68,7 @@ QVariant AccountsModel::data(const QModelIndex &index, int role) const
 
     switch (role) {
     case Qt::DisplayRole: {
-        QString text = acc.displayName;
-
-        if (!acc.username.isEmpty() && acc.username != "unknown")
-            text += " (" + acc.username + ")";
+        QString text = acc.getEntryString();
 
         if (acc.state == ConnectionState::Connected)
             text += " [Connected]";

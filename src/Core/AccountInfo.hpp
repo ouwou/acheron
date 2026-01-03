@@ -22,6 +22,14 @@ struct AccountInfo
     QString cdnUrl = "https://cdn.discordapp.com";
 
     ConnectionState state = ConnectionState::Disconnected;
+
+    [[nodiscard]] QString getEntryString() const
+    {
+        if (displayName.isEmpty())
+            return username;
+
+        return QString("%1 (%2)").arg(displayName).arg(username);
+    }
 };
 } // namespace Core
 } // namespace Acheron
