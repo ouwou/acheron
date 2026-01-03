@@ -20,6 +20,13 @@ static Snowflake getIdAndCheckToken(const QString &token)
     bool ok;
     Snowflake id = decoded.toULongLong(&ok);
 
+    if (!ok) {
+        // spacebar
+        QByteArray decoded = QByteArray::fromBase64(parts[1].toUtf8());
+        QJsonDocument doc = QJsonDocument::fromJson(decoded);
+        id = doc.object()["id"].toVariant().toULongLong(&ok);
+    }
+
     return ok ? id : Snowflake::Invalid;
 }
 
