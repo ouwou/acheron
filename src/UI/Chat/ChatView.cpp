@@ -12,6 +12,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     setUniformItemSizes(false);
     setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     verticalScrollBar()->setSingleStep(10);
+    setAutoScroll(false);
 
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             &ChatView::onScrollBarValueChanged);
