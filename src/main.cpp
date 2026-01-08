@@ -1,4 +1,4 @@
-#include "App.hpp"
+    #include "App.hpp"
 #include "UI/MainWindow.hpp"
 #include "Storage/DatabaseManager.hpp"
 #include "Core/Session.hpp"
@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
     App app(argc, argv);
     app.setStyle("Fusion");
 
-#if 1
+#if 0
     QPalette darkCoolPurple;
 
     darkCoolPurple.setColor(QPalette::Window, QColor(24, 22, 34)); // deep cool background
