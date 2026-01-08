@@ -230,6 +230,28 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             QRect embedRect = embedLayout.embedRect;
             embedRect.moveLeft(textRect.left());
 
+            if (embed.type == EmbedType::Gifv) {
+                int gifTop = embedRect.top();
+
+                if (!embed.thumbnail.isNull()) {
+                    QPixmap scaledThumb = embed.thumbnail.scaled(
+                            embed.thumbnailSize * embed.thumbnail.devicePixelRatio(),
+                            Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    painter->drawPixmap(textRect.left(), gifTop, scaledThumb);
+                    gifTop += embed.thumbnailSize.height();
+                }
+
+                QFont gifFont = option.font;
+                gifFont.setPointSize(gifFont.pointSize() - 2);
+                painter->setFont(gifFont);
+                painter->setPen(option.palette.placeholderText().color());
+                QFontMetrics gifFm(gifFont);
+                painter->drawText(textRect.left(), gifTop + gifFm.ascent() + 2, "GIF");
+
+                currentTop += embedLayout.totalHeight + ChatLayout::padding();
+                continue;
+            }
+
             QColor bgColor = option.palette.base().color().darker(110);
             painter->fillRect(embedRect, bgColor);
 

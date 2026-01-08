@@ -188,6 +188,36 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
     int embedWidth = std::min(maxWidth, embedMaxWidth());
     int contentWidth = embedWidth - embedBorderWidth() - embedPadding() * 2;
 
+    if (embed.type == EmbedType::Gifv) {
+        layout.hasThumbnail = false;
+        layout.contentWidth = contentWidth;
+        int currentY = 0;
+
+        layout.imagesY = currentY;
+        layout.imagesHeight = 0;
+
+        if (!embed.thumbnail.isNull()) {
+            QSize actualSize =
+                    embed.thumbnail.size().scaled(embed.thumbnailSize, Qt::KeepAspectRatio);
+            layout.imagesHeight = actualSize.height();
+            currentY += layout.imagesHeight;
+        }
+
+        QFont gifFont = font;
+        gifFont.setPointSize(gifFont.pointSize() - 2);
+        QFontMetrics gifFm(gifFont);
+        int gifLabelHeight = gifFm.height() + 4;
+        currentY += gifLabelHeight;
+
+        layout.totalHeight = currentY;
+        layout.thumbnailY = 0;
+
+        layout.embedRect = QRect(0, top, embedWidth, layout.totalHeight);
+        layout.contentRect = QRect(0, 0, contentWidth, layout.totalHeight);
+
+        return layout;
+    }
+
     layout.hasThumbnail =
             !embed.thumbnail.isNull() || (!embed.videoThumbnail.isNull() && embed.images.isEmpty());
     if (layout.hasThumbnail)

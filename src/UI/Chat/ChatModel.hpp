@@ -39,8 +39,27 @@ struct EmbedImageData
     QSize displaySize;
 };
 
+enum class EmbedType {
+    AgeVerificationSystemNotification,
+    ApplicationNews,
+    Article,
+    AutoModerationMessage,
+    AutoModerationNotification,
+    Gift,
+    Gifv,
+    Image,
+    Link,
+    PollResult,
+    PostPreview,
+    Rich,
+    SafetyPolicyNotice,
+    SafetySystemNotification,
+    Video,
+};
+
 struct EmbedData
 {
+    EmbedType type = EmbedType::Rich; // should this be default idk
     QString title;
     QString description;
     QString url;

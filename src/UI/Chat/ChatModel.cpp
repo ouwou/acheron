@@ -7,6 +7,44 @@
 
 namespace Acheron {
 namespace UI {
+
+static EmbedType embedTypeFromString(const QString &typeStr)
+{
+    if (typeStr.isEmpty() || typeStr == "rich")
+        return EmbedType::Rich;
+    else if (typeStr == "age_verification_system_notification")
+        return EmbedType::AgeVerificationSystemNotification;
+    else if (typeStr == "application_news")
+        return EmbedType::ApplicationNews;
+    else if (typeStr == "article")
+        return EmbedType::Article;
+    else if (typeStr == "auto_moderation_message")
+        return EmbedType::AutoModerationMessage;
+    else if (typeStr == "auto_moderation_notification")
+        return EmbedType::AutoModerationNotification;
+    else if (typeStr == "gift")
+        return EmbedType::Gift;
+    else if (typeStr == "gifv")
+        return EmbedType::Gifv;
+    else if (typeStr == "image")
+        return EmbedType::Image;
+    else if (typeStr == "link")
+        return EmbedType::Link;
+    else if (typeStr == "poll_result")
+        return EmbedType::PollResult;
+    else if (typeStr == "post_preview")
+        return EmbedType::PostPreview;
+    else if (typeStr == "rich")
+        return EmbedType::Rich;
+    else if (typeStr == "safety_policy_notice")
+        return EmbedType::SafetyPolicyNotice;
+    else if (typeStr == "safety_system_notification")
+        return EmbedType::SafetySystemNotification;
+    else if (typeStr == "video")
+        return EmbedType::Video;
+    return EmbedType::Rich;
+}
+
 ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *attachmentCache,
                      QObject *parent)
     : QAbstractListModel(parent), imageManager(imageManager), attachmentCache(attachmentCache)
@@ -232,6 +270,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                    embed.timestamp.hasValue() || embed.color.hasValue() ||
                                    embed.author.hasValue() || embed.footer.hasValue() || hasImage;
 
+                data.type = embedTypeFromString(embed.type.hasValue() ? *embed.type : QString());
                 data.title = embed.title.hasValue() ? *embed.title : QString();
                 data.description = embed.description.hasValue() ? *embed.description : QString();
                 data.url = embedUrl;
@@ -267,9 +306,9 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                             embed.provider->url.hasValue() ? *embed.provider->url : QString();
                 }
 
+                // observed png thumbnail with width/height but no content type
                 if (embed.thumbnail.hasValue() && embed.thumbnail->proxyUrl.hasValue() &&
-                    embed.thumbnail->contentType.hasValue() &&
-                    embed.thumbnail->contentType->startsWith("image/")) {
+                    embed.thumbnail->width > 0) {
                     hasAnything = true;
                     data.thumbnailUrl = QUrl(*embed.thumbnail->proxyUrl);
                     QSize origSize;
