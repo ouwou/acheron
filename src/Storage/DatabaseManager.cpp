@@ -141,6 +141,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "edited_timestamp" TEXT,
 	        "type" INTEGER NOT NULL,
 	        "flags" INTEGER NOT NULL,
+	        "embeds" TEXT,
 	        PRIMARY KEY("id")
         );
     )");

@@ -25,6 +25,53 @@ struct AttachmentData
     qint64 fileSizeBytes;
 };
 
+struct EmbedFieldData
+{
+    QString name;
+    QString value;
+    bool isInline = false;
+};
+
+struct EmbedImageData
+{
+    QUrl url;
+    QPixmap pixmap;
+    QSize displaySize;
+};
+
+struct EmbedData
+{
+    QString title;
+    QString description;
+    QString url;
+    QDateTime timestamp;
+    QColor color;
+
+    QString authorName;
+    QString authorUrl;
+    QUrl authorIconUrl;
+    QPixmap authorIcon;
+
+    QString footerText;
+    QUrl footerIconUrl;
+    QPixmap footerIcon;
+
+    QUrl thumbnailUrl;
+    QPixmap thumbnail;
+    QSize thumbnailSize;
+
+    QList<EmbedImageData> images;
+
+    QUrl videoThumbnailUrl;
+    QPixmap videoThumbnail;
+    QSize videoThumbnailSize;
+
+    QString providerName;
+    QString providerUrl;
+
+    QList<EmbedFieldData> fields;
+};
+
 namespace UI {
 class ChatModel : public QAbstractListModel
 {
@@ -44,6 +91,7 @@ public:
         DateSeparatorRole,
         HtmlRole,
         AttachmentsRole,
+        EmbedsRole,
     };
 
     using AvatarUrlResolver = std::function<QUrl(const Discord::User &)>;
@@ -87,3 +135,7 @@ private:
 
 Q_DECLARE_METATYPE(Acheron::AttachmentData)
 Q_DECLARE_METATYPE(QList<Acheron::AttachmentData>)
+Q_DECLARE_METATYPE(Acheron::EmbedFieldData)
+Q_DECLARE_METATYPE(Acheron::EmbedImageData)
+Q_DECLARE_METATYPE(Acheron::EmbedData)
+Q_DECLARE_METATYPE(QList<Acheron::EmbedData>)

@@ -52,8 +52,21 @@ struct AttachmentGridLayout
     int totalHeight;
 };
 
+enum class EmbedHitType { None, Title, Author, Image, VideoThumbnail };
+
+struct EmbedHitResult
+{
+    int embedIndex = -1;
+    EmbedHitType hitType = EmbedHitType::None;
+    QString url;
+    QPixmap image;
+    QSize imageSize;
+};
+
 AttachmentGridLayout calculateAttachmentGrid(int count, int maxWidth);
 QString formatFileSize(qint64 bytes);
+std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QModelIndex &index,
+                                         const QPoint &mousePos);
 
 } // namespace ChatLayout
 } // namespace UI

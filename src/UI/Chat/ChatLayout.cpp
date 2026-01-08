@@ -367,6 +367,349 @@ QString formatFileSize(qint64 bytes)
     return QString::number(bytes) + " B";
 }
 
+std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QModelIndex &index,
+                                         const QPoint &mousePos)
+{
+    if (!index.isValid() || !view)
+        return std::nullopt;
+
+    QList<EmbedData> embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    if (embeds.isEmpty())
+        return std::nullopt;
+
+    QRect rowRect = view->visualRect(index);
+    bool showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
+    bool hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
+    QString html = index.data(ChatModel::HtmlRole).toString();
+    QFont font = view->font();
+    QFontMetrics fm(font);
+
+    QRect textRect = textRectForRow(rowRect, showHeader, fm, hasSeparator);
+
+    QTextDocument doc;
+    setupDocument(doc, html, font, textRect.width());
+    int realTextHeight = int(std::ceil(doc.size().height()));
+
+    int embedTop = textRect.top() + realTextHeight + padding();
+
+    QList<AttachmentData> attachments =
+            index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
+    if (!attachments.isEmpty()) {
+        int imageCount = 0;
+        int fileCount = 0;
+        QSize firstImageSize;
+        for (const auto &att : attachments) {
+            if (att.isImage) {
+                if (imageCount == 0)
+                    firstImageSize = att.displaySize;
+                imageCount++;
+            } else {
+                fileCount++;
+            }
+        }
+
+        if (imageCount == 1)
+            embedTop += firstImageSize.height() + padding();
+        else if (imageCount > 1) {
+            AttachmentGridLayout grid = calculateAttachmentGrid(imageCount, textRect.width());
+            embedTop += grid.totalHeight + padding();
+        }
+
+        constexpr int fileAttachmentHeight = 48;
+        embedTop += fileCount * (fileAttachmentHeight + padding());
+    }
+
+    constexpr int embedMaxWidth = 400;
+    constexpr int embedBorderWidth = 4;
+    constexpr int embedPadding = 12;
+    constexpr int thumbnailSize = 80;
+    constexpr int authorIconSize = 24;
+    constexpr int footerIconSize = 16;
+    constexpr int fieldSpacing = 8;
+
+    for (int embedIndex = 0; embedIndex < embeds.size(); ++embedIndex) {
+        const auto &embed = embeds[embedIndex];
+        int embedWidth = std::min(textRect.width(), embedMaxWidth);
+        int contentWidth = embedWidth - embedBorderWidth - embedPadding * 2;
+
+        bool hasThumbnail = !embed.thumbnail.isNull() ||
+                            (!embed.videoThumbnail.isNull() && embed.images.isEmpty());
+        if (hasThumbnail)
+            contentWidth -= (thumbnailSize + embedPadding);
+
+        int embedHeight = embedPadding;
+
+        if (!embed.providerName.isEmpty()) {
+            QFont providerFont = font;
+            providerFont.setPointSize(providerFont.pointSize() - 2);
+            QFontMetrics providerFm(providerFont);
+            embedHeight += providerFm.height() + 4;
+        }
+
+        if (!embed.authorName.isEmpty()) {
+            QFont authorFont = font;
+            authorFont.setPointSize(authorFont.pointSize() - 1);
+            authorFont.setBold(true);
+            QFontMetrics authorFm(authorFont);
+            embedHeight += std::max(authorIconSize, authorFm.height()) + 4;
+        }
+
+        if (!embed.title.isEmpty()) {
+            QFont titleFont = font;
+            titleFont.setBold(true);
+            QFontMetrics titleFm(titleFont);
+            embedHeight += titleFm.height() + 4;
+        }
+
+        if (!embed.description.isEmpty()) {
+            QTextDocument descDoc;
+            descDoc.setDefaultFont(font);
+            descDoc.setTextWidth(contentWidth);
+            descDoc.setPlainText(embed.description);
+            embedHeight += int(std::ceil(descDoc.size().height())) + 8;
+        }
+
+        if (!embed.fields.isEmpty()) {
+            QFont fieldNameFont = font;
+            fieldNameFont.setBold(true);
+            QFontMetrics fieldNameFm(fieldNameFont);
+            int fieldWidthCalc = (contentWidth - 2 * fieldSpacing) / 3;
+
+            int fieldsInRow = 0;
+            int maxRowHeight = 0;
+            for (const auto &field : embed.fields) {
+                QTextDocument valueDoc;
+                valueDoc.setDefaultFont(font);
+                valueDoc.setTextWidth(field.isInline ? fieldWidthCalc : contentWidth);
+                valueDoc.setPlainText(field.value);
+                int valueHeight = int(std::ceil(valueDoc.size().height()));
+                int fieldHeight = fieldNameFm.height() + 2 + valueHeight;
+
+                if (field.isInline) {
+                    fieldsInRow++;
+                    maxRowHeight = std::max(maxRowHeight, fieldHeight);
+                    if (fieldsInRow >= 3) {
+                        embedHeight += maxRowHeight + fieldSpacing;
+                        fieldsInRow = 0;
+                        maxRowHeight = 0;
+                    }
+                } else {
+                    if (fieldsInRow > 0) {
+                        embedHeight += maxRowHeight + fieldSpacing;
+                        fieldsInRow = 0;
+                        maxRowHeight = 0;
+                    }
+                    embedHeight += fieldHeight + fieldSpacing;
+                }
+            }
+            if (fieldsInRow > 0)
+                embedHeight += maxRowHeight + fieldSpacing;
+        }
+
+        int imageY = embedHeight;
+
+        if (!embed.images.isEmpty()) {
+            if (embed.images.size() == 1) {
+                const auto &img = embed.images[0];
+                if (!img.pixmap.isNull()) {
+                    QSize actualSize =
+                            img.pixmap.size().scaled(img.displaySize, Qt::KeepAspectRatio);
+                    embedHeight += actualSize.height();
+                }
+            } else {
+                AttachmentGridLayout grid =
+                        calculateAttachmentGrid(embed.images.size(), contentWidth);
+                embedHeight += grid.totalHeight;
+            }
+        } else if (!embed.videoThumbnail.isNull() && embed.thumbnail.isNull()) {
+            QSize actualSize = embed.videoThumbnail.size().scaled(embed.videoThumbnailSize,
+                                                                  Qt::KeepAspectRatio);
+            embedHeight += actualSize.height();
+        }
+
+        if (!embed.footerText.isEmpty()) {
+            QFont footerFont = font;
+            footerFont.setPointSize(footerFont.pointSize() - 2);
+            QFontMetrics footerFm(footerFont);
+            embedHeight += std::max(footerIconSize, footerFm.height()) + 4;
+        }
+
+        if (hasThumbnail)
+            embedHeight = std::max(embedHeight, int(embedPadding * 2 + thumbnailSize));
+
+        // embedHeight += embedPadding;
+
+        QRect embedRect(textRect.left(), embedTop, embedWidth, embedHeight);
+
+        if (embedRect.contains(mousePos)) {
+            int contentLeft = embedRect.left() + embedBorderWidth + embedPadding;
+            int contentTop = embedRect.top() + embedPadding;
+            int currentY = contentTop;
+
+            if (hasThumbnail) {
+                QSize thumbSize =
+                        !embed.thumbnail.isNull() ? embed.thumbnailSize : embed.videoThumbnailSize;
+                int thumbX = contentLeft + contentWidth + embedPadding;
+                QRect thumbRect(thumbX, currentY, thumbSize.width(), thumbSize.height());
+                if (thumbRect.contains(mousePos)) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = !embed.thumbnail.isNull() ? EmbedHitType::Image
+                                                               : EmbedHitType::VideoThumbnail;
+                    result.image =
+                            !embed.thumbnail.isNull() ? embed.thumbnail : embed.videoThumbnail;
+                    result.imageSize = thumbSize;
+                    result.url = embed.thumbnailUrl.toString();
+                    return result;
+                }
+            }
+
+            if (!embed.providerName.isEmpty()) {
+                QFont providerFont = font;
+                providerFont.setPointSize(providerFont.pointSize() - 2);
+                QFontMetrics providerFm(providerFont);
+                currentY += providerFm.height() + 4;
+            }
+
+            if (!embed.authorName.isEmpty()) {
+                QFont authorFont = font;
+                authorFont.setPointSize(authorFont.pointSize() - 1);
+                authorFont.setBold(true);
+                QFontMetrics authorFm(authorFont);
+                int authorHeight = std::max(authorIconSize, authorFm.height());
+                QRect authorRect(contentLeft, currentY, contentWidth, authorHeight);
+                if (authorRect.contains(mousePos) && !embed.authorUrl.isEmpty()) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::Author;
+                    result.url = embed.authorUrl;
+                    return result;
+                }
+                currentY += authorHeight + 4;
+            }
+
+            if (!embed.title.isEmpty()) {
+                QFont titleFont = font;
+                titleFont.setBold(true);
+                QFontMetrics titleFm(titleFont);
+                QRect titleRect(contentLeft, currentY, contentWidth, titleFm.height());
+                if (titleRect.contains(mousePos) && !embed.url.isEmpty()) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::Title;
+                    result.url = embed.url;
+                    return result;
+                }
+                currentY += titleFm.height() + 4;
+            }
+
+            if (!embed.description.isEmpty()) {
+                QTextDocument descDoc;
+                descDoc.setDefaultFont(font);
+                descDoc.setTextWidth(contentWidth);
+                descDoc.setPlainText(embed.description);
+                currentY += int(std::ceil(descDoc.size().height())) + 8;
+            }
+
+            if (!embed.fields.isEmpty()) {
+                QFont fieldNameFont = font;
+                fieldNameFont.setBold(true);
+                QFontMetrics fieldNameFm(fieldNameFont);
+                int fieldWidthCalc = (contentWidth - 2 * fieldSpacing) / 3;
+
+                int fieldsInRow = 0;
+                int maxRowHeight = 0;
+                for (const auto &field : embed.fields) {
+                    QTextDocument valueDoc;
+                    valueDoc.setDefaultFont(font);
+                    valueDoc.setTextWidth(field.isInline ? fieldWidthCalc : contentWidth);
+                    valueDoc.setPlainText(field.value);
+                    int valueHeight = int(std::ceil(valueDoc.size().height()));
+                    int fieldHeight = fieldNameFm.height() + 2 + valueHeight;
+
+                    if (field.isInline) {
+                        fieldsInRow++;
+                        maxRowHeight = std::max(maxRowHeight, fieldHeight);
+                        if (fieldsInRow >= 3) {
+                            currentY += maxRowHeight + fieldSpacing;
+                            fieldsInRow = 0;
+                            maxRowHeight = 0;
+                        }
+                    } else {
+                        if (fieldsInRow > 0) {
+                            currentY += maxRowHeight + fieldSpacing;
+                            fieldsInRow = 0;
+                            maxRowHeight = 0;
+                        }
+                        currentY += fieldHeight + fieldSpacing;
+                    }
+                }
+                if (fieldsInRow > 0)
+                    currentY += maxRowHeight + fieldSpacing;
+            }
+
+            if (!embed.images.isEmpty()) {
+                bool isSingleImage = (embed.images.size() == 1);
+
+                if (isSingleImage) {
+                    const auto &img = embed.images[0];
+                    if (!img.pixmap.isNull()) {
+                        QSize actualSize =
+                                img.pixmap.size().scaled(img.displaySize, Qt::KeepAspectRatio);
+                        QRect imageRect(contentLeft, currentY, actualSize.width(),
+                                        actualSize.height());
+                        if (imageRect.contains(mousePos)) {
+                            EmbedHitResult result;
+                            result.embedIndex = embedIndex;
+                            result.hitType = EmbedHitType::Image;
+                            result.image = img.pixmap;
+                            result.imageSize = actualSize;
+                            result.url = img.url.toString();
+                            return result;
+                        }
+                    }
+                } else {
+                    AttachmentGridLayout grid =
+                            calculateAttachmentGrid(embed.images.size(), contentWidth);
+                    for (const auto &cell : grid.cells) {
+                        if (cell.attachmentIndex >= embed.images.size())
+                            continue;
+
+                        QRect imgRect = cell.rect.translated(contentLeft, currentY);
+                        if (imgRect.contains(mousePos)) {
+                            const auto &img = embed.images[cell.attachmentIndex];
+                            EmbedHitResult result;
+                            result.embedIndex = embedIndex;
+                            result.hitType = EmbedHitType::Image;
+                            result.image = img.pixmap;
+                            result.imageSize = imgRect.size();
+                            result.url = img.url.toString();
+                            return result;
+                        }
+                    }
+                }
+            } else if (!embed.videoThumbnail.isNull() && embed.thumbnail.isNull()) {
+                QSize actualSize = embed.videoThumbnail.size().scaled(embed.videoThumbnailSize,
+                                                                      Qt::KeepAspectRatio);
+                QRect videoRect(contentLeft, currentY, actualSize.width(), actualSize.height());
+                if (videoRect.contains(mousePos)) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::VideoThumbnail;
+                    result.image = embed.videoThumbnail;
+                    result.imageSize = actualSize;
+                    result.url = embed.url;
+                    return result;
+                }
+            }
+        }
+
+        embedTop += embedHeight + padding();
+    }
+
+    return std::nullopt;
+}
+
 } // namespace ChatLayout
 } // namespace UI
 } // namespace Acheron

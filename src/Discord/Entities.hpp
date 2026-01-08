@@ -2,6 +2,8 @@
 
 #include <QString>
 #include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonDocument>
 
 #include "Enums.hpp"
 
@@ -131,6 +133,126 @@ struct GatewayGuild : Core::JsonUtils::JsonObject
     }
 };
 
+struct EmbedFooter : Core::JsonUtils::JsonObject
+{
+    Field<QString> text;
+    Field<QString, true> iconUrl;
+    Field<QString, true> proxyIconUrl;
+
+    static EmbedFooter fromJson(const QJsonObject &obj)
+    {
+        EmbedFooter footer;
+        get(obj, "text", footer.text);
+        get(obj, "icon_url", footer.iconUrl);
+        get(obj, "proxy_icon_url", footer.proxyIconUrl);
+        return footer;
+    }
+};
+
+struct EmbedMedia : Core::JsonUtils::JsonObject
+{
+    Field<QString> url;
+    Field<QString, true> proxyUrl;
+    Field<int, true> width;
+    Field<int, true> height;
+    Field<QString, true> contentType;
+
+    static EmbedMedia fromJson(const QJsonObject &obj)
+    {
+        EmbedMedia image;
+        get(obj, "url", image.url);
+        get(obj, "proxy_url", image.proxyUrl);
+        get(obj, "width", image.width);
+        get(obj, "height", image.height);
+        get(obj, "content_type", image.contentType);
+        return image;
+    }
+};
+
+struct EmbedProvider : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> name;
+    Field<QString, true> url;
+
+    static EmbedProvider fromJson(const QJsonObject &obj)
+    {
+        EmbedProvider provider;
+        get(obj, "name", provider.name);
+        get(obj, "url", provider.url);
+        return provider;
+    }
+};
+
+struct EmbedAuthor : Core::JsonUtils::JsonObject
+{
+    Field<QString> name;
+    Field<QString, true> url;
+    Field<QString, true> iconUrl;
+    Field<QString, true> proxyIconUrl;
+
+    static EmbedAuthor fromJson(const QJsonObject &obj)
+    {
+        EmbedAuthor author;
+        get(obj, "name", author.name);
+        get(obj, "url", author.url);
+        get(obj, "icon_url", author.iconUrl);
+        get(obj, "proxy_icon_url", author.proxyIconUrl);
+        return author;
+    }
+};
+
+struct EmbedField : Core::JsonUtils::JsonObject
+{
+    Field<QString> name;
+    Field<QString> value;
+    Field<bool, true> isInline;
+
+    static EmbedField fromJson(const QJsonObject &obj)
+    {
+        EmbedField field;
+        get(obj, "name", field.name);
+        get(obj, "value", field.value);
+        get(obj, "inline", field.isInline);
+        return field;
+    }
+};
+
+struct Embed : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> title;
+    Field<QString, true> type;
+    Field<QString, true> description;
+    Field<QString, true> url;
+    Field<QDateTime, true> timestamp;
+    Field<int, true> color;
+    Field<EmbedFooter, true> footer;
+    Field<EmbedMedia, true> image;
+    Field<EmbedMedia, true> thumbnail;
+    Field<EmbedMedia, true> video;
+    Field<EmbedProvider, true> provider;
+    Field<EmbedAuthor, true> author;
+    Field<QList<EmbedField>, true> fields;
+
+    static Embed fromJson(const QJsonObject &obj)
+    {
+        Embed embed;
+        get(obj, "title", embed.title);
+        get(obj, "type", embed.type);
+        get(obj, "description", embed.description);
+        get(obj, "url", embed.url);
+        get(obj, "timestamp", embed.timestamp);
+        get(obj, "color", embed.color);
+        get(obj, "footer", embed.footer);
+        get(obj, "image", embed.image);
+        get(obj, "thumbnail", embed.thumbnail);
+        get(obj, "video", embed.video);
+        get(obj, "provider", embed.provider);
+        get(obj, "author", embed.author);
+        get(obj, "fields", embed.fields);
+        return embed;
+    }
+};
+
 struct Attachment : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;
@@ -175,9 +297,11 @@ struct Message : Core::JsonUtils::JsonObject
     Field<MessageType> type;
     Field<MessageFlags> flags;
     Field<QList<Attachment>, true> attachments;
+    Field<QList<Embed>, true> embeds;
 
-    // ui stuff
+    // cached data
     QString parsedContentCached;
+    QString embedsJson;
 
     static Message fromJson(const QJsonObject &obj)
     {
@@ -191,6 +315,13 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "type", message.type);
         get(obj, "flags", message.flags);
         get(obj, "attachments", message.attachments);
+        get(obj, "embeds", message.embeds);
+
+        if (obj.contains("embeds")) {
+            QJsonDocument doc(obj.value("embeds").toArray());
+            message.embedsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
+        }
+
         return message;
     }
 };

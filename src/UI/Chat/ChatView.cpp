@@ -114,8 +114,9 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
 
     QString link = ChatLayout::getLinkAt(this, idx, pos);
     std::optional<AttachmentData> hoveredAtt = ChatLayout::getAttachmentAt(this, idx, pos);
+    std::optional<ChatLayout::EmbedHitResult> hoveredEmbed = ChatLayout::getEmbedAt(this, idx, pos);
 
-    if (!link.isEmpty() || hoveredAtt.has_value()) {
+    if (!link.isEmpty() || hoveredAtt.has_value() || hoveredEmbed.has_value()) {
         viewport()->setCursor(Qt::PointingHandCursor);
     } else {
         if (charPos >= 0) {
@@ -144,6 +145,37 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton) {
         QPoint pos = event->pos();
         QModelIndex idx = indexAt(pos);
+
+        std::optional<ChatLayout::EmbedHitResult> embedHit = ChatLayout::getEmbedAt(this, idx, pos);
+        if (embedHit.has_value()) {
+            switch (embedHit->hitType) {
+            case ChatLayout::EmbedHitType::Image: {
+                if (!embedHit->image.isNull()) {
+                    auto *viewer = new ImageViewer(window());
+                    viewer->showImage(QUrl(embedHit->url), embedHit->image);
+                }
+                QListView::mouseReleaseEvent(event);
+                return;
+            }
+            case ChatLayout::EmbedHitType::VideoThumbnail:
+            case ChatLayout::EmbedHitType::Title:
+            case ChatLayout::EmbedHitType::Author: {
+                if (!embedHit->url.isEmpty()) {
+                    ConfirmPopup dialog(tr("External Link"),
+                                        QString(tr("Are you sure you want to open <b>%1</b>?"))
+                                                .arg(embedHit->url),
+                                        tr("Open Link"), this);
+
+                    if (dialog.exec() == QDialog::Accepted)
+                        QDesktopServices::openUrl(QUrl(embedHit->url));
+                }
+                QListView::mouseReleaseEvent(event);
+                return;
+            }
+            default:
+                break;
+            }
+        }
 
         std::optional<AttachmentData> att = ChatLayout::getAttachmentAt(this, idx, pos);
         if (att.has_value()) {

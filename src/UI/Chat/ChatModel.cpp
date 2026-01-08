@@ -24,14 +24,47 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
             [this](const QUrl &url, const QPixmap &pixmap) {
                 for (int row = 0; row < messages.size(); ++row) {
                     const auto &msg = messages[row];
-                    if (!msg.attachments.hasValue())
-                        continue;
-                    for (const auto &att : *msg.attachments) {
-                        if (QUrl(*att.proxyUrl) == url) {
-                            QModelIndex idx = index(row, 0);
-                            emit dataChanged(idx, idx, { AttachmentsRole, CachedSizeRole });
-                            break;
+                    bool found = false;
+
+                    if (msg.attachments.hasValue()) {
+                        for (const auto &att : *msg.attachments) {
+                            if (QUrl(*att.proxyUrl) == url) {
+                                found = true;
+                                break;
+                            }
                         }
+                    }
+
+                    if (!found && msg.embeds.hasValue()) {
+                        for (const auto &embed : *msg.embeds) {
+                            if (embed.author.hasValue() && embed.author->proxyIconUrl.hasValue() &&
+                                QUrl(*embed.author->proxyIconUrl) == url) {
+                                found = true;
+                                break;
+                            }
+                            if (embed.footer.hasValue() && embed.footer->proxyIconUrl.hasValue() &&
+                                QUrl(*embed.footer->proxyIconUrl) == url) {
+                                found = true;
+                                break;
+                            }
+                            if (embed.thumbnail.hasValue() &&
+                                embed.thumbnail->proxyUrl.hasValue() &&
+                                QUrl(*embed.thumbnail->proxyUrl) == url) {
+                                found = true;
+                                break;
+                            }
+
+                            if (embed.image.hasValue() && embed.image->proxyUrl.hasValue() &&
+                                QUrl(*embed.image->proxyUrl) == url) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (found) {
+                        QModelIndex idx = index(row, 0);
+                        emit dataChanged(idx, idx, { AttachmentsRole, EmbedsRole, CachedSizeRole });
                     }
                 }
             });
@@ -150,6 +183,148 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             }
 
             result.append(data);
+        }
+
+        return QVariant::fromValue(result);
+    }
+    case EmbedsRole: {
+        if (!msg.embeds.hasValue() || msg.embeds->isEmpty())
+            return QVariant();
+
+        QList<EmbedData> result;
+        // for handling the url-based embed image merging
+        QMap<QString, int> urlToEmbedIndex;
+
+        for (const auto &embed : *msg.embeds) {
+            QString embedUrl = embed.url.hasValue() ? *embed.url : QString();
+
+            bool hasImage = embed.image.hasValue() && embed.image->proxyUrl.hasValue() &&
+                            embed.image->contentType.hasValue() &&
+                            embed.image->contentType->startsWith("image/");
+
+            bool shouldMerge = false;
+            int parentIndex = -1;
+
+            if (!embedUrl.isEmpty() && hasImage && urlToEmbedIndex.contains(embedUrl)) {
+                parentIndex = urlToEmbedIndex[embedUrl];
+                // excess ignored
+                if (result[parentIndex].images.size() < 4)
+                    shouldMerge = true;
+            }
+
+            if (shouldMerge) {
+                EmbedImageData imageData;
+                imageData.url = QUrl(*embed.image->proxyUrl);
+                QSize origSize;
+                if (embed.image->width.hasValue() && embed.image->height.hasValue())
+                    origSize = QSize(*embed.image->width, *embed.image->height);
+                imageData.displaySize = Core::AttachmentCache::calculateDisplaySize(origSize);
+                imageData.pixmap = attachmentCache->get(imageData.url, origSize);
+
+                result[parentIndex].images.append(imageData);
+            } else if (!shouldMerge && hasImage && !embedUrl.isEmpty() &&
+                       urlToEmbedIndex.contains(embedUrl)) {
+                continue;
+            } else {
+                EmbedData data;
+
+                bool hasAnything = embed.title.hasValue() || embed.description.hasValue() ||
+                                   embed.timestamp.hasValue() || embed.color.hasValue() ||
+                                   embed.author.hasValue() || embed.footer.hasValue() || hasImage;
+
+                data.title = embed.title.hasValue() ? *embed.title : QString();
+                data.description = embed.description.hasValue() ? *embed.description : QString();
+                data.url = embedUrl;
+                data.timestamp = embed.timestamp.hasValue() ? *embed.timestamp : QDateTime();
+                data.color = embed.color.hasValue() ? QColor::fromRgb(*embed.color)
+                                                    : QColor(88, 101, 242);
+
+                if (embed.author.hasValue()) {
+                    data.authorName =
+                            embed.author->name.hasValue() ? *embed.author->name : QString();
+                    data.authorUrl = embed.author->proxyIconUrl.hasValue()
+                                             ? *embed.author->proxyIconUrl
+                                             : QString();
+                    if (embed.author->iconUrl.hasValue()) {
+                        data.authorIconUrl = QUrl(*embed.author->proxyIconUrl);
+                        data.authorIcon = attachmentCache->get(data.authorIconUrl, QSize(24, 24));
+                    }
+                }
+
+                if (embed.footer.hasValue()) {
+                    data.footerText =
+                            embed.footer->text.hasValue() ? *embed.footer->text : QString();
+                    if (embed.footer->proxyIconUrl.hasValue()) {
+                        data.footerIconUrl = QUrl(*embed.footer->proxyIconUrl);
+                        data.footerIcon = attachmentCache->get(data.footerIconUrl, QSize(20, 20));
+                    }
+                }
+
+                if (embed.provider.hasValue()) {
+                    data.providerName =
+                            embed.provider->name.hasValue() ? *embed.provider->name : QString();
+                    data.providerUrl =
+                            embed.provider->url.hasValue() ? *embed.provider->url : QString();
+                }
+
+                if (embed.thumbnail.hasValue() && embed.thumbnail->proxyUrl.hasValue() &&
+                    embed.thumbnail->contentType.hasValue() &&
+                    embed.thumbnail->contentType->startsWith("image/")) {
+                    hasAnything = true;
+                    data.thumbnailUrl = QUrl(*embed.thumbnail->proxyUrl);
+                    QSize origSize;
+                    if (embed.thumbnail->width.hasValue() && embed.thumbnail->height.hasValue())
+                        origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
+                    data.thumbnailSize = origSize.isValid()
+                                                 ? origSize.scaled(80, 80, Qt::KeepAspectRatio)
+                                                 : QSize(80, 80);
+                    data.thumbnail = attachmentCache->get(data.thumbnailUrl, origSize);
+                }
+
+                if (hasImage) {
+                    EmbedImageData imageData;
+                    imageData.url = QUrl(*embed.image->proxyUrl);
+                    QSize origSize;
+                    if (embed.image->width.hasValue() && embed.image->height.hasValue())
+                        origSize = QSize(*embed.image->width, *embed.image->height);
+                    imageData.displaySize = Core::AttachmentCache::calculateDisplaySize(origSize);
+                    imageData.pixmap = attachmentCache->get(imageData.url, origSize);
+                    data.images.append(imageData);
+                }
+
+                if (embed.video.hasValue()) {
+                    if (embed.thumbnail.hasValue() && embed.thumbnail->proxyUrl.hasValue() &&
+                        embed.thumbnail->proxyUrl->startsWith("https://")) {
+                        hasAnything = true;
+                        data.videoThumbnailUrl = QUrl(*embed.thumbnail->proxyUrl);
+                        QSize origSize;
+                        if (embed.thumbnail->width.hasValue() && embed.thumbnail->height.hasValue())
+                            origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
+                        data.videoThumbnailSize =
+                                Core::AttachmentCache::calculateDisplaySize(origSize);
+                        data.videoThumbnail =
+                                attachmentCache->get(data.videoThumbnailUrl, origSize);
+                    }
+                }
+
+                if (embed.fields.hasValue()) {
+                    if (!embed.fields->empty())
+                        hasAnything = true;
+                    for (const auto &field : *embed.fields) {
+                        EmbedFieldData fieldData;
+                        fieldData.name = field.name.hasValue() ? *field.name : QString();
+                        fieldData.value = field.value.hasValue() ? *field.value : QString();
+                        fieldData.isInline = field.isInline.hasValue() ? *field.isInline : false;
+                        data.fields.append(fieldData);
+                    }
+                }
+
+                if (!embedUrl.isEmpty())
+                    urlToEmbedIndex[embedUrl] = result.size();
+
+                if (hasAnything)
+                    result.append(data);
+            }
         }
 
         return QVariant::fromValue(result);
