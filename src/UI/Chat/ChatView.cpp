@@ -147,18 +147,33 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
 
         std::optional<AttachmentData> att = ChatLayout::getAttachmentAt(this, idx, pos);
         if (att.has_value()) {
-            auto *viewer = new ImageViewer(window());
-            viewer->showImage(att->proxyUrl, att->pixmap);
-            QListView::mouseReleaseEvent(event);
-            return;
+            if (att->isImage) {
+                auto *viewer = new ImageViewer(window());
+                viewer->showImage(att->proxyUrl, att->pixmap);
+                QListView::mouseReleaseEvent(event);
+                return;
+            } else {
+                ConfirmPopup dialog(
+                        tr("Open File"),
+                        QString(tr("Do you want to open <b>%1</b> (%2) in your browser?"))
+                                .arg(att->filename)
+                                .arg(ChatLayout::formatFileSize(att->fileSizeBytes)),
+                        tr("Open"), this);
+
+                if (dialog.exec() == QDialog::Accepted)
+                    QDesktopServices::openUrl(att->originalUrl);
+
+                QListView::mouseReleaseEvent(event);
+                return;
+            }
         }
 
         QString link = ChatLayout::getLinkAt(this, idx, pos);
 
         if (!link.isEmpty()) {
-            ConfirmPopup dialog("External Link",
-                                QString("Are you sure you want to open <b>%1</b>?").arg(link),
-                                "Open Link", this);
+            ConfirmPopup dialog(tr("External Link"),
+                                QString(tr("Are you sure you want to open <b>%1</b>?")).arg(link),
+                                tr("Open Link"), this);
 
             if (dialog.exec() == QDialog::Accepted) {
                 QDesktopServices::openUrl(QUrl(link));

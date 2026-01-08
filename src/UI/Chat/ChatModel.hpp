@@ -16,9 +16,13 @@ class AttachmentCache;
 struct AttachmentData
 {
     QUrl proxyUrl;
+    QUrl originalUrl;
     QSize displaySize;
     QPixmap pixmap;
     bool isLoading;
+    bool isImage;
+    QString filename;
+    qint64 fileSizeBytes;
 };
 
 namespace UI {

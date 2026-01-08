@@ -129,19 +129,25 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         QList<AttachmentData> result;
         for (const auto &att : *msg.attachments) {
-            if (!att.isImage())
-                continue;
-
             AttachmentData data;
             data.proxyUrl = QUrl(*att.proxyUrl);
+            data.originalUrl = QUrl(*att.url);
+            data.isImage = att.isImage();
+            data.filename = att.filename.hasValue() ? *att.filename : "unknown";
+            data.fileSizeBytes = att.size.hasValue() ? *att.size : 0;
 
-            QSize original;
-            if (att.width.hasValue() && att.height.hasValue())
-                original = QSize(*att.width, *att.height);
+            if (att.isImage()) {
+                QSize original;
+                if (att.width.hasValue() && att.height.hasValue())
+                    original = QSize(*att.width, *att.height);
 
-            data.displaySize = Core::AttachmentCache::calculateDisplaySize(original);
-            data.pixmap = attachmentCache->get(data.proxyUrl, original);
-            data.isLoading = !attachmentCache->isCached(data.proxyUrl);
+                data.displaySize = Core::AttachmentCache::calculateDisplaySize(original);
+                data.pixmap = attachmentCache->get(data.proxyUrl, original);
+                data.isLoading = !attachmentCache->isCached(data.proxyUrl);
+            } else {
+                data.displaySize = QSize();
+                data.isLoading = false;
+            }
 
             result.append(data);
         }

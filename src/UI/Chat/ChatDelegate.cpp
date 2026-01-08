@@ -124,54 +124,118 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         int realTextHeight = int(std::ceil(doc.size().height()));
         int attachmentTop = textRect.top() + realTextHeight + ChatLayout::padding();
 
-        ChatLayout::AttachmentGridLayout grid =
-                ChatLayout::calculateAttachmentGrid(attachments.size(), textRect.width());
+        QList<AttachmentData> images;
+        QList<AttachmentData> files;
+        for (const auto &att : attachments) {
+            if (att.isImage)
+                images.append(att);
+            else
+                files.append(att);
+        }
 
-        bool isSingleImage = (attachments.size() == 1);
+        if (!images.isEmpty()) {
+            ChatLayout::AttachmentGridLayout grid =
+                    ChatLayout::calculateAttachmentGrid(images.size(), textRect.width());
 
-        for (const auto &cell : grid.cells) {
-            if (cell.attachmentIndex >= attachments.size())
-                continue;
+            bool isSingleImage = (images.size() == 1);
 
-            const auto &att = attachments[cell.attachmentIndex];
+            for (const auto &cell : grid.cells) {
+                if (cell.attachmentIndex >= images.size())
+                    continue;
 
-            QRect imgRect = cell.rect.translated(textRect.left(), attachmentTop);
+                const auto &att = images[cell.attachmentIndex];
 
-            if (!att.pixmap.isNull()) {
-                if (isSingleImage) {
-                    QRect actualRect(imgRect.x(), imgRect.y(), att.displaySize.width(),
-                                     att.displaySize.height());
-                    painter->drawPixmap(actualRect, att.pixmap);
-                } else {
-                    QSize pixSize = att.pixmap.size() / att.pixmap.devicePixelRatio();
-                    QRect sourceRect;
+                QRect imgRect = cell.rect.translated(textRect.left(), attachmentTop);
 
-                    qreal targetAspect = qreal(imgRect.width()) / imgRect.height();
-                    qreal pixAspect = qreal(pixSize.width()) / pixSize.height();
-
-                    // crop to fit
-                    if (pixAspect > targetAspect) {
-                        int cropWidth = qRound(pixSize.height() * targetAspect);
-                        int cropX = (pixSize.width() - cropWidth) / 2;
-                        sourceRect = QRect(cropX, 0, cropWidth, pixSize.height());
+                if (!att.pixmap.isNull()) {
+                    if (isSingleImage) {
+                        QRect actualRect(imgRect.x(), imgRect.y(), att.displaySize.width(),
+                                         att.displaySize.height());
+                        painter->drawPixmap(actualRect, att.pixmap);
                     } else {
-                        int cropHeight = qRound(pixSize.width() / targetAspect);
-                        int cropY = (pixSize.height() - cropHeight) / 2;
-                        sourceRect = QRect(0, cropY, pixSize.width(), cropHeight);
+                        QSize pixSize = att.pixmap.size() / att.pixmap.devicePixelRatio();
+                        QRect sourceRect;
+
+                        qreal targetAspect = qreal(imgRect.width()) / imgRect.height();
+                        qreal pixAspect = qreal(pixSize.width()) / pixSize.height();
+
+                        // crop to fit
+                        if (pixAspect > targetAspect) {
+                            int cropWidth = qRound(pixSize.height() * targetAspect);
+                            int cropX = (pixSize.width() - cropWidth) / 2;
+                            sourceRect = QRect(cropX, 0, cropWidth, pixSize.height());
+                        } else {
+                            int cropHeight = qRound(pixSize.width() / targetAspect);
+                            int cropY = (pixSize.height() - cropHeight) / 2;
+                            sourceRect = QRect(0, cropY, pixSize.width(), cropHeight);
+                        }
+
+                        qreal dpr = att.pixmap.devicePixelRatio();
+                        QRect physicalSourceRect(qRound(sourceRect.x() * dpr),
+                                                 qRound(sourceRect.y() * dpr),
+                                                 qRound(sourceRect.width() * dpr),
+                                                 qRound(sourceRect.height() * dpr));
+
+                        painter->drawPixmap(imgRect, att.pixmap, physicalSourceRect);
                     }
-
-                    qreal dpr = att.pixmap.devicePixelRatio();
-                    QRect physicalSourceRect(
-                            qRound(sourceRect.x() * dpr), qRound(sourceRect.y() * dpr),
-                            qRound(sourceRect.width() * dpr), qRound(sourceRect.height() * dpr));
-
-                    painter->drawPixmap(imgRect, att.pixmap, physicalSourceRect);
+                } else {
+                    painter->fillRect(imgRect, QColor(60, 60, 60));
+                    painter->setPen(option.palette.text().color());
+                    painter->drawText(imgRect, Qt::AlignCenter, "Loading...");
                 }
-            } else {
-                painter->fillRect(imgRect, QColor(60, 60, 60));
-                painter->setPen(option.palette.text().color());
-                painter->drawText(imgRect, Qt::AlignCenter, "Loading...");
             }
+
+            if (isSingleImage && !images.isEmpty())
+                attachmentTop += images[0].displaySize.height() + ChatLayout::padding();
+            else if (!images.isEmpty())
+                attachmentTop += grid.totalHeight + ChatLayout::padding();
+        }
+
+        constexpr int fileAttachmentHeight = 48;
+        constexpr int fileAttachmentPadding = 8;
+        constexpr int maxAttachmentWidth = 400;
+        int fileWidth = std::min(textRect.width(), maxAttachmentWidth);
+
+        for (const auto &att : files) {
+            QRect fileRect(textRect.left(), attachmentTop, fileWidth, fileAttachmentHeight);
+
+            QColor bgColor = option.palette.alternateBase().color();
+            painter->fillRect(fileRect, bgColor);
+
+            painter->setPen(QPen(option.palette.mid().color(), 1));
+            painter->drawRect(fileRect);
+
+            QRect iconRect(fileRect.left() + fileAttachmentPadding,
+                           fileRect.top() + fileAttachmentPadding, 32, 32);
+            painter->fillRect(iconRect, option.palette.mid());
+            painter->setPen(option.palette.text().color());
+            painter->drawText(iconRect, Qt::AlignCenter, "📄");
+
+            int textLeft = iconRect.right() + fileAttachmentPadding;
+            QRect textAreaRect(textLeft, fileRect.top() + fileAttachmentPadding,
+                               fileRect.width() - (textLeft - fileRect.left()) -
+                                       fileAttachmentPadding,
+                               fileRect.height() - fileAttachmentPadding * 2);
+
+            QFont filenameFont = option.font;
+            painter->setFont(filenameFont);
+            painter->setPen(option.palette.text().color());
+            QFontMetrics filenameFm(filenameFont);
+            QString elidedFilename =
+                    filenameFm.elidedText(att.filename, Qt::ElideMiddle, textAreaRect.width());
+            painter->drawText(textAreaRect.left(), textAreaRect.top() + filenameFm.ascent(),
+                              elidedFilename);
+
+            QFont sizeFont = option.font;
+            sizeFont.setPointSize(sizeFont.pointSize() - 1);
+            painter->setFont(sizeFont);
+            painter->setPen(option.palette.placeholderText().color());
+            QString sizeText = ChatLayout::formatFileSize(att.fileSizeBytes);
+            QFontMetrics sizeFm(sizeFont);
+            painter->drawText(textAreaRect.left(),
+                              textAreaRect.top() + filenameFm.height() + sizeFm.ascent(), sizeText);
+
+            attachmentTop = fileRect.bottom() + ChatLayout::padding();
         }
     }
 
@@ -202,13 +266,29 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         QList<AttachmentData> atts =
                 index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
         if (!atts.isEmpty()) {
-            if (atts.size() == 1) {
-                requiredHeight += atts[0].displaySize.height() + pad;
-            } else {
+            int imageCount = 0;
+            int fileCount = 0;
+            QSize firstImageSize;
+            for (const auto &att : atts) {
+                if (att.isImage) {
+                    if (imageCount == 0)
+                        firstImageSize = att.displaySize;
+                    imageCount++;
+                } else {
+                    fileCount++;
+                }
+            }
+
+            if (imageCount == 1) {
+                requiredHeight += firstImageSize.height() + pad;
+            } else if (imageCount > 1) {
                 ChatLayout::AttachmentGridLayout grid = ChatLayout::calculateAttachmentGrid(
-                        atts.size(), option.rect.width() - pad - aSz - pad - pad);
+                        imageCount, option.rect.width() - pad - aSz - pad - pad);
                 requiredHeight += grid.totalHeight + pad;
             }
+
+            constexpr int fileAttachmentHeight = 48;
+            requiredHeight += fileCount * (fileAttachmentHeight + pad);
         }
 
         if (option.rect.height() != requiredHeight) {
@@ -279,13 +359,30 @@ QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelInd
     QList<AttachmentData> attachments =
             index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
     if (!attachments.isEmpty()) {
-        if (attachments.size() == 1) {
-            totalHeight += attachments[0].displaySize.height() + pad;
-        } else {
+        int imageCount = 0;
+        int fileCount = 0;
+        QSize firstImageSize;
+        for (const auto &att : attachments) {
+            if (att.isImage) {
+                if (imageCount == 0)
+                    firstImageSize = att.displaySize;
+                imageCount++;
+            } else {
+                fileCount++;
+            }
+        }
+
+        if (imageCount == 1) {
+            totalHeight += firstImageSize.height() + pad;
+        } else if (imageCount > 1) {
             ChatLayout::AttachmentGridLayout grid =
-                    ChatLayout::calculateAttachmentGrid(attachments.size(), textWidth);
+                    ChatLayout::calculateAttachmentGrid(imageCount, textWidth);
             totalHeight += grid.totalHeight + pad;
         }
+
+        // Add height for non-image files (48px each + padding)
+        constexpr int fileAttachmentHeight = 48;
+        totalHeight += fileCount * (fileAttachmentHeight + pad);
     }
 
     return QSize(viewportWidth, totalHeight);

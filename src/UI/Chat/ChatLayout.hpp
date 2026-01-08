@@ -53,6 +53,7 @@ struct AttachmentGridLayout
 };
 
 AttachmentGridLayout calculateAttachmentGrid(int count, int maxWidth);
+QString formatFileSize(qint64 bytes);
 
 } // namespace ChatLayout
 } // namespace UI

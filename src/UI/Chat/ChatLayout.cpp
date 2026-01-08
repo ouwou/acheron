@@ -295,30 +295,76 @@ std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
 
     int attachmentTop = textRect.top() + realTextHeight + padding();
 
-    bool isSingleImage = (attachments.size() == 1);
+    QList<AttachmentData> images;
+    QList<AttachmentData> files;
+    for (const auto &att : attachments) {
+        if (att.isImage)
+            images.append(att);
+        else
+            files.append(att);
+    }
 
-    if (isSingleImage) {
-        const auto &att = attachments[0];
-        QRect imgRect(textRect.left(), attachmentTop, att.displaySize.width(),
-                      att.displaySize.height());
+    if (!images.isEmpty()) {
+        bool isSingleImage = (images.size() == 1);
 
-        if (imgRect.contains(mousePos))
-            return att;
-    } else {
-        AttachmentGridLayout grid = calculateAttachmentGrid(attachments.size(), textRect.width());
-
-        for (const auto &cell : grid.cells) {
-            if (cell.attachmentIndex >= attachments.size())
-                continue;
-
-            QRect imgRect = cell.rect.translated(textRect.left(), attachmentTop);
+        if (isSingleImage) {
+            const auto &att = images[0];
+            QRect imgRect(textRect.left(), attachmentTop, att.displaySize.width(),
+                          att.displaySize.height());
 
             if (imgRect.contains(mousePos))
-                return attachments[cell.attachmentIndex];
+                return att;
+
+            attachmentTop += att.displaySize.height() + padding();
+        } else {
+            AttachmentGridLayout grid = calculateAttachmentGrid(images.size(), textRect.width());
+
+            for (const auto &cell : grid.cells) {
+                if (cell.attachmentIndex >= images.size())
+                    continue;
+
+                QRect imgRect = cell.rect.translated(textRect.left(), attachmentTop);
+
+                if (imgRect.contains(mousePos))
+                    return images[cell.attachmentIndex];
+            }
+
+            attachmentTop += grid.totalHeight + padding();
         }
     }
 
+    constexpr int fileAttachmentHeight = 48;
+    constexpr int maxAttachmentWidth = 400;
+    int fileWidth = std::min(textRect.width(), maxAttachmentWidth);
+
+    for (const auto &att : files) {
+        QRect fileRect(textRect.left(), attachmentTop, fileWidth, fileAttachmentHeight);
+
+        if (fileRect.contains(mousePos))
+            return att;
+
+        attachmentTop = fileRect.bottom() + padding();
+    }
+
     return std::nullopt;
+}
+
+QString formatFileSize(qint64 bytes)
+{
+    if (bytes < 0)
+        return "0 B";
+
+    constexpr qint64 KB = 1024;
+    constexpr qint64 MB = KB * 1024;
+    constexpr qint64 GB = MB * 1024;
+
+    if (bytes >= GB)
+        return QString::number(bytes / double(GB), 'f', 2) + " GB";
+    if (bytes >= MB)
+        return QString::number(bytes / double(MB), 'f', 2) + " MB";
+    if (bytes >= KB)
+        return QString::number(bytes / double(KB), 'f', 2) + " KB";
+    return QString::number(bytes) + " B";
 }
 
 } // namespace ChatLayout
