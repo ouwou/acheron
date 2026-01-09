@@ -12,8 +12,6 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
                QObject *parent)
     : QObject(parent), token(token), baseUrl(baseUrl)
 {
-    netManager = new QNetworkAccessManager(this);
-
     identity.regenerateClientHeartbeatSessionId();
 
     gateway = new Gateway(token, gatewayUrl, identity, this);
@@ -147,32 +145,6 @@ void Client::setState(Core::ConnectionState state)
         this->state = state;
         emit stateChanged(state);
     }
-}
-
-void Client::sendRequest(const QString &endpoint, const QUrlQuery &query,
-                         const std::function<void(QNetworkReply *)> &callback)
-{
-    QUrl url(baseUrl + endpoint);
-    url.setQuery(query);
-    QNetworkRequest request(url);
-
-    if (!token.isEmpty()) {
-        request.setRawHeader("Authorization", token.toUtf8());
-    }
-
-    QNetworkReply *reply = netManager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            qWarning() << "Network Error:" << reply->errorString();
-            emit errorOccurred(reply->errorString());
-            return;
-        }
-
-        callback(reply);
-    });
 }
 
 } // namespace Discord

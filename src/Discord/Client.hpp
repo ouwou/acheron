@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QObject>
-#include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -71,13 +70,9 @@ private slots:
 private:
     void setState(Core::ConnectionState state);
 
-    void sendRequest(const QString &endpoint, const QUrlQuery &query,
-                     const std::function<void(QNetworkReply *)> &callback);
-
 private:
     Core::ConnectionState state = Core::ConnectionState::Disconnected;
 
-    QNetworkAccessManager *netManager;
     QString baseUrl;
     QString token;
 
