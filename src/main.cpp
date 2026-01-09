@@ -1,10 +1,12 @@
-    #include "App.hpp"
+#include "App.hpp"
 #include "UI/MainWindow.hpp"
 #include "Storage/DatabaseManager.hpp"
 #include "Core/Session.hpp"
 #include "Core/Logging.hpp"
+#include "Discord/CurlUtils.hpp"
 
 #include <curl/curl.h>
+#include <QNetworkAccessManager>
 
 // potentially named after that river
 // or the honkai star rail character
@@ -18,6 +20,9 @@ int main(int argc, char *argv[])
 
     App app(argc, argv);
     app.setStyle("Fusion");
+
+    QNetworkAccessManager buildNumberNam;
+    Discord::CurlUtils::fetchBuildNumber(&buildNumberNam);
 
 #if 0
     QPalette darkCoolPurple;

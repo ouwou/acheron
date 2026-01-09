@@ -59,7 +59,7 @@ ClientProperties ClientIdentity::buildClientProperties(
     properties.referrerCurrent = "";
     properties.referringDomainCurrent = "";
     properties.releaseChannel = "stable";
-    properties.clientBuildNumber = 482285;
+    properties.clientBuildNumber = CurlUtils::getBuildNumber();
     properties.clientEventSource = nullptr;
     properties.clientLaunchId = launchId;
     properties.launchSignature = launchSignature;
