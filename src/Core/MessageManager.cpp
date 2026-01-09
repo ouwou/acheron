@@ -212,7 +212,9 @@ void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messag
 
     for (auto &msg : sortedMessages) {
         static Markdown::Parser parser;
-        auto ast = parser.parse(msg.content);
+        Markdown::ParseState state;
+        state.isInline = true;
+        auto ast = parser.parse(msg.content, state);
         msg.parsedContentCached = parser.toHtml(ast);
     }
 

@@ -109,12 +109,56 @@ QString Parser::toHtml(const QList<AstNode> &nodes)
     return result;
 }
 
+static MatchFn inlineRegex(QRegularExpression regex)
+{
+    return [regex](const QString &source, const ParseState &state) -> Capture {
+        if (state.isInline)
+            return regex.match(source, 0, QRegularExpression::NormalMatch,
+                               QRegularExpression::AnchoredMatchOption);
+        else
+            return Capture();
+    };
+}
+
+static MatchFn blockRegex(QRegularExpression regex)
+{
+    return [regex](const QString &source, const ParseState &state) -> Capture {
+        if (!state.isInline)
+            return regex.match(source, 0, QRegularExpression::NormalMatch,
+                               QRegularExpression::AnchoredMatchOption);
+        else
+            return Capture();
+    };
+}
+
+static MatchFn anyScopeRegex(QRegularExpression regex)
+{
+    return [regex](const QString &source, const ParseState &state) -> Capture {
+        return regex.match(source, 0, QRegularExpression::NormalMatch,
+                           QRegularExpression::AnchoredMatchOption);
+    };
+}
+
 void Parser::setupDefaultRules()
 {
+    MarkdownRule newline;
+    newline.name = "newline";
+    newline.order = 10;
+    newline.regex = QRegularExpression(R"(^(?:\n *)*\n)");
+    newline.match = blockRegex(newline.regex);
+    newline.parse = [](const Capture &match, NestedParseFn nestedParse,
+                       ParseState state) -> AstNode { return {}; };
+    newline.html = [](const AstNode &node,
+                      std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        return "\n";
+    };
+    rules.append(newline);
+
     MarkdownRule url;
     url.name = "url";
     url.order = 16;
     url.regex = QRegularExpression(R"(^(https?:\/\/[^\s<]+[^<.,:;"')\]\s]))");
+    url.match = inlineRegex(url.regex);
     url.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;
         node.type = "url";
@@ -135,6 +179,7 @@ void Parser::setupDefaultRules()
     em.order = 20;
     em.regex = QRegularExpression(
             R"(^\b_((?:__|\\[\s\S]|[^\\_])+?)_\b|^\*(?=\S)((?:\*\*|\\[\s\S]|\s+(?:\\[\s\S]|[^\s\*\\]|\*\*)|[^\s\*\\])+?)\*(?!\*))");
+    em.match = inlineRegex(em.regex);
     em.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;
         node.type = "em";
@@ -156,6 +201,7 @@ void Parser::setupDefaultRules()
     strong.name = "strong";
     strong.order = 21;
     strong.regex = QRegularExpression(R"(^\*\*((?:\\[\s\S]|[^\\])+?)\*\*(?!\*))");
+    strong.match = inlineRegex(strong.regex);
     strong.parse = [](const Capture &match, NestedParseFn nestedParse,
                       ParseState state) -> AstNode {
         AstNode node;
@@ -180,6 +226,7 @@ void Parser::setupDefaultRules()
     u.name = "u";
     u.order = 21;
     u.regex = QRegularExpression(R"(^__((?:\\[\s\S]|[^\\])+?)__(?!_))");
+    u.match = inlineRegex(u.regex);
     u.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;
         node.type = "u";
@@ -201,6 +248,7 @@ void Parser::setupDefaultRules()
     strike.name = "strike";
     strike.order = 22;
     strike.regex = QRegularExpression(R"(~~([\s\S]+?)~~(?!_))");
+    strike.match = inlineRegex(strike.regex);
     strike.parse = [](const Capture &match, NestedParseFn nestedParse,
                       ParseState state) -> AstNode {
         AstNode node;
@@ -221,6 +269,7 @@ void Parser::setupDefaultRules()
     inlineCode.name = "inlineCode";
     inlineCode.order = 23;
     inlineCode.regex = QRegularExpression(R"(^(`+)([\s\S]*?[^`])\1(?!`))");
+    inlineCode.match = inlineRegex(inlineCode.regex);
     inlineCode.parse = [](const Capture &match, NestedParseFn nestedParse,
                           ParseState state) -> AstNode {
         AstNode node;
@@ -236,11 +285,26 @@ void Parser::setupDefaultRules()
     };
     rules.append(inlineCode);
 
+    MarkdownRule br;
+    br.name = "br";
+    br.order = 24;
+    br.regex = QRegularExpression(R"(^\n)");
+    br.match = anyScopeRegex(br.regex);
+    br.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        return {};
+    };
+    br.html = [](const AstNode &node,
+                 std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        return "<br>";
+    };
+    rules.append(br);
+
     MarkdownRule text;
     text.name = "text";
     text.order = 25;
-    text.regex = QRegularExpression(
-            R"(^[\s\S]+?(?=[^0-9A-Za-z\s\x{00C0}-\x{FFFF}]|\n\n| {2,}\n|\w+:\S|$))");
+    text.regex =
+            QRegularExpression(R"(^[\s\S]+?(?=[^0-9A-Za-z\s\x{00C0}-\x{ffff}-]|\n\n|\n|\w+:\S|$))");
+    text.match = anyScopeRegex(text.regex);
     text.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;
         node.content = match.captured(0);
@@ -256,7 +320,7 @@ void Parser::setupDefaultRules()
 void Parser::sortRules()
 {
     std::sort(rules.begin(), rules.end(),
-              [](const MarkdownRule &a, const MarkdownRule &b) { return a.order > b.order; });
+              [](const MarkdownRule &a, const MarkdownRule &b) { return a.order < b.order; });
 
     for (auto &rule : rules) {
         ruleMap[rule.name] = &rule;

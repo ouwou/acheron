@@ -9,13 +9,20 @@ class TestMarkdown : public QObject
 {
     Q_OBJECT
 private slots:
-    void testFoo();
+    void testNewlines();
 };
 
-void TestMarkdown::testFoo()
+void TestMarkdown::testNewlines()
 {
     Parser parser;
-    
+
+    ParseState state;
+    state.isInline = true;
+    auto nodes = parser.parse("i\nlove\n\ncats", state);
+    auto html = parser.toHtml(nodes);
+
+    QVERIFY(html == "i<br>love<br><br>cats");
+
     return;
 }
 

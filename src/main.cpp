@@ -21,8 +21,10 @@ int main(int argc, char *argv[])
     App app(argc, argv);
     app.setStyle("Fusion");
 
-    QNetworkAccessManager buildNumberNam;
-    Discord::CurlUtils::fetchBuildNumber(&buildNumberNam);
+    {
+        QNetworkAccessManager buildNumberNam;
+        Discord::CurlUtils::fetchBuildNumber(&buildNumberNam);
+    }
 
 #if 0
     QPalette darkCoolPurple;
