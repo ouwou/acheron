@@ -435,9 +435,20 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         break;
     };
     case Discord::Client::MessageLoadType::History: {
-        beginInsertRows({}, 0, result.messages.size() - 1);
+        int numNew = result.messages.size();
+
+        const Snowflake oldAnchorId = messages.first().id;
+
+        beginInsertRows({}, 0, numNew - 1);
         messages = result.messages + messages;
         endInsertRows();
+
+        // invalidate cached size cuz header and/or separator might have moved
+        sizeCache.remove(oldAnchorId);
+        QModelIndex oldAnchorIdx = index(numNew, 0);
+        emit dataChanged(oldAnchorIdx, oldAnchorIdx,
+                         { CachedSizeRole, ShowHeaderRole, DateSeparatorRole });
+
         break;
     }
     case Discord::Client::MessageLoadType::Created: {

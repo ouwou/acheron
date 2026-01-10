@@ -267,15 +267,21 @@ void ChatView::onRowsInserted(const QModelIndex &parent, int start, int end)
     } else if (start == 0 && anchorIndex.isValid()) {
         setUpdatesEnabled(false);
 
-        scrollTo(anchorIndex, QAbstractItemView::PositionAtTop);
-        QRect newRect = visualRect(anchorIndex);
-        int diff = newRect.bottom() - anchorDistanceFromBottom;
-        verticalScrollBar()->setValue(verticalScrollBar()->value() + diff);
+        QTimer::singleShot(0, this, [this]() {
+            if (!anchorIndex.isValid()) {
+                setUpdatesEnabled(true);
+                return;
+            }
 
-        anchorIndex = {};
-        setUpdatesEnabled(true);
+            scrollTo(anchorIndex, QAbstractItemView::PositionAtTop);
+            QRect newRect = visualRect(anchorIndex);
+            int diff = newRect.bottom() - anchorDistanceFromBottom;
+            verticalScrollBar()->setValue(verticalScrollBar()->value() + diff);
 
-        isFetchingTop = false;
+            anchorIndex = {};
+            isFetchingTop = false;
+            setUpdatesEnabled(true);
+        });
     }
 }
 
