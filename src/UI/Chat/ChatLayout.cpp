@@ -271,8 +271,12 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
     if (!embed.title.isEmpty()) {
         QFont titleFont = font;
         titleFont.setBold(true);
-        QFontMetrics titleFm(titleFont);
-        int titleHeight = titleFm.height() + 4;
+        QTextDocument titleDoc;
+        titleDoc.setDefaultFont(titleFont);
+        titleDoc.setTextWidth(contentWidth);
+        QString titleHtml = !embed.titleParsed.isEmpty() ? embed.titleParsed : embed.title;
+        titleDoc.setHtml(titleHtml);
+        int titleHeight = int(std::ceil(titleDoc.size().height())) + 4;
         layout.titleRect = QRect(contentLeft, contentTop + currentY, contentWidth, titleHeight);
         currentY += titleHeight;
     }
@@ -281,7 +285,9 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
         QTextDocument descDoc;
         descDoc.setDefaultFont(font);
         descDoc.setTextWidth(contentWidth);
-        descDoc.setPlainText(embed.description);
+        QString descHtml =
+                !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed : embed.description;
+        descDoc.setHtml(descHtml);
         int descriptionHeight = int(std::ceil(descDoc.size().height())) + 8;
         layout.descriptionRect =
                 QRect(contentLeft, contentTop + currentY, contentWidth, descriptionHeight);
@@ -303,12 +309,20 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
         for (int i = 0; i < embed.fields.size(); ++i) {
             const auto &field = embed.fields[i];
 
+            QTextDocument nameDoc;
+            nameDoc.setDefaultFont(fieldNameFont);
+            nameDoc.setTextWidth(field.isInline ? fieldWidth : contentWidth);
+            QString nameHtml = !field.nameParsed.isEmpty() ? field.nameParsed : field.name;
+            nameDoc.setHtml(nameHtml);
+            int nameHeight = int(std::ceil(nameDoc.size().height()));
+
             QTextDocument valueDoc;
             valueDoc.setDefaultFont(font);
             valueDoc.setTextWidth(field.isInline ? fieldWidth : contentWidth);
-            valueDoc.setPlainText(field.value);
+            QString valueHtml = !field.valueParsed.isEmpty() ? field.valueParsed : field.value;
+            valueDoc.setHtml(valueHtml);
             int valueHeight = int(std::ceil(valueDoc.size().height()));
-            int fieldHeight = fieldNameFm.height() + 2 + valueHeight;
+            int fieldHeight = nameHeight + 2 + valueHeight;
 
             EmbedFieldLayout fieldLayout;
             fieldLayout.fieldIndex = i;
@@ -322,11 +336,10 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
                     rowStartY = currentY;
                 }
 
-                fieldLayout.nameRect = QRect(contentLeft, contentTop + currentY, contentWidth,
-                                             fieldNameFm.height());
-                fieldLayout.valueRect =
-                        QRect(contentLeft, contentTop + currentY + fieldNameFm.height() + 2,
-                              contentWidth, valueHeight);
+                fieldLayout.nameRect =
+                        QRect(contentLeft, contentTop + currentY, contentWidth, nameHeight);
+                fieldLayout.valueRect = QRect(contentLeft, contentTop + currentY + nameHeight + 2,
+                                              contentWidth, valueHeight);
                 layout.fieldLayouts.append(fieldLayout);
 
                 currentY += fieldHeight + fieldSpacing();
@@ -341,11 +354,9 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
                 }
 
                 int xPos = contentLeft + fieldX;
-                fieldLayout.nameRect =
-                        QRect(xPos, contentTop + currentY, fieldWidth, fieldNameFm.height());
-                fieldLayout.valueRect =
-                        QRect(xPos, contentTop + currentY + fieldNameFm.height() + 2, fieldWidth,
-                              valueHeight);
+                fieldLayout.nameRect = QRect(xPos, contentTop + currentY, fieldWidth, nameHeight);
+                fieldLayout.valueRect = QRect(xPos, contentTop + currentY + nameHeight + 2,
+                                              fieldWidth, valueHeight);
                 layout.fieldLayouts.append(fieldLayout);
 
                 maxRowHeight = std::max(maxRowHeight, fieldHeight);
@@ -803,12 +814,32 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
         }
 
         if (!embed.title.isEmpty() && !embedLayout.titleRect.isNull()) {
-            if (embedLayout.titleRect.contains(mousePos) && !embed.url.isEmpty()) {
-                EmbedHitResult result;
-                result.embedIndex = embedIndex;
-                result.hitType = EmbedHitType::Title;
-                result.url = embed.url;
-                return result;
+            if (embedLayout.titleRect.contains(mousePos)) {
+                if (!embed.titleParsed.isEmpty()) {
+                    QFont titleFont = view->font();
+                    titleFont.setBold(true);
+                    QTextDocument titleDoc;
+                    titleDoc.setDefaultFont(titleFont);
+                    titleDoc.setTextWidth(embedLayout.titleRect.width());
+                    titleDoc.setHtml(embed.titleParsed);
+                    QPointF localPos = mousePos - embedLayout.titleRect.topLeft();
+                    QString linkUrl = titleDoc.documentLayout()->anchorAt(localPos);
+                    if (!linkUrl.isEmpty()) {
+                        EmbedHitResult result;
+                        result.embedIndex = embedIndex;
+                        result.hitType = EmbedHitType::Link;
+                        result.url = linkUrl;
+                        return result;
+                    }
+                }
+
+                if (!embed.url.isEmpty()) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::Title;
+                    result.url = embed.url;
+                    return result;
+                }
             }
         }
 
@@ -837,6 +868,64 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
                 result.imageSize = embedLayout.imagesRect.size();
                 result.url = embed.url;
                 return result;
+            }
+        }
+
+        if (!embed.description.isEmpty() && !embedLayout.descriptionRect.isNull() &&
+            embedLayout.descriptionRect.contains(mousePos) && !embed.descriptionParsed.isEmpty()) {
+            QTextDocument descDoc;
+            descDoc.setDefaultFont(view->font());
+            descDoc.setTextWidth(embedLayout.descriptionRect.width());
+            descDoc.setHtml(embed.descriptionParsed);
+            QPointF localPos = mousePos - embedLayout.descriptionRect.topLeft();
+            QString linkUrl = descDoc.documentLayout()->anchorAt(localPos);
+            if (!linkUrl.isEmpty()) {
+                EmbedHitResult result;
+                result.embedIndex = embedIndex;
+                result.hitType = EmbedHitType::Link;
+                result.url = linkUrl;
+                return result;
+            }
+        }
+
+        for (const auto &fieldLayout : embedLayout.fieldLayouts) {
+            if (fieldLayout.fieldIndex >= embed.fields.size())
+                continue;
+
+            const auto &field = embed.fields[fieldLayout.fieldIndex];
+
+            if (fieldLayout.nameRect.contains(mousePos) && !field.nameParsed.isEmpty()) {
+                QFont fieldNameFont = view->font();
+                fieldNameFont.setBold(true);
+                QTextDocument nameDoc;
+                nameDoc.setDefaultFont(fieldNameFont);
+                nameDoc.setTextWidth(fieldLayout.nameRect.width());
+                nameDoc.setHtml(field.nameParsed);
+                QPointF localPos = mousePos - fieldLayout.nameRect.topLeft();
+                QString linkUrl = nameDoc.documentLayout()->anchorAt(localPos);
+                if (!linkUrl.isEmpty()) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::Link;
+                    result.url = linkUrl;
+                    return result;
+                }
+            }
+
+            if (fieldLayout.valueRect.contains(mousePos) && !field.valueParsed.isEmpty()) {
+                QTextDocument valueDoc;
+                valueDoc.setDefaultFont(view->font());
+                valueDoc.setTextWidth(fieldLayout.valueRect.width());
+                valueDoc.setHtml(field.valueParsed);
+                QPointF localPos = mousePos - fieldLayout.valueRect.topLeft();
+                QString linkUrl = valueDoc.documentLayout()->anchorAt(localPos);
+                if (!linkUrl.isEmpty()) {
+                    EmbedHitResult result;
+                    result.embedIndex = embedIndex;
+                    result.hitType = EmbedHitType::Link;
+                    result.url = linkUrl;
+                    return result;
+                }
             }
         }
     }

@@ -294,15 +294,22 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             QFont titleFont = option.font;
             titleFont.setBold(true);
             painter->setFont(titleFont);
-            if (!embed.url.isEmpty())
-                painter->setPen(QColor(0, 168, 252));
-            else
-                painter->setPen(option.palette.text().color());
-            QFontMetrics titleFm(titleFont);
-            QString elidedTitle =
-                    titleFm.elidedText(embed.title, Qt::ElideRight, embedLayout.titleRect.width());
-            painter->drawText(embedLayout.titleRect.left(),
-                              embedLayout.titleRect.top() + titleFm.ascent(), elidedTitle);
+            QColor titleColor =
+                    !embed.url.isEmpty() ? QColor(0, 168, 252) : option.palette.text().color();
+            painter->setPen(titleColor);
+
+            QTextDocument titleDoc;
+            titleDoc.setDefaultFont(titleFont);
+            titleDoc.setTextWidth(embedLayout.titleRect.width());
+            QString titleHtml = !embed.titleParsed.isEmpty() ? embed.titleParsed : embed.title;
+            titleDoc.setHtml(titleHtml);
+
+            painter->save();
+            painter->translate(embedLayout.titleRect.topLeft());
+            QAbstractTextDocumentLayout::PaintContext titleCtx;
+            titleCtx.palette.setColor(QPalette::Text, titleColor);
+            titleDoc.documentLayout()->draw(painter, titleCtx);
+            painter->restore();
         }
 
         if (!embed.description.isEmpty() && !embedLayout.descriptionRect.isNull()) {
@@ -313,7 +320,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             QTextDocument descDoc;
             descDoc.setDefaultFont(descFont);
             descDoc.setTextWidth(embedLayout.descriptionRect.width());
-            descDoc.setPlainText(embed.description);
+            QString descHtml = !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed
+                                                                  : embed.description;
+            descDoc.setHtml(descHtml);
 
             painter->save();
             painter->translate(embedLayout.descriptionRect.topLeft());
@@ -333,17 +342,24 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
             const auto &field = embed.fields[fieldLayout.fieldIndex];
 
-            painter->setFont(fieldNameFont);
-            painter->setPen(option.palette.text().color());
-            QString nameText = fieldNameFm.elidedText(field.name, Qt::ElideRight,
-                                                      fieldLayout.nameRect.width());
-            painter->drawText(fieldLayout.nameRect.left(),
-                              fieldLayout.nameRect.top() + fieldNameFm.ascent(), nameText);
+            QTextDocument nameDoc;
+            nameDoc.setDefaultFont(fieldNameFont);
+            nameDoc.setTextWidth(fieldLayout.nameRect.width());
+            QString nameHtml = !field.nameParsed.isEmpty() ? field.nameParsed : field.name;
+            nameDoc.setHtml(nameHtml);
+
+            painter->save();
+            painter->translate(fieldLayout.nameRect.topLeft());
+            QAbstractTextDocumentLayout::PaintContext nameCtx;
+            nameCtx.palette.setColor(QPalette::Text, option.palette.text().color());
+            nameDoc.documentLayout()->draw(painter, nameCtx);
+            painter->restore();
 
             QTextDocument valueDoc;
             valueDoc.setDefaultFont(option.font);
             valueDoc.setTextWidth(fieldLayout.valueRect.width());
-            valueDoc.setPlainText(field.value);
+            QString valueHtml = !field.valueParsed.isEmpty() ? field.valueParsed : field.value;
+            valueDoc.setHtml(valueHtml);
 
             painter->save();
             painter->translate(fieldLayout.valueRect.topLeft());

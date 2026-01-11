@@ -29,6 +29,8 @@ struct EmbedFieldData
 {
     QString name;
     QString value;
+    QString nameParsed;
+    QString valueParsed;
     bool isInline = false;
 };
 
@@ -62,6 +64,8 @@ struct EmbedData
     EmbedType type = EmbedType::Rich; // should this be default idk
     QString title;
     QString description;
+    QString titleParsed;
+    QString descriptionParsed;
     QString url;
     QDateTime timestamp;
     QColor color;

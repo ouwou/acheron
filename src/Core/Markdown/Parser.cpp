@@ -32,6 +32,9 @@ QList<AstNode> Parser::parse(QString source, ParseState state)
         bool foundMatch = false;
 
         for (auto &rule : rules) {
+            if (state.excludedRules.contains(rule.name))
+                continue;
+
             if (foundMatch && rule.order > currentBestOrder)
                 break;
 

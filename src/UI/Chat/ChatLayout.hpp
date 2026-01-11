@@ -161,7 +161,7 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
                                  int top);
 int calculateAttachmentsHeight(const QList<AttachmentData> &attachments, int textWidth);
 int calculateEmbedsHeight(const QList<EmbedData> &embeds, const QFont &font, int textWidth);
-enum class EmbedHitType { None, Title, Author, Image, VideoThumbnail };
+enum class EmbedHitType { None, Title, Author, Image, VideoThumbnail, Link };
 
 struct EmbedHitResult
 {

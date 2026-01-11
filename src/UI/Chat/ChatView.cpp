@@ -159,7 +159,8 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
             }
             case ChatLayout::EmbedHitType::VideoThumbnail:
             case ChatLayout::EmbedHitType::Title:
-            case ChatLayout::EmbedHitType::Author: {
+            case ChatLayout::EmbedHitType::Author:
+            case ChatLayout::EmbedHitType::Link: {
                 if (!embedHit->url.isEmpty()) {
                     ConfirmPopup dialog(tr("External Link"),
                                         QString(tr("Are you sure you want to open <b>%1</b>?"))

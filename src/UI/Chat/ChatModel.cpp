@@ -288,6 +288,22 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 data.color = embed.color.hasValue() ? QColor::fromRgb(*embed.color)
                                                     : QColor(88, 101, 242);
 
+                static Core::Markdown::Parser parser;
+                Core::Markdown::ParseState titleState;
+                titleState.isInline = true;
+                titleState.excludedRules.insert("link");
+                if (!data.title.isEmpty()) {
+                    auto ast = parser.parse(data.title, titleState);
+                    data.titleParsed = parser.toHtml(ast);
+                }
+
+                Core::Markdown::ParseState descriptionState;
+                descriptionState.isInline = true;
+                if (!data.description.isEmpty()) {
+                    auto ast = parser.parse(data.description, descriptionState);
+                    data.descriptionParsed = parser.toHtml(ast);
+                }
+
                 if (embed.author.hasValue()) {
                     data.authorName =
                             embed.author->name.hasValue() ? *embed.author->name : QString();
@@ -368,6 +384,22 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                         fieldData.name = field.name.hasValue() ? *field.name : QString();
                         fieldData.value = field.value.hasValue() ? *field.value : QString();
                         fieldData.isInline = field.isInline.hasValue() ? *field.isInline : false;
+
+                        Core::Markdown::ParseState nameState;
+                        nameState.isInline = true;
+                        nameState.excludedRules.insert("link");
+                        if (!fieldData.name.isEmpty()) {
+                            auto ast = parser.parse(fieldData.name, nameState);
+                            fieldData.nameParsed = parser.toHtml(ast);
+                        }
+
+                        Core::Markdown::ParseState valueState;
+                        valueState.isInline = true;
+                        if (!fieldData.value.isEmpty()) {
+                            auto ast = parser.parse(fieldData.value, valueState);
+                            fieldData.valueParsed = parser.toHtml(ast);
+                        }
+
                         data.fields.append(fieldData);
                     }
                 }

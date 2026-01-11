@@ -22,6 +22,7 @@ struct ParseState
     int key = 0;
     QString prevCapture = "";
     QVariantMap customState;
+    QSet<QString> excludedRules;
 };
 
 using Capture = QRegularExpressionMatch;
