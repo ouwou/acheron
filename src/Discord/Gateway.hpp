@@ -13,6 +13,11 @@
 #include "Events.hpp"
 
 namespace Acheron {
+
+namespace Proto {
+struct PreloadedUserSettings;
+}
+
 namespace Discord {
 
 class ClientIdentity;

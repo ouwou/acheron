@@ -25,6 +25,37 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     constexpr int iconSize = 24;
 
+    if (node->type == ChannelNode::Type::Folder) {
+        if (node->folderColor.has_value()) {
+            QColor color = QColor::fromRgb(node->folderColor.value());
+            painter->fillRect(option.rect, color);
+        } else {
+            painter->fillRect(option.rect, option.palette.alternateBase());
+        }
+
+        painter->setFont(QFont(painter->font().family(), painter->font().pointSize(), QFont::Bold));
+        QRect textRect = option.rect.adjusted(iconSize, 0, -iconSize, 0);
+        painter->setPen(option.palette.text().color());
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, node->name);
+
+        int indicatorWidth = 20;
+        QRect branchRect = option.rect;
+        branchRect.setWidth(indicatorWidth);
+
+        QStyleOptionViewItem branchOpt = option;
+        branchOpt.rect = branchRect;
+        branchOpt.state |= QStyle::State_Children;
+
+        if (option.state & QStyle::State_Open)
+            branchOpt.state |= QStyle::State_Open;
+
+        QApplication::style()->drawPrimitive(QStyle::PE_IndicatorBranch, &branchOpt, painter,
+                                             option.widget);
+
+        painter->restore();
+        return;
+    }
+
     if (node->type == ChannelNode::Type::Server) {
         QPixmap icon = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
         QRect iconRect = QRect(option.rect.left() + (iconSize - iconSize) / 2,

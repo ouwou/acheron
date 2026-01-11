@@ -9,6 +9,8 @@
 #include "ClientIdentity.hpp"
 
 #include "Core/Logging.hpp"
+#include "Proto/ProtoReader.hpp"
+#include "Proto/UserSettings.hpp"
 
 namespace Acheron {
 namespace Discord {

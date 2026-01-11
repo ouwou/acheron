@@ -12,13 +12,15 @@ namespace UI {
 
 struct ChannelNode
 {
-    enum class Type { Root, Account, DMHeader, Server, Category, Channel };
+    enum class Type { Root, Account, DMHeader, Folder, Server, Category, Channel };
     Core::Snowflake id;
     QString name;
     Type type;
     int unreadCount = 0;
     int position = 0;
     QString TEMP_iconHash;
+    std::optional<QString> folderName;
+    std::optional<uint64_t> folderColor;
 
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;

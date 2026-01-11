@@ -4,6 +4,8 @@
 
 #include "Enums.hpp"
 #include "Core/Logging.hpp"
+#include "Proto/ProtoReader.hpp"
+#include "Proto/UserSettings.hpp"
 
 namespace Acheron {
 namespace Discord {
@@ -117,6 +119,11 @@ void Client::onGatewayReady(const Ready &data)
             channelToGuild.insert(channel.id, guild.properties->id.get());
         }
     }
+
+    const QByteArray binary = QByteArray::fromBase64(data.userSettingsProto->toUtf8());
+    Proto::ProtoReader reader(binary);
+    settings = Proto::PreloadedUserSettings::fromProto(reader);
+
     emit ready(data);
 }
 
@@ -137,6 +144,11 @@ void Client::ensureSubscriptionByChannel(Snowflake channelId)
     if (!subscribedGuilds.contains(guildId)) {
         gateway->subscribeToGuild(guildId);
     }
+}
+
+[[nodiscard]] const Proto::PreloadedUserSettings &Client::getSettings() const
+{
+    return settings;
 }
 
 void Client::setState(Core::ConnectionState state)

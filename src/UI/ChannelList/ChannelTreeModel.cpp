@@ -128,6 +128,10 @@ Qt::ItemFlags ChannelTreeModel::flags(const QModelIndex &index) const
     if (node->type == ChannelNode::Type::Channel)
         return f | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 
+    // Folders should be enabled (for expansion) but not selectable
+    if (node->type == ChannelNode::Type::Folder)
+        return f | Qt::ItemIsEnabled;
+
     return f & ~Qt::ItemIsSelectable;
 }
 
@@ -174,71 +178,82 @@ void ChannelTreeModel::removeAccount(Snowflake accountId)
 void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
 {
     ChannelNode *accNode = accountNodes.value(ready.user->id, nullptr);
-    QModelIndex accIndex = indexForNode(accNode);
-
-    int startRow = accNode->children.size();
-    int count = ready.guilds->size();
-    if (count == 0)
+    if (!accNode)
         return;
 
-    beginInsertRows(accIndex, startRow, startRow + count - 1);
+    QModelIndex accIndex = indexForNode(accNode);
 
-    for (const auto &guild : ready.guilds.get()) {
-        auto guildNode = std::make_unique<ChannelNode>();
-        guildNode->id = guild.properties->id;
-        guildNode->name = guild.properties->name;
-        guildNode->type = ChannelNode::Type::Server;
-        guildNode->TEMP_iconHash = guild.properties->icon;
+    auto *instance = session->client(ready.user->id);
+    if (!instance)
+        return;
 
-        QHash<Snowflake, ChannelNode *> categoryMap;
-        std::vector<std::unique_ptr<ChannelNode>> categories;
-        std::vector<std::unique_ptr<ChannelNode>> orphanChannels;
+    const auto &settings = instance->discord()->getSettings();
 
-        for (const auto &channel : guild.channels.get()) {
-            if (channel.type == Discord::ChannelType::GUILD_CATEGORY) {
-                auto node = std::make_unique<ChannelNode>();
-                node->id = channel.id;
-                node->name = channel.name;
-                node->type = ChannelNode::Type::Category;
-                node->position = channel.position;
-                categoryMap[channel.id] = node.get();
-                categories.push_back(std::move(node));
+    QHash<Core::Snowflake, const Discord::GatewayGuild *> guildMap;
+    for (const auto &guild : ready.guilds.get())
+        guildMap.insert(guild.properties->id, &guild);
+
+    // folders and unfolder'd guilds
+    std::vector<std::unique_ptr<ChannelNode>> topLevelNodes;
+
+    if (settings.guildFolders.has_value() && !settings.guildFolders->folders.isEmpty()) {
+        const auto &folders = settings.guildFolders->folders;
+
+        QSet<Core::Snowflake> guildIdsInFolders;
+        for (const auto &folder : folders)
+            for (const auto &guildId : folder.guildIds)
+                guildIdsInFolders.insert(guildId);
+
+        std::vector<Core::Snowflake> unfolderedGuilds;
+        for (const auto &guild : ready.guilds.get())
+            if (!guildIdsInFolders.contains(guild.properties->id))
+                unfolderedGuilds.push_back(guild.properties->id);
+
+        // discord does unfolder'd guilds by id descending
+        std::sort(unfolderedGuilds.begin(), unfolderedGuilds.end(),
+                  [](const auto &a, const auto &b) { return a > b; });
+
+        // and they come first
+        for (const auto &guildId : unfolderedGuilds)
+            if (guildMap.contains(guildId))
+                topLevelNodes.push_back(createGuildNode(*guildMap[guildId]));
+
+        for (const auto &folder : folders) {
+            if (!folder.id.has_value()) {
+                // folders with null ids are just guilds
+                for (const auto &guildId : folder.guildIds)
+                    if (guildMap.contains(guildId))
+                        topLevelNodes.push_back(createGuildNode(*guildMap[guildId]));
+            } else {
+                auto folderNode = std::make_unique<ChannelNode>();
+                folderNode->type = ChannelNode::Type::Folder;
+                folderNode->name = folder.name.value_or("Unnamed Folder");
+                folderNode->folderName = folder.name;
+                folderNode->folderColor = folder.color;
+                folderNode->id = Core::Snowflake(folder.id.value());
+
+                for (const auto &guildId : folder.guildIds)
+                    if (guildMap.contains(guildId))
+                        folderNode->addChild(createGuildNode(*guildMap[guildId]));
+
+                topLevelNodes.push_back(std::move(folderNode));
             }
         }
-
-        for (const auto &channel : guild.channels.get()) {
-            if (channel.type == Discord::ChannelType::GUILD_TEXT) {
-                auto node = std::make_unique<ChannelNode>();
-                node->id = channel.id;
-                node->name = channel.name;
-                node->type = ChannelNode::Type::Channel;
-                node->position = channel.position;
-
-                if (channel.parentId.hasValue() && channel.parentId->isValid()) {
-                    if (categoryMap.contains(channel.parentId.get())) {
-                        categoryMap[channel.parentId.get()]->addChild(std::move(node));
-                    }
-                } else {
-                    orphanChannels.push_back(std::move(node));
-                }
-            }
-        }
-
-        auto sorter = [](const auto &a, const auto &b) { return a->position < b->position; };
-
-        std::sort(categories.begin(), categories.end(), sorter);
-        std::sort(orphanChannels.begin(), orphanChannels.end(), sorter);
-        for (const auto &category : categories)
-            std::sort(category->children.begin(), category->children.end(), sorter);
-
-        for (auto &node : orphanChannels)
-            guildNode->addChild(std::move(node));
-        for (auto &node : categories)
-            guildNode->addChild(std::move(node));
-
-        accNode->addChild(std::move(guildNode));
+    } else {
+        // probably not going to correspond
+        for (const auto &guild : ready.guilds.get())
+            topLevelNodes.push_back(createGuildNode(guild));
     }
 
+    if (topLevelNodes.empty())
+        return;
+
+    int startRow = accNode->children.size();
+    int endRow = startRow + topLevelNodes.size() - 1;
+
+    beginInsertRows(accIndex, startRow, endRow);
+    for (auto &node : topLevelNodes)
+        accNode->addChild(std::move(node));
     endInsertRows();
 }
 
@@ -248,6 +263,62 @@ ChannelNode *ChannelTreeModel::getAccountNodeFor(ChannelNode *node)
     while (accountNode && accountNode->type != ChannelNode::Type::Account)
         accountNode = accountNode->parent;
     return accountNode;
+}
+
+std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::GatewayGuild &guild)
+{
+    auto guildNode = std::make_unique<ChannelNode>();
+    guildNode->id = guild.properties->id;
+    guildNode->name = guild.properties->name;
+    guildNode->type = ChannelNode::Type::Server;
+    guildNode->TEMP_iconHash = guild.properties->icon;
+
+    QHash<Snowflake, ChannelNode *> categoryMap;
+    std::vector<std::unique_ptr<ChannelNode>> categories;
+    std::vector<std::unique_ptr<ChannelNode>> orphanChannels;
+
+    for (const auto &channel : guild.channels.get()) {
+        if (channel.type == Discord::ChannelType::GUILD_CATEGORY) {
+            auto node = std::make_unique<ChannelNode>();
+            node->id = channel.id;
+            node->name = channel.name;
+            node->type = ChannelNode::Type::Category;
+            node->position = channel.position;
+            categoryMap[channel.id] = node.get();
+            categories.push_back(std::move(node));
+        }
+    }
+
+    for (const auto &channel : guild.channels.get()) {
+        if (channel.type == Discord::ChannelType::GUILD_TEXT) {
+            auto node = std::make_unique<ChannelNode>();
+            node->id = channel.id;
+            node->name = channel.name;
+            node->type = ChannelNode::Type::Channel;
+            node->position = channel.position;
+
+            if (channel.parentId.hasValue() && channel.parentId->isValid()) {
+                if (categoryMap.contains(channel.parentId.get()))
+                    categoryMap[channel.parentId.get()]->addChild(std::move(node));
+            } else {
+                orphanChannels.push_back(std::move(node));
+            }
+        }
+    }
+
+    auto sorter = [](const auto &a, const auto &b) { return a->position < b->position; };
+
+    std::sort(categories.begin(), categories.end(), sorter);
+    std::sort(orphanChannels.begin(), orphanChannels.end(), sorter);
+    for (const auto &category : categories)
+        std::sort(category->children.begin(), category->children.end(), sorter);
+
+    for (auto &node : orphanChannels)
+        guildNode->addChild(std::move(node));
+    for (auto &node : categories)
+        guildNode->addChild(std::move(node));
+
+    return guildNode;
 }
 
 ChannelNode *ChannelTreeModel::nodeFromIndex(const QModelIndex &index) const

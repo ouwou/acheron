@@ -69,6 +69,8 @@ set(PROJECT_SOURCES
     src/Discord/HttpClient.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/ClientIdentity.cpp
+    src/Proto/ProtoReader.cpp
+    src/Proto/UserSettings.cpp
     src/App.cpp
 )
 

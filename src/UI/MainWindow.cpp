@@ -218,7 +218,8 @@ void MainWindow::setupUi()
         auto node = static_cast<ChannelNode *>(index.internalPointer());
 
         if (node->type == ChannelNode::Type::Category || node->type == ChannelNode::Type::Server ||
-            node->type == ChannelNode::Type::Account || node->type == ChannelNode::Type::DMHeader) {
+            node->type == ChannelNode::Type::Account || node->type == ChannelNode::Type::DMHeader ||
+            node->type == ChannelNode::Type::Folder) {
             bool isExpanded = channelTree->isExpanded(index);
             channelTree->setExpanded(index, !isExpanded);
         }

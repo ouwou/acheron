@@ -37,6 +37,7 @@ public:
 private:
     ChannelNode *nodeFromIndex(const QModelIndex &index) const;
     QModelIndex indexForNode(ChannelNode *node) const;
+    std::unique_ptr<ChannelNode> createGuildNode(const Discord::GatewayGuild &guild);
 
 private:
     Session *session;

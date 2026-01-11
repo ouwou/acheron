@@ -11,6 +11,8 @@
 #include "Core/Snowflake.hpp"
 #include "Core/Enums.hpp"
 
+#include "Proto/UserSettings.hpp"
+
 #include "Gateway.hpp"
 #include "HttpClient.hpp"
 #include "ClientIdentity.hpp"
@@ -52,6 +54,8 @@ public:
 
     void ensureSubscriptionByChannel(Snowflake guildId);
 
+    [[nodiscard]] const Proto::PreloadedUserSettings &getSettings() const;
+
 signals:
     void stateChanged(Core::ConnectionState state);
     void ready(const Ready &data);
@@ -82,6 +86,8 @@ private:
 
     QHash<Snowflake, Snowflake> channelToGuild; // todo prob move this somewhere or just a cache
     QSet<Snowflake> subscribedGuilds;
+
+    Proto::PreloadedUserSettings settings;
 };
 
 } // namespace Discord

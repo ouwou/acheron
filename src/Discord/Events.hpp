@@ -13,12 +13,14 @@ struct Ready : Core::JsonUtils::JsonObject
 {
     Field<User> user;
     Field<QList<GatewayGuild>> guilds;
+    Field<QString> userSettingsProto;
 
     static Ready fromJson(const QJsonObject &obj)
     {
         Ready ready;
         get(obj, "user", ready.user);
         get(obj, "guilds", ready.guilds);
+        get(obj, "user_settings_proto", ready.userSettingsProto);
         return ready;
     }
 };
