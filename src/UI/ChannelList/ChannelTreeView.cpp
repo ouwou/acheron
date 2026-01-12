@@ -7,7 +7,8 @@ ChannelTreeView::ChannelTreeView(QWidget *parent) : QTreeView(parent) { }
 
 void ChannelTreeView::mousePressEvent(QMouseEvent *event)
 {
-    handleMouseEventForExpansion(event);
+    if (event->button() == Qt::LeftButton)
+        handleMouseEventForExpansion(event);
     QTreeView::mousePressEvent(event);
 }
 
