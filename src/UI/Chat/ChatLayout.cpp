@@ -58,8 +58,11 @@ QRect textRectForRow(const QRect &rowRect, bool showHeader, const QFontMetrics &
 
 void setupDocument(QTextDocument &doc, const QString &htmlContent, const QFont &font, int textWidth)
 {
+    QString wrapped = QString("<div style=\"white-space: pre-wrap;\">%1</div>")
+                              .arg(htmlContent);
+
     doc.setDefaultFont(font);
-    doc.setHtml(htmlContent);
+    doc.setHtml(wrapped);
     doc.setTextWidth(textWidth);
     doc.setDocumentMargin(0);
     QTextOption opt = doc.defaultTextOption();
