@@ -62,7 +62,8 @@ private:
     Storage::ChannelRepository channelRepo;
     Storage::MemberRepository memberRepo;
 
-    QSet<Snowflake> pendingMemberRequests;
+    // notFound members are kept in here so we dont ask for them again
+    QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;
 };
 
 } // namespace Core

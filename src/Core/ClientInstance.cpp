@@ -154,12 +154,9 @@ void ClientInstance::onGuildMembersChunk(const Discord::GuildMembersChunk &chunk
         if (member.user.hasValue())
             userManager->saveUser(member.user.get());
 
-        pendingMemberRequests.remove(userId);
+        pendingMemberRequests.remove(qMakePair(guildId, userId));
         updatedUserIds.append(userId);
     }
-
-    for (const auto &notFound : chunk.notFound.get())
-        pendingMemberRequests.remove(notFound);
 
     if (!updatedUserIds.isEmpty())
         emit membersUpdated(guildId, updatedUserIds);
@@ -187,13 +184,13 @@ void ClientInstance::onMessagesReceived(const MessageRequestResult &result)
 
         Snowflake userId = msg.author->id.get();
 
-        if (pendingMemberRequests.contains(userId))
+        if (pendingMemberRequests.contains(qMakePair(guildId, userId)))
             continue;
 
         if (userManager->getMember(guildId, userId))
             continue;
 
-        pendingMemberRequests.insert(userId);
+        pendingMemberRequests.insert(qMakePair(guildId, userId));
         missingUserIds.append(userId);
     }
 
