@@ -25,7 +25,7 @@ public:
 
     Discord::Permissions getChannelPermissions(Snowflake userId, Snowflake channelId);
     bool hasChannelPermission(Snowflake userId, Snowflake channelId,
-                              Discord::Permission permission);
+                              Discord::Permissions permission);
 
     void precomputeGuildPermissions(const Discord::Guild &guild, const Discord::Member &member,
                                     const QList<Discord::Role> &roles,

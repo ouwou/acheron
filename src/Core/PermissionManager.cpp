@@ -33,7 +33,7 @@ Discord::Permissions PermissionManager::getChannelPermissions(Snowflake userId, 
 }
 
 bool PermissionManager::hasChannelPermission(Snowflake userId, Snowflake channelId,
-                                             Discord::Permission permission)
+                                             Discord::Permissions permission)
 {
     auto perms = getChannelPermissions(userId, channelId);
     return (perms & permission) == permission;

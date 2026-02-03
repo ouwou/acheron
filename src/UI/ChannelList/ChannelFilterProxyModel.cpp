@@ -58,27 +58,33 @@ bool ChannelFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex 
 
     auto nodeType = static_cast<ChannelNode::Type>(index.data(ChannelTreeModel::TypeRole).toInt());
 
-    if (nodeType == ChannelNode::Type::Channel) {
-        Core::Snowflake userId = getUserIdForNode(index);
-        if (!userId.isValid())
-            return true;
+    Core::Snowflake userId = getUserIdForNode(index);
+    if (!userId.isValid())
+        return true;
 
-        auto *instance = session->client(userId);
-        if (!instance)
-            return true;
+    auto *instance = session->client(userId);
+    if (!instance)
+        return true;
 
+    if (nodeType == ChannelNode::Type::Channel || nodeType == ChannelNode::Type::Category) {
         auto *permissionManager = instance->permissions();
         if (!permissionManager)
             return true;
 
         Core::Snowflake channelId =
                 Core::Snowflake(index.data(ChannelTreeModel::IdRole).toULongLong());
-        return permissionManager->hasChannelPermission(userId, channelId,
-                                                       Discord::Permission::VIEW_CHANNEL);
-    }
 
-    if (nodeType == ChannelNode::Type::Category)
-        return hasVisibleChildren(index);
+        if (nodeType == ChannelNode::Type::Channel) {
+            return permissionManager->hasChannelPermission(userId, channelId,
+                                                           Discord::Permission::VIEW_CHANNEL);
+        } else {
+            if (nodeType == ChannelNode::Type::Category) {
+                if (permissionManager->hasChannelPermission(userId, channelId, Discord::Permission::VIEW_CHANNEL | Discord::Permission::MANAGE_CHANNELS))
+					return true;
+                return hasVisibleChildren(index);
+            }
+        }
+    }
 
     return true;
 }
