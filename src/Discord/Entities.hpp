@@ -34,7 +34,7 @@ struct User : Core::JsonUtils::JsonObject
 
     QString getDisplayName() const
     {
-        if (globalName.hasValue())
+        if (globalName.hasValue() && !globalName->isEmpty())
             return globalName;
         return username;
     }
@@ -146,6 +146,11 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<Core::Snowflake, true> guildId;
     Field<Core::Snowflake, true, true> parentId;
     Field<QList<PermissionOverwrite>, true> permissionOverwrites;
+    Field<QList<User>, true> recipients;
+    Field<QList<Core::Snowflake>, true> recipientIds;
+    Field<Core::Snowflake, true, true> lastMessageId;
+    Field<QString, true, true> icon;
+    Field<Core::Snowflake, true> ownerId;
 
     static Channel fromJson(const QJsonObject &obj)
     {
@@ -157,6 +162,11 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "guild_id", channel.guildId);
         get(obj, "parent_id", channel.parentId);
         get(obj, "permission_overwrites", channel.permissionOverwrites);
+        get(obj, "recipients", channel.recipients);
+        get(obj, "recipient_ids", channel.recipientIds);
+        get(obj, "last_message_id", channel.lastMessageId);
+        get(obj, "icon", channel.icon);
+        get(obj, "owner_id", channel.ownerId);
         return channel;
     }
 };

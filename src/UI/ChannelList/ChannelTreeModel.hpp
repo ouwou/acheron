@@ -25,6 +25,7 @@ public:
         UnreadCountRole = Qt::UserRole + 1,
         TypeRole = Qt::UserRole + 2,
         PositionRole = Qt::UserRole + 3,
+        LastMessageIdRole = Qt::UserRole + 4,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;

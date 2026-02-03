@@ -20,8 +20,8 @@ void ChannelRepository::saveChannel(const Discord::Channel &channel, QSqlDatabas
 
     q.prepare(R"(
 		INSERT OR REPLACE INTO channels
-		(id, type, position, name, guild_id, parent_id)
-		VALUES (:id, :type, :position, :name, :guild_id, :parent_id)
+		(id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id)
+		VALUES (:id, :type, :position, :name, :guild_id, :parent_id, :last_message_id, :icon, :owner_id)
     )");
 
     q.bindValue(":id", static_cast<qint64>(channel.id.get()));
@@ -32,6 +32,12 @@ void ChannelRepository::saveChannel(const Discord::Channel &channel, QSqlDatabas
         q.bindValue(":guild_id", static_cast<qint64>(channel.guildId.get()));
     if (channel.parentId.hasValue())
         q.bindValue(":parent_id", static_cast<qint64>(channel.parentId.get()));
+    if (channel.lastMessageId.hasValue())
+        q.bindValue(":last_message_id", static_cast<qint64>(channel.lastMessageId.get()));
+    if (channel.icon.hasValue())
+        q.bindValue(":icon", channel.icon.get());
+    if (channel.ownerId.hasValue())
+        q.bindValue(":owner_id", static_cast<qint64>(channel.ownerId.get()));
 
     if (!q.exec())
         qCWarning(LogDB) << "ChannelRepository: Save failed:" << q.lastError().text();
@@ -44,6 +50,11 @@ void ChannelRepository::deleteChannel(Core::Snowflake channelId, QSqlDatabase &d
     q.bindValue(":channel_id", static_cast<qint64>(channelId));
     if (!q.exec())
         qCWarning(LogDB) << "ChannelRepository: Delete overwrites failed:" << q.lastError().text();
+
+    q.prepare("DELETE FROM channel_recipients WHERE channel_id = :channel_id");
+    q.bindValue(":channel_id", static_cast<qint64>(channelId));
+    if (!q.exec())
+        qCWarning(LogDB) << "ChannelRepository: Delete recipients failed:" << q.lastError().text();
 
     q.prepare("DELETE FROM channels WHERE id = :id");
     q.bindValue(":id", static_cast<qint64>(channelId));
@@ -82,6 +93,34 @@ void ChannelRepository::savePermissionOverwrites(
     }
 }
 
+void ChannelRepository::saveChannelRecipients(Core::Snowflake channelId,
+                                              const QList<Core::Snowflake> &recipientIds,
+                                              QSqlDatabase &db)
+{
+    QSqlQuery delQ(db);
+    delQ.prepare("DELETE FROM channel_recipients WHERE channel_id = :channel_id");
+    delQ.bindValue(":channel_id", static_cast<qint64>(channelId));
+    delQ.exec();
+
+    if (recipientIds.isEmpty())
+        return;
+
+    QSqlQuery q(db);
+    q.prepare(R"(
+        INSERT INTO channel_recipients
+        (channel_id, user_id)
+        VALUES (:channel_id, :user_id)
+    )");
+
+    for (const auto &userId : recipientIds) {
+        q.bindValue(":channel_id", static_cast<qint64>(channelId));
+        q.bindValue(":user_id", static_cast<qint64>(userId));
+
+        if (!q.exec())
+            qCWarning(LogDB) << "ChannelRepository: Save recipient failed:" << q.lastError().text();
+    }
+}
+
 QList<Discord::PermissionOverwrite> ChannelRepository::getPermissionOverwrites(
         Core::Snowflake channelId)
 {
@@ -107,6 +146,26 @@ QList<Discord::PermissionOverwrite> ChannelRepository::getPermissionOverwrites(
     }
 
     return overwrites;
+}
+
+QList<Core::Snowflake> ChannelRepository::getChannelRecipientIds(Core::Snowflake channelId)
+{
+    QList<Core::Snowflake> recipientIds;
+    auto db = getDb();
+    QSqlQuery q(db);
+    q.prepare(R"(
+        SELECT user_id
+        FROM channel_recipients WHERE channel_id = :channel_id
+    )");
+    q.bindValue(":channel_id", static_cast<qint64>(channelId));
+
+    if (!q.exec())
+        return recipientIds;
+
+    while (q.next())
+        recipientIds.append(static_cast<Core::Snowflake>(q.value(0).toLongLong()));
+
+    return recipientIds;
 }
 
 QHash<Core::Snowflake, QList<Discord::PermissionOverwrite>> ChannelRepository::
@@ -169,7 +228,7 @@ std::optional<Discord::Channel> ChannelRepository::getChannel(Core::Snowflake ch
     auto db = getDb();
     QSqlQuery q(db);
     q.prepare(R"(
-        SELECT id, type, position, name, guild_id, parent_id
+        SELECT id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id
         FROM channels WHERE id = :id
     )");
     q.bindValue(":id", static_cast<qint64>(channelId));
@@ -188,8 +247,17 @@ std::optional<Discord::Channel> ChannelRepository::getChannel(Core::Snowflake ch
         channel.guildId = static_cast<Core::Snowflake>(q.value(4).toLongLong());
     if (!q.value(5).isNull())
         channel.parentId = static_cast<Core::Snowflake>(q.value(5).toLongLong());
+    if (!q.value(6).isNull())
+        channel.lastMessageId = static_cast<Core::Snowflake>(q.value(6).toLongLong());
+    if (!q.value(7).isNull())
+        channel.icon = q.value(7).toString();
+    if (!q.value(8).isNull())
+        channel.ownerId = static_cast<Core::Snowflake>(q.value(8).toLongLong());
 
     channel.permissionOverwrites = getPermissionOverwrites(channelId);
+
+    if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM)
+        channel.recipientIds = getChannelRecipientIds(channelId);
 
     return channel;
 }

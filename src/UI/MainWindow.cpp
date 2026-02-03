@@ -140,7 +140,8 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
     QModelIndex sourceIndex = channelFilterProxy->mapToSource(current);
     auto node = static_cast<ChannelNode *>(sourceIndex.internalPointer());
 
-    if (!node || node->type != ChannelNode::Type::Channel)
+    if (!node || (node->type != ChannelNode::Type::Channel &&
+                  node->type != ChannelNode::Type::DMChannel))
         return;
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
@@ -161,35 +162,38 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
     Core::Snowflake userId = selectedInstance->accountId();
     Core::Snowflake channelId = node->id;
 
-    bool canSend = selectedInstance->permissions()->hasChannelPermission(
-            userId, channelId, Discord::Permission::SEND_MESSAGES);
+    if (node->type == ChannelNode::Type::DMChannel) {
+        messageInput->setEnabled(true);
+        messageInput->setPlaceholder("Message @" + node->name);
+    } else {
+        bool canSend = selectedInstance->permissions()->hasChannelPermission(
+                userId, channelId, Discord::Permission::SEND_MESSAGES);
 
-    messageInput->setEnabled(canSend);
+        messageInput->setEnabled(canSend);
 
-    if (canSend)
-        messageInput->setPlaceholder(node->name);
-    else
-        messageInput->setPlaceholder("You do not have permission to send messages");
+        if (canSend)
+            messageInput->setPlaceholder("Message #" + node->name);
+        else
+            messageInput->setPlaceholder("You do not have permission to send messages");
 
-    selectedInstance->discord()->ensureSubscriptionByChannel(node->id);
+        selectedInstance->discord()->ensureSubscriptionByChannel(node->id);
+    }
 
     MessageManager *messages = selectedInstance->messages();
 
-    if (node->type == ChannelNode::Type::Channel) {
-        if (node->id != chatModel->getActiveChannelId()) {
-            ChannelNode *guildNode = node;
-            while (guildNode && guildNode->type != ChannelNode::Type::Server)
-                guildNode = guildNode->parent;
-            Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
+    if (node->id != chatModel->getActiveChannelId()) {
+        ChannelNode *guildNode = node;
+        while (guildNode && guildNode->type != ChannelNode::Type::Server)
+            guildNode = guildNode->parent;
+        Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
 
-            if (guildId != cachedGuildId) {
-                cachedGuildId = guildId;
-                userColorCache.clear();
-            }
-
-            chatModel->setActiveChannel(node->id, guildId);
-            typingTracker->setActiveChannel(node->id);
+        if (guildId != cachedGuildId) {
+            cachedGuildId = guildId;
+            userColorCache.clear();
         }
+
+        chatModel->setActiveChannel(node->id, guildId);
+        typingTracker->setActiveChannel(node->id);
     }
 
     messages->requestLoadChannel(node->id);

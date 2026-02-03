@@ -15,6 +15,8 @@ struct Ready : Core::JsonUtils::JsonObject
     Field<QList<GatewayGuild>> guilds;
     Field<QString> userSettingsProto;
     Field<QList<QList<Member>>, true> mergedMembers;
+    Field<QList<User>, true> users;
+    Field<QList<Channel>, true> privateChannels;
 
     static Ready fromJson(const QJsonObject &obj)
     {
@@ -23,6 +25,8 @@ struct Ready : Core::JsonUtils::JsonObject
         get(obj, "guilds", ready.guilds);
         get(obj, "user_settings_proto", ready.userSettingsProto);
         get(obj, "merged_members", ready.mergedMembers);
+        get(obj, "users", ready.users);
+        get(obj, "private_channels", ready.privateChannels);
         return ready;
     }
 };

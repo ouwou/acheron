@@ -128,6 +128,9 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "name" INTEGER,
 	        "guild_id" INTEGER,
 	        "parent_id" INTEGER,
+	        "last_message_id" INTEGER,
+	        "icon" TEXT,
+	        "owner_id" INTEGER,
 	        PRIMARY KEY("id")
         );
     )");
@@ -231,6 +234,18 @@ void DatabaseManager::setupCacheTables(const QString &connName)
     query.exec("CREATE INDEX idx_overwrites_channel_id ON permission_overwrites(channel_id);");
     query.exec("CREATE INDEX idx_members_lookup ON members(guild_id, user_id);");
     query.exec("CREATE INDEX idx_channels_guild ON channels(guild_id);");
+
+    query.exec(R"(
+        CREATE TABLE "channel_recipients" (
+            "channel_id" INTEGER NOT NULL,
+            "user_id" INTEGER NOT NULL,
+            PRIMARY KEY("channel_id", "user_id"),
+            FOREIGN KEY("channel_id") REFERENCES channels("id") ON DELETE CASCADE,
+            FOREIGN KEY("user_id") REFERENCES users("id")
+        );
+    )");
+
+    query.exec("CREATE INDEX idx_channel_recipients_channel ON channel_recipients(channel_id);");
 }
 } // namespace Storage
 } // namespace Acheron

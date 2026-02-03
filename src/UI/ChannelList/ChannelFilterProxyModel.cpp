@@ -43,6 +43,12 @@ bool ChannelFilterProxyModel::lessThan(const QModelIndex &left, const QModelInde
         return leftPos < rightPos;
     }
 
+    if (leftType == ChannelNode::Type::DMChannel && rightType == ChannelNode::Type::DMChannel) {
+        quint64 leftMsgId = left.data(ChannelTreeModel::LastMessageIdRole).toULongLong();
+        quint64 rightMsgId = right.data(ChannelTreeModel::LastMessageIdRole).toULongLong();
+        return leftMsgId > rightMsgId;
+    }
+
     // preserve underlying
     return left.row() < right.row();
 }
@@ -80,7 +86,7 @@ bool ChannelFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex 
         } else {
             if (nodeType == ChannelNode::Type::Category) {
                 if (permissionManager->hasChannelPermission(userId, channelId, Discord::Permission::VIEW_CHANNEL | Discord::Permission::MANAGE_CHANNELS))
-					return true;
+                    return true;
                 return hasVisibleChildren(index);
             }
         }

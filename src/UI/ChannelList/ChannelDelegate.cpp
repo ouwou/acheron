@@ -61,12 +61,14 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         return;
     }
 
-    if (node->type == ChannelNode::Type::Server) {
+    if (node->type == ChannelNode::Type::Server || node->type == ChannelNode::Type::DMChannel) {
         QPixmap icon = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
-        QRect iconRect = QRect(option.rect.left() + (iconSize - iconSize) / 2,
-                               option.rect.top() + (option.rect.height() - iconSize) / 2, iconSize,
-                               iconSize);
-        painter->drawPixmap(iconRect, icon);
+        if (!icon.isNull()) {
+            QRect iconRect = QRect(option.rect.left() + (iconSize - iconSize) / 2,
+                                   option.rect.top() + (option.rect.height() - iconSize) / 2, iconSize,
+                                   iconSize);
+            painter->drawPixmap(iconRect, icon);
+        }
     }
 
     QString text = index.data(Qt::DisplayRole).toString();

@@ -74,6 +74,28 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
 
         userManager->saveUser(ready.user);
 
+        if (ready.users.hasValue())
+            userManager->saveUsers(ready.users.get());
+
+        if (ready.privateChannels.hasValue()) {
+            for (const auto &channel : ready.privateChannels.get()) {
+                channelRepo.saveChannel(channel, db);
+
+                QList<Core::Snowflake> recipientIds;
+                if (channel.recipients.hasValue()) {
+                    for (const auto &user : channel.recipients.get()) {
+                        userManager->saveUser(user);
+                        recipientIds.append(user.id.get());
+                    }
+                } else if (channel.recipientIds.hasValue()) {
+                    recipientIds = channel.recipientIds.get();
+                }
+
+                if (!recipientIds.isEmpty())
+                    channelRepo.saveChannelRecipients(channel.id.get(), recipientIds, db);
+            }
+        }
+
         db.commit();
 
         emit detailsUpdated(account);
@@ -133,6 +155,21 @@ void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
 
     if (channel.permissionOverwrites.hasValue())
         channelRepo.savePermissionOverwrites(channelId, channel.permissionOverwrites.get(), db);
+
+    if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
+        QList<Core::Snowflake> recipientIds;
+        if (channel.recipients.hasValue()) {
+            for (const auto &user : channel.recipients.get()) {
+                userManager->saveUser(user);
+                recipientIds.append(user.id.get());
+            }
+        } else if (channel.recipientIds.hasValue()) {
+            recipientIds = channel.recipientIds.get();
+        }
+
+        if (!recipientIds.isEmpty())
+            channelRepo.saveChannelRecipients(channelId, recipientIds, db);
+    }
 
     db.commit();
 

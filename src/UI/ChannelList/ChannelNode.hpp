@@ -20,6 +20,7 @@ struct ChannelNode
         Server,
         Category,
         Channel,
+        DMChannel,
     };
 
     Core::Snowflake id;
@@ -31,6 +32,10 @@ struct ChannelNode
     QString TEMP_iconHash;
     std::optional<QString> folderName;
     std::optional<uint64_t> folderColor;
+    QList<Core::Snowflake> recipientIds;
+    QString dmAvatarHash;
+    Core::Snowflake dmRecipientId;
+    Core::Snowflake lastMessageId;
 
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;

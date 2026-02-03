@@ -20,7 +20,11 @@ public:
     void savePermissionOverwrites(Core::Snowflake channelId,
                                   const QList<Discord::PermissionOverwrite> &overwrites,
                                   QSqlDatabase &db);
+    void saveChannelRecipients(Core::Snowflake channelId,
+                               const QList<Core::Snowflake> &recipientIds,
+                               QSqlDatabase &db);
     QList<Discord::PermissionOverwrite> getPermissionOverwrites(Core::Snowflake channelId);
+    QList<Core::Snowflake> getChannelRecipientIds(Core::Snowflake channelId);
 
     QHash<Core::Snowflake, QList<Discord::PermissionOverwrite>> getPermissionOverwritesForGuild(
             Core::Snowflake guildId);

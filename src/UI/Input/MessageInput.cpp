@@ -55,7 +55,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
 void MessageInput::setPlaceholder(const QString &name)
 {
-    textEdit->setPlaceholderText("Message #" + name);
+    textEdit->setPlaceholderText(name);
 }
 
 void MessageInput::resizeEvent(QResizeEvent *event)

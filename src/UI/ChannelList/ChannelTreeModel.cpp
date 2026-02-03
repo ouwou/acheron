@@ -4,9 +4,31 @@
 #include <Core/Logging.hpp>
 #include <Storage/DatabaseManager.hpp>
 #include <Storage/ChannelRepository.hpp>
+#include <Storage/UserRepository.hpp>
 
 namespace Acheron {
 namespace UI {
+
+static QString getDMDisplayName(const Discord::Channel &channel, Storage::UserRepository &userRepo)
+{
+    if (channel.name.hasValue() && !channel.name->isEmpty())
+        return channel.name.get();
+
+    QStringList names;
+
+    if (channel.recipients.hasValue()) {
+        for (const auto &user : channel.recipients.get())
+            names.append(user.getDisplayName());
+    } else if (channel.recipientIds.hasValue()) {
+        for (const auto &userId : channel.recipientIds.get()) {
+            auto userOpt = userRepo.getUser(userId);
+            if (userOpt.has_value())
+                names.append(userOpt->getDisplayName());
+        }
+    }
+
+    return names.isEmpty() ? "Unnamed" : names.join(", ");
+}
 ChannelTreeModel::ChannelTreeModel(Session *session, QObject *parent)
     : QAbstractItemModel(parent), session(session)
 {
@@ -108,6 +130,45 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
 
             return pixmap;
         }
+
+        if (node->type == ChannelNode::Type::DMChannel) {
+            const QSize desiredSize(64, 64);
+            QUrl avatarUrl;
+
+            if (node->dmRecipientId.isValid() && !node->dmAvatarHash.isEmpty()) {
+                avatarUrl = QUrl(QString("https://cdn.discordapp.com/avatars/%1/%2.png?size=%3")
+                                         .arg(quint64(node->dmRecipientId))
+                                         .arg(node->dmAvatarHash)
+                                         .arg(desiredSize.width()));
+            } else if (!node->TEMP_iconHash.isEmpty()) {
+                avatarUrl = QUrl(QString("https://cdn.discordapp.com/channel-icons/%1/%2.png?size=%3")
+                                         .arg(quint64(node->id))
+                                         .arg(node->TEMP_iconHash)
+                                         .arg(desiredSize.width()));
+            }
+
+            if (!avatarUrl.isEmpty()) {
+                QPixmap pixmap = session->getImageManager()->get(avatarUrl, desiredSize);
+
+                if (!session->getImageManager()->isCached(avatarUrl, desiredSize)) {
+                    bool alreadyWaiting = false;
+                    auto it = pendingRequests.constFind(avatarUrl);
+                    while (it != pendingRequests.cend() && it.key() == avatarUrl) {
+                        if (it.value() == index) {
+                            alreadyWaiting = true;
+                            break;
+                        }
+                        it++;
+                    }
+
+                    if (!alreadyWaiting)
+                        pendingRequests.insert(avatarUrl, QPersistentModelIndex(index));
+                }
+
+                return pixmap;
+            }
+        }
+
         return {};
     }
 
@@ -119,6 +180,8 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return static_cast<int>(node->type);
     if (role == PositionRole)
         return node->position;
+    if (role == LastMessageIdRole)
+        return static_cast<quint64>(node->lastMessageId);
 
     return {};
 }
@@ -131,7 +194,7 @@ Qt::ItemFlags ChannelTreeModel::flags(const QModelIndex &index) const
     ChannelNode *node = nodeFromIndex(index);
     Qt::ItemFlags f = QAbstractItemModel::flags(index);
 
-    if (node->type == ChannelNode::Type::Channel)
+    if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::DMChannel)
         return f | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 
     // Folders should be enabled (for expansion) but not selectable
@@ -261,6 +324,67 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
     for (auto &node : topLevelNodes)
         accNode->addChild(std::move(node));
     endInsertRows();
+
+    if (ready.privateChannels.hasValue() && !ready.privateChannels->isEmpty()) {
+        ChannelNode *dmHeader = nullptr;
+        for (const auto &child : accNode->children) {
+            if (child->type == ChannelNode::Type::DMHeader) {
+                dmHeader = child.get();
+                break;
+            }
+        }
+
+        if (!dmHeader)
+            return;
+
+        Storage::UserRepository userRepo(ready.user->id);
+
+        const auto &dms = ready.privateChannels.get();
+
+        QModelIndex dmHeaderIndex = indexForNode(dmHeader);
+        int dmStartRow = 0;
+        int dmEndRow = dms.size() - 1;
+
+        beginInsertRows(dmHeaderIndex, dmStartRow, dmEndRow);
+        for (const auto &channel : dms) {
+            auto dmNode = std::make_unique<ChannelNode>();
+            dmNode->id = channel.id;
+            dmNode->type = ChannelNode::Type::DMChannel;
+            dmNode->name = getDMDisplayName(channel, userRepo);
+            dmNode->lastMessageId = channel.lastMessageId.hasValue()
+                                            ? channel.lastMessageId.get()
+                                            : channel.id.get();
+
+            if (channel.recipients.hasValue()) {
+                for (const auto &user : channel.recipients.get())
+                    dmNode->recipientIds.append(user.id.get());
+            } else if (channel.recipientIds.hasValue()) {
+                dmNode->recipientIds = channel.recipientIds.get();
+            }
+
+            if (channel.type == Discord::ChannelType::DM && dmNode->recipientIds.size() == 1) {
+                dmNode->dmRecipientId = dmNode->recipientIds.first();
+
+                if (channel.recipients.hasValue() && !channel.recipients->isEmpty()) {
+                    const auto &user = channel.recipients->first();
+                    if (user.avatar.hasValue())
+                        dmNode->dmAvatarHash = user.avatar.get();
+                }
+
+                if (dmNode->dmAvatarHash.isEmpty()) {
+                    auto userOpt = userRepo.getUser(dmNode->dmRecipientId);
+                    if (userOpt.has_value() && userOpt->avatar.hasValue())
+                        dmNode->dmAvatarHash = userOpt->avatar.get();
+                }
+            } else if (channel.type == Discord::ChannelType::GROUP_DM) {
+                if (channel.icon.hasValue())
+                    dmNode->TEMP_iconHash = channel.icon.get();
+            }
+
+            dmHeader->addChild(std::move(dmNode));
+        }
+        endInsertRows();
+    }
 }
 
 ChannelNode *ChannelTreeModel::getAccountNodeFor(ChannelNode *node)
@@ -416,16 +540,73 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
 
     const auto &channel = event.channel.get();
 
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return;
+
+    if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
+        ChannelNode *dmHeader = nullptr;
+        for (const auto &child : accNode->children) {
+            if (child->type == ChannelNode::Type::DMHeader) {
+                dmHeader = child.get();
+                break;
+            }
+        }
+
+        if (!dmHeader)
+            return;
+
+        if (findChannelTreeNode(channel.id, dmHeader))
+            return;
+
+        Storage::UserRepository userRepo(accountId);
+
+        auto dmNode = std::make_unique<ChannelNode>();
+        dmNode->id = channel.id;
+        dmNode->type = ChannelNode::Type::DMChannel;
+        dmNode->name = getDMDisplayName(channel, userRepo);
+
+        if (channel.recipients.hasValue()) {
+            for (const auto &user : channel.recipients.get())
+                dmNode->recipientIds.append(user.id.get());
+        } else if (channel.recipientIds.hasValue()) {
+            dmNode->recipientIds = channel.recipientIds.get();
+        }
+
+        if (channel.type == Discord::ChannelType::DM && dmNode->recipientIds.size() == 1) {
+            dmNode->dmRecipientId = dmNode->recipientIds.first();
+
+            if (channel.recipients.hasValue() && !channel.recipients->isEmpty()) {
+                const auto &user = channel.recipients->first();
+                if (user.avatar.hasValue())
+                    dmNode->dmAvatarHash = user.avatar.get();
+            }
+
+            if (dmNode->dmAvatarHash.isEmpty()) {
+                auto userOpt = userRepo.getUser(dmNode->dmRecipientId);
+                if (userOpt.has_value() && userOpt->avatar.hasValue())
+                    dmNode->dmAvatarHash = userOpt->avatar.get();
+            }
+        } else if (channel.type == Discord::ChannelType::GROUP_DM) {
+            if (channel.icon.hasValue())
+                dmNode->TEMP_iconHash = channel.icon.get();
+        }
+
+        QModelIndex dmHeaderIndex = indexForNode(dmHeader);
+        beginInsertRows(dmHeaderIndex, 0, 0);
+        dmNode->parent = dmHeader;
+        dmHeader->children.insert(dmHeader->children.begin(), std::move(dmNode));
+        endInsertRows();
+
+        return;
+    }
+
     if (channel.type != Discord::ChannelType::GUILD_TEXT &&
         channel.type != Discord::ChannelType::GUILD_NEWS &&
         channel.type != Discord::ChannelType::GUILD_CATEGORY)
         return;
 
     if (!channel.guildId.hasValue())
-        return;
-
-    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
-    if (!accNode)
         return;
 
     Snowflake guildId = channel.guildId.get();
