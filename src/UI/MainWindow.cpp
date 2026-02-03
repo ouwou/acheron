@@ -256,6 +256,11 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
             [this, instance](const Discord::ChannelUpdate &update) {
                 channelTreeModel->updateChannel(update, instance->accountId());
             });
+
+    connect(instance, &Core::ClientInstance::channelDeleted, this,
+            [this, instance](const Discord::ChannelDelete &event) {
+                channelTreeModel->deleteChannel(event, instance->accountId());
+            });
 }
 
 void MainWindow::setupUi()

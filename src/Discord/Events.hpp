@@ -97,6 +97,20 @@ struct ChannelUpdate : Core::JsonUtils::JsonObject
     }
 };
 
+struct ChannelDelete : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> id;
+    Field<Core::Snowflake, true> guildId;
+
+    static ChannelDelete fromJson(const QJsonObject &obj)
+    {
+        ChannelDelete event;
+        get(obj, "id", event.id);
+        get(obj, "guild_id", event.guildId);
+        return event;
+    }
+};
+
 struct GuildMembersChunk : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> guildId;

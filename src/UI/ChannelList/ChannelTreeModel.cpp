@@ -561,5 +561,47 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
     }
 }
 
+void ChannelTreeModel::deleteChannel(const Discord::ChannelDelete &event, Snowflake accountId)
+{
+    if (!event.id.hasValue())
+        return;
+
+    Core::Snowflake channelId = event.id.get();
+
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return;
+
+    ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
+    if (!channelNode)
+        return;
+
+    ChannelNode *parent = channelNode->parent;
+    if (!parent)
+        return;
+
+    QModelIndex parentIdx = indexForNode(parent);
+    int row = -1;
+    for (size_t i = 0; i < parent->children.size(); ++i) {
+        if (parent->children[i].get() == channelNode) {
+            row = i;
+            break;
+        }
+    }
+
+    if (row == -1)
+        return;
+
+    beginRemoveRows(parentIdx, row, row);
+    parent->children.erase(parent->children.begin() + row);
+    endRemoveRows();
+
+    // notify proxy to re-check category visibility
+    if (parent->type == ChannelNode::Type::Category && parentIdx.isValid())
+        emit dataChanged(parentIdx, parentIdx);
+
+    qCDebug(LogUI) << "Deleted channel tree node:" << channelId;
+}
+
 } // namespace UI
 } // namespace Acheron

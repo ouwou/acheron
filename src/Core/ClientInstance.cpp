@@ -109,6 +109,7 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
             &MessageManager::onMessageSendFailed);
     connect(client, &Discord::Client::channelCreated, this, &ClientInstance::onChannelCreated);
     connect(client, &Discord::Client::channelUpdated, this, &ClientInstance::onChannelUpdated);
+    connect(client, &Discord::Client::channelDeleted, this, &ClientInstance::onChannelDeleted);
     connect(client, &Discord::Client::guildMembersChunk, this,
             &ClientInstance::onGuildMembersChunk);
     connect(messageManager, &MessageManager::messagesReceived, this,
@@ -163,6 +164,29 @@ void ClientInstance::onChannelUpdated(const Discord::ChannelUpdate &event)
     permissionManager->invalidateChannelCache(channelId);
 
     emit channelUpdated(event);
+}
+
+void ClientInstance::onChannelDeleted(const Discord::ChannelDelete &event)
+{
+    if (!event.id.hasValue())
+        return;
+
+    Core::Snowflake channelId = event.id.get();
+
+    qCDebug(LogCore) << "Channel deleted:" << channelId;
+
+    QString connName = Storage::DatabaseManager::instance().getCacheConnectionName(account.id);
+    QSqlDatabase db = QSqlDatabase::database(connName);
+
+    db.transaction();
+
+    channelRepo.deleteChannel(channelId, db);
+
+    db.commit();
+
+    permissionManager->invalidateChannelCache(channelId);
+
+    emit channelDeleted(event);
 }
 
 void ClientInstance::onGuildMembersChunk(const Discord::GuildMembersChunk &chunk)

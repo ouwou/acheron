@@ -68,6 +68,7 @@ signals:
     void typingStart(const TypingStart &event);
     void channelCreated(const ChannelCreate &event);
     void channelUpdated(const ChannelUpdate &event);
+    void channelDeleted(const ChannelDelete &event);
     void guildMembersChunk(const GuildMembersChunk &chunk);
     void messageSendFailed(const QString &nonce, const QString &error);
 
@@ -84,6 +85,7 @@ private slots:
     void onGatewayMessageDelete(const MessageDelete &event);
     void onGatewayChannelCreate(const ChannelCreate &event);
     void onGatewayChannelUpdate(const ChannelUpdate &event);
+    void onGatewayChannelDelete(const ChannelDelete &event);
 
 private:
     void setState(Core::ConnectionState state);

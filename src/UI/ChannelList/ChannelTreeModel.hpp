@@ -44,6 +44,7 @@ public:
     ChannelNode *nodeFromIndex(const QModelIndex &index) const;
     void addChannel(const Discord::ChannelCreate &event, Snowflake accountId);
     void updateChannel(const Discord::ChannelUpdate &update, Snowflake accountId);
+    void deleteChannel(const Discord::ChannelDelete &event, Snowflake accountId);
 
 private:
     QModelIndex indexForNode(ChannelNode *node) const;

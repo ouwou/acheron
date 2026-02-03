@@ -16,6 +16,7 @@ public:
     ChannelRepository(Core::Snowflake accountId);
 
     void saveChannel(const Discord::Channel &channel, QSqlDatabase &db);
+    void deleteChannel(Core::Snowflake channelId, QSqlDatabase &db);
     void savePermissionOverwrites(Core::Snowflake channelId,
                                   const QList<Discord::PermissionOverwrite> &overwrites,
                                   QSqlDatabase &db);

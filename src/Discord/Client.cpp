@@ -31,6 +31,7 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayTypingStart, this, &Client::typingStart);
     connect(gateway, &Gateway::gatewayChannelCreate, this, &Client::onGatewayChannelCreate);
     connect(gateway, &Gateway::gatewayChannelUpdate, this, &Client::onGatewayChannelUpdate);
+    connect(gateway, &Gateway::gatewayChannelDelete, this, &Client::onGatewayChannelDelete);
     connect(gateway, &Gateway::gatewayGuildMembersChunk, this, &Client::guildMembersChunk);
 }
 
@@ -163,6 +164,11 @@ void Client::onGatewayChannelCreate(const ChannelCreate &event)
 void Client::onGatewayChannelUpdate(const ChannelUpdate &event)
 {
     emit channelUpdated(event);
+}
+
+void Client::onGatewayChannelDelete(const ChannelDelete &event)
+{
+    emit channelDeleted(event);
 }
 
 void Client::sendMessage(Snowflake channelId, const QString &content, const QString &nonce)

@@ -43,11 +43,13 @@ signals:
     void ready(const Discord::Ready &ready);
     void channelCreated(const Discord::ChannelCreate &event);
     void channelUpdated(const Discord::ChannelUpdate &update);
+    void channelDeleted(const Discord::ChannelDelete &event);
     void membersUpdated(Snowflake guildId, const QList<Snowflake> &userIds);
 
 private slots:
     void onChannelCreated(const Discord::ChannelCreate &event);
     void onChannelUpdated(const Discord::ChannelUpdate &event);
+    void onChannelDeleted(const Discord::ChannelDelete &event);
     void onGuildMembersChunk(const Discord::GuildMembersChunk &chunk);
     void onMessagesReceived(const MessageRequestResult &result);
 

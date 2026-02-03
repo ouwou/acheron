@@ -177,6 +177,9 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::CHANNEL_UPDATE:
         handleChannelUpdate(data);
         break;
+    case GatewayEvent::CHANNEL_DELETE:
+        handleChannelDelete(data);
+        break;
     case GatewayEvent::GUILD_MEMBERS_CHUNK:
         handleGuildMembersChunk(data);
         break;
@@ -246,6 +249,13 @@ void Gateway::handleChannelUpdate(const Inbound &data)
     ChannelUpdate event = data.getData<ChannelUpdate>();
 
     emit gatewayChannelUpdate(event);
+}
+
+void Gateway::handleChannelDelete(const Inbound &data)
+{
+    ChannelDelete event = data.getData<ChannelDelete>();
+
+    emit gatewayChannelDelete(event);
 }
 
 void Gateway::handleGuildMembersChunk(const Inbound &data)

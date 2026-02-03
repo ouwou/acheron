@@ -37,6 +37,20 @@ void ChannelRepository::saveChannel(const Discord::Channel &channel, QSqlDatabas
         qCWarning(LogDB) << "ChannelRepository: Save failed:" << q.lastError().text();
 }
 
+void ChannelRepository::deleteChannel(Core::Snowflake channelId, QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM permission_overwrites WHERE channel_id = :channel_id");
+    q.bindValue(":channel_id", static_cast<qint64>(channelId));
+    if (!q.exec())
+        qCWarning(LogDB) << "ChannelRepository: Delete overwrites failed:" << q.lastError().text();
+
+    q.prepare("DELETE FROM channels WHERE id = :id");
+    q.bindValue(":id", static_cast<qint64>(channelId));
+    if (!q.exec())
+        qCWarning(LogDB) << "ChannelRepository: Delete channel failed:" << q.lastError().text();
+}
+
 void ChannelRepository::savePermissionOverwrites(
         Core::Snowflake channelId, const QList<Discord::PermissionOverwrite> &overwrites,
         QSqlDatabase &db)
