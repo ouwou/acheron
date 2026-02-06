@@ -122,6 +122,7 @@ void Gateway::sendPayload(const QByteArray &data)
             }
         } else {
             qCWarning(LogDiscord) << "Error sending payload: " << curl_easy_strerror(res);
+            break;
         }
     }
 }
