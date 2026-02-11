@@ -1,6 +1,7 @@
 #include "AccountsModel.hpp"
 
 #include "Storage/AccountRepository.hpp"
+#include "Core/TokenStore.hpp"
 
 #include "Core/Session.hpp"
 #include <QMimeData>
@@ -125,8 +126,13 @@ void AccountsModel::addAccount(const AccountInfo &account)
     }
     newAccount.displayOrder = maxOrder + 1;
 
+    Core::TokenStore::saveToken(newAccount.id, newAccount.token);
+
     AccountRepository repo;
     repo.saveAccount(newAccount);
+
+    // Don't keep the token in the in-memory model
+    newAccount.token.clear();
 
     beginInsertRows(QModelIndex(), accounts.size(), accounts.size());
     accounts.append(newAccount);

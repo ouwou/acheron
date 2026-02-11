@@ -96,7 +96,6 @@ void DatabaseManager::setupPersistentTables()
             id INTEGER PRIMARY KEY,
             username TEXT,
             display_name TEXT,
-            token TEXT,
             avatar TEXT,
             gateway_url TEXT,
             rest_url TEXT,
@@ -105,6 +104,7 @@ void DatabaseManager::setupPersistentTables()
         )
     )");
 }
+
 void DatabaseManager::setupCacheTables(const QString &connName)
 {
     QSqlDatabase db = QSqlDatabase::database(connName);

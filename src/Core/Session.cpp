@@ -3,6 +3,7 @@
 #include <QDebug>
 
 #include "Logging.hpp"
+#include "TokenStore.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -48,8 +49,14 @@ void Session::connectAccount(Snowflake accountId)
     }
 
     AccountInfo acc = repo.getAccount(accountId);
-    if (acc.id == 0 || acc.token.isEmpty()) {
-        qCWarning(LogCore) << "Account not found or invalid token:" << accountId;
+    if (acc.id == 0) {
+        qCWarning(LogCore) << "Account not found:" << accountId;
+        return;
+    }
+
+    acc.token = TokenStore::loadToken(accountId);
+    if (acc.token.isEmpty()) {
+        qCWarning(LogCore) << "No token found in keychain for account:" << accountId;
         return;
     }
 
