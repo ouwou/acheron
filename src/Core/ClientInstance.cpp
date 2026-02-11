@@ -224,6 +224,15 @@ void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
 
     db.commit();
 
+    if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
+        Snowflake lastMsg = channel.lastMessageId.hasValue()
+                                    ? channel.lastMessageId.get()
+                                    : channelId;
+        readStateManager->updateChannelLastMessageId(channelId, lastMsg);
+    } else if (channel.lastMessageId.hasValue()) {
+        readStateManager->updateChannelLastMessageId(channelId, channel.lastMessageId.get());
+    }
+
     emit channelCreated(event);
 }
 

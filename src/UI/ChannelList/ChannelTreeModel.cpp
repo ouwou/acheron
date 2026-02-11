@@ -578,6 +578,9 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         dmNode->id = channel.id;
         dmNode->type = ChannelNode::Type::DMChannel;
         dmNode->name = getDMDisplayName(channel, userRepo);
+        dmNode->lastMessageId = channel.lastMessageId.hasValue()
+                                        ? channel.lastMessageId.get()
+                                        : channel.id.get();
 
         if (channel.recipients.hasValue()) {
             for (const auto &user : channel.recipients.get())
@@ -635,6 +638,8 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
     node->name = channel.name;
     node->position = channel.position;
     node->parentId = channel.parentId.hasValue() ? channel.parentId.get() : Core::Snowflake();
+    if (channel.lastMessageId.hasValue())
+        node->lastMessageId = channel.lastMessageId.get();
 
     if (channel.type == Discord::ChannelType::GUILD_CATEGORY) {
         node->type = ChannelNode::Type::Category;
@@ -1012,7 +1017,7 @@ void ChannelTreeModel::updateChannelLastMessageId(Snowflake channelId, Snowflake
     if (!channelNode)
         return;
 
-    if (messageId <= channelNode->lastMessageId)
+    if (channelNode->lastMessageId.isValid() && messageId <= channelNode->lastMessageId)
         return;
 
     channelNode->lastMessageId = messageId;
