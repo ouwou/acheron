@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QtWidgets>
+#include <QCache>
+#include <QTextDocument>
 #include "Core/Session.hpp"
 #include "Core/MessageManager.hpp"
 
@@ -115,6 +117,46 @@ struct EmbedData
 };
 
 namespace UI {
+
+struct DocCacheKey
+{
+    Snowflake messageId;
+    // 0 = body, then embed/field sub-documents encoded as:
+    // (embedIndex+1)*1000 + offset (0=title, 1=desc, 100+fieldIndex*2=fieldName, 100+fieldIndex*2+1=fieldValue)
+    int subId = 0;
+
+    bool operator==(const DocCacheKey &o) const
+    {
+        return messageId == o.messageId && subId == o.subId;
+    }
+};
+
+inline size_t qHash(const DocCacheKey &k, size_t seed = 0)
+{
+    return qHashMulti(seed, quint64(k.messageId), k.subId);
+}
+
+inline DocCacheKey bodyDocKey(Snowflake msgId)
+{
+    return { msgId, 0 };
+}
+inline DocCacheKey embedTitleDocKey(Snowflake msgId, int embedIdx)
+{
+    return { msgId, (embedIdx + 1) * 1000 };
+}
+inline DocCacheKey embedDescDocKey(Snowflake msgId, int embedIdx)
+{
+    return { msgId, (embedIdx + 1) * 1000 + 1 };
+}
+inline DocCacheKey embedFieldNameDocKey(Snowflake msgId, int embedIdx, int fieldIdx)
+{
+    return { msgId, (embedIdx + 1) * 1000 + 100 + fieldIdx * 2 };
+}
+inline DocCacheKey embedFieldValueDocKey(Snowflake msgId, int embedIdx, int fieldIdx)
+{
+    return { msgId, (embedIdx + 1) * 1000 + 100 + fieldIdx * 2 + 1 };
+}
+
 class ChatModel : public QAbstractListModel
 {
     Q_OBJECT
@@ -159,6 +201,11 @@ public:
     [[nodiscard]] Snowflake getActiveChannelId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
 
+    QTextDocument *getCachedDocument(const DocCacheKey &key) const;
+    void cacheDocument(const DocCacheKey &key, QTextDocument *doc) const;
+    void invalidateDocCache();
+    void invalidateDocCacheForMessage(Snowflake messageId);
+
 public slots:
     void setActiveChannel(Snowflake channelId, Snowflake guildId = Snowflake::Invalid);
     void handleIncomingMessages(const Core::MessageRequestResult &result);
@@ -183,6 +230,8 @@ private:
     QVector<Discord::Message> messages;
     mutable QHash<Snowflake, QSize> sizeCache;
     mutable QHash<Snowflake, QList<EmbedData>> embedCache;
+    mutable QCache<DocCacheKey, QTextDocument> docCache{ 500 };
+    mutable int docCacheWidth = 0;
 
     Snowflake currentChannelId = Snowflake::Invalid;
     Snowflake currentGuildId = Snowflake::Invalid;

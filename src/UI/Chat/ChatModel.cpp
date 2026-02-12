@@ -81,6 +81,7 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
                             }
                         }
                         if (found) {
+                            invalidateDocCacheForMessage(msg.id);
                             QModelIndex idx = index(row, 0);
                             emit dataChanged(idx, idx, { HtmlRole, EmbedsRole, CachedSizeRole });
                         }
@@ -132,6 +133,7 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
 
                     if (found) {
                         embedCache.remove(msg.id);
+                        invalidateDocCacheForMessage(msg.id);
                         QModelIndex idx = index(row, 0);
                         emit dataChanged(idx, idx, { AttachmentsRole, EmbedsRole, CachedSizeRole });
                     }
@@ -579,6 +581,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         beginResetModel();
         sizeCache.clear();
         embedCache.clear();
+        docCache.clear();
         pendingNonces.clear();
         erroredNonces.clear();
         messages = incomingMessages;
@@ -612,6 +615,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
 
                     sizeCache.remove(incomingMsg.id);
                     embedCache.remove(incomingMsg.id);
+                    invalidateDocCacheForMessage(incomingMsg.id);
 
                     QModelIndex idx = index(i, 0);
                     emit dataChanged(idx, idx);
@@ -673,6 +677,7 @@ void ChatModel::handleMessageDeleted(Snowflake channelId, Snowflake messageId)
             beginRemoveRows({}, i, i);
             sizeCache.remove(messageId);
             embedCache.remove(messageId);
+            invalidateDocCacheForMessage(messageId);
             messages.remove(i);
             endRemoveRows();
 
@@ -682,6 +687,7 @@ void ChatModel::handleMessageDeleted(Snowflake channelId, Snowflake messageId)
 
                 sizeCache.remove(nextMessage.id);
                 embedCache.remove(nextMessage.id);
+                invalidateDocCacheForMessage(nextMessage.id);
 
                 QModelIndex idx = index(i, 0);
                 emit dataChanged(idx, idx, { CachedSizeRole, ShowHeaderRole, DateSeparatorRole });
@@ -716,6 +722,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
     messages.clear();
     sizeCache.clear();
     embedCache.clear();
+    docCache.clear();
     pendingNonces.clear();
     erroredNonces.clear();
     revealedSpoilers.clear();
@@ -764,6 +771,37 @@ void ChatModel::revealSpoiler(Snowflake attachmentId)
 bool ChatModel::isSpoilerRevealed(Snowflake attachmentId) const
 {
     return revealedSpoilers.contains(attachmentId);
+}
+
+QTextDocument *ChatModel::getCachedDocument(const DocCacheKey &key) const
+{
+    return docCache.object(key);
+}
+
+void ChatModel::cacheDocument(const DocCacheKey &key, QTextDocument *doc) const
+{
+    docCache.insert(key, doc);
+}
+
+void ChatModel::invalidateDocCache()
+{
+    docCache.clear();
+    docCacheWidth = 0;
+}
+
+void ChatModel::invalidateDocCacheForMessage(Snowflake messageId)
+{
+    docCache.remove(bodyDocKey(messageId));
+
+    // brute remove all possible entries
+    for (int ei = 0; ei < 10; ++ei) {
+        docCache.remove(embedTitleDocKey(messageId, ei));
+        docCache.remove(embedDescDocKey(messageId, ei));
+        for (int fi = 0; fi < 25; ++fi) {
+            docCache.remove(embedFieldNameDocKey(messageId, ei, fi));
+            docCache.remove(embedFieldValueDocKey(messageId, ei, fi));
+        }
+    }
 }
 
 } // namespace UI

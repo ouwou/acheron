@@ -48,6 +48,8 @@ static ChatLayout::LayoutContext buildLayoutContext(const QStyleOptionViewItem &
     ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.model = qobject_cast<const ChatModel *>(index.model());
+    ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
 
     QDateTime editedTime = index.data(ChatModel::EditedTimestampRole).toDateTime();
     if (editedTime.isValid()) {
@@ -210,9 +212,19 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                           "  " + timestamp.toString("hh:mm"));
     }
 
-    QTextDocument doc;
-    ChatLayout::setupDocument(doc, ctx.htmlContent, option.font, layout.textRect.width());
-    registerEmojiResources(doc, ctx.htmlContent, imageManager);
+    const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
+    Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+
+    DocCacheKey bodyKey = bodyDocKey(msgId);
+    QTextDocument *doc = chatModel->getCachedDocument(bodyKey);
+    if (!doc) {
+        doc = new QTextDocument;
+        ChatLayout::setupDocument(*doc, ctx.htmlContent, option.font, layout.textRect.width());
+        registerEmojiResources(*doc, ctx.htmlContent, imageManager);
+        chatModel->cacheDocument(bodyKey, doc);
+    } else if (int(doc->textWidth()) != layout.textRect.width()) {
+        doc->setTextWidth(layout.textRect.width());
+    }
 
     painter->translate(layout.textRect.topLeft());
 
@@ -248,7 +260,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             if (r == end.row)
                 endChar = end.index;
 
-            QTextCursor cursor(&doc);
+            QTextCursor cursor(doc);
             cursor.setPosition(startChar);
 
             if (endChar == -1)
@@ -264,14 +276,12 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         }
     }
 
-    doc.documentLayout()->draw(painter, paintCtx);
+    doc->documentLayout()->draw(painter, paintCtx);
 
     painter->restore();
     painter->save();
 
     QList<AttachmentData> attachments = ctx.attachments;
-
-    const ChatModel *chatModel = qobject_cast<const ChatModel *>(index.model());
 
     for (const auto &imgLayout : layout.imageLayouts) {
         if (imgLayout.index >= attachments.size())
@@ -284,7 +294,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                                [](const AttachmentData &a) { return a.isImage; }) == 1);
 
         bool showBlurred = att.isSpoiler;
-        if (showBlurred && chatModel && chatModel->isSpoilerRevealed(att.id))
+        if (showBlurred && chatModel->isSpoilerRevealed(att.id))
             showBlurred = false;
 
         if (!att.pixmap.isNull()) {
@@ -451,18 +461,25 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                                                      : option.palette.text().color();
             painter->setPen(titleColor);
 
-            QTextDocument titleDoc;
-            titleDoc.setDefaultFont(titleFont);
-            titleDoc.setTextWidth(embedLayout.titleRect.width());
             QString titleHtml = !embed.titleParsed.isEmpty() ? embed.titleParsed : embed.title;
-            registerEmojiResources(titleDoc, titleHtml, imageManager);
-            titleDoc.setHtml(titleHtml);
+            DocCacheKey titleKey = embedTitleDocKey(msgId, embedIdx);
+            QTextDocument *titleDoc = chatModel->getCachedDocument(titleKey);
+            if (!titleDoc) {
+                titleDoc = new QTextDocument;
+                titleDoc->setDefaultFont(titleFont);
+                titleDoc->setTextWidth(embedLayout.titleRect.width());
+                registerEmojiResources(*titleDoc, titleHtml, imageManager);
+                titleDoc->setHtml(titleHtml);
+                chatModel->cacheDocument(titleKey, titleDoc);
+            } else if (int(titleDoc->textWidth()) != embedLayout.titleRect.width()) {
+                titleDoc->setTextWidth(embedLayout.titleRect.width());
+            }
 
             painter->save();
             painter->translate(embedLayout.titleRect.topLeft());
             QAbstractTextDocumentLayout::PaintContext titleCtx;
             titleCtx.palette.setColor(QPalette::Text, titleColor);
-            titleDoc.documentLayout()->draw(painter, titleCtx);
+            titleDoc->documentLayout()->draw(painter, titleCtx);
             painter->restore();
         }
 
@@ -471,19 +488,26 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             painter->setFont(descFont);
             painter->setPen(option.palette.text().color());
 
-            QTextDocument descDoc;
-            descDoc.setDefaultFont(descFont);
-            descDoc.setTextWidth(embedLayout.descriptionRect.width());
             QString descHtml = !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed
                                                                   : embed.description;
-            registerEmojiResources(descDoc, descHtml, imageManager);
-            descDoc.setHtml(descHtml);
+            DocCacheKey descKey = embedDescDocKey(msgId, embedIdx);
+            QTextDocument *descDoc = chatModel->getCachedDocument(descKey);
+            if (!descDoc) {
+                descDoc = new QTextDocument;
+                descDoc->setDefaultFont(descFont);
+                descDoc->setTextWidth(embedLayout.descriptionRect.width());
+                registerEmojiResources(*descDoc, descHtml, imageManager);
+                descDoc->setHtml(descHtml);
+                chatModel->cacheDocument(descKey, descDoc);
+            } else if (int(descDoc->textWidth()) != embedLayout.descriptionRect.width()) {
+                descDoc->setTextWidth(embedLayout.descriptionRect.width());
+            }
 
             painter->save();
             painter->translate(embedLayout.descriptionRect.topLeft());
             QAbstractTextDocumentLayout::PaintContext descCtx;
             descCtx.palette.setColor(QPalette::Text, option.palette.text().color());
-            descDoc.documentLayout()->draw(painter, descCtx);
+            descDoc->documentLayout()->draw(painter, descCtx);
             painter->restore();
         }
 
@@ -496,33 +520,48 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 continue;
 
             const auto &field = embed.fields[fieldLayout.fieldIndex];
+            int fi = fieldLayout.fieldIndex;
 
-            QTextDocument nameDoc;
-            nameDoc.setDefaultFont(fieldNameFont);
-            nameDoc.setTextWidth(fieldLayout.nameRect.width());
             QString nameHtml = !field.nameParsed.isEmpty() ? field.nameParsed : field.name;
-            registerEmojiResources(nameDoc, nameHtml, imageManager);
-            nameDoc.setHtml(nameHtml);
+            DocCacheKey nameKey = embedFieldNameDocKey(msgId, embedIdx, fi);
+            QTextDocument *nameDoc = chatModel->getCachedDocument(nameKey);
+            if (!nameDoc) {
+                nameDoc = new QTextDocument;
+                nameDoc->setDefaultFont(fieldNameFont);
+                nameDoc->setTextWidth(fieldLayout.nameRect.width());
+                registerEmojiResources(*nameDoc, nameHtml, imageManager);
+                nameDoc->setHtml(nameHtml);
+                chatModel->cacheDocument(nameKey, nameDoc);
+            } else if (int(nameDoc->textWidth()) != fieldLayout.nameRect.width()) {
+                nameDoc->setTextWidth(fieldLayout.nameRect.width());
+            }
 
             painter->save();
             painter->translate(fieldLayout.nameRect.topLeft());
             QAbstractTextDocumentLayout::PaintContext nameCtx;
             nameCtx.palette.setColor(QPalette::Text, option.palette.text().color());
-            nameDoc.documentLayout()->draw(painter, nameCtx);
+            nameDoc->documentLayout()->draw(painter, nameCtx);
             painter->restore();
 
-            QTextDocument valueDoc;
-            valueDoc.setDefaultFont(option.font);
-            valueDoc.setTextWidth(fieldLayout.valueRect.width());
             QString valueHtml = !field.valueParsed.isEmpty() ? field.valueParsed : field.value;
-            registerEmojiResources(valueDoc, valueHtml, imageManager);
-            valueDoc.setHtml(valueHtml);
+            DocCacheKey valueKey = embedFieldValueDocKey(msgId, embedIdx, fi);
+            QTextDocument *valueDoc = chatModel->getCachedDocument(valueKey);
+            if (!valueDoc) {
+                valueDoc = new QTextDocument;
+                valueDoc->setDefaultFont(option.font);
+                valueDoc->setTextWidth(fieldLayout.valueRect.width());
+                registerEmojiResources(*valueDoc, valueHtml, imageManager);
+                valueDoc->setHtml(valueHtml);
+                chatModel->cacheDocument(valueKey, valueDoc);
+            } else if (int(valueDoc->textWidth()) != fieldLayout.valueRect.width()) {
+                valueDoc->setTextWidth(fieldLayout.valueRect.width());
+            }
 
             painter->save();
             painter->translate(fieldLayout.valueRect.topLeft());
             QAbstractTextDocumentLayout::PaintContext valueCtx;
             valueCtx.palette.setColor(QPalette::Text, option.palette.text().color().darker(110));
-            valueDoc.documentLayout()->draw(painter, valueCtx);
+            valueDoc->documentLayout()->draw(painter, valueCtx);
             painter->restore();
         }
 

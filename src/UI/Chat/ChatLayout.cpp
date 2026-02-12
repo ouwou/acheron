@@ -190,7 +190,8 @@ AttachmentGridLayout calculateAttachmentGrid(int count, int maxWidth)
 }
 
 EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int maxWidth, int left,
-                                 int top)
+                                 int top, const ChatModel *model, Core::Snowflake messageId,
+                                 int embedIndex)
 {
     EmbedLayout layout = {};
 
@@ -279,24 +280,41 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
     if (!embed.title.isEmpty()) {
         QFont titleFont = font;
         titleFont.setBold(true);
-        QTextDocument titleDoc;
-        titleDoc.setDefaultFont(titleFont);
-        titleDoc.setTextWidth(contentWidth);
         QString titleHtml = !embed.titleParsed.isEmpty() ? embed.titleParsed : embed.title;
-        titleDoc.setHtml(titleHtml);
-        int titleHeight = int(std::ceil(titleDoc.size().height())) + 4;
+        int titleHeight;
+        QTextDocument *cached = model ? model->getCachedDocument(embedTitleDocKey(messageId, embedIndex))
+                                      : nullptr;
+        if (cached) {
+            if (int(cached->textWidth()) != contentWidth)
+                cached->setTextWidth(contentWidth);
+            titleHeight = int(std::ceil(cached->size().height())) + 4;
+        } else {
+            QTextDocument titleDoc;
+            titleDoc.setDefaultFont(titleFont);
+            titleDoc.setTextWidth(contentWidth);
+            titleDoc.setHtml(titleHtml);
+            titleHeight = int(std::ceil(titleDoc.size().height())) + 4;
+        }
         layout.titleRect = QRect(contentLeft, contentTop + currentY, contentWidth, titleHeight);
         currentY += titleHeight;
     }
 
     if (!embed.description.isEmpty()) {
-        QTextDocument descDoc;
-        descDoc.setDefaultFont(font);
-        descDoc.setTextWidth(contentWidth);
-        QString descHtml =
-                !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed : embed.description;
-        descDoc.setHtml(descHtml);
-        int descriptionHeight = int(std::ceil(descDoc.size().height())) + 8;
+        QString descHtml = !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed : embed.description;
+        int descriptionHeight;
+        QTextDocument *cached = model ? model->getCachedDocument(embedDescDocKey(messageId, embedIndex))
+                                      : nullptr;
+        if (cached) {
+            if (int(cached->textWidth()) != contentWidth)
+                cached->setTextWidth(contentWidth);
+            descriptionHeight = int(std::ceil(cached->size().height())) + 8;
+        } else {
+            QTextDocument descDoc;
+            descDoc.setDefaultFont(font);
+            descDoc.setTextWidth(contentWidth);
+            descDoc.setHtml(descHtml);
+            descriptionHeight = int(std::ceil(descDoc.size().height())) + 8;
+        }
         layout.descriptionRect =
                 QRect(contentLeft, contentTop + currentY, contentWidth, descriptionHeight);
         currentY += descriptionHeight;
@@ -316,20 +334,40 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
 
         for (int i = 0; i < embed.fields.size(); ++i) {
             const auto &field = embed.fields[i];
+            int fldTextWidth = field.isInline ? fieldWidth : contentWidth;
 
-            QTextDocument nameDoc;
-            nameDoc.setDefaultFont(fieldNameFont);
-            nameDoc.setTextWidth(field.isInline ? fieldWidth : contentWidth);
             QString nameHtml = !field.nameParsed.isEmpty() ? field.nameParsed : field.name;
-            nameDoc.setHtml(nameHtml);
-            int nameHeight = int(std::ceil(nameDoc.size().height()));
+            int nameHeight;
+            QTextDocument *cachedName = model
+                                                ? model->getCachedDocument(embedFieldNameDocKey(messageId, embedIndex, i))
+                                                : nullptr;
+            if (cachedName) {
+                if (int(cachedName->textWidth()) != fldTextWidth)
+                    cachedName->setTextWidth(fldTextWidth);
+                nameHeight = int(std::ceil(cachedName->size().height()));
+            } else {
+                QTextDocument nameDoc;
+                nameDoc.setDefaultFont(fieldNameFont);
+                nameDoc.setTextWidth(fldTextWidth);
+                nameDoc.setHtml(nameHtml);
+                nameHeight = int(std::ceil(nameDoc.size().height()));
+            }
 
-            QTextDocument valueDoc;
-            valueDoc.setDefaultFont(font);
-            valueDoc.setTextWidth(field.isInline ? fieldWidth : contentWidth);
             QString valueHtml = !field.valueParsed.isEmpty() ? field.valueParsed : field.value;
-            valueDoc.setHtml(valueHtml);
-            int valueHeight = int(std::ceil(valueDoc.size().height()));
+            int valueHeight;
+            QTextDocument *cachedValue = model ? model->getCachedDocument(embedFieldValueDocKey(messageId, embedIndex, i))
+                                               : nullptr;
+            if (cachedValue) {
+                if (int(cachedValue->textWidth()) != fldTextWidth)
+                    cachedValue->setTextWidth(fldTextWidth);
+                valueHeight = int(std::ceil(cachedValue->size().height()));
+            } else {
+                QTextDocument valueDoc;
+                valueDoc.setDefaultFont(font);
+                valueDoc.setTextWidth(fldTextWidth);
+                valueDoc.setHtml(valueHtml);
+                valueHeight = int(std::ceil(valueDoc.size().height()));
+            }
             int fieldHeight = nameHeight + 2 + valueHeight;
 
             EmbedFieldLayout fieldLayout;
@@ -521,9 +559,17 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
     }
 
     if (!ctx.htmlContent.isEmpty()) {
-        QTextDocument doc;
-        setupDocument(doc, ctx.htmlContent, ctx.font, textWidth);
-        layout.textHeight = int(std::ceil(doc.size().height()));
+        QTextDocument *cached = ctx.model ? ctx.model->getCachedDocument(bodyDocKey(ctx.messageId))
+                                          : nullptr;
+        if (cached) {
+            if (int(cached->textWidth()) != textWidth)
+                cached->setTextWidth(textWidth);
+            layout.textHeight = int(std::ceil(cached->size().height()));
+        } else {
+            QTextDocument doc;
+            setupDocument(doc, ctx.htmlContent, ctx.font, textWidth);
+            layout.textHeight = int(std::ceil(doc.size().height()));
+        }
     }
 
     int textTop;
@@ -619,9 +665,10 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
 
     if (!ctx.embeds.isEmpty()) {
         int embedTop = layout.embedsTop;
-        for (const auto &embed : ctx.embeds) {
-            EmbedLayout embedLayout =
-                    calculateEmbedLayout(embed, ctx.font, textWidth, textLeft, embedTop);
+        for (int ei = 0; ei < ctx.embeds.size(); ++ei) {
+            const auto &embed = ctx.embeds[ei];
+            EmbedLayout embedLayout = calculateEmbedLayout(embed, ctx.font, textWidth, textLeft,
+                                                           embedTop, ctx.model, ctx.messageId, ei);
             layout.embedLayouts.append(embedLayout);
             embedTop += embedLayout.totalHeight + padding();
             layout.embedsTotalHeight += embedLayout.totalHeight + padding();
@@ -698,7 +745,6 @@ int hitTestCharIndex(QAbstractItemView *view, const QModelIndex &index, const QP
     const bool hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
     ReplyData reply = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
     bool hasReply = reply.state != ReplyData::State::None;
-    // For replies, the top padding is removed so offset is replyBarHeight - padding
     int replyOffset = hasReply ? replyBarHeight() - padding() : 0;
 
     QFont docFont = getFontForIndex(view, index);
@@ -708,15 +754,23 @@ int hitTestCharIndex(QAbstractItemView *view, const QModelIndex &index, const QP
     QRect textRect = textRectForRow(rowRect, showHeader, fm, hasSeparator);
     textRect.translate(0, replyOffset);
 
-    QTextDocument doc;
-    setupDocument(doc, html, docFont, textRect.width());
+    const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
+    Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+    QTextDocument *doc = chatModel->getCachedDocument(bodyDocKey(msgId));
+    QTextDocument localDoc;
+    if (!doc) {
+        setupDocument(localDoc, html, docFont, textRect.width());
+        doc = &localDoc;
+    } else if (int(doc->textWidth()) != textRect.width()) {
+        doc->setTextWidth(textRect.width());
+    }
 
     QPointF local = viewportPos - textRect.topLeft();
 
-    if (local.y() < 0 || local.y() > doc.size().height())
+    if (local.y() < 0 || local.y() > doc->size().height())
         return -1;
 
-    return doc.documentLayout()->hitTest(local, Qt::ExactHit);
+    return doc->documentLayout()->hitTest(local, Qt::ExactHit);
 }
 
 QRectF charRectInDocument(const QTextDocument &doc, int charIndex)
@@ -769,12 +823,20 @@ QString getLinkAt(const QAbstractItemView *view, const QModelIndex &index, const
     if (!textRect.contains(mousePos))
         return {};
 
-    QTextDocument doc;
-    setupDocument(doc, html, font, textRect.width());
+    const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
+    Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+    QTextDocument *doc = chatModel->getCachedDocument(bodyDocKey(msgId));
+    QTextDocument localDoc;
+    if (!doc) {
+        setupDocument(localDoc, html, font, textRect.width());
+        doc = &localDoc;
+    } else if (int(doc->textWidth()) != textRect.width()) {
+        doc->setTextWidth(textRect.width());
+    }
 
     QPointF localPos = mousePos - textRect.topLeft();
 
-    return doc.documentLayout()->anchorAt(localPos);
+    return doc->documentLayout()->anchorAt(localPos);
 }
 
 std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
@@ -798,6 +860,8 @@ std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
     ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
     ctx.attachments = attachments;
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.model = qobject_cast<const ChatModel *>(index.model());
+    ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
 
     MessageLayout layout = calculateMessageLayout(ctx);
 
@@ -824,6 +888,9 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
     if (embeds.isEmpty())
         return std::nullopt;
 
+    const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
+    Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+
     LayoutContext ctx;
     ctx.font = view->font();
     QRect rowRect = view->visualRect(index);
@@ -835,6 +902,8 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
     ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
     ctx.embeds = embeds;
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.model = chatModel;
+    ctx.messageId = msgId;
 
     MessageLayout layout = calculateMessageLayout(ctx);
 
@@ -873,12 +942,16 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
                 if (!embed.titleParsed.isEmpty()) {
                     QFont titleFont = view->font();
                     titleFont.setBold(true);
-                    QTextDocument titleDoc;
-                    titleDoc.setDefaultFont(titleFont);
-                    titleDoc.setTextWidth(embedLayout.titleRect.width());
-                    titleDoc.setHtml(embed.titleParsed);
+                    QTextDocument *titleDoc = chatModel->getCachedDocument(embedTitleDocKey(msgId, embedIndex));
+                    QTextDocument localTitleDoc;
+                    if (!titleDoc) {
+                        localTitleDoc.setDefaultFont(titleFont);
+                        localTitleDoc.setTextWidth(embedLayout.titleRect.width());
+                        localTitleDoc.setHtml(embed.titleParsed);
+                        titleDoc = &localTitleDoc;
+                    }
                     QPointF localPos = mousePos - embedLayout.titleRect.topLeft();
-                    QString linkUrl = titleDoc.documentLayout()->anchorAt(localPos);
+                    QString linkUrl = titleDoc->documentLayout()->anchorAt(localPos);
                     if (!linkUrl.isEmpty()) {
                         EmbedHitResult result;
                         result.embedIndex = embedIndex;
@@ -928,12 +1001,16 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
 
         if (!embed.description.isEmpty() && !embedLayout.descriptionRect.isNull() &&
             embedLayout.descriptionRect.contains(mousePos) && !embed.descriptionParsed.isEmpty()) {
-            QTextDocument descDoc;
-            descDoc.setDefaultFont(view->font());
-            descDoc.setTextWidth(embedLayout.descriptionRect.width());
-            descDoc.setHtml(embed.descriptionParsed);
+            QTextDocument *descDoc = chatModel->getCachedDocument(embedDescDocKey(msgId, embedIndex));
+            QTextDocument localDescDoc;
+            if (!descDoc) {
+                localDescDoc.setDefaultFont(view->font());
+                localDescDoc.setTextWidth(embedLayout.descriptionRect.width());
+                localDescDoc.setHtml(embed.descriptionParsed);
+                descDoc = &localDescDoc;
+            }
             QPointF localPos = mousePos - embedLayout.descriptionRect.topLeft();
-            QString linkUrl = descDoc.documentLayout()->anchorAt(localPos);
+            QString linkUrl = descDoc->documentLayout()->anchorAt(localPos);
             if (!linkUrl.isEmpty()) {
                 EmbedHitResult result;
                 result.embedIndex = embedIndex;
@@ -952,12 +1029,16 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
             if (fieldLayout.nameRect.contains(mousePos) && !field.nameParsed.isEmpty()) {
                 QFont fieldNameFont = view->font();
                 fieldNameFont.setBold(true);
-                QTextDocument nameDoc;
-                nameDoc.setDefaultFont(fieldNameFont);
-                nameDoc.setTextWidth(fieldLayout.nameRect.width());
-                nameDoc.setHtml(field.nameParsed);
+                QTextDocument *nameDoc = chatModel->getCachedDocument(embedFieldNameDocKey(msgId, embedIndex, fieldLayout.fieldIndex));
+                QTextDocument localNameDoc;
+                if (!nameDoc) {
+                    localNameDoc.setDefaultFont(fieldNameFont);
+                    localNameDoc.setTextWidth(fieldLayout.nameRect.width());
+                    localNameDoc.setHtml(field.nameParsed);
+                    nameDoc = &localNameDoc;
+                }
                 QPointF localPos = mousePos - fieldLayout.nameRect.topLeft();
-                QString linkUrl = nameDoc.documentLayout()->anchorAt(localPos);
+                QString linkUrl = nameDoc->documentLayout()->anchorAt(localPos);
                 if (!linkUrl.isEmpty()) {
                     EmbedHitResult result;
                     result.embedIndex = embedIndex;
@@ -968,12 +1049,16 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
             }
 
             if (fieldLayout.valueRect.contains(mousePos) && !field.valueParsed.isEmpty()) {
-                QTextDocument valueDoc;
-                valueDoc.setDefaultFont(view->font());
-                valueDoc.setTextWidth(fieldLayout.valueRect.width());
-                valueDoc.setHtml(field.valueParsed);
+                QTextDocument *valueDoc = chatModel->getCachedDocument(embedFieldValueDocKey(msgId, embedIndex, fieldLayout.fieldIndex));
+                QTextDocument localValueDoc;
+                if (!valueDoc) {
+                    localValueDoc.setDefaultFont(view->font());
+                    localValueDoc.setTextWidth(fieldLayout.valueRect.width());
+                    localValueDoc.setHtml(field.valueParsed);
+                    valueDoc = &localValueDoc;
+                }
                 QPointF localPos = mousePos - fieldLayout.valueRect.topLeft();
-                QString linkUrl = valueDoc.documentLayout()->anchorAt(localPos);
+                QString linkUrl = valueDoc->documentLayout()->anchorAt(localPos);
                 if (!linkUrl.isEmpty()) {
                     EmbedHitResult result;
                     result.embedIndex = embedIndex;

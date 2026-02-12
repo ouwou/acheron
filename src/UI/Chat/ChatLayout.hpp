@@ -169,11 +169,16 @@ struct LayoutContext
     QList<AttachmentData> attachments;
     QList<EmbedData> embeds;
     ReplyData replyData;
+
+    const ChatModel *model = nullptr;
+    Core::Snowflake messageId;
 };
 
 MessageLayout calculateMessageLayout(const LayoutContext &ctx);
 EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int maxWidth, int left,
-                                 int top);
+                                 int top, const ChatModel *model = nullptr,
+                                 Core::Snowflake messageId = Core::Snowflake::Invalid,
+                                 int embedIndex = -1);
 int calculateAttachmentsHeight(const QList<AttachmentData> &attachments, int textWidth);
 int calculateEmbedsHeight(const QList<EmbedData> &embeds, const QFont &font, int textWidth);
 enum class EmbedHitType {
