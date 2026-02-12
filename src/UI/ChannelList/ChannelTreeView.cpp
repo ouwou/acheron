@@ -70,6 +70,7 @@ bool ChannelTreeView::handleMouseEventForExpansion(QMouseEvent *event)
         return true;
     } else if (model()->hasChildren(proxyIndex)) {
         setExpanded(proxyIndex, !isExpanded(proxyIndex));
+        return true;
     }
     return false;
 }
