@@ -3,11 +3,37 @@
 #include "ChatModel.hpp"
 #include "ChatLayout.hpp"
 #include "ChatView.hpp"
+#include "Core/ImageManager.hpp"
 
 #include <algorithm>
 
 namespace Acheron {
 namespace UI {
+
+static const QRegularExpression &emojiImgRegex()
+{
+    static const QRegularExpression re(
+            R"lol(<img src="(https://cdn\.discordapp\.com/emojis/\d+\.webp\?size=\d+)"[^>]*width="(\d+)")lol");
+    return re;
+}
+
+static const QString emojiCdnPrefix = QStringLiteral("https://cdn.discordapp.com/emojis/");
+
+static void registerEmojiResources(QTextDocument &doc, const QString &html,
+                                   Core::ImageManager *imageManager)
+{
+    if (!imageManager || !html.contains(emojiCdnPrefix))
+        return;
+
+    auto it = emojiImgRegex().globalMatch(html);
+    while (it.hasNext()) {
+        auto match = it.next();
+        QUrl url(match.captured(1));
+        int size = match.captured(2).toInt();
+        QPixmap px = imageManager->get(url, QSize(size, size));
+        doc.addResource(QTextDocument::ImageResource, url, px);
+    }
+}
 
 static ChatLayout::LayoutContext buildLayoutContext(const QStyleOptionViewItem &option,
                                                     const QModelIndex &index)
@@ -186,6 +212,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     QTextDocument doc;
     ChatLayout::setupDocument(doc, ctx.htmlContent, option.font, layout.textRect.width());
+    registerEmojiResources(doc, ctx.htmlContent, imageManager);
 
     painter->translate(layout.textRect.topLeft());
 
@@ -428,6 +455,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             titleDoc.setDefaultFont(titleFont);
             titleDoc.setTextWidth(embedLayout.titleRect.width());
             QString titleHtml = !embed.titleParsed.isEmpty() ? embed.titleParsed : embed.title;
+            registerEmojiResources(titleDoc, titleHtml, imageManager);
             titleDoc.setHtml(titleHtml);
 
             painter->save();
@@ -448,6 +476,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             descDoc.setTextWidth(embedLayout.descriptionRect.width());
             QString descHtml = !embed.descriptionParsed.isEmpty() ? embed.descriptionParsed
                                                                   : embed.description;
+            registerEmojiResources(descDoc, descHtml, imageManager);
             descDoc.setHtml(descHtml);
 
             painter->save();
@@ -472,6 +501,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             nameDoc.setDefaultFont(fieldNameFont);
             nameDoc.setTextWidth(fieldLayout.nameRect.width());
             QString nameHtml = !field.nameParsed.isEmpty() ? field.nameParsed : field.name;
+            registerEmojiResources(nameDoc, nameHtml, imageManager);
             nameDoc.setHtml(nameHtml);
 
             painter->save();
@@ -485,6 +515,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             valueDoc.setDefaultFont(option.font);
             valueDoc.setTextWidth(fieldLayout.valueRect.width());
             QString valueHtml = !field.valueParsed.isEmpty() ? field.valueParsed : field.value;
+            registerEmojiResources(valueDoc, valueHtml, imageManager);
             valueDoc.setHtml(valueHtml);
 
             painter->save();

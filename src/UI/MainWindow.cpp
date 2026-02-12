@@ -410,7 +410,7 @@ void MainWindow::setupUi()
             });
 
     chatView->setModel(chatModel);
-    chatView->setItemDelegate(new ChatDelegate(chatView));
+    chatView->setItemDelegate(new ChatDelegate(session->getImageManager(), chatView));
     chatView->setIconSize(QSize(24, 24));
     chatView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     chatView->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);

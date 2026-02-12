@@ -57,6 +57,7 @@ set(PROJECT_SOURCES
     src/Core/PermissionManager.cpp
     src/Core/PermissionComputer.cpp
     src/Core/ReadStateManager.cpp
+    src/Core/EmojiSegmenter.cpp
     src/Core/Markdown/Parser.cpp
     src/UI/MainWindow.cpp
     src/UI/TypingIndicator.cpp
@@ -100,9 +101,11 @@ set(PROJECT_SOURCES
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
-qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp)
+target_include_directories(${PROJECT_NAME} PRIVATE vendor/emoji-segmenter)
+
+qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp src/Core/EmojiSegmenter.cpp)
 target_link_libraries(TestMarkdown PRIVATE Qt::Core Qt::Test)
-target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
 add_test(NAME MarkdownTests COMMAND TestMarkdown)
 
 qt_add_translations(${PROJECT_NAME})

@@ -69,7 +69,8 @@ void MessageManager::requestLoadChannel(Snowflake channelId)
                 Markdown::ParseState state;
                 state.isInline = true;
                 auto ast = parser->parse(msg.content, state);
-                msg.parsedContentCached = parser->toHtml(ast);
+                bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+                msg.parsedContentCached = parser->toHtml(ast, jumbo);
             }
 
             emit messagesReceived({
@@ -159,7 +160,8 @@ void MessageManager::requestLoadHistory(Snowflake channelId, Snowflake beforeId)
             Markdown::ParseState state;
             state.isInline = true;
             auto ast = parser->parse(msg.content, state);
-            msg.parsedContentCached = parser->toHtml(ast);
+            bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+            msg.parsedContentCached = parser->toHtml(ast, jumbo);
         }
 
         if (!msgs.isEmpty()) { // probably good
@@ -220,10 +222,11 @@ void MessageManager::onMessageCreated(const Discord::Message &message)
 void MessageManager::onMessageUpdated(const Discord::Message &message)
 {
     Discord::Message updatedMsg = message;
-    static Markdown::ParseState state;
+    Markdown::ParseState state;
     state.isInline = true;
     auto ast = parser->parse(updatedMsg.content, state);
-    updatedMsg.parsedContentCached = parser->toHtml(ast);
+    bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+    updatedMsg.parsedContentCached = parser->toHtml(ast, jumbo);
 
     messageCache.insert(message.id, new Discord::Message(updatedMsg));
 
@@ -287,7 +290,8 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
     Markdown::ParseState state;
     state.isInline = true;
     auto ast = parser->parse(content, state);
-    preview.parsedContentCached = parser->toHtml(ast);
+    bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+    preview.parsedContentCached = parser->toHtml(ast, jumbo);
 
     // get our fake preview in
     emit messagesReceived(
@@ -320,7 +324,8 @@ void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messag
         Markdown::ParseState state;
         state.isInline = true;
         auto ast = parser->parse(msg.content, state);
-        msg.parsedContentCached = parser->toHtml(ast);
+        bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+        msg.parsedContentCached = parser->toHtml(ast, jumbo);
     }
 
     for (const auto &msg : sortedMessages) {

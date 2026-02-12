@@ -56,6 +56,36 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
                     if (index.isValid())
                         emit dataChanged(index, index, { Qt::DecorationRole });
                 }
+
+                if (url.host() == u"cdn.discordapp.com" && url.path().startsWith(u"/emojis/")) {
+                    QString urlStr = url.toString();
+                    for (int row = 0; row < messages.size(); ++row) {
+                        const auto &msg = messages[row];
+                        bool found = msg.parsedContentCached.contains(urlStr);
+                        if (!found && embedCache.contains(msg.id)) {
+                            for (const auto &embed : embedCache.value(msg.id)) {
+                                if (embed.titleParsed.contains(urlStr) ||
+                                    embed.descriptionParsed.contains(urlStr)) {
+                                    found = true;
+                                    break;
+                                }
+                                for (const auto &field : embed.fields) {
+                                    if (field.nameParsed.contains(urlStr) ||
+                                        field.valueParsed.contains(urlStr)) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (found)
+                                    break;
+                            }
+                        }
+                        if (found) {
+                            QModelIndex idx = index(row, 0);
+                            emit dataChanged(idx, idx, { HtmlRole, EmbedsRole, CachedSizeRole });
+                        }
+                    }
+                }
             });
 
     connect(attachmentCache, &Core::AttachmentCache::attachmentFetched, this,

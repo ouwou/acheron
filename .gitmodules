@@ -1,3 +1,6 @@
 [submodule "vendor/qtkeychain"]
 	path = vendor/qtkeychain
 	url = https://github.com/frankosterfeld/qtkeychain.git
+[submodule "vendor/emoji-segmenter"]
+	path = vendor/emoji-segmenter
+	url = https://github.com/google/emoji-segmenter/

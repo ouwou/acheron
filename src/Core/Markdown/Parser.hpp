@@ -54,13 +54,17 @@ public:
     Parser();
 
     QList<AstNode> parse(QString source, ParseState state = {});
-    QString toHtml(const QList<AstNode> &nodes);
+    QString toHtml(const QList<AstNode> &nodes, bool jumboEmoji = false);
 
     void setUserResolver(UserResolverFn resolver);
+
+    static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
 
 private:
     void setupDefaultRules();
     void sortRules();
+
+    QString toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji);
 
 private:
     QList<MarkdownRule> rules;

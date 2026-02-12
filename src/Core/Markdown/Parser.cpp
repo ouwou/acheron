@@ -1,6 +1,9 @@
 #include "Parser.hpp"
+#include "Core/EmojiSegmenter.hpp"
 
 #include <QRegularExpression>
+
+using Acheron::Core::countUnicodeEmojisSegmented;
 
 namespace Acheron {
 namespace Core {
@@ -96,7 +99,39 @@ QList<AstNode> Parser::parse(QString source, ParseState state)
     return result;
 }
 
-QString Parser::toHtml(const QList<AstNode> &nodes)
+QString Parser::toHtml(const QList<AstNode> &nodes, bool jumboEmoji)
+{
+    return toHtmlInternal(nodes, jumboEmoji);
+}
+
+bool Parser::isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis)
+{
+    int totalEmojis = 0;
+    for (const auto &node : nodes) {
+        if (node.type == "customEmoji") {
+            totalEmojis++;
+            if (totalEmojis > maxEmojis)
+                return false;
+            continue;
+        }
+        if (node.type == "br" || node.type == "newline")
+            continue;
+        if (node.type == "text" || node.type.isEmpty()) {
+            int unicodeCount = countUnicodeEmojisSegmented(node.content);
+            if (unicodeCount < 0)
+                return false;
+            totalEmojis += unicodeCount;
+            if (totalEmojis > maxEmojis)
+                return false;
+            continue;
+        }
+        // Any other node type (em, strong, url, link, code, etc.) disqualifies
+        return false;
+    }
+    return totalEmojis > 0;
+}
+
+QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
 {
     QString result;
     for (const auto &node : nodes) {
@@ -113,9 +148,30 @@ QString Parser::toHtml(const QList<AstNode> &nodes)
             continue;
         }
 
+        if (node.type == "customEmoji") {
+            QString id = node.content;
+            QString name = node.attributes["name"].toString();
+            int emojiSize = jumboEmoji ? 44 : 22;
+            QString url = QString("https://cdn.discordapp.com/emojis/%1.webp?size=128").arg(id);
+            result += QString(R"(<img src="%1" alt=":%2:" width="%3" height="%3" style="vertical-align: middle;" />)")
+                              .arg(url.toHtmlEscaped())
+                              .arg(name.toHtmlEscaped())
+                              .arg(emojiSize);
+            continue;
+        }
+
+        if (jumboEmoji && node.type == "text") {
+            QString escaped = node.content.toHtmlEscaped();
+            if (!node.content.trimmed().isEmpty())
+                result += QString(R"(<span style="font-size: 44px;">%1</span>)").arg(escaped);
+            else
+                result += escaped;
+            continue;
+        }
+
         if (ruleMap.contains(node.type) && ruleMap[node.type]->html) {
-            auto renderChildren = [this](const QList<AstNode> &children) {
-                return this->toHtml(children);
+            auto renderChildren = [this, jumboEmoji](const QList<AstNode> &children) {
+                return this->toHtmlInternal(children, jumboEmoji);
             };
             result += ruleMap[node.type]->html(node, renderChildren);
         } else {
@@ -271,6 +327,23 @@ void Parser::setupDefaultRules()
     };
     // .html handled in toHtml() because of user resolution
     rules.append(user);
+
+    MarkdownRule customEmoji;
+    customEmoji.name = "customEmoji";
+    customEmoji.order = 21;
+    customEmoji.regex = QRegularExpression(R"(^<(a?):([a-zA-Z0-9_]{1,32}):(\d+)>)");
+    customEmoji.match = anyScopeRegex(customEmoji.regex);
+    customEmoji.parse = [](const Capture &match, NestedParseFn nestedParse,
+                           ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "customEmoji";
+        node.content = match.captured(3);
+        node.attributes["name"] = match.captured(2);
+        node.attributes["animated"] = !match.captured(1).isEmpty();
+        return node;
+    };
+    // .html handled in toHtmlInternal() for jumbo emoji support
+    rules.append(customEmoji);
 
     MarkdownRule strong;
     strong.name = "strong";

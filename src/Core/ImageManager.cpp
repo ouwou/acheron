@@ -83,7 +83,11 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size)
                 cache.insert({ url, size }, new QPixmap(pixmap));
                 requests.remove({ url, size });
                 emit imageFetched(url, size, pixmap);
+            } else {
+                requests.remove({ url, size });
             }
+        } else {
+            requests.remove({ url, size });
         }
         reply->deleteLater();
     });
