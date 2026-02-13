@@ -219,6 +219,21 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::MESSAGE_ACK:
         handleMessageAck(data);
         break;
+    case GatewayEvent::MESSAGE_REACTION_ADD:
+        handleMessageReactionAdd(data);
+        break;
+    case GatewayEvent::MESSAGE_REACTION_ADD_MANY:
+        handleMessageReactionAddMany(data);
+        break;
+    case GatewayEvent::MESSAGE_REACTION_REMOVE:
+        handleMessageReactionRemove(data);
+        break;
+    case GatewayEvent::MESSAGE_REACTION_REMOVE_ALL:
+        handleMessageReactionRemoveAll(data);
+        break;
+    case GatewayEvent::MESSAGE_REACTION_REMOVE_EMOJI:
+        handleMessageReactionRemoveEmoji(data);
+        break;
     case GatewayEvent::USER_GUILD_SETTINGS_UPDATE:
         handleUserGuildSettingsUpdate(data);
         break;
@@ -344,6 +359,41 @@ void Gateway::handleMessageAck(const Inbound &data)
     MessageAck event = data.getData<MessageAck>();
 
     emit gatewayMessageAck(event);
+}
+
+void Gateway::handleMessageReactionAdd(const Inbound &data)
+{
+    MessageReactionAdd event = data.getData<MessageReactionAdd>();
+
+    emit gatewayMessageReactionAdd(event);
+}
+
+void Gateway::handleMessageReactionAddMany(const Inbound &data)
+{
+    MessageReactionAddMany event = data.getData<MessageReactionAddMany>();
+
+    emit gatewayMessageReactionAddMany(event);
+}
+
+void Gateway::handleMessageReactionRemove(const Inbound &data)
+{
+    MessageReactionRemove event = data.getData<MessageReactionRemove>();
+
+    emit gatewayMessageReactionRemove(event);
+}
+
+void Gateway::handleMessageReactionRemoveAll(const Inbound &data)
+{
+    MessageReactionRemoveAll event = data.getData<MessageReactionRemoveAll>();
+
+    emit gatewayMessageReactionRemoveAll(event);
+}
+
+void Gateway::handleMessageReactionRemoveEmoji(const Inbound &data)
+{
+    MessageReactionRemoveEmoji event = data.getData<MessageReactionRemoveEmoji>();
+
+    emit gatewayMessageReactionRemoveEmoji(event);
 }
 
 void Gateway::handleUserGuildSettingsUpdate(const Inbound &data)

@@ -258,5 +258,119 @@ struct MessageAck : Core::JsonUtils::JsonObject
     }
 };
 
+struct MessageReactionAdd : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> userId;
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake> messageId;
+    Field<Core::Snowflake, true> messageAuthorId;
+    Field<Core::Snowflake, true> guildId;
+    Field<Emoji> emoji;
+    Field<int, true> type; // 0 = normal, 1 = burst
+    Field<QList<QString>, true> burstColors;
+
+    static MessageReactionAdd fromJson(const QJsonObject &obj)
+    {
+        MessageReactionAdd event;
+        get(obj, "user_id", event.userId);
+        get(obj, "channel_id", event.channelId);
+        get(obj, "message_id", event.messageId);
+        get(obj, "message_author_id", event.messageAuthorId);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "emoji", event.emoji);
+        get(obj, "type", event.type);
+        get(obj, "burst_colors", event.burstColors);
+        return event;
+    }
+};
+
+struct DebouncedReaction : Core::JsonUtils::JsonObject
+{
+    Field<QList<Core::Snowflake>> users;
+    Field<Emoji> emoji;
+
+    static DebouncedReaction fromJson(const QJsonObject &obj)
+    {
+        DebouncedReaction reaction;
+        get(obj, "users", reaction.users);
+        get(obj, "emoji", reaction.emoji);
+        return reaction;
+    }
+};
+
+struct MessageReactionAddMany : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake> messageId;
+    Field<Core::Snowflake, true> guildId;
+    Field<QList<DebouncedReaction>> reactions;
+
+    static MessageReactionAddMany fromJson(const QJsonObject &obj)
+    {
+        MessageReactionAddMany event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "message_id", event.messageId);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "reactions", event.reactions);
+        return event;
+    }
+};
+
+struct MessageReactionRemove : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> userId;
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake> messageId;
+    Field<Core::Snowflake, true> guildId;
+    Field<Emoji> emoji;
+    Field<int, true> type;
+
+    static MessageReactionRemove fromJson(const QJsonObject &obj)
+    {
+        MessageReactionRemove event;
+        get(obj, "user_id", event.userId);
+        get(obj, "channel_id", event.channelId);
+        get(obj, "message_id", event.messageId);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "emoji", event.emoji);
+        get(obj, "type", event.type);
+        return event;
+    }
+};
+
+struct MessageReactionRemoveAll : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake> messageId;
+    Field<Core::Snowflake, true> guildId;
+
+    static MessageReactionRemoveAll fromJson(const QJsonObject &obj)
+    {
+        MessageReactionRemoveAll event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "message_id", event.messageId);
+        get(obj, "guild_id", event.guildId);
+        return event;
+    }
+};
+
+struct MessageReactionRemoveEmoji : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake> messageId;
+    Field<Core::Snowflake, true> guildId;
+    Field<Emoji> emoji;
+
+    static MessageReactionRemoveEmoji fromJson(const QJsonObject &obj)
+    {
+        MessageReactionRemoveEmoji event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "message_id", event.messageId);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "emoji", event.emoji);
+        return event;
+    }
+};
+
 } // namespace Discord
 } // namespace Acheron

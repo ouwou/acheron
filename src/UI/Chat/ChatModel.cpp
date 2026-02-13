@@ -80,10 +80,28 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
                                     break;
                             }
                         }
+
+                        bool reactionFound = false;
+                        if (!found && msg.reactions.hasValue()) {
+                            for (const auto &reaction : *msg.reactions) {
+                                if (!reaction.emoji->isUnicode()) {
+                                    QString emojiUrl = reaction.emoji->getImageUrl(48);
+                                    if (emojiUrl == urlStr) {
+                                        reactionFound = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         if (found) {
                             invalidateDocCacheForMessage(msg.id);
                             QModelIndex idx = index(row, 0);
                             emit dataChanged(idx, idx, { HtmlRole, EmbedsRole, CachedSizeRole });
+                        } else if (reactionFound) {
+                            sizeCache.remove(msg.id);
+                            QModelIndex idx = index(row, 0);
+                            emit dataChanged(idx, idx, { ReactionsRole, CachedSizeRole });
                         }
                     }
                 }
@@ -486,6 +504,56 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
     }
     case MessageIdRole:
         return msg.id;
+    case ReactionsRole: {
+        if (!msg.reactions.hasValue() || msg.reactions->isEmpty())
+            return QVariant();
+
+        QList<ReactionData> result;
+        for (const auto &reaction : *msg.reactions) {
+            QPixmap emojiPixmap;
+            bool isLoading = false;
+            Core::Snowflake emojiId;
+            if (!reaction.emoji->isUnicode()) {
+                emojiId = reaction.emoji->id;
+                QString emojiUrl = reaction.emoji->getImageUrl(48);
+                QSize emojiSize(16, 16);
+                emojiPixmap = imageManager->get(QUrl(emojiUrl), emojiSize);
+                isLoading = !imageManager->isCached(QUrl(emojiUrl), emojiSize);
+            }
+
+            int normalCount = reaction.countDetails.hasValue() ? *reaction.countDetails->normal : *reaction.count;
+            int burstCount = reaction.countDetails.hasValue() ? *reaction.countDetails->burst : 0;
+
+            if (burstCount > 0) {
+                ReactionData data;
+                data.emojiName = reaction.emoji->name;
+                data.emojiId = emojiId;
+                data.emojiAnimated = reaction.emoji->animated.hasValue() && *reaction.emoji->animated;
+                data.count = burstCount;
+                data.me = reaction.meBurst.hasValue() && *reaction.meBurst;
+                data.isBurst = true;
+                data.emojiPixmap = emojiPixmap;
+                data.isLoading = isLoading;
+                data.burstTintColor = reaction.getBrightestBurstColor();
+                result.append(data);
+            }
+
+            if (normalCount > 0) {
+                ReactionData data;
+                data.emojiName = reaction.emoji->name;
+                data.emojiId = emojiId;
+                data.emojiAnimated = reaction.emoji->animated.hasValue() && *reaction.emoji->animated;
+                data.count = normalCount;
+                data.me = reaction.me;
+                data.isBurst = false;
+                data.emojiPixmap = emojiPixmap;
+                data.isLoading = isLoading;
+                result.append(data);
+            }
+        }
+
+        return QVariant::fromValue(result);
+    }
     case ReplyDataRole: {
         ReplyData reply;
 

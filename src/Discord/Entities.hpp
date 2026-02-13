@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <QString>
+#include <QColor>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -376,6 +377,92 @@ struct Attachment : Core::JsonUtils::JsonObject
     }
 };
 
+struct Emoji : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake, false, true> id; // null for unicode emojis
+    Field<QString> name;
+    Field<bool, true> animated;
+
+    static Emoji fromJson(const QJsonObject &obj)
+    {
+        Emoji emoji;
+        get(obj, "id", emoji.id);
+        get(obj, "name", emoji.name);
+        get(obj, "animated", emoji.animated);
+        return emoji;
+    }
+
+    bool isUnicode() const { return !id.hasValue() || id.isNull(); }
+
+    QString getImageUrl(int size = 48) const
+    {
+        if (isUnicode())
+            return {};
+        return QString("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
+                .arg(id->toString())
+                .arg(size);
+    }
+};
+
+struct ReactionCountDetails : Core::JsonUtils::JsonObject
+{
+    Field<int> burst;
+    Field<int> normal;
+
+    static ReactionCountDetails fromJson(const QJsonObject &obj)
+    {
+        ReactionCountDetails details;
+        get(obj, "burst", details.burst);
+        get(obj, "normal", details.normal);
+        return details;
+    }
+};
+
+struct Reaction : Core::JsonUtils::JsonObject
+{
+    Field<Emoji> emoji;
+    Field<int> count;
+    Field<ReactionCountDetails, true> countDetails;
+    Field<bool> me;
+    Field<bool, true> meBurst;
+    Field<int, true> burstCount;
+    Field<QList<QString>, true> burstColors;
+
+    static Reaction fromJson(const QJsonObject &obj)
+    {
+        Reaction reaction;
+        get(obj, "emoji", reaction.emoji);
+        get(obj, "count", reaction.count);
+        get(obj, "count_details", reaction.countDetails);
+        get(obj, "me", reaction.me);
+        get(obj, "me_burst", reaction.meBurst);
+        get(obj, "burst_count", reaction.burstCount);
+        get(obj, "burst_colors", reaction.burstColors);
+        return reaction;
+    }
+
+    QColor getBrightestBurstColor() const
+    {
+        if (!burstColors.hasValue() || burstColors->isEmpty())
+            return {};
+
+        QColor best;
+        float maxSaturation = -1;
+
+        for (const QString &hex : *burstColors) {
+            QColor color(hex);
+            if (!color.isValid())
+                continue;
+            if (color.saturationF() > maxSaturation) {
+                maxSaturation = color.saturationF();
+                best = color;
+            }
+        }
+
+        return best;
+    }
+};
+
 struct MessageReference : Core::JsonUtils::JsonObject
 {
     Field<int, true> type;
@@ -409,6 +496,7 @@ struct Message : Core::JsonUtils::JsonObject
     Field<QList<Embed>, true> embeds;
     Field<QList<User>, true> mentions;
     Field<QList<Core::Snowflake>, true> mentionRoles;
+    Field<QList<Reaction>, true> reactions;
 
     Field<MessageReference, true> messageReference;
 
@@ -426,6 +514,7 @@ struct Message : Core::JsonUtils::JsonObject
     // cached data
     QString parsedContentCached;
     QString embedsJson;
+    QString reactionsJson;
 
     // sent
     bool isPendingOutbound = false;
@@ -446,6 +535,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "embeds", message.embeds);
         get(obj, "mentions", message.mentions);
         get(obj, "mention_roles", message.mentionRoles);
+        get(obj, "reactions", message.reactions);
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
@@ -464,6 +554,11 @@ struct Message : Core::JsonUtils::JsonObject
         if (obj.contains("embeds")) {
             QJsonDocument doc(obj.value("embeds").toArray());
             message.embedsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
+        }
+
+        if (obj.contains("reactions")) {
+            QJsonDocument doc(obj.value("reactions").toArray());
+            message.reactionsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
         }
 
         return message;

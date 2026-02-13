@@ -57,6 +57,11 @@ public:
     void pinMessage(Snowflake channelId, Snowflake messageId);
     void unpinMessage(Snowflake channelId, Snowflake messageId);
 
+    void addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
+                     bool isBurst = false);
+    void removeReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
+                        bool isBurst = false);
+
     struct AckEntry
     {
         Snowflake channelId;
@@ -93,6 +98,11 @@ signals:
     void guildRoleUpdated(const GuildRoleUpdate &event);
     void guildRoleDeleted(const GuildRoleDelete &event);
     void messageAcked(const MessageAck &event);
+    void messageReactionAdd(const MessageReactionAdd &event);
+    void messageReactionAddMany(const MessageReactionAddMany &event);
+    void messageReactionRemove(const MessageReactionRemove &event);
+    void messageReactionRemoveAll(const MessageReactionRemoveAll &event);
+    void messageReactionRemoveEmoji(const MessageReactionRemoveEmoji &event);
     void userGuildSettingsUpdated(const UserGuildSettings &settings);
     void messageSendFailed(const QString &nonce, const QString &error);
 

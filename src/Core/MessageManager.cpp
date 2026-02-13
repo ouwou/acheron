@@ -1,6 +1,8 @@
 #include "MessageManager.hpp"
 
 #include <QtConcurrent>
+#include <QJsonArray>
+#include <QJsonDocument>
 
 #include "Discord/Client.hpp"
 #include "Markdown/Parser.hpp"
@@ -298,6 +300,331 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
             { true, Discord::Client::MessageLoadType::Created, channelId, { preview } });
 
     client->sendMessage(channelId, content, nonce, replyToMessageId);
+}
+
+static bool emojisMatch(const Discord::Emoji &a, const Discord::Emoji &b)
+{
+    if (!a.isUnicode() && !b.isUnicode())
+        return a.id.get() == b.id.get();
+    if (a.isUnicode() && b.isUnicode())
+        return a.name.get() == b.name.get();
+    return false;
+}
+
+// todo i dont like this here
+static QString reactionsToJson(const QList<Discord::Reaction> &reactions)
+{
+    if (reactions.isEmpty())
+        return {};
+
+    QJsonArray arr;
+    for (const auto &r : reactions) {
+        QJsonObject emojiObj;
+        if (!r.emoji->isUnicode())
+            emojiObj["id"] = r.emoji->id->toString();
+        else
+            emojiObj["id"] = QJsonValue::Null;
+        emojiObj["name"] = *r.emoji->name;
+        if (r.emoji->animated.hasValue())
+            emojiObj["animated"] = *r.emoji->animated;
+
+        QJsonObject obj;
+        obj["emoji"] = emojiObj;
+        obj["count"] = *r.count;
+        obj["me"] = *r.me;
+
+        if (r.countDetails.hasValue()) {
+            QJsonObject details;
+            details["burst"] = *r.countDetails->burst;
+            details["normal"] = *r.countDetails->normal;
+            obj["count_details"] = details;
+        }
+
+        if (r.meBurst.hasValue())
+            obj["me_burst"] = *r.meBurst;
+        if (r.burstCount.hasValue())
+            obj["burst_count"] = *r.burstCount;
+
+        if (r.burstColors.hasValue()) {
+            QJsonArray colors;
+            for (const auto &c : *r.burstColors)
+                colors.append(c);
+            obj["burst_colors"] = colors;
+        }
+
+        arr.append(obj);
+    }
+
+    QJsonDocument doc(arr);
+    return QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
+}
+
+static void rebuildReactionsJson(Discord::Message &msg)
+{
+    if (!msg.reactions.hasValue()) {
+        msg.reactionsJson.clear();
+        return;
+    }
+    msg.reactionsJson = reactionsToJson(*msg.reactions);
+}
+
+static QList<Discord::Reaction> reactionsFromJson(const QString &json)
+{
+    QList<Discord::Reaction> reactions;
+    if (json.isEmpty())
+        return reactions;
+
+    QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (doc.isArray()) {
+        for (const QJsonValue &val : doc.array())
+            reactions.append(Discord::Reaction::fromJson(val.toObject()));
+    }
+    return reactions;
+}
+
+void MessageManager::emitReactionUpdate(Discord::Message &msg)
+{
+    rebuildReactionsJson(msg);
+    messageCache.insert(msg.id, new Discord::Message(msg));
+    repo.saveMessages({ msg });
+    emit messagesReceived({ true, Discord::Client::MessageLoadType::Created, msg.channelId, { msg } });
+}
+
+static void applyReactionAdd(QList<Discord::Reaction> &reactions,
+                             const Discord::Emoji &emoji, bool isBurst, bool isMe,
+                             const QList<QString> &burstColors = {})
+{
+    bool found = false;
+    for (auto &r : reactions) {
+        if (emojisMatch(r.emoji, emoji)) {
+            r.count = *r.count + 1;
+            if (r.countDetails.hasValue()) {
+                if (isBurst)
+                    r.countDetails->burst = *r.countDetails->burst + 1;
+                else
+                    r.countDetails->normal = *r.countDetails->normal + 1;
+            }
+            if (isMe) {
+                if (isBurst)
+                    r.meBurst = true;
+                else
+                    r.me = true;
+            }
+            if (isBurst && !burstColors.isEmpty())
+                r.burstColors = burstColors;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        Discord::Reaction newReaction;
+        newReaction.emoji = emoji;
+        newReaction.count = 1;
+        newReaction.me = !isBurst && isMe;
+        newReaction.meBurst = isBurst && isMe;
+        newReaction.burstCount = isBurst ? 1 : 0;
+
+        Discord::ReactionCountDetails details;
+        details.burst = isBurst ? 1 : 0;
+        details.normal = isBurst ? 0 : 1;
+        newReaction.countDetails = details;
+
+        if (isBurst && !burstColors.isEmpty())
+            newReaction.burstColors = burstColors;
+
+        reactions.append(newReaction);
+    }
+}
+
+void MessageManager::onReactionAdd(const Discord::MessageReactionAdd &event)
+{
+    bool isBurst = event.type.hasValue() && *event.type == 1;
+    bool isMe = event.userId.get() == client->getMe().id.get();
+
+    auto *cached = messageCache.object(event.messageId);
+    if (!cached) {
+        QList<Discord::Reaction> reactions =
+                reactionsFromJson(repo.getReactionsJson(event.messageId));
+        QList<QString> colors = event.burstColors.hasValue() ? *event.burstColors : QList<QString>{};
+        applyReactionAdd(reactions, event.emoji, isBurst, isMe, colors);
+        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
+        return;
+    }
+
+    Discord::Message msg = *cached;
+
+    if (!msg.reactions.hasValue())
+        msg.reactions = QList<Discord::Reaction>();
+
+    QList<QString> colors = event.burstColors.hasValue() ? *event.burstColors : QList<QString>{};
+    applyReactionAdd(*msg.reactions, event.emoji, isBurst, isMe, colors);
+
+    emitReactionUpdate(msg);
+}
+
+static void applyReactionAddMany(QList<Discord::Reaction> &reactions,
+                                 const Discord::MessageReactionAddMany &event, Snowflake myId)
+{
+    for (const auto &debounced : *event.reactions) {
+        bool isMe = false;
+        for (const auto &uid : *debounced.users) {
+            if (uid == myId) {
+                isMe = true;
+                break;
+            }
+        }
+
+        int addCount = debounced.users->size();
+        bool found = false;
+        for (auto &r : reactions) {
+            if (emojisMatch(r.emoji, debounced.emoji)) {
+                r.count = *r.count + addCount;
+                if (r.countDetails.hasValue())
+                    r.countDetails->normal = *r.countDetails->normal + addCount;
+                if (isMe)
+                    r.me = true;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            Discord::Reaction newReaction;
+            newReaction.emoji = debounced.emoji;
+            newReaction.count = addCount;
+            newReaction.me = isMe;
+            newReaction.meBurst = false;
+            newReaction.burstCount = 0;
+
+            Discord::ReactionCountDetails details;
+            details.burst = 0;
+            details.normal = addCount;
+            newReaction.countDetails = details;
+
+            reactions.append(newReaction);
+        }
+    }
+}
+
+void MessageManager::onReactionAddMany(const Discord::MessageReactionAddMany &event)
+{
+    Snowflake myId = client->getMe().id;
+
+    auto *cached = messageCache.object(event.messageId);
+    if (!cached) {
+        QList<Discord::Reaction> reactions =
+                reactionsFromJson(repo.getReactionsJson(event.messageId));
+        applyReactionAddMany(reactions, event, myId);
+        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
+        return;
+    }
+
+    Discord::Message msg = *cached;
+
+    if (!msg.reactions.hasValue())
+        msg.reactions = QList<Discord::Reaction>();
+
+    applyReactionAddMany(*msg.reactions, event, myId);
+
+    emitReactionUpdate(msg);
+}
+
+static void applyReactionRemove(QList<Discord::Reaction> &reactions,
+                                const Discord::Emoji &emoji, bool isBurst, bool isMe)
+{
+    for (int i = 0; i < reactions.size(); ++i) {
+        auto &r = reactions[i];
+        if (emojisMatch(r.emoji, emoji)) {
+            r.count = *r.count - 1;
+            if (r.countDetails.hasValue()) {
+                if (isBurst)
+                    r.countDetails->burst = qMax(0, *r.countDetails->burst - 1);
+                else
+                    r.countDetails->normal = qMax(0, *r.countDetails->normal - 1);
+            }
+            if (isMe) {
+                if (isBurst)
+                    r.meBurst = false;
+                else
+                    r.me = false;
+            }
+
+            if (*r.count <= 0)
+                reactions.removeAt(i);
+
+            break;
+        }
+    }
+}
+
+void MessageManager::onReactionRemove(const Discord::MessageReactionRemove &event)
+{
+    bool isBurst = event.type.hasValue() && *event.type == 1;
+    bool isMe = event.userId.get() == client->getMe().id.get();
+
+    auto *cached = messageCache.object(event.messageId);
+    if (!cached) {
+        QList<Discord::Reaction> reactions =
+                reactionsFromJson(repo.getReactionsJson(event.messageId));
+        applyReactionRemove(reactions, event.emoji, isBurst, isMe);
+        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
+        return;
+    }
+
+    Discord::Message msg = *cached;
+
+    if (!msg.reactions.hasValue())
+        return;
+
+    applyReactionRemove(*msg.reactions, event.emoji, isBurst, isMe);
+
+    emitReactionUpdate(msg);
+}
+
+void MessageManager::onReactionRemoveAll(const Discord::MessageReactionRemoveAll &event)
+{
+    auto *cached = messageCache.object(event.messageId);
+    if (!cached) {
+        repo.updateReactionsJson(event.messageId, {});
+        return;
+    }
+
+    Discord::Message msg = *cached;
+    msg.reactions = QList<Discord::Reaction>();
+
+    emitReactionUpdate(msg);
+}
+
+void MessageManager::onReactionRemoveEmoji(const Discord::MessageReactionRemoveEmoji &event)
+{
+    auto *cached = messageCache.object(event.messageId);
+    if (!cached) {
+        QList<Discord::Reaction> reactions =
+                reactionsFromJson(repo.getReactionsJson(event.messageId));
+        for (int i = 0; i < reactions.size(); ++i) {
+            if (emojisMatch(reactions[i].emoji, event.emoji)) {
+                reactions.removeAt(i);
+                break;
+            }
+        }
+        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
+        return;
+    }
+
+    Discord::Message msg = *cached;
+
+    if (!msg.reactions.hasValue())
+        return;
+
+    for (int i = 0; i < msg.reactions->size(); ++i) {
+        if (emojisMatch((*msg.reactions)[i].emoji, event.emoji)) {
+            msg.reactions->removeAt(i);
+            break;
+        }
+    }
+
+    emitReactionUpdate(msg);
 }
 
 void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messages,

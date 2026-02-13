@@ -146,6 +146,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "type" INTEGER NOT NULL,
 	        "flags" INTEGER NOT NULL,
 	        "embeds" TEXT,
+	        "reactions" TEXT,
 	        "deleted" INTEGER NOT NULL,
 	        "referenced_message_id" INTEGER,
 	        PRIMARY KEY("id")

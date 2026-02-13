@@ -71,6 +71,8 @@ signals:
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void replyToMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void addReactionRequested(Core::Snowflake channelId, Core::Snowflake messageId);
+    void toggleReactionClicked(Core::Snowflake channelId, Core::Snowflake messageId,
+                               const QString &emoji, bool currentlyReacted, bool isBurst);
 
 public slots:
     void onHistoryRequestFinished();

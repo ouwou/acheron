@@ -47,6 +47,7 @@ static ChatLayout::LayoutContext buildLayoutContext(const QStyleOptionViewItem &
     ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
     ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
     ctx.model = qobject_cast<const ChatModel *>(index.model());
     ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
@@ -635,6 +636,65 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                         footerFm.ascent();
             painter->drawText(footerX, textY, footerText);
         }
+    }
+
+    QList<ReactionData> reactions = ctx.reactions;
+
+    for (const auto &reactionLayout : layout.reactionLayouts) {
+        if (reactionLayout.reactionIndex >= reactions.size())
+            continue;
+
+        const auto &reaction = reactions[reactionLayout.reactionIndex];
+
+        QColor pillBg;
+        if (reaction.isBurst && reaction.burstTintColor.isValid()) {
+            pillBg = reaction.burstTintColor;
+            pillBg.setAlpha(40);
+        } else {
+            pillBg = option.palette.alternateBase().color();
+        }
+
+        QColor borderColor;
+        int borderWidth;
+        if (reaction.me) {
+            borderColor = option.palette.highlight().color();
+            borderWidth = 1;
+        } else {
+            borderColor = option.palette.mid().color();
+            borderWidth = 1;
+        }
+
+        painter->setPen(QPen(borderColor, borderWidth));
+        painter->setBrush(pillBg);
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->drawRoundedRect(reactionLayout.pillRect, 6, 6);
+        painter->setRenderHint(QPainter::Antialiasing, false);
+
+        if (reaction.emojiId.isValid()) {
+            if (!reaction.emojiPixmap.isNull())
+                painter->drawPixmap(reactionLayout.emojiRect, reaction.emojiPixmap);
+        } else {
+            // render smaller than the rect to fit within pill
+            QFont emojiFont = option.font;
+            emojiFont.setPixelSize(ChatLayout::reactionEmojiSize() - 4);
+            painter->setFont(emojiFont);
+            painter->setPen(option.palette.text().color());
+            painter->drawText(reactionLayout.emojiRect, Qt::AlignCenter, reaction.emojiName);
+        }
+
+        QFont countFont = option.font;
+        countFont.setPointSizeF(countFont.pointSizeF() * 0.85);
+        painter->setFont(countFont);
+
+        QColor countColor;
+        if (reaction.me)
+            countColor = option.palette.highlight().color();
+        else
+            countColor = option.palette.text().color();
+
+        painter->setPen(countColor);
+        painter->drawText(reactionLayout.countRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          QString::number(reaction.count));
     }
 
     painter->restore();

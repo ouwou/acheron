@@ -126,8 +126,9 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
     QString link = ChatLayout::getLinkAt(this, idx, pos);
     std::optional<AttachmentData> hoveredAtt = ChatLayout::getAttachmentAt(this, idx, pos);
     std::optional<ChatLayout::EmbedHitResult> hoveredEmbed = ChatLayout::getEmbedAt(this, idx, pos);
+    std::optional<ChatLayout::ReactionHitResult> hoveredReaction = ChatLayout::getReactionAt(this, idx, pos);
 
-    if (!link.isEmpty() || hoveredAtt.has_value() || hoveredEmbed.has_value()) {
+    if (!link.isEmpty() || hoveredAtt.has_value() || hoveredEmbed.has_value() || hoveredReaction.has_value()) {
         viewport()->setCursor(Qt::PointingHandCursor);
     } else {
         if (charPos >= 0) {
@@ -156,6 +157,24 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton) {
         QPoint pos = event->pos();
         QModelIndex idx = indexAt(pos);
+
+        std::optional<ChatLayout::ReactionHitResult> reactionHit = ChatLayout::getReactionAt(this, idx, pos);
+        if (reactionHit.has_value() && !hasTextSelection()) {
+            auto *chatModel = qobject_cast<ChatModel *>(model());
+            if (chatModel) {
+                Snowflake channelId = chatModel->getActiveChannelId();
+                Snowflake messageId = idx.data(ChatModel::MessageIdRole).toULongLong();
+                const ReactionData &r = reactionHit->reaction;
+                QString emojiStr;
+                if (r.emojiId.isValid())
+                    emojiStr = r.emojiName + ":" + QString::number(r.emojiId);
+                else
+                    emojiStr = r.emojiName;
+                emit toggleReactionClicked(channelId, messageId, emojiStr, r.me, r.isBurst);
+            }
+            QListView::mouseReleaseEvent(event);
+            return;
+        }
 
         std::optional<ChatLayout::EmbedHitResult> embedHit = ChatLayout::getEmbedAt(this, idx, pos);
         if (embedHit.has_value()) {

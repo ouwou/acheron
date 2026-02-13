@@ -38,6 +38,11 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayGuildRoleUpdate, this, &Client::onGatewayGuildRoleUpdate);
     connect(gateway, &Gateway::gatewayGuildRoleDelete, this, &Client::onGatewayGuildRoleDelete);
     connect(gateway, &Gateway::gatewayMessageAck, this, &Client::messageAcked);
+    connect(gateway, &Gateway::gatewayMessageReactionAdd, this, &Client::messageReactionAdd);
+    connect(gateway, &Gateway::gatewayMessageReactionAddMany, this, &Client::messageReactionAddMany);
+    connect(gateway, &Gateway::gatewayMessageReactionRemove, this, &Client::messageReactionRemove);
+    connect(gateway, &Gateway::gatewayMessageReactionRemoveAll, this, &Client::messageReactionRemoveAll);
+    connect(gateway, &Gateway::gatewayMessageReactionRemoveEmoji, this, &Client::messageReactionRemoveEmoji);
     connect(gateway, &Gateway::gatewayUserGuildSettingsUpdate, this,
             &Client::userGuildSettingsUpdated);
     connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
@@ -299,6 +304,40 @@ void Client::unpinMessage(Snowflake channelId, Snowflake messageId)
                                   << channelId << ":" << response.error;
         else
             qCInfo(LogDiscord) << "Message" << messageId << "unpinned from channel" << channelId;
+    });
+}
+
+void Client::addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
+                         bool isBurst)
+{
+    QString encoded = QUrl::toPercentEncoding(emoji, ":");
+    int type = isBurst ? 1 : 0;
+    QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
+                       QString::number(messageId) + "/reactions/" + encoded +
+                       "/%40me?location=Message%20Inline%20Button&type=" + QString::number(type);
+
+    httpClient->put(endpoint, QJsonObject{}, [this, channelId, messageId](const HttpResponse &response) {
+        if (!response.success)
+            qCWarning(LogDiscord) << "Failed to add reaction on message" << messageId
+                                  << "in channel" << channelId << ":" << response.error;
+    });
+}
+
+void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
+                            bool isBurst)
+{
+    QString encoded = QUrl::toPercentEncoding(emoji, ":");
+    QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
+                       QString::number(messageId) + "/reactions/" + encoded + "/%40me";
+    if (isBurst)
+        endpoint += "?burst=true";
+    else
+        endpoint += "?type=0";
+
+    httpClient->delete_(endpoint, [this, channelId, messageId](const HttpResponse &response) {
+        if (!response.success)
+            qCWarning(LogDiscord) << "Failed to remove reaction on message" << messageId
+                                  << "in channel" << channelId << ":" << response.error;
     });
 }
 

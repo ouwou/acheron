@@ -80,6 +80,19 @@ struct ReplyData
     QString contentSnippet;
 };
 
+struct ReactionData
+{
+    QString emojiName;
+    Core::Snowflake emojiId;
+    bool emojiAnimated = false;
+    int count = 0;
+    bool me = false;
+    bool isBurst = false;
+    QPixmap emojiPixmap;
+    bool isLoading = false;
+    QColor burstTintColor;
+};
+
 struct EmbedData
 {
     EmbedType type = EmbedType::Rich; // should this be default idk
@@ -182,6 +195,7 @@ public:
         UsernameColorRole,
         MessageIdRole,
         ReplyDataRole,
+        ReactionsRole,
     };
 
     using AvatarUrlResolver = std::function<QUrl(const Discord::User &)>;
@@ -255,3 +269,5 @@ Q_DECLARE_METATYPE(Acheron::EmbedFieldData)
 Q_DECLARE_METATYPE(Acheron::EmbedImageData)
 Q_DECLARE_METATYPE(Acheron::EmbedData)
 Q_DECLARE_METATYPE(QList<Acheron::EmbedData>)
+Q_DECLARE_METATYPE(Acheron::ReactionData)
+Q_DECLARE_METATYPE(QList<Acheron::ReactionData>)

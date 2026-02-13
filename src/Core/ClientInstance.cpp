@@ -158,6 +158,16 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
             &MessageManager::onMessageDeleted);
     connect(client, &Discord::Client::messageSendFailed, messageManager,
             &MessageManager::onMessageSendFailed);
+    connect(client, &Discord::Client::messageReactionAdd, messageManager,
+            &MessageManager::onReactionAdd);
+    connect(client, &Discord::Client::messageReactionAddMany, messageManager,
+            &MessageManager::onReactionAddMany);
+    connect(client, &Discord::Client::messageReactionRemove, messageManager,
+            &MessageManager::onReactionRemove);
+    connect(client, &Discord::Client::messageReactionRemoveAll, messageManager,
+            &MessageManager::onReactionRemoveAll);
+    connect(client, &Discord::Client::messageReactionRemoveEmoji, messageManager,
+            &MessageManager::onReactionRemoveEmoji);
     connect(client, &Discord::Client::channelCreated, this, &ClientInstance::onChannelCreated);
     connect(client, &Discord::Client::channelUpdated, this, &ClientInstance::onChannelUpdated);
     connect(client, &Discord::Client::channelDeleted, this, &ClientInstance::onChannelDeleted);

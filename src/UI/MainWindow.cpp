@@ -495,6 +495,16 @@ void MainWindow::setupUi()
                                 << "- UI not yet implemented";
             });
 
+    connect(chatView, &ChatView::toggleReactionClicked, this,
+            [this](Snowflake channelId, Snowflake messageId, const QString &emoji, bool currentlyReacted, bool isBurst) {
+                if (!currentInstance)
+                    return;
+                if (currentlyReacted)
+                    currentInstance->discord()->removeReaction(channelId, messageId, emoji, isBurst);
+                else
+                    currentInstance->discord()->addReaction(channelId, messageId, emoji, isBurst);
+            });
+
     connect(channelTree->selectionModel(), &QItemSelectionModel::currentChanged, this,
             &MainWindow::onChannelSelectionChanged);
 

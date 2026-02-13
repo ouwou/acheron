@@ -72,6 +72,30 @@ constexpr int replyBarSpacing() noexcept
 {
     return 4;
 }
+constexpr int reactionPillHeight() noexcept
+{
+    return 22;
+}
+constexpr int reactionPillPadding() noexcept
+{
+    return 6;
+}
+constexpr int reactionEmojiSize() noexcept
+{
+    return 16;
+}
+constexpr int reactionSpacing() noexcept
+{
+    return 4;
+}
+constexpr int reactionRowSpacing() noexcept
+{
+    return 4;
+}
+constexpr int reactionTopMargin() noexcept
+{
+    return 4;
+}
 
 struct AttachmentGridCell
 {
@@ -121,6 +145,14 @@ struct EmbedLayout
     int totalHeight;
 };
 
+struct ReactionLayout
+{
+    int reactionIndex;
+    QRect pillRect;
+    QRect emojiRect;
+    QRect countRect;
+};
+
 struct AttachmentLayout
 {
     QRect rect;
@@ -153,6 +185,10 @@ struct MessageLayout
     QList<EmbedLayout> embedLayouts;
     int embedsTotalHeight;
 
+    int reactionsTop;
+    QList<ReactionLayout> reactionLayouts;
+    int reactionsTotalHeight;
+
     int totalHeight;
 };
 
@@ -168,6 +204,7 @@ struct LayoutContext
     QString htmlContent;
     QList<AttachmentData> attachments;
     QList<EmbedData> embeds;
+    QList<ReactionData> reactions;
     ReplyData replyData;
 
     const ChatModel *model = nullptr;
@@ -216,6 +253,15 @@ std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
                                               const QModelIndex &index, const QPoint &mousePos);
 std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QModelIndex &index,
                                          const QPoint &mousePos);
+
+struct ReactionHitResult
+{
+    int reactionIndex = -1;
+    ReactionData reaction;
+};
+
+std::optional<ReactionHitResult> getReactionAt(const QAbstractItemView *view,
+                                               const QModelIndex &index, const QPoint &mousePos);
 
 QString formatFileSize(qint64 bytes);
 

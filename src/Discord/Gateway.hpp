@@ -61,6 +61,11 @@ signals:
     void gatewayGuildRoleUpdate(const GuildRoleUpdate &data);
     void gatewayGuildRoleDelete(const GuildRoleDelete &data);
     void gatewayMessageAck(const MessageAck &data);
+    void gatewayMessageReactionAdd(const MessageReactionAdd &data);
+    void gatewayMessageReactionAddMany(const MessageReactionAddMany &data);
+    void gatewayMessageReactionRemove(const MessageReactionRemove &data);
+    void gatewayMessageReactionRemoveAll(const MessageReactionRemoveAll &data);
+    void gatewayMessageReactionRemoveEmoji(const MessageReactionRemoveEmoji &data);
     void gatewayUserGuildSettingsUpdate(const UserGuildSettings &data);
 
 private:
@@ -85,6 +90,11 @@ private:
     void handleGuildRoleUpdate(const Inbound &data);
     void handleGuildRoleDelete(const Inbound &data);
     void handleMessageAck(const Inbound &data);
+    void handleMessageReactionAdd(const Inbound &data);
+    void handleMessageReactionAddMany(const Inbound &data);
+    void handleMessageReactionRemove(const Inbound &data);
+    void handleMessageReactionRemoveAll(const Inbound &data);
+    void handleMessageReactionRemoveEmoji(const Inbound &data);
     void handleUserGuildSettingsUpdate(const Inbound &data);
     void handleHello(const Inbound &data);
     void identify();

@@ -6,6 +6,7 @@
 #include "Snowflake.hpp"
 #include "Storage/MessageRepository.hpp"
 #include "Discord/Entities.hpp"
+#include "Discord/Events.hpp"
 #include "Discord/Client.hpp"
 
 namespace Acheron::Core::Markdown {
@@ -49,6 +50,11 @@ public slots:
     void onMessageUpdated(const Discord::Message &message);
     void onMessageDeleted(const Discord::MessageDelete &event);
     void onMessageSendFailed(const QString &nonce, const QString &error);
+    void onReactionAdd(const Discord::MessageReactionAdd &event);
+    void onReactionAddMany(const Discord::MessageReactionAddMany &event);
+    void onReactionRemove(const Discord::MessageReactionRemove &event);
+    void onReactionRemoveAll(const Discord::MessageReactionRemoveAll &event);
+    void onReactionRemoveEmoji(const Discord::MessageReactionRemoveEmoji &event);
 
 private slots:
     void onApiMessagesReceived(const QList<Discord::Message> &messages,
@@ -57,6 +63,7 @@ private slots:
 private:
     void cacheMessages(Snowflake channelId, const QList<Discord::Message> &msgs);
     QList<Discord::Message> getCachedMessages();
+    void emitReactionUpdate(Discord::Message &msg);
 
     Storage::MessageRepository repo;
 

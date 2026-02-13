@@ -676,6 +676,51 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         totalHeight += layout.embedsTotalHeight;
     }
 
+    layout.reactionsTop = layout.embedsTop + layout.embedsTotalHeight;
+    layout.reactionsTotalHeight = 0;
+
+    if (!ctx.reactions.isEmpty()) {
+        QFontMetrics reactionFm(ctx.font);
+        int currentX = textLeft;
+        int currentY = layout.reactionsTop + reactionTopMargin();
+        int rowHeight = reactionPillHeight();
+        int maxX = textLeft + textWidth;
+
+        for (int i = 0; i < ctx.reactions.size(); ++i) {
+            const auto &reaction = ctx.reactions[i];
+
+            int countTextWidth = reactionFm.horizontalAdvance(QString::number(reaction.count));
+            int pillWidth = reactionPillPadding() + reactionEmojiSize() + 4 + countTextWidth + reactionPillPadding();
+
+            // wrap to next row if needed
+            if (currentX + pillWidth > maxX && currentX > textLeft) {
+                currentX = textLeft;
+                currentY += rowHeight + reactionRowSpacing();
+            }
+
+            QRect pillRect(currentX, currentY, pillWidth, rowHeight);
+            QRect emojiRect(currentX + reactionPillPadding(),
+                            currentY + (rowHeight - reactionEmojiSize()) / 2,
+                            reactionEmojiSize(), reactionEmojiSize());
+            QRect countRect(emojiRect.right() + 4,
+                            currentY,
+                            countTextWidth,
+                            rowHeight);
+
+            ReactionLayout rl;
+            rl.reactionIndex = i;
+            rl.pillRect = pillRect;
+            rl.emojiRect = emojiRect;
+            rl.countRect = countRect;
+            layout.reactionLayouts.append(rl);
+
+            currentX += pillWidth + reactionSpacing();
+        }
+
+        layout.reactionsTotalHeight = reactionTopMargin() + (currentY - layout.reactionsTop - reactionTopMargin()) + rowHeight;
+        totalHeight += layout.reactionsTotalHeight;
+    }
+
     // last ditch minimum size but only with headers
     if (ctx.showHeader) {
         int minHeight = padding() + avatarSize() + padding();
@@ -1067,6 +1112,47 @@ std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QM
                     return result;
                 }
             }
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<ReactionHitResult> getReactionAt(const QAbstractItemView *view,
+                                               const QModelIndex &index, const QPoint &mousePos)
+{
+    if (!index.isValid() || !view)
+        return std::nullopt;
+
+    QList<ReactionData> reactions =
+            index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
+
+    if (reactions.isEmpty())
+        return std::nullopt;
+
+    LayoutContext ctx;
+    ctx.font = view->font();
+    QRect rowRect = view->visualRect(index);
+    ctx.rowWidth = rowRect.width();
+    ctx.rowTop = rowRect.top();
+    ctx.showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
+    ctx.hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
+    ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
+    ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
+    ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    ctx.reactions = reactions;
+    ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.model = qobject_cast<const ChatModel *>(index.model());
+    ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
+
+    MessageLayout layout = calculateMessageLayout(ctx);
+
+    for (const auto &reactionLayout : layout.reactionLayouts) {
+        if (reactionLayout.pillRect.contains(mousePos)) {
+            ReactionHitResult result;
+            result.reactionIndex = reactionLayout.reactionIndex;
+            result.reaction = reactions[reactionLayout.reactionIndex];
+            return result;
         }
     }
 
