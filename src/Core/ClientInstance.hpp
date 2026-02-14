@@ -8,6 +8,7 @@
 #include "AccountInfo.hpp"
 #include "Discord/Client.hpp"
 #include "MessageManager.hpp"
+#include "MemberListManager.hpp"
 #include "UserManager.hpp"
 #include "PermissionManager.hpp"
 
@@ -31,6 +32,7 @@ public:
     [[nodiscard]] UserManager *users() const;
     [[nodiscard]] PermissionManager *permissions() const;
     [[nodiscard]] ReadStateManager *readState() const;
+    [[nodiscard]] MemberListManager *memberList() const;
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
 
@@ -79,6 +81,7 @@ private:
     Discord::Client *client;
     PermissionManager *permissionManager;
     ReadStateManager *readStateManager;
+    MemberListManager *memberListManager;
 
     Storage::RoleRepository roleRepo;
     Storage::GuildRepository guildRepo;

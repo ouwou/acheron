@@ -45,6 +45,7 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayMessageReactionRemoveEmoji, this, &Client::messageReactionRemoveEmoji);
     connect(gateway, &Gateway::gatewayUserGuildSettingsUpdate, this,
             &Client::userGuildSettingsUpdated);
+    connect(gateway, &Gateway::gatewayGuildMemberListUpdate, this, &Client::guildMemberListUpdate);
     connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
         setState(Core::ConnectionState::Connecting);
         emit reconnecting(attempt, maxAttempts);
@@ -382,11 +383,11 @@ void Client::ackBulk(const QList<AckEntry> &entries)
     });
 }
 
-void Client::ensureSubscriptionByGuild(Snowflake guildId)
+void Client::subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
+                                     const QList<QPair<int, int>> &ranges)
 {
-    if (!subscribedGuilds.contains(guildId)) {
-        gateway->subscribeToGuild(guildId);
-    }
+    gateway->subscribeToGuild(guildId, channelId, ranges);
+    subscribedGuilds.insert(guildId);
 }
 
 void Client::ensureSubscriptionByChannel(Snowflake channelId)
@@ -395,7 +396,15 @@ void Client::ensureSubscriptionByChannel(Snowflake channelId)
         return;
 
     Snowflake guildId = channelToGuild.value(channelId);
-    ensureSubscriptionByGuild(guildId);
+    if (!subscribedGuilds.contains(guildId)) {
+        QList<QPair<int, int>> defaultRanges = { { 0, 99 } };
+        subscribeToGuildChannel(guildId, channelId, defaultRanges);
+    }
+}
+
+Snowflake Client::getGuildIdForChannel(Snowflake channelId) const
+{
+    return channelToGuild.value(channelId, Snowflake::Invalid);
 }
 
 void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds)

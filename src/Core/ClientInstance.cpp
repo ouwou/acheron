@@ -30,6 +30,7 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
 
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);
+    memberListManager = new MemberListManager(channelRepo, roleRepo, this);
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
     connect(client, &Discord::Client::reconnecting, this, &ClientInstance::reconnecting);
@@ -178,6 +179,10 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
             &ClientInstance::onGuildMembersChunk);
     connect(client, &Discord::Client::guildMemberUpdated, this,
             &ClientInstance::onGuildMemberUpdate);
+    connect(client, &Discord::Client::guildMemberListUpdate, memberListManager,
+            &MemberListManager::handleMemberListUpdate);
+    connect(memberListManager, &MemberListManager::subscriptionRequested, client,
+            &Discord::Client::subscribeToGuildChannel);
     connect(messageManager, &MessageManager::messagesReceived, this,
             &ClientInstance::onMessagesReceived);
 
@@ -330,6 +335,7 @@ void ClientInstance::onGuildRoleCreated(const Discord::GuildRoleCreate &event)
     }
 
     permissionManager->invalidateGuildCache(guildId);
+    memberListManager->handleRoleCreated(guildId, role);
     emit guildRoleCreated(event);
 }
 
@@ -367,6 +373,7 @@ void ClientInstance::onGuildRoleUpdated(const Discord::GuildRoleUpdate &event)
     }
 
     permissionManager->invalidateGuildCache(guildId);
+    memberListManager->handleRoleUpdated(guildId, role);
     emit guildRoleUpdated(event);
 }
 
@@ -399,6 +406,7 @@ void ClientInstance::onGuildRoleDeleted(const Discord::GuildRoleDelete &event)
     }
 
     permissionManager->invalidateGuildCache(guildId);
+    memberListManager->handleRoleDeleted(guildId, roleId);
     emit guildRoleDeleted(event);
 }
 
@@ -586,6 +594,11 @@ PermissionManager *ClientInstance::permissions() const
 ReadStateManager *ClientInstance::readState() const
 {
     return readStateManager;
+}
+
+MemberListManager *ClientInstance::memberList() const
+{
+    return memberListManager;
 }
 
 QList<Discord::Role> ClientInstance::getRolesForGuild(Snowflake guildId)

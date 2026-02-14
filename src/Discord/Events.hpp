@@ -372,5 +372,110 @@ struct MessageReactionRemoveEmoji : Core::JsonUtils::JsonObject
     }
 };
 
+struct GuildMemberListUpdate : Core::JsonUtils::JsonObject
+{
+    struct Group : Core::JsonUtils::JsonObject
+    {
+        Field<QString> id; // role snowflake string, "online", or "offline"
+        Field<int> count;
+
+        static Group fromJson(const QJsonObject &obj)
+        {
+            Group group;
+            get(obj, "id", group.id);
+            get(obj, "count", group.count);
+            return group;
+        }
+    };
+
+    struct SyncItem : Core::JsonUtils::JsonObject
+    {
+        Field<Group, true> group;
+        Field<Member, true> member;
+
+        static SyncItem fromJson(const QJsonObject &obj)
+        {
+            SyncItem item;
+            if (obj.contains("group"))
+                item.group = Group::fromJson(obj["group"].toObject());
+            if (obj.contains("member"))
+                item.member = Member::fromJson(obj["member"].toObject());
+            return item;
+        }
+    };
+
+    struct ListOp : Core::JsonUtils::JsonObject
+    {
+        Field<QString> op;
+        Field<QPair<int, int>, true> range;
+        Field<QList<SyncItem>, true> items;
+        Field<int, true> index;
+        Field<SyncItem, true> item;
+
+        static ListOp fromJson(const QJsonObject &obj)
+        {
+            ListOp listOp;
+            get(obj, "op", listOp.op);
+            get(obj, "index", listOp.index);
+
+            if (obj.contains("range")) {
+                QJsonArray rangeArr = obj["range"].toArray();
+                if (rangeArr.size() == 2)
+                    listOp.range = QPair<int, int>(rangeArr[0].toInt(), rangeArr[1].toInt());
+            }
+
+            if (obj.contains("items")) {
+                QJsonArray itemsArr = obj["items"].toArray();
+                QList<SyncItem> syncItems;
+                syncItems.reserve(itemsArr.size());
+                for (const QJsonValue &val : itemsArr)
+                    syncItems.append(SyncItem::fromJson(val.toObject()));
+                listOp.items = syncItems;
+            }
+
+            if (obj.contains("item"))
+                listOp.item = SyncItem::fromJson(obj["item"].toObject());
+
+            return listOp;
+        }
+    };
+
+    Field<QString> id; // member list id
+    Field<Core::Snowflake> guildId;
+    Field<QList<Group>> groups;
+    Field<QList<ListOp>> ops;
+    Field<int> memberCount;
+    Field<int> onlineCount;
+
+    static GuildMemberListUpdate fromJson(const QJsonObject &obj)
+    {
+        GuildMemberListUpdate event;
+        get(obj, "id", event.id);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "member_count", event.memberCount);
+        get(obj, "online_count", event.onlineCount);
+
+        if (obj.contains("groups")) {
+            QJsonArray groupsArr = obj["groups"].toArray();
+            QList<Group> groups;
+            groups.reserve(groupsArr.size());
+            for (const QJsonValue &val : groupsArr)
+                groups.append(Group::fromJson(val.toObject()));
+            event.groups = groups;
+        }
+
+        if (obj.contains("ops")) {
+            QJsonArray opsArr = obj["ops"].toArray();
+            QList<ListOp> ops;
+            ops.reserve(opsArr.size());
+            for (const QJsonValue &val : opsArr)
+                ops.append(ListOp::fromJson(val.toObject()));
+            event.ops = ops;
+        }
+
+        return event;
+    }
+};
+
 } // namespace Discord
 } // namespace Acheron

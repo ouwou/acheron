@@ -3,6 +3,9 @@
 
 #include <Core/Snowflake.hpp>
 #include "Input/MessageInput.hpp"
+#include "MemberList/MemberListView.hpp"
+#include "MemberList/MemberListModel.hpp"
+#include "MemberList/MemberListDelegate.hpp"
 #include "Discord/Entities.hpp"
 
 namespace Acheron {
@@ -66,6 +69,8 @@ private:
     MessageInput *messageInput;
     TypingIndicator *typingIndicator;
     ConnectionBanner *connectionBanner;
+    MemberListView *memberListView;
+    MemberListModel *memberListModel;
     Core::TypingTracker *typingTracker;
 
     AccountsWindow *accountsWindow = nullptr;
@@ -80,6 +85,8 @@ private:
     Core::Snowflake cachedGuildId = Core::Snowflake::Invalid;
     QHash<Core::Snowflake, QList<Discord::Role>> guildRolesCache;
     QHash<Core::Snowflake, QColor> userColorCache; // current guild
+
+    QSplitter *mainSplitter = nullptr;
 };
 
 } // namespace UI

@@ -57,6 +57,8 @@ set(PROJECT_SOURCES
     src/Core/PermissionManager.cpp
     src/Core/PermissionComputer.cpp
     src/Core/ReadStateManager.cpp
+    src/Core/MemberListManager.cpp
+    src/Core/MurmurHash3.cpp
     src/Core/EmojiSegmenter.cpp
     src/Core/Markdown/Parser.cpp
     src/UI/MainWindow.cpp
@@ -77,6 +79,9 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/AddAccountDialog.cpp
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
+    src/UI/MemberList/MemberListModel.cpp
+    src/UI/MemberList/MemberListDelegate.cpp
+    src/UI/MemberList/MemberListView.cpp
     src/UI/Input/MessageInput.cpp
     src/Storage/DatabaseManager.cpp
     src/Storage/BaseRepository.cpp

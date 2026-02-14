@@ -19,6 +19,7 @@
 #include "TypingIndicator.hpp"
 #include "ConnectionBanner.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
+#include "Core/MemberListManager.hpp"
 
 using namespace Acheron::Core;
 
@@ -55,6 +56,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
             [this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
 
     typingTracker = new TypingTracker(this);
+    memberListModel = new MemberListModel(session->getImageManager(), this);
 
     setupUi();
     setupMenu();
@@ -155,6 +157,8 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         messageInput->setPlaceholder("Message @" + node->name);
         chatView->setCanPinMessages(true);
         chatView->setCanManageMessages(false);
+        memberListView->hide();
+        selectedInstance->memberList()->clear();
     } else {
         bool canSend = selectedInstance->permissions()->hasChannelPermission(
                 userId, channelId, Discord::Permission::SEND_MESSAGES);
@@ -172,7 +176,15 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         else
             messageInput->setPlaceholder("You do not have permission to send messages");
 
-        selectedInstance->discord()->ensureSubscriptionByChannel(node->id);
+        ChannelNode *gNode = node;
+        while (gNode && gNode->type != ChannelNode::Type::Server)
+            gNode = gNode->parent;
+        Snowflake gId = gNode ? gNode->id : Snowflake::Invalid;
+
+        if (gId.isValid()) {
+            memberListView->show();
+            selectedInstance->memberList()->setActiveChannel(gId, node->id);
+        }
     }
 
     MessageManager *messages = selectedInstance->messages();
@@ -208,10 +220,15 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+        disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
     }
 
     currentInstance = newInstance;
     auto *msgs = currentInstance->messages();
+
+    memberListModel->setManager(currentInstance->memberList());
+    connect(memberListView, &MemberListView::visibleRangeChanged,
+            currentInstance->memberList(), &Core::MemberListManager::updateSubscriptionRange);
 
     chatView->setCurrentUserId(currentInstance->accountId());
 
@@ -367,14 +384,25 @@ void MainWindow::setupUi()
     rightLayout->addWidget(typingIndicator, 0);
     rightLayout->addWidget(messageInput, 0);
 
-    auto *splitter = new QSplitter(this);
-    splitter->addWidget(channelTree);
-    splitter->addWidget(rightSideWidget);
+    memberListView = new MemberListView(central);
+    memberListView->setModel(memberListModel);
+    memberListView->setItemDelegate(new MemberListDelegate(memberListView));
 
-    splitter->setCollapsible(0, false);
-    splitter->setStretchFactor(0, 0);
-    splitter->setStretchFactor(1, 1);
+    mainSplitter = new QSplitter(this);
+    mainSplitter->addWidget(channelTree);
+    mainSplitter->addWidget(rightSideWidget);
+    mainSplitter->addWidget(memberListView);
+
+    mainSplitter->setCollapsible(0, false);
+    mainSplitter->setCollapsible(2, false);
+    mainSplitter->setStretchFactor(0, 0);
+    mainSplitter->setStretchFactor(1, 1);
+    mainSplitter->setStretchFactor(2, 0);
     channelTree->setMinimumWidth(200);
+    memberListView->setMinimumWidth(140);
+    memberListView->setMaximumWidth(400);
+
+    memberListView->hide();
 
     channelTree->setModel(channelFilterProxy);
     channelTree->setHeaderHidden(true);
@@ -508,7 +536,7 @@ void MainWindow::setupUi()
     connect(channelTree->selectionModel(), &QItemSelectionModel::currentChanged, this,
             &MainWindow::onChannelSelectionChanged);
 
-    layout->addWidget(splitter);
+    layout->addWidget(mainSplitter);
     layout->setContentsMargins(0, 0, 4, 0);
     setCentralWidget(central);
 }

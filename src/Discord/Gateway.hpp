@@ -34,7 +34,7 @@ public:
     void stop();
     void hardStop();
 
-    void subscribeToGuild(Core::Snowflake guildId);
+    void subscribeToGuild(Core::Snowflake guildId, Core::Snowflake channelId, const QList<QPair<int, int>> &ranges);
     void requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds);
 
     // Debug: simulate a server RECONNECT opcode
@@ -67,6 +67,7 @@ signals:
     void gatewayMessageReactionRemoveAll(const MessageReactionRemoveAll &data);
     void gatewayMessageReactionRemoveEmoji(const MessageReactionRemoveEmoji &data);
     void gatewayUserGuildSettingsUpdate(const UserGuildSettings &data);
+    void gatewayGuildMemberListUpdate(const GuildMemberListUpdate &data);
 
 private:
     void sendPayload(const QJsonObject &obj);
@@ -96,6 +97,7 @@ private:
     void handleMessageReactionRemoveAll(const Inbound &data);
     void handleMessageReactionRemoveEmoji(const Inbound &data);
     void handleUserGuildSettingsUpdate(const Inbound &data);
+    void handleGuildMemberListUpdate(const Inbound &data);
     void handleHello(const Inbound &data);
     void identify();
     void resume();

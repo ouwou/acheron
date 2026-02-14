@@ -47,8 +47,6 @@ public:
     void fetchLatestMessages(Snowflake channelId, int limit, MessagesCallback callback);
     void fetchHistory(Snowflake channelId, Snowflake beforeId, int limit,
                       MessagesCallback callback);
-    // void fetchFuture(Snowflake channelId, Snowflake afterId, int limit = 50);
-    // void fetchAround(Snowflake channelId, Snowflake targetId, int limit = 50);
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
                      Snowflake replyToMessageId = Snowflake::Invalid);
@@ -74,9 +72,12 @@ public:
 
     void debugForceReconnect();
 
-    void ensureSubscriptionByGuild(Snowflake guildId);
+    void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
+                                 const QList<QPair<int, int>> &ranges);
     void ensureSubscriptionByChannel(Snowflake channelId);
     void requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds);
+
+    [[nodiscard]] Snowflake getGuildIdForChannel(Snowflake channelId) const;
 
     [[nodiscard]] const Proto::PreloadedUserSettings &getSettings() const;
     [[nodiscard]] const User &getMe() const;
@@ -104,6 +105,7 @@ signals:
     void messageReactionRemoveAll(const MessageReactionRemoveAll &event);
     void messageReactionRemoveEmoji(const MessageReactionRemoveEmoji &event);
     void userGuildSettingsUpdated(const UserGuildSettings &settings);
+    void guildMemberListUpdate(const GuildMemberListUpdate &event);
     void messageSendFailed(const QString &nonce, const QString &error);
 
     void reconnecting(int attempt, int maxAttempts);

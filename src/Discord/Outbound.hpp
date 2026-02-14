@@ -80,6 +80,8 @@ struct GuildSubscriptionsBulkData : Core::JsonUtils::JsonObject
         Field<bool> typing;
         Field<bool> activities;
         Field<bool> threads;
+        // channel_id -> list of [start, end] range pairs for member list subscriptions
+        QMap<Core::Snowflake, QList<QPair<int, int>>> channels;
 
         QJsonObject toJson() const
         {
@@ -87,6 +89,22 @@ struct GuildSubscriptionsBulkData : Core::JsonUtils::JsonObject
             insert(obj, "typing", typing);
             insert(obj, "activities", activities);
             insert(obj, "threads", threads);
+
+            if (!channels.isEmpty()) {
+                QJsonObject channelsObj;
+                for (auto it = channels.begin(); it != channels.end(); ++it) {
+                    QJsonArray rangesArr;
+                    for (const auto &range : it.value()) {
+                        QJsonArray pair;
+                        pair.append(range.first);
+                        pair.append(range.second);
+                        rangesArr.append(pair);
+                    }
+                    channelsObj[QString::number(it.key())] = rangesArr;
+                }
+                obj["channels"] = channelsObj;
+            }
+
             return obj;
         }
     };

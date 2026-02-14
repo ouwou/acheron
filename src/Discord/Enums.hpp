@@ -144,6 +144,7 @@ enum class GatewayEvent {
     MESSAGE_REACTION_REMOVE_ALL,
     MESSAGE_REACTION_REMOVE_EMOJI,
     USER_GUILD_SETTINGS_UPDATE,
+    GUILD_MEMBER_LIST_UPDATE,
 };
 
 inline GatewayEvent parseGatewayEvent(const QString &event)
@@ -170,6 +171,7 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "MESSAGE_REACTION_REMOVE_ALL", GatewayEvent::MESSAGE_REACTION_REMOVE_ALL },
         { "MESSAGE_REACTION_REMOVE_EMOJI", GatewayEvent::MESSAGE_REACTION_REMOVE_EMOJI },
         { "USER_GUILD_SETTINGS_UPDATE", GatewayEvent::USER_GUILD_SETTINGS_UPDATE },
+        { "GUILD_MEMBER_LIST_UPDATE", GatewayEvent::GUILD_MEMBER_LIST_UPDATE },
     };
 
     return events.value(event, GatewayEvent::UNKNOWN);

@@ -74,14 +74,17 @@ void Gateway::hardStop()
         heartbeatThread.join();
 }
 
-void Gateway::subscribeToGuild(Core::Snowflake guildId)
+void Gateway::subscribeToGuild(Core::Snowflake guildId, Core::Snowflake channelId, const QList<QPair<int, int>> &ranges)
 {
     GuildSubscriptionsBulk data;
     GuildSubscriptionsBulk::SubscriptionData guild;
     guild.typing = true;
     guild.activities = true;
     guild.threads = true;
+    guild.channels.insert(channelId, ranges);
     data.subscriptions.get().insert(guildId, guild);
+
+    qCDebug(LogDiscord) << "Subscribing to channel" << channelId << "with ranges" << ranges;
 
     sendPayload(data.toJson());
 }
@@ -236,6 +239,9 @@ void Gateway::handleDispatch(const Inbound &data)
         break;
     case GatewayEvent::USER_GUILD_SETTINGS_UPDATE:
         handleUserGuildSettingsUpdate(data);
+        break;
+    case GatewayEvent::GUILD_MEMBER_LIST_UPDATE:
+        handleGuildMemberListUpdate(data);
         break;
     case GatewayEvent::UNKNOWN:
         qCInfo(LogDiscord) << "Unknown gateway event: " << t;
@@ -401,6 +407,13 @@ void Gateway::handleUserGuildSettingsUpdate(const Inbound &data)
     UserGuildSettings settings = data.getData<UserGuildSettings>();
 
     emit gatewayUserGuildSettingsUpdate(settings);
+}
+
+void Gateway::handleGuildMemberListUpdate(const Inbound &data)
+{
+    GuildMemberListUpdate update = data.getData<GuildMemberListUpdate>();
+
+    emit gatewayGuildMemberListUpdate(update);
 }
 
 void Gateway::requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds)

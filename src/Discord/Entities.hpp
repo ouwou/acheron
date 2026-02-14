@@ -108,6 +108,16 @@ struct Role : Core::JsonUtils::JsonObject
         get(obj, "mentionable", role.mentionable);
         return role;
     }
+
+    bool hasColor() const
+    {
+        return color.hasValue() && color.get() != 0;
+    }
+
+    QColor getColor() const
+    {
+        return hasColor() ? QColor::fromRgb(color.get()) : QColor();
+    }
 };
 
 struct PermissionOverwrite : Core::JsonUtils::JsonObject
