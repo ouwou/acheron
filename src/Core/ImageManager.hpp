@@ -32,7 +32,7 @@ public:
     [[nodiscard]] ImageRequestKey key(const QUrl &url, const QSize &size);
 
     [[nodiscard]] bool isCached(const QUrl &url, const QSize &size);
-    [[nodiscard]] void assign(QLabel *label, const QUrl &url, const QSize &size);
+    void assign(QLabel *label, const QUrl &url, const QSize &size);
     QPixmap get(const QUrl &url, const QSize &size);
     [[nodiscard]] QPixmap placeholder(const QSize &size);
 

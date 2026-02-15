@@ -166,6 +166,8 @@ void Gateway::onPayloadReceived(const QJsonObject &root)
         shouldReconnect = true;
         break;
     }
+    default:
+        break;
     }
 }
 

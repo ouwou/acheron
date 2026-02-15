@@ -126,7 +126,7 @@ void AttachmentCache::fetchFromNetwork(const QUrl &url, const QSize &displaySize
     QNetworkRequest request(fetchUrl);
     QNetworkReply *reply = networkManager->get(request);
 
-    connect(reply, &QNetworkReply::finished, this, [=]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, displaySize, dpr]() {
         pendingRequests.remove(url);
 
         if (reply->error() != QNetworkReply::NoError) {

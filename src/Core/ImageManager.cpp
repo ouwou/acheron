@@ -75,7 +75,7 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size)
     QNetworkRequest request(url);
     QNetworkReply *reply = networkManager->get(request);
 
-    connect(reply, &QNetworkReply::finished, this, [=]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size]() {
         if (reply->error() == QNetworkReply::NoError) {
             QPixmap pixmap;
             if (pixmap.loadFromData(reply->readAll())) {

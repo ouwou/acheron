@@ -8,7 +8,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_AUTORCC ON)
 
-enable_testing()
+option(BUILD_TESTS "Build test targets" ON)
+
+if(BUILD_TESTS)
+    enable_testing()
+endif()
 
 find_package(CURL REQUIRED)
 
@@ -24,7 +28,23 @@ find_package(Qt${QT_VERSION_MAJOR}
         Test
         LinguistTools
 )
+find_package(Qt${QT_VERSION_MAJOR} COMPONENTS ZlibPrivate QUIET)
 qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES en)
+
+# If Qt::ZlibPrivate is not available, create a QtZlib compatibility include
+# directory so that #include <QtZlib/zlib.h> resolves using system zlib.
+if(NOT TARGET Qt::ZlibPrivate)
+    find_package(ZLIB REQUIRED)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/qtzlib-compat/QtZlib")
+    file(WRITE "${CMAKE_BINARY_DIR}/qtzlib-compat/QtZlib/zlib.h" "#include <zlib.h>\n")
+    file(WRITE "${CMAKE_BINARY_DIR}/qtzlib-compat/QtZlib/zconf.h" "#include <zconf.h>\n")
+    add_library(QtZlibCompat INTERFACE)
+    target_include_directories(QtZlibCompat INTERFACE
+        "${CMAKE_BINARY_DIR}/qtzlib-compat"
+        ${ZLIB_INCLUDE_DIRS}
+    )
+    target_link_libraries(QtZlibCompat INTERFACE ZLIB::ZLIB)
+endif()
 
 find_package(Qt${QT_VERSION_MAJOR}Keychain QUIET)
 if(Qt${QT_VERSION_MAJOR}Keychain_FOUND)
@@ -110,10 +130,12 @@ qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE vendor/emoji-segmenter)
 
-qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp src/Core/EmojiSegmenter.cpp)
-target_link_libraries(TestMarkdown PRIVATE Qt::Core Qt::Test)
-target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
-add_test(NAME MarkdownTests COMMAND TestMarkdown)
+if(BUILD_TESTS)
+    qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp src/Core/EmojiSegmenter.cpp)
+    target_link_libraries(TestMarkdown PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
+    add_test(NAME MarkdownTests COMMAND TestMarkdown)
+endif()
 
 qt_add_translations(${PROJECT_NAME})
 
@@ -122,9 +144,11 @@ if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
 
-    target_link_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
-    target_compile_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
-    target_compile_options(TestMarkdown PRIVATE /utf-8)
+    if(BUILD_TESTS)
+        target_link_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
+        target_compile_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
+        target_compile_options(TestMarkdown PRIVATE /utf-8)
+    endif()
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -148,6 +172,11 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain
 )
+if(TARGET Qt::ZlibPrivate)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
+endif()
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
 
 include(CheckSymbolExists)

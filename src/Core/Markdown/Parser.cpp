@@ -47,7 +47,7 @@ QList<AstNode> Parser::parse(QString source, ParseState state)
                 capture = rule.match(source, state);
             } else {
                 capture = rule.regex.match(source, 0, QRegularExpression::NormalMatch,
-                                           QRegularExpression::AnchoredMatchOption);
+                                           QRegularExpression::AnchorAtOffsetMatchOption);
             }
 
             if (capture.hasMatch()) {
@@ -191,7 +191,7 @@ static MatchFn inlineRegex(QRegularExpression regex)
     return [regex](const QString &source, const ParseState &state) -> Capture {
         if (state.isInline)
             return regex.match(source, 0, QRegularExpression::NormalMatch,
-                               QRegularExpression::AnchoredMatchOption);
+                               QRegularExpression::AnchorAtOffsetMatchOption);
         else
             return Capture();
     };
@@ -202,7 +202,7 @@ static MatchFn blockRegex(QRegularExpression regex)
     return [regex](const QString &source, const ParseState &state) -> Capture {
         if (!state.isInline)
             return regex.match(source, 0, QRegularExpression::NormalMatch,
-                               QRegularExpression::AnchoredMatchOption);
+                               QRegularExpression::AnchorAtOffsetMatchOption);
         else
             return Capture();
     };
@@ -212,7 +212,7 @@ static MatchFn anyScopeRegex(QRegularExpression regex)
 {
     return [regex](const QString &source, const ParseState &state) -> Capture {
         return regex.match(source, 0, QRegularExpression::NormalMatch,
-                           QRegularExpression::AnchoredMatchOption);
+                           QRegularExpression::AnchorAtOffsetMatchOption);
     };
 }
 

@@ -50,7 +50,7 @@ void ChatView::setModel(QAbstractItemModel *model)
 
     connect(model, &QAbstractItemModel::modelReset, this, [this]() {
         isFetchingTop = false;
-        anchorIndex = {};
+        anchorIndex = QPersistentModelIndex();
         QTimer::singleShot(0, this, &ChatView::scrollToBottom);
     });
 
@@ -318,7 +318,7 @@ void ChatView::onRowsInserted(const QModelIndex &parent, int start, int end)
             int diff = newRect.bottom() - anchorDistanceFromBottom;
             verticalScrollBar()->setValue(verticalScrollBar()->value() + diff);
 
-            anchorIndex = {};
+            anchorIndex = QPersistentModelIndex();
             isFetchingTop = false;
             setUpdatesEnabled(true);
         });

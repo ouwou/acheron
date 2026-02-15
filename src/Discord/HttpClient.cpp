@@ -128,7 +128,7 @@ void HttpClient::executeRequest(Method method, const QString &url, const QByteAr
 
     // i should use curl_multi but for now i will deal with the share obj interface
     // cuz its easier than dealing with multi for now
-    std::thread([=]() {
+    std::thread([=, this]() {
         CURL *curl = curl_easy_init();
         HttpResponse response;
 
@@ -142,6 +142,7 @@ void HttpClient::executeRequest(Method method, const QString &url, const QByteAr
 #endif
             curl_easy_setopt(curl, CURLOPT_USERAGENT,
                              CurlUtils::getUserAgent().toUtf8().constData());
+
             curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); // engine
             curl_easy_setopt(curl, CURLOPT_SHARE, share);
 
@@ -235,9 +236,10 @@ void HttpClient::executeMultipartRequest(const QString &url, const QByteArray &j
     std::string sUrl = url.toStdString();
     std::string sToken = token.toStdString();
 
-    std::thread([=]() {
+    std::thread([=, this]() {
         CURL *curl = curl_easy_init();
         HttpResponse response;
+
 
         if (curl) {
             QString certPath = CurlUtils::getCertificatePath();

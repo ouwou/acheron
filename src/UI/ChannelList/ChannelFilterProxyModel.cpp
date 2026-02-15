@@ -40,12 +40,14 @@ void ChannelFilterProxyModel::setSelectedChannel(Core::Snowflake channelId, Core
         return;
     selectedChannelId = channelId;
     selectedAccountId = accountId;
-    QSortFilterProxyModel::invalidateFilter();
+    beginFilterChange();
+    endFilterChange();
 }
 
 void ChannelFilterProxyModel::invalidateFilter()
 {
-    QSortFilterProxyModel::invalidateFilter();
+    beginFilterChange();
+    endFilterChange();
 }
 
 bool ChannelFilterProxyModel::lessThan(const QModelIndex &left, const QModelIndex &right) const

@@ -1,0 +1,154 @@
+name: Build
+
+on:
+  push:
+    branches: [master, ci/**]
+  pull_request:
+    branches: [master]
+
+env:
+  CURL_IMPERSONATE_VERSION: v1.4.4
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [MinSizeRel, RelWithDebInfo]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          modules: qtimageformats
+          cache: true
+
+      - name: Install curl-impersonate
+        shell: pwsh
+        run: |
+          $url = "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-win32.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
+          New-Item -ItemType Directory -Path curl-impersonate -Force
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
+            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DBUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          $exe = "${{ github.workspace }}/build/${{ matrix.build_type }}/acheron.exe"
+          windeployqt --no-translations --no-opengl-sw $exe
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $out = "acheron-windows-${{ matrix.build_type }}"
+          $binDir = "build/${{ matrix.build_type }}"
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          New-Item -ItemType Directory -Path $out -Force
+
+          # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
+          Copy-Item "$binDir/*" $out -Recurse -Force
+
+          # Copy curl-impersonate DLLs
+          Copy-Item "$curlDir/bin/*.dll" $out -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acheron-windows-${{ matrix.build_type }}
+          path: acheron-windows-${{ matrix.build_type }}
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          modules: qtimageformats
+          cache: true
+
+      - name: Install curl-impersonate
+        run: |
+          curl -L -o libcurl-impersonate.tar.gz \
+            "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
+          mkdir -p curl-impersonate
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+          sudo cp curl-impersonate/libcurl-impersonate.a /usr/local/lib/
+
+      - name: Configure
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
+          -DBUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: brew install curl
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          modules: qtimageformats
+          cache: true
+
+      - name: Install curl-impersonate
+        run: |
+          curl -L -o libcurl-impersonate.tar.gz \
+            "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.arm64-macos.tar.gz"
+          mkdir -p curl-impersonate
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Configure
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
+          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.a"
+          -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -liconv -licucore"
+          -DBUILD_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)

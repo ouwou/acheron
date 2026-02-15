@@ -266,7 +266,7 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
     message.timestamp = q.value(4).toDateTime();
     message.editedTimestamp = q.value(5).toDateTime();
     message.type = static_cast<Discord::MessageType>(q.value(6).toLongLong());
-    message.flags = static_cast<Discord::MessageFlags>(q.value(7).toLongLong());
+    message.flags = static_cast<Discord::MessageFlags>(static_cast<int>(q.value(7).toLongLong()));
 
     QString embedsJson = q.value(8).toString();
     if (!embedsJson.isEmpty()) {
@@ -314,7 +314,7 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
             refMsg->timestamp = q.value(20).toDateTime();
             refMsg->editedTimestamp = q.value(21).toDateTime();
             refMsg->type = static_cast<Discord::MessageType>(q.value(22).toLongLong());
-            refMsg->flags = static_cast<Discord::MessageFlags>(q.value(23).toLongLong());
+            refMsg->flags = static_cast<Discord::MessageFlags>(static_cast<int>(q.value(23).toLongLong()));
 
             QString refEmbedsJson = q.value(24).toString();
             if (!refEmbedsJson.isEmpty()) {
