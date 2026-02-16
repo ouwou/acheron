@@ -3,7 +3,6 @@
 #include "Core/Markdown/Parser.hpp"
 #include "Core/MessageManager.hpp"
 #include "Core/ImageManager.hpp"
-#include "Core/AttachmentCache.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -45,18 +44,19 @@ static EmbedType embedTypeFromString(const QString &typeStr)
     return EmbedType::Rich;
 }
 
-ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *attachmentCache,
-                     QObject *parent)
-    : QAbstractListModel(parent), imageManager(imageManager), attachmentCache(attachmentCache)
+ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
+    : QAbstractListModel(parent), imageManager(imageManager)
 {
     connect(imageManager, &Core::ImageManager::imageFetched, this,
             [this](const QUrl &url, const QSize &size, const QPixmap &pixmap) {
+                // avatar pending requests
                 auto values = pendingRequests.values(url);
                 for (const auto &index : values) {
                     if (index.isValid())
                         emit dataChanged(index, index, { Qt::DecorationRole });
                 }
 
+                // custom emoji in message content and embed text
                 if (url.host() == u"cdn.discordapp.com" && url.path().startsWith(u"/emojis/")) {
                     QString urlStr = url.toString();
                     for (int row = 0; row < messages.size(); ++row) {
@@ -104,11 +104,10 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *at
                             emit dataChanged(idx, idx, { ReactionsRole, CachedSizeRole });
                         }
                     }
+                    return;
                 }
-            });
 
-    connect(attachmentCache, &Core::AttachmentCache::attachmentFetched, this,
-            [this](const QUrl &url, const QPixmap &pixmap) {
+                // attachment and embed images
                 for (int row = 0; row < messages.size(); ++row) {
                     const auto &msg = messages[row];
                     bool found = false;
@@ -297,9 +296,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 if (att.width.hasValue() && att.height.hasValue())
                     original = QSize(*att.width, *att.height);
 
-                data.displaySize = Core::AttachmentCache::calculateDisplaySize(original);
-                data.pixmap = attachmentCache->get(data.proxyUrl, original);
-                data.isLoading = !attachmentCache->isCached(data.proxyUrl);
+                data.displaySize = Core::ImageManager::calculateDisplaySize(original);
+                data.pixmap = suppressImageFetch
+                                      ? imageManager->getIfCached(data.proxyUrl, data.displaySize)
+                                      : imageManager->get(data.proxyUrl, data.displaySize);
+                data.isLoading = !imageManager->isCached(data.proxyUrl, data.displaySize);
             } else {
                 data.displaySize = QSize();
                 data.isLoading = false;
@@ -344,8 +345,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 QSize origSize;
                 if (embed.image->width.hasValue() && embed.image->height.hasValue())
                     origSize = QSize(*embed.image->width, *embed.image->height);
-                imageData.displaySize = Core::AttachmentCache::calculateDisplaySize(origSize);
-                imageData.pixmap = attachmentCache->get(imageData.url, origSize);
+                imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
+                imageData.pixmap =
+                        suppressImageFetch
+                                ? imageManager->getIfCached(imageData.url, imageData.displaySize)
+                                : imageManager->get(imageData.url, imageData.displaySize);
 
                 result[parentIndex].images.append(imageData);
             } else if (!shouldMerge && hasImage && !embedUrl.isEmpty() &&
@@ -390,7 +394,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                              : QString();
                     if (embed.author->iconUrl.hasValue()) {
                         data.authorIconUrl = QUrl(*embed.author->proxyIconUrl);
-                        data.authorIcon = attachmentCache->get(data.authorIconUrl, QSize(24, 24));
+                        data.authorIcon =
+                                suppressImageFetch
+                                        ? imageManager->getIfCached(data.authorIconUrl,
+                                                                    QSize(24, 24))
+                                        : imageManager->get(data.authorIconUrl, QSize(24, 24));
                     }
                 }
 
@@ -399,7 +407,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                             embed.footer->text.hasValue() ? *embed.footer->text : QString();
                     if (embed.footer->proxyIconUrl.hasValue()) {
                         data.footerIconUrl = QUrl(*embed.footer->proxyIconUrl);
-                        data.footerIcon = attachmentCache->get(data.footerIconUrl, QSize(20, 20));
+                        data.footerIcon =
+                                suppressImageFetch
+                                        ? imageManager->getIfCached(data.footerIconUrl,
+                                                                    QSize(20, 20))
+                                        : imageManager->get(data.footerIconUrl, QSize(20, 20));
                     }
                 }
 
@@ -420,12 +432,16 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                         origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
 
                     if (data.type == EmbedType::Gifv || data.type == EmbedType::Image)
-                        data.thumbnailSize = Core::AttachmentCache::calculateDisplaySize(origSize);
+                        data.thumbnailSize = Core::ImageManager::calculateDisplaySize(origSize);
                     else
                         data.thumbnailSize = origSize.isValid()
                                                      ? origSize.scaled(80, 80, Qt::KeepAspectRatio)
                                                      : QSize(80, 80);
-                    data.thumbnail = attachmentCache->get(data.thumbnailUrl, origSize);
+                    data.thumbnail =
+                            suppressImageFetch
+                                    ? imageManager->getIfCached(data.thumbnailUrl,
+                                                                data.thumbnailSize)
+                                    : imageManager->get(data.thumbnailUrl, data.thumbnailSize);
                 }
 
                 if (hasImage) {
@@ -434,8 +450,12 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     QSize origSize;
                     if (embed.image->width.hasValue() && embed.image->height.hasValue())
                         origSize = QSize(*embed.image->width, *embed.image->height);
-                    imageData.displaySize = Core::AttachmentCache::calculateDisplaySize(origSize);
-                    imageData.pixmap = attachmentCache->get(imageData.url, origSize);
+                    imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
+                    imageData.pixmap =
+                            suppressImageFetch
+                                    ? imageManager->getIfCached(imageData.url,
+                                                                imageData.displaySize)
+                                    : imageManager->get(imageData.url, imageData.displaySize);
                     data.images.append(imageData);
                 }
 
@@ -448,9 +468,13 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                         if (embed.thumbnail->width.hasValue() && embed.thumbnail->height.hasValue())
                             origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
                         data.videoThumbnailSize =
-                                Core::AttachmentCache::calculateDisplaySize(origSize);
+                                Core::ImageManager::calculateDisplaySize(origSize);
                         data.videoThumbnail =
-                                attachmentCache->get(data.videoThumbnailUrl, origSize);
+                                suppressImageFetch
+                                        ? imageManager->getIfCached(data.videoThumbnailUrl,
+                                                                    data.videoThumbnailSize)
+                                        : imageManager->get(data.videoThumbnailUrl,
+                                                            data.videoThumbnailSize);
                     }
                 }
 
@@ -490,7 +514,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             }
         }
 
-        embedCache[msg.id] = result;
+        if (!suppressImageFetch)
+            embedCache[msg.id] = result;
         return QVariant::fromValue(result);
     }
     case IsPendingRole:

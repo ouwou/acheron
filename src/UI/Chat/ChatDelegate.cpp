@@ -66,6 +66,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 {
     painter->save();
 
+    if (auto *chatModel = qobject_cast<const ChatModel *>(index.model()))
+        chatModel->suppressImageFetch = false;
+
     ChatLayout::LayoutContext ctx = buildLayoutContext(option, index);
     ChatLayout::MessageLayout layout = ChatLayout::calculateMessageLayout(ctx);
 
@@ -719,7 +722,15 @@ QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelInd
     if (cached.isValid() && cached.width() == viewportWidth && !isEditing)
         return cached;
 
+    const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
+    if (chatModel)
+        chatModel->suppressImageFetch = true;
+
     ChatLayout::LayoutContext ctx = buildLayoutContext(option, index);
+
+    if (chatModel)
+        chatModel->suppressImageFetch = false;
+
     ctx.rowWidth = viewportWidth;
     ctx.rowTop = 0;
 

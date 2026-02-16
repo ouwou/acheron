@@ -30,7 +30,7 @@ namespace UI {
 
 MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent), session(session)
 {
-    chatModel = new ChatModel(session->getImageManager(), session->getAttachmentCache(), this);
+    chatModel = new ChatModel(session->getImageManager(), this);
     channelTreeModel = new ChannelTreeModel(session, this);
     channelFilterProxy = new ChannelFilterProxyModel(session, this);
     channelFilterProxy->setSourceModel(channelTreeModel);

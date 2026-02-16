@@ -71,7 +71,6 @@ set(PROJECT_SOURCES
     src/Core/Logging.cpp
     src/Core/MessageManager.cpp
     src/Core/ImageManager.cpp
-    src/Core/AttachmentCache.cpp
     src/Core/UserManager.cpp
     src/Core/TypingTracker.cpp
     src/Core/PermissionManager.cpp

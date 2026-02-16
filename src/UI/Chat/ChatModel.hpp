@@ -12,7 +12,6 @@ namespace Acheron {
 
 namespace Core {
 class ImageManager;
-class AttachmentCache;
 } // namespace Core
 
 struct AttachmentData
@@ -174,8 +173,7 @@ class ChatModel : public QAbstractListModel
 {
     Q_OBJECT
 public:
-    ChatModel(Core::ImageManager *imageManager, Core::AttachmentCache *attachmentCache,
-              QObject *parent = nullptr);
+    ChatModel(Core::ImageManager *imageManager, QObject *parent = nullptr);
 
     enum Roles {
         ContentRole = Qt::UserRole + 1,
@@ -240,7 +238,6 @@ private:
     void setMessages(const QList<Discord::Message> &messages);
 
     Core::ImageManager *imageManager;
-    Core::AttachmentCache *attachmentCache;
     QVector<Discord::Message> messages;
     mutable QHash<Snowflake, QSize> sizeCache;
     mutable QHash<Snowflake, QList<EmbedData>> embedCache;
@@ -258,6 +255,9 @@ private:
     QSet<QString> pendingNonces;
     QSet<QString> erroredNonces;
     mutable QSet<Snowflake> revealedSpoilers;
+    mutable bool suppressImageFetch = false;
+
+    friend class ChatDelegate;
 };
 } // namespace UI
 } // namespace Acheron
