@@ -8,6 +8,7 @@ Q_LOGGING_CATEGORY(LogDiscord, "acheron.discord");
 Q_LOGGING_CATEGORY(LogDB, "acheron.db");
 Q_LOGGING_CATEGORY(LogUI, "acheron.ui");
 Q_LOGGING_CATEGORY(LogProto, "acheron.proto");
+Q_LOGGING_CATEGORY(LogDave, "acheron.dave");
 
 namespace Acheron {
 namespace Core {
