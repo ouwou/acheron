@@ -4,3 +4,6 @@
 [submodule "vendor/emoji-segmenter"]
 	path = vendor/emoji-segmenter
 	url = https://github.com/google/emoji-segmenter/
+[submodule "vendor/libdave"]
+	path = vendor/libdave
+	url = https://github.com/discord/libdave

@@ -8,6 +8,7 @@ on:
 
 env:
   CURL_IMPERSONATE_VERSION: v1.4.4
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
   build-windows:
@@ -22,12 +23,23 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.10.2'
           modules: qtimageformats
           cache: true
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.bat
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -43,6 +55,9 @@ jobs:
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vendor/libdave/cpp/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/vendor/libdave/cpp/vcpkg-alts/openssl_3" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
             -DCURL_DIR="$curlDir/lib/cmake/CURL" `
             -DBUILD_TESTS=OFF
@@ -84,6 +99,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -95,6 +117,9 @@ jobs:
           version: '6.10.2'
           modules: qtimageformats
           cache: true
+
+      - name: Bootstrap vcpkg
+        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install curl-impersonate
         run: |
@@ -108,6 +133,9 @@ jobs:
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vendor/libdave/cpp/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/vendor/libdave/cpp/vcpkg-alts/openssl_3"
+          -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
           -DBUILD_TESTS=OFF
@@ -123,6 +151,13 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install dependencies
         run: brew install curl
 
@@ -132,6 +167,9 @@ jobs:
           version: '6.10.2'
           modules: qtimageformats
           cache: true
+
+      - name: Bootstrap vcpkg
+        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install curl-impersonate
         run: |
@@ -144,6 +182,9 @@ jobs:
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vendor/libdave/cpp/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_MANIFEST_DIR="${{ github.workspace }}/vendor/libdave/cpp/vcpkg-alts/openssl_3"
+          -DVCPKG_TARGET_TRIPLET=arm64-osx
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
           -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.a"
