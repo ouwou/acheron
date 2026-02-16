@@ -39,7 +39,9 @@ jobs:
 
       - name: Bootstrap vcpkg
         shell: pwsh
-        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.bat
+        run: |
+          git -C vendor/libdave/cpp/vcpkg fetch --unshallow
+          vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.bat
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -119,7 +121,9 @@ jobs:
           cache: true
 
       - name: Bootstrap vcpkg
-        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
+        run: |
+          git -C vendor/libdave/cpp/vcpkg fetch --unshallow
+          vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install curl-impersonate
         run: |
@@ -169,7 +173,9 @@ jobs:
           cache: true
 
       - name: Bootstrap vcpkg
-        run: vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
+        run: |
+          git -C vendor/libdave/cpp/vcpkg fetch --unshallow
+          vendor/libdave/cpp/vcpkg/bootstrap-vcpkg.sh
 
       - name: Install curl-impersonate
         run: |
