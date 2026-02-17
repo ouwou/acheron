@@ -142,6 +142,10 @@ set(PROJECT_SOURCES
     src/Discord/HttpClient.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/ClientIdentity.cpp
+    src/Discord/AV/VoiceGateway.cpp
+    src/Discord/AV/UdpTransport.cpp
+    src/Discord/AV/VoiceClient.cpp
+    src/Core/AV/VoiceManager.cpp
     src/Proto/ProtoReader.cpp
     src/Proto/UserSettings.cpp
     src/Core/TokenStore.cpp

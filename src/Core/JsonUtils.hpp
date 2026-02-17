@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QByteArray>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 
@@ -117,8 +119,11 @@ protected:
             state = State::Null;
         }
 
-        bool operator==(const T &value) const { return this->value == value; }
-        bool operator!=(const T &value) const { return this->value != value; }
+        template <typename U>
+        bool operator==(const U &value) const
+        {
+            return this->value == value;
+        }
 
         [[nodiscard]] bool isUndefined() const { return IsOptional && state == State::Undefined; }
         [[nodiscard]] bool isNull() const { return IsNullable && state == State::Null; }
@@ -201,6 +206,11 @@ protected:
                 mapObject[keyStr] = toJsonValue(it.value());
             }
             object[key] = mapObject;
+        } else if constexpr (std::is_same_v<T, QByteArray>) {
+            QJsonArray array;
+            for (unsigned char byte : field.get())
+                array.append(static_cast<int>(byte));
+            object[key] = array;
         } else if constexpr (!std::is_same_v<T, QString> && ListLike<T>) {
             QJsonArray array;
             for (const auto &element : field.get()) {
@@ -227,6 +237,13 @@ protected:
             return T::fromInt(value.toInt());
         } else if constexpr (std::is_enum_v<T>) {
             return static_cast<T>(value.toInt());
+        } else if constexpr (std::is_same_v<T, QByteArray>) {
+            QByteArray result;
+            const QJsonArray array = value.toArray();
+            result.reserve(array.size());
+            for (const QJsonValue &element : array)
+                result.append(static_cast<char>(element.toInt()));
+            return result;
         } else if constexpr (ListLike<T>) {
             using InnerType = typename T::value_type;
 

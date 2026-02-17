@@ -5,3 +5,4 @@ CMakeUserPresets.json
 .vs/
 *.aps
 .planning/
+/build

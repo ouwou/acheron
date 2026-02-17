@@ -15,6 +15,10 @@
 namespace Acheron {
 namespace Core {
 
+namespace AV {
+class VoiceManager;
+}
+
 class ReadStateManager;
 
 class ClientInstance : public QObject
@@ -33,6 +37,7 @@ public:
     [[nodiscard]] PermissionManager *permissions() const;
     [[nodiscard]] ReadStateManager *readState() const;
     [[nodiscard]] MemberListManager *memberList() const;
+    [[nodiscard]] AV::VoiceManager *voice() const;
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
@@ -88,6 +93,7 @@ private:
     PermissionManager *permissionManager;
     ReadStateManager *readStateManager;
     MemberListManager *memberListManager;
+    AV::VoiceManager *voiceManager;
 
     Storage::RoleRepository roleRepo;
     Storage::GuildRepository guildRepo;
