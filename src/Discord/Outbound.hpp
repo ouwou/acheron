@@ -155,5 +155,31 @@ struct ResumeData : Core::JsonUtils::JsonObject
 };
 using Resume = Outbound<OpCode::RESUME, ResumeData>;
 
+struct UpdateVoiceStateData : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> guildId;
+    Field<Core::Snowflake, false, true> channelId;
+    Field<bool> selfMute;
+    Field<bool> selfDeaf;
+    Field<bool, true> selfVideo;
+    Field<VoiceFlags, true> flags;
+
+    QJsonObject toJson() const
+    {
+        QJsonObject obj;
+        obj["guild_id"] = QString::number(guildId.get());
+        if (channelId.isNull())
+            obj["channel_id"] = QJsonValue::Null;
+        else
+            obj["channel_id"] = QString::number(channelId.get());
+        insert(obj, "self_mute", selfMute);
+        insert(obj, "self_deaf", selfDeaf);
+        insert(obj, "self_video", selfVideo);
+        insert(obj, "flags", flags);
+        return obj;
+    }
+};
+using UpdateVoiceState = Outbound<OpCode::VOICE_STATE_UPDATE, UpdateVoiceStateData>;
+
 } // namespace Discord
 } // namespace Acheron

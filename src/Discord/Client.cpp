@@ -46,6 +46,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayUserGuildSettingsUpdate, this,
             &Client::userGuildSettingsUpdated);
     connect(gateway, &Gateway::gatewayGuildMemberListUpdate, this, &Client::guildMemberListUpdate);
+    connect(gateway, &Gateway::gatewayVoiceStateUpdate, this, &Client::voiceStateUpdated);
+    connect(gateway, &Gateway::gatewayVoiceServerUpdate, this, &Client::voiceServerUpdated);
     connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
         setState(Core::ConnectionState::Connecting);
         emit reconnecting(attempt, maxAttempts);
@@ -405,6 +407,11 @@ void Client::ensureSubscriptionByChannel(Snowflake channelId)
 Snowflake Client::getGuildIdForChannel(Snowflake channelId) const
 {
     return channelToGuild.value(channelId, Snowflake::Invalid);
+}
+
+void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf)
+{
+    gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf);
 }
 
 void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds)

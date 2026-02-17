@@ -139,10 +139,11 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     // determine text color
     QColor textColor = option.palette.text().color();
     bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
-    if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::DMChannel) {
+    if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::VoiceChannel ||
+        node->type == ChannelNode::Type::DMChannel) {
         if (node->isMuted)
             textColor = option.palette.text().color().darker(150);
-        else if (node->isUnread || isSelected)
+        else if (isSelected || (node->isUnread && node->type != ChannelNode::Type::VoiceChannel))
             textColor = option.palette.brightText().color();
     } else if (node->type == ChannelNode::Type::Server) {
         if (node->isUnread && !node->isMuted)

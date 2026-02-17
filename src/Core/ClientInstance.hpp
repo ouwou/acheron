@@ -39,6 +39,10 @@ public:
 
     [[nodiscard]] ConnectionState state() const;
 
+    [[nodiscard]] Snowflake voiceChannelId() const;
+    [[nodiscard]] Snowflake voiceGuildId() const;
+    [[nodiscard]] bool isInVoice() const;
+
     Snowflake accountId() const;
     const AccountInfo &accountInfo() const;
 
@@ -58,6 +62,7 @@ signals:
     void readStateChanged(Snowflake channelId);
     void guildSettingsChanged(Snowflake guildId);
     void channelLastMessageUpdated(Snowflake channelId, Snowflake messageId);
+    void voiceStateChanged(Snowflake channelId, Snowflake guildId);
 
 private slots:
     void onChannelCreated(const Discord::ChannelCreate &event);
@@ -88,6 +93,9 @@ private:
     Storage::GuildRepository guildRepo;
     Storage::ChannelRepository channelRepo;
     Storage::MemberRepository memberRepo;
+
+    Snowflake currentVoiceChannelId;
+    Snowflake currentVoiceGuildId;
 
     // notFound members are kept in here so we dont ask for them again
     QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;

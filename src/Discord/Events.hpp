@@ -477,5 +477,55 @@ struct GuildMemberListUpdate : Core::JsonUtils::JsonObject
     }
 };
 
+struct VoiceState : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake, true> guildId;
+    Field<Core::Snowflake, false, true> channelId;
+    Field<Core::Snowflake> userId;
+    Field<QString> sessionId;
+    Field<bool> deaf;
+    Field<bool> mute;
+    Field<bool> selfDeaf;
+    Field<bool> selfMute;
+    Field<bool, true> selfStream;
+    Field<bool> selfVideo;
+    Field<bool> suppress;
+    Field<QString, true> requestToSpeakTimestamp;
+
+    static VoiceState fromJson(const QJsonObject &obj)
+    {
+        VoiceState state;
+        get(obj, "guild_id", state.guildId);
+        get(obj, "channel_id", state.channelId);
+        get(obj, "user_id", state.userId);
+        get(obj, "session_id", state.sessionId);
+        get(obj, "deaf", state.deaf);
+        get(obj, "mute", state.mute);
+        get(obj, "self_deaf", state.selfDeaf);
+        get(obj, "self_mute", state.selfMute);
+        get(obj, "self_stream", state.selfStream);
+        get(obj, "self_video", state.selfVideo);
+        get(obj, "suppress", state.suppress);
+        get(obj, "request_to_speak_timestamp", state.requestToSpeakTimestamp);
+        return state;
+    }
+};
+
+struct VoiceServerUpdate : Core::JsonUtils::JsonObject
+{
+    Field<QString> token;
+    Field<Core::Snowflake> guildId;
+    Field<QString, false, true> endpoint;
+
+    static VoiceServerUpdate fromJson(const QJsonObject &obj)
+    {
+        VoiceServerUpdate event;
+        get(obj, "token", event.token);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "endpoint", event.endpoint);
+        return event;
+    }
+};
+
 } // namespace Discord
 } // namespace Acheron

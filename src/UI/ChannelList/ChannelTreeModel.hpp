@@ -61,6 +61,7 @@ public:
     void toggleCollapsed(const QModelIndex &index);
 
     QList<QPair<Snowflake, Snowflake>> getMarkableChannels(const QModelIndex &index);
+    ChannelNode *findChannelTreeNode(Snowflake channelId);
 
 private:
     void initChannelReadStates(ChannelNode *node, Core::ClientInstance *instance);

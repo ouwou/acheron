@@ -20,6 +20,7 @@ struct ChannelNode
         Server,
         Category,
         Channel,
+        VoiceChannel,
         DMChannel,
     };
 

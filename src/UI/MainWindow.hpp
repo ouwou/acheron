@@ -82,6 +82,7 @@ private:
     MemberListModel *memberListModel;
     Core::TypingTracker *typingTracker;
 
+    QLabel *voiceStatusLabel;
     AccountsWindow *accountsWindow = nullptr;
 
 private slots:

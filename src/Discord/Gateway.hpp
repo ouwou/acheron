@@ -36,6 +36,7 @@ public:
 
     void subscribeToGuild(Core::Snowflake guildId, Core::Snowflake channelId, const QList<QPair<int, int>> &ranges);
     void requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds);
+    void sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf);
 
     // Debug: simulate a server RECONNECT opcode
     void debugForceReconnect();
@@ -68,6 +69,8 @@ signals:
     void gatewayMessageReactionRemoveEmoji(const MessageReactionRemoveEmoji &data);
     void gatewayUserGuildSettingsUpdate(const UserGuildSettings &data);
     void gatewayGuildMemberListUpdate(const GuildMemberListUpdate &data);
+    void gatewayVoiceStateUpdate(const VoiceState &data);
+    void gatewayVoiceServerUpdate(const VoiceServerUpdate &data);
 
 private:
     void sendPayload(const QJsonObject &obj);
@@ -98,6 +101,8 @@ private:
     void handleMessageReactionRemoveEmoji(const Inbound &data);
     void handleUserGuildSettingsUpdate(const Inbound &data);
     void handleGuildMemberListUpdate(const Inbound &data);
+    void handleVoiceStateUpdate(const Inbound &data);
+    void handleVoiceServerUpdate(const Inbound &data);
     void handleHello(const Inbound &data);
     void identify();
     void resume();

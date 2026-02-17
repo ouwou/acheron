@@ -313,6 +313,22 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
                 chatModel->refreshUsersInView(userIds);
             });
+
+    // refresh voice indicator for the new active instance
+    if (currentInstance->isInVoice()) {
+        Snowflake vcId = currentInstance->voiceChannelId();
+        ChannelNode *node = channelTreeModel->findChannelTreeNode(vcId);
+        QString name = node ? node->name : QString::number(vcId);
+        voiceStatusLabel->setStyleSheet(
+                "QLabel { background-color: #1a1a2e; color: #43b581; padding: 6px 8px; "
+                "font-size: 11px; border-top: 1px solid #2a2a3e; }");
+        voiceStatusLabel->setText(tr("Voice Connected\n#%1").arg(name));
+    } else {
+        voiceStatusLabel->setStyleSheet(
+                "QLabel { background-color: #1a1a2e; color: #999; padding: 6px 8px; "
+                "font-size: 11px; border-top: 1px solid #2a2a3e; }");
+        voiceStatusLabel->setText(tr("Voice Disconnected"));
+    }
 }
 
 void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
@@ -426,6 +442,42 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 if (state == Core::ConnectionState::Connected)
                     connectionBanner->hide();
             });
+
+    connect(instance, &Core::ClientInstance::voiceStateChanged, this,
+            [this, instance](Core::Snowflake channelId, Core::Snowflake guildId) {
+                channelTree->setAccountVoiceChannel(instance->accountId(), channelId);
+
+                if (!channelId.isValid()) {
+                    // only reset label if no other account is in voice
+                    bool anyInVoice = false;
+                    for (const auto &other : session->getClients()) {
+                        if (other && other->isInVoice()) {
+                            anyInVoice = true;
+                            break;
+                        }
+                    }
+                    if (!anyInVoice) {
+                        voiceStatusLabel->setStyleSheet(
+                                "QLabel { background-color: #1a1a2e; color: #999; padding: 6px 8px; "
+                                "font-size: 11px; border-top: 1px solid #2a2a3e; }");
+                        voiceStatusLabel->setText(tr("Voice Disconnected"));
+                    }
+                    return;
+                }
+
+                // resolve channel name from the tree
+                QString channelName;
+                ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId);
+                if (node)
+                    channelName = node->name;
+                else
+                    channelName = QString::number(channelId);
+
+                voiceStatusLabel->setStyleSheet(
+                        "QLabel { background-color: #1a1a2e; color: #43b581; padding: 6px 8px; "
+                        "font-size: 11px; border-top: 1px solid #2a2a3e; }");
+                voiceStatusLabel->setText(tr("Voice Connected\n#%1").arg(channelName));
+            });
 }
 
 void MainWindow::setupUi()
@@ -433,7 +485,22 @@ void MainWindow::setupUi()
     auto *central = new QWidget(this);
     auto *layout = new QHBoxLayout(central);
 
-    channelTree = new ChannelTreeView(central);
+    auto *leftSideWidget = new QWidget(central);
+    auto *leftLayout = new QVBoxLayout(leftSideWidget);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(0);
+
+    channelTree = new ChannelTreeView(leftSideWidget);
+
+    voiceStatusLabel = new QLabel(leftSideWidget);
+    voiceStatusLabel->setWordWrap(true);
+    voiceStatusLabel->setStyleSheet(
+            "QLabel { background-color: #1a1a2e; color: #999; padding: 6px 8px; "
+            "font-size: 11px; border-top: 1px solid #2a2a3e; }");
+    voiceStatusLabel->setText(tr("Voice Disconnected"));
+
+    leftLayout->addWidget(channelTree, 1);
+    leftLayout->addWidget(voiceStatusLabel, 0);
 
     auto *rightSideWidget = new QWidget(central);
     auto *rightLayout = new QVBoxLayout(rightSideWidget);
@@ -485,7 +552,7 @@ void MainWindow::setupUi()
     memberListView->setItemDelegate(new MemberListDelegate(memberListView));
 
     mainSplitter = new QSplitter(this);
-    mainSplitter->addWidget(channelTree);
+    mainSplitter->addWidget(leftSideWidget);
     mainSplitter->addWidget(rightSideWidget);
     mainSplitter->addWidget(memberListView);
 
@@ -494,7 +561,7 @@ void MainWindow::setupUi()
     mainSplitter->setStretchFactor(0, 0);
     mainSplitter->setStretchFactor(1, 1);
     mainSplitter->setStretchFactor(2, 0);
-    channelTree->setMinimumWidth(200);
+    leftSideWidget->setMinimumWidth(200);
     memberListView->setMinimumWidth(140);
     memberListView->setMaximumWidth(400);
 
@@ -676,6 +743,57 @@ void MainWindow::setupUi()
                                             .arg(quint64(guildNode->id))
                                             .arg(guildNode->TEMP_iconHash);
                 tabBar->openNewTab(entry);
+            });
+
+    connect(channelTree, &ChannelTreeView::joinVoiceChannelRequested, this,
+            [this](const QModelIndex &proxyIndex) {
+                QModelIndex sourceIndex = channelFilterProxy->mapToSource(proxyIndex);
+                auto *node = channelTreeModel->nodeFromIndex(sourceIndex);
+                if (!node || node->type != ChannelNode::Type::VoiceChannel)
+                    return;
+
+                ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+                if (!accountNode)
+                    return;
+
+                ClientInstance *instance = session->client(accountNode->id);
+                if (!instance)
+                    return;
+
+                ChannelNode *guildNode = node;
+                while (guildNode && guildNode->type != ChannelNode::Type::Server)
+                    guildNode = guildNode->parent;
+                if (!guildNode)
+                    return;
+
+                qCInfo(LogVoice) << "Joining voice channel" << node->name << node->id
+                                 << "in guild" << guildNode->id;
+                instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, false, false);
+            });
+
+    connect(channelTree, &ChannelTreeView::disconnectVoiceRequested, this,
+            [this](const QModelIndex &proxyIndex) {
+                QModelIndex sourceIndex = channelFilterProxy->mapToSource(proxyIndex);
+                auto *node = channelTreeModel->nodeFromIndex(sourceIndex);
+                if (!node)
+                    return;
+
+                ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+                if (!accountNode)
+                    return;
+
+                ClientInstance *instance = session->client(accountNode->id);
+                if (!instance)
+                    return;
+
+                ChannelNode *guildNode = node;
+                while (guildNode && guildNode->type != ChannelNode::Type::Server)
+                    guildNode = guildNode->parent;
+                if (!guildNode)
+                    return;
+
+                qCInfo(LogVoice) << "Disconnecting from voice in guild" << guildNode->id;
+                instance->discord()->sendVoiceStateUpdate(guildNode->id, Snowflake::Invalid, false, false);
             });
 
     layout->addWidget(mainSplitter);

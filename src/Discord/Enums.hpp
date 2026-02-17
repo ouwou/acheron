@@ -145,6 +145,8 @@ enum class GatewayEvent {
     MESSAGE_REACTION_REMOVE_EMOJI,
     USER_GUILD_SETTINGS_UPDATE,
     GUILD_MEMBER_LIST_UPDATE,
+    VOICE_STATE_UPDATE,
+    VOICE_SERVER_UPDATE,
 };
 
 inline GatewayEvent parseGatewayEvent(const QString &event)
@@ -172,6 +174,8 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "MESSAGE_REACTION_REMOVE_EMOJI", GatewayEvent::MESSAGE_REACTION_REMOVE_EMOJI },
         { "USER_GUILD_SETTINGS_UPDATE", GatewayEvent::USER_GUILD_SETTINGS_UPDATE },
         { "GUILD_MEMBER_LIST_UPDATE", GatewayEvent::GUILD_MEMBER_LIST_UPDATE },
+        { "VOICE_STATE_UPDATE", GatewayEvent::VOICE_STATE_UPDATE },
+        { "VOICE_SERVER_UPDATE", GatewayEvent::VOICE_SERVER_UPDATE },
     };
 
     return events.value(event, GatewayEvent::UNKNOWN);
@@ -368,6 +372,14 @@ enum class AttachmentFlag {
 };
 Q_DECLARE_FLAGS(AttachmentFlags, AttachmentFlag);
 Q_DECLARE_OPERATORS_FOR_FLAGS(AttachmentFlags);
+
+enum class VoiceFlag {
+    CLIPS_ENABLED = 1 << 0,
+    ALLOW_VOICE_RECORDINGS = 1 << 1,
+    ALLOW_ANY_VIEWER_CLIPS = 1 << 2,
+};
+Q_DECLARE_FLAGS(VoiceFlags, VoiceFlag);
+Q_DECLARE_OPERATORS_FOR_FLAGS(VoiceFlags);
 
 } // namespace Discord
 } // namespace Acheron
