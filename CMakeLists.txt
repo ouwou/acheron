@@ -24,6 +24,8 @@ if(BUILD_TESTS)
 endif()
 
 find_package(CURL REQUIRED)
+find_package(unofficial-sodium CONFIG REQUIRED)
+find_package(Opus CONFIG REQUIRED)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools)
 find_package(Qt${QT_VERSION_MAJOR}
@@ -145,6 +147,8 @@ set(PROJECT_SOURCES
     src/Discord/AV/VoiceGateway.cpp
     src/Discord/AV/UdpTransport.cpp
     src/Discord/AV/VoiceClient.cpp
+    src/Discord/AV/RtpPacket.cpp
+    src/Discord/AV/VoiceEncryption.cpp
     src/Core/AV/VoiceManager.cpp
     src/Proto/ProtoReader.cpp
     src/Proto/UserSettings.cpp
@@ -197,6 +201,8 @@ target_link_libraries(${PROJECT_NAME}
         CURL::libcurl
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain
+        unofficial-sodium::sodium
+        Opus::opus
 )
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)

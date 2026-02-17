@@ -1,6 +1,9 @@
 #pragma once
 
 #include <QObject>
+#include <QTimer>
+
+#include <memory>
 
 #include "Core/Snowflake.hpp"
 #include "VoiceEnums.hpp"
@@ -12,6 +15,7 @@ namespace AV {
 
 class VoiceGateway;
 class UdpTransport;
+class VoiceEncryption;
 
 class VoiceClient : public QObject
 {
@@ -64,9 +68,12 @@ private slots:
     void onGatewayResumed();
     void onIpDiscovered(const QString &ip, int port);
     void onIpDiscoveryFailed(const QString &error);
+    void onDatagram(const QByteArray &data);
 
 private:
     void setState(State state);
+    void sendSilence();
+    void cleanupTransport();
 
 private:
     VoiceGateway *gateway = nullptr;
@@ -92,6 +99,13 @@ private:
     QByteArray sessionKey;
 
     QHash<quint32, Core::Snowflake> ssrcToUser;
+
+    std::unique_ptr<VoiceEncryption> encryption;
+    QTimer *keepaliveTimer = nullptr;
+    uint16_t rtpSequence = 0;
+    uint32_t rtpTimestamp = 0;
+
+    static constexpr int KEEPALIVE_INTERVAL_MS = 10000;
 };
 
 } // namespace AV

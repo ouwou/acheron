@@ -81,7 +81,6 @@ Q_DECLARE_OPERATORS_FOR_FLAGS(SpeakingFlags)
 enum class EncryptionMode {
     AEAD_AES256_GCM_RTPSIZE,
     AEAD_XCHACHA20_POLY1305_RTPSIZE,
-    XSALSA20_POLY1305_LITE,
     UNKNOWN,
 };
 
@@ -92,8 +91,6 @@ inline QString encryptionModeToString(EncryptionMode mode)
         return "aead_aes256_gcm_rtpsize";
     case EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE:
         return "aead_xchacha20_poly1305_rtpsize";
-    case EncryptionMode::XSALSA20_POLY1305_LITE:
-        return "xsalsa20_poly1305_lite";
     default:
         return "unknown";
     }
@@ -105,8 +102,6 @@ inline EncryptionMode encryptionModeFromString(const QString &str)
         return EncryptionMode::AEAD_AES256_GCM_RTPSIZE;
     if (str == "aead_xchacha20_poly1305_rtpsize")
         return EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE;
-    if (str == "xsalsa20_poly1305_lite")
-        return EncryptionMode::XSALSA20_POLY1305_LITE;
     return EncryptionMode::UNKNOWN;
 }
 
@@ -115,7 +110,6 @@ inline EncryptionMode selectBestEncryptionMode(const QStringList &serverModes)
     static const std::array preferred{
         "aead_aes256_gcm_rtpsize",
         "aead_xchacha20_poly1305_rtpsize",
-        "xsalsa20_poly1305_lite",
     };
 
     for (const auto &mode : preferred)
