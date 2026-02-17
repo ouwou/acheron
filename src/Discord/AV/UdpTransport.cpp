@@ -121,8 +121,8 @@ void UdpTransport::parseIpDiscoveryResponse(const QByteArray &data)
         return;
     }
 
-    // discoveryPending = false;
-    if (false&&discoveryTimer)
+    discoveryPending = false;
+    if (discoveryTimer)
         discoveryTimer->stop();
 
     // null terminated
@@ -135,7 +135,7 @@ void UdpTransport::parseIpDiscoveryResponse(const QByteArray &data)
 
     qCInfo(LogVoice) << "IP Discovery result:" << discoveredIp << ":" << discoveredPort;
 
-    // emit ipDiscovered(discoveredIp, static_cast<int>(discoveredPort));
+    emit ipDiscovered(discoveredIp, static_cast<int>(discoveredPort));
 }
 
 } // namespace AV
