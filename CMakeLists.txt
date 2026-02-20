@@ -27,7 +27,7 @@ find_package(CURL REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(Opus CONFIG REQUIRED)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools Multimedia)
 find_package(Qt${QT_VERSION_MAJOR}
     COMPONENTS
         Core
@@ -38,6 +38,7 @@ find_package(Qt${QT_VERSION_MAJOR}
         Concurrent
         Test
         LinguistTools
+        Multimedia
 )
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS ZlibPrivate QUIET)
 qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES en)
@@ -106,6 +107,8 @@ set(PROJECT_SOURCES
     src/Core/EmojiSegmenter.cpp
     src/Core/Markdown/Parser.cpp
     src/UI/MainWindow.cpp
+    src/UI/VoiceStatusBar.cpp
+    src/UI/VoiceWindow.cpp
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
     src/UI/ConnectionBanner.cpp
@@ -150,6 +153,13 @@ set(PROJECT_SOURCES
     src/Discord/AV/RtpPacket.cpp
     src/Discord/AV/VoiceEncryption.cpp
     src/Core/AV/VoiceManager.cpp
+    src/Core/AV/AudioPipeline.cpp
+    src/Core/AV/IAudioBackend.cpp
+    src/Core/AV/MiniaudioAudioBackend.cpp
+    src/Core/AV/OpusEncoder.cpp
+    src/Core/AV/OpusDecoder.cpp
+    src/Core/AV/JitterBuffer.cpp
+    src/Core/AV/AudioMixer.cpp
     src/Proto/ProtoReader.cpp
     src/Proto/UserSettings.cpp
     src/Core/TokenStore.cpp
@@ -198,6 +208,7 @@ target_link_libraries(${PROJECT_NAME}
         Qt::Network
         Qt::Sql
         Qt::Concurrent
+        Qt::Multimedia
         CURL::libcurl
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain
@@ -213,6 +224,7 @@ if(ACHERON_ENABLE_DAVE)
     target_link_libraries(${PROJECT_NAME} PRIVATE libdave)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_DAVE_ENABLED)
 endif()
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
 
 include(CheckSymbolExists)

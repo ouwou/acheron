@@ -84,7 +84,7 @@ private:
     std::mutex curlMutex;
     CURL *curl = nullptr;
 
-    bool wantToClose = false;
+    std::atomic<bool> wantToClose{ false };
     std::thread networkThread;
     std::chrono::steady_clock::time_point closeTime;
     static constexpr std::chrono::milliseconds closeTimeout = std::chrono::milliseconds(1000);
@@ -99,9 +99,9 @@ private:
     std::atomic<int> lastReceivedSeq{ -1 };
 
     std::atomic<bool> shouldReconnect{ false };
-    bool canResume = false;
-    bool isResuming = false;
-    int reconnectAttempts = 0;
+    std::atomic<bool> canResume{ false };
+    std::atomic<bool> isResuming{ false };
+    std::atomic<int> reconnectAttempts{ 0 };
     static constexpr int maxReconnectAttempts = 5;
 
     std::atomic<uint64_t> generation{ 0 };

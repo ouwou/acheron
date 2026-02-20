@@ -29,6 +29,7 @@ struct ChannelNode;
 class TypingIndicator;
 class SlowModeIndicator;
 class ConnectionBanner;
+class VoiceStatusBar;
 class TabBar;
 struct TabEntry;
 } // namespace UI
@@ -83,7 +84,7 @@ private:
     MemberListModel *memberListModel;
     Core::TypingTracker *typingTracker;
 
-    QLabel *voiceStatusLabel;
+    VoiceStatusBar *voiceStatusBar;
     AccountsWindow *accountsWindow = nullptr;
 
 private slots:

@@ -1,4 +1,5 @@
 #include "VoiceManager.hpp"
+#include "AudioPipeline.hpp"
 
 #include "Core/Logging.hpp"
 
@@ -7,17 +8,14 @@ namespace Core {
 namespace AV {
 
 VoiceManager::VoiceManager(Snowflake accountId, QObject *parent)
-    : QObject(parent), accountId(accountId)
+    : QObject(parent), accountId(accountId), audioBackend(IAudioBackend::create())
 {
+    connect(audioBackend.get(), &IAudioBackend::devicesChanged, this, &VoiceManager::onDevicesChanged);
 }
 
 VoiceManager::~VoiceManager()
 {
-    if (voiceClient) {
-        voiceClient->stop();
-        delete voiceClient;
-        voiceClient = nullptr;
-    }
+    stopVoiceThread();
 }
 
 void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
@@ -32,20 +30,32 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         guildId = Snowflake::Invalid;
         pending = {};
 
-        if (voiceClient) {
+        if (voiceThread)
             disconnect();
-        }
         return;
     }
 
     voiceSessionId = state.sessionId.get();
     channelId = state.channelId.get();
     guildId = state.guildId.hasValue() ? state.guildId.get() : Snowflake::Invalid;
+
+    bool wasMuted = selfMute;
+    bool wasDeaf = selfDeaf;
     selfMute = state.selfMute.get();
     selfDeaf = state.selfDeaf.get();
 
     qCInfo(LogVoice) << "Voice state: session =" << voiceSessionId
                      << "channel =" << channelId << "guild =" << guildId;
+
+    if (audioPipeline && (selfMute != wasMuted || selfDeaf != wasDeaf)) {
+        if (selfMute || selfDeaf)
+            QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::stopCapture);
+        else
+            QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::startCapture);
+
+        if (selfDeaf != wasDeaf)
+            QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deaf = selfDeaf]() { p->setDeafened(deaf); });
+    }
 
     pending.hasStateUpdate = true;
 
@@ -59,9 +69,6 @@ void VoiceManager::handleVoiceServerUpdate(const Discord::VoiceServerUpdate &eve
 {
     Snowflake eventGuildId = event.guildId.get();
 
-    // "A null endpoint means that the voice server allocated has gone away and is trying to be reallocated.
-    // You should attempt to disconnect from the currently connected voice server,
-    // and not attempt to reconnect until a new voice server is allocated."
     if (event.endpoint.isNull() || event.endpoint.get().isEmpty()) {
         qCInfo(LogVoice) << "Voice server update with null endpoint, waiting for new one";
         return;
@@ -73,13 +80,9 @@ void VoiceManager::handleVoiceServerUpdate(const Discord::VoiceServerUpdate &eve
     qCInfo(LogVoice) << "Voice server update: guild =" << eventGuildId
                      << "endpoint =" << eventEndpoint;
 
-    if (voiceClient && guildId == eventGuildId) {
+    if (voiceThread && guildId == eventGuildId) {
         qCInfo(LogVoice) << "Server-commanded voice reconnection";
-
-        voiceClient->stop();
-        delete voiceClient;
-        voiceClient = nullptr;
-
+        stopVoiceThread();
         connectToVoiceServer(eventEndpoint, eventToken);
         return;
     }
@@ -97,11 +100,7 @@ void VoiceManager::handleVoiceServerUpdate(const Discord::VoiceServerUpdate &eve
 
 void VoiceManager::disconnect()
 {
-    if (voiceClient) {
-        voiceClient->stop();
-        delete voiceClient;
-        voiceClient = nullptr;
-    }
+    stopVoiceThread();
     pending = {};
     emit voiceDisconnected();
     emit voiceStateChanged();
@@ -120,6 +119,58 @@ Discord::AV::VoiceClient::State VoiceManager::clientState() const
     return voiceClient->state();
 }
 
+void VoiceManager::setInputGain(float gain)
+{
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, gain]() { p->setInputGain(gain); });
+}
+
+void VoiceManager::setOutputVolume(float volume)
+{
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, volume]() { p->setOutputVolume(volume); });
+}
+
+void VoiceManager::setUserVolume(Snowflake userId, float volume)
+{
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, userId, volume]() { p->setUserVolume(userId, volume); });
+}
+
+void VoiceManager::setVadThreshold(float threshold)
+{
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, threshold]() { p->setVadThreshold(threshold); });
+}
+
+QList<AudioDeviceInfo> VoiceManager::availableInputDevices() const
+{
+    if (voiceThread)
+        return cachedInputDevices;
+    return audioBackend->availableInputDevices();
+}
+
+QList<AudioDeviceInfo> VoiceManager::availableOutputDevices() const
+{
+    if (voiceThread)
+        return cachedOutputDevices;
+    return audioBackend->availableOutputDevices();
+}
+
+void VoiceManager::setInputDevice(const QByteArray &deviceId)
+{
+    currentInputDeviceId = deviceId;
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deviceId]() { p->setInputDevice(deviceId); });
+}
+
+void VoiceManager::setOutputDevice(const QByteArray &deviceId)
+{
+    currentOutputDeviceId = deviceId;
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deviceId]() { p->setOutputDevice(deviceId); });
+}
+
 void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &token)
 {
     if (voiceSessionId.isEmpty()) {
@@ -127,28 +178,148 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
         return;
     }
 
-    if (voiceClient) {
-        voiceClient->stop();
-        delete voiceClient;
-        voiceClient = nullptr;
-    }
+    stopVoiceThread();
 
-    qCInfo(LogVoice) << "Creating VoiceClient for endpoint" << endpoint
+    qCInfo(LogVoice) << "Creating voice thread for endpoint" << endpoint
                      << "guild" << guildId << "channel" << channelId;
 
-    voiceClient = new Discord::AV::VoiceClient(endpoint, token, guildId, channelId, accountId, voiceSessionId, this);
+    voiceThread = new QThread(this);
+    voiceThread->setObjectName("VoiceThread");
 
-    connect(voiceClient, &Discord::AV::VoiceClient::connected, this, &VoiceManager::onVoiceClientConnected);
-    // defer with QueuedConnection because VoiceClient is deleted in this handler
-    connect(voiceClient, &Discord::AV::VoiceClient::disconnected, this, &VoiceManager::onVoiceClientDisconnected, Qt::QueuedConnection);
-    connect(voiceClient, &Discord::AV::VoiceClient::stateChanged, this, &VoiceManager::onVoiceClientStateChanged);
+    voiceClient = new Discord::AV::VoiceClient(endpoint, token, guildId, channelId, accountId, voiceSessionId);
+    audioPipeline = new AudioPipeline;
 
-    voiceClient->start();
+    cachedInputDevices = audioBackend->availableInputDevices();
+    cachedOutputDevices = audioBackend->availableOutputDevices();
+
+    voiceClient->moveToThread(voiceThread);
+    audioPipeline->moveToThread(voiceThread);
+    audioBackend->moveToThread(voiceThread);
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::audioReceived,
+                    audioPipeline, &AudioPipeline::onAudioReceived));
+
+    voiceConnections.append(
+            connect(audioPipeline, &AudioPipeline::encodedAudioReady,
+                    voiceClient, &Discord::AV::VoiceClient::sendAudio));
+
+    voiceConnections.append(
+            connect(audioPipeline, &AudioPipeline::speakingChanged,
+                    voiceClient, &Discord::AV::VoiceClient::setSpeaking));
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::speakingReceived, audioPipeline,
+                    [ap = audioPipeline](const Discord::AV::SpeakingData &data) {
+                        if (data.userId->isValid() && data.ssrc.get() != 0)
+                            ap->setSsrcUserId(data.ssrc, data.userId.get());
+                    }));
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::clientConnected, audioPipeline,
+                    [ap = audioPipeline](const Discord::AV::ClientConnectData &data) {
+                        if (data.userId->isValid() && data.audioSsrc.get() != 0)
+                            ap->setSsrcUserId(data.audioSsrc, data.userId);
+                    }));
+
+    // move to a new generation so old signals are ignored.
+    // for example if we get dragged to a different channel a disconnect can sneak in
+    unsigned int gen = voiceGeneration;
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::connected,
+                    this, [this, gen]() {
+                        if (gen != voiceGeneration)
+                            return;
+                        onVoiceClientConnected();
+                    }));
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::disconnected, this, [this, gen]() {
+                        if (gen != voiceGeneration)
+                            return;
+                        onVoiceClientDisconnected(); }, Qt::QueuedConnection));
+
+    voiceConnections.append(
+            connect(voiceClient, &Discord::AV::VoiceClient::stateChanged,
+                    this, [this, gen](Discord::AV::VoiceClient::State state) {
+                        if (gen != voiceGeneration)
+                            return;
+                        onVoiceClientStateChanged(state);
+                    }));
+
+    voiceConnections.append(
+            connect(audioPipeline, &AudioPipeline::audioLevelChanged,
+                    this, &VoiceManager::audioLevelChanged));
+
+    voiceConnections.append(
+            connect(audioPipeline, &AudioPipeline::speakingChanged,
+                    this, &VoiceManager::speakingChanged));
+
+    voiceThread->start();
+    QMetaObject::invokeMethod(voiceClient, &Discord::AV::VoiceClient::start);
+}
+
+void VoiceManager::stopVoiceThread()
+{
+    if (!voiceThread)
+        return;
+
+    voiceGeneration++;
+
+    for (auto &conn : voiceConnections)
+        QObject::disconnect(conn);
+    voiceConnections.clear();
+
+    AudioPipeline *ap = audioPipeline;
+    Discord::AV::VoiceClient *vc = voiceClient;
+    IAudioBackend *backend = audioBackend.get();
+    QThread *mainThread = thread();
+    QMetaObject::invokeMethod(audioPipeline, [ap, vc, backend, mainThread]() {
+        ap->stop();
+        vc->stop();
+        ap->moveToThread(mainThread);
+        vc->moveToThread(mainThread);
+        backend->moveToThread(mainThread); }, Qt::BlockingQueuedConnection);
+
+    voiceThread->quit();
+    if (!voiceThread->wait(5000)) {
+        qCWarning(LogVoice) << "Voice thread did not stop in time, terminating";
+        voiceThread->terminate();
+        voiceThread->wait();
+    }
+
+    delete audioPipeline;
+    audioPipeline = nullptr;
+
+    delete voiceClient;
+    voiceClient = nullptr;
+
+    delete voiceThread;
+    voiceThread = nullptr;
+
+    qCDebug(LogVoice) << "Voice thread stopped";
 }
 
 void VoiceManager::onVoiceClientConnected()
 {
+    if (!audioPipeline)
+        return;
+
     qCInfo(LogVoice) << "Voice connection established for channel" << channelId;
+
+    bool capturing = !selfMute && !selfDeaf;
+    QByteArray inputId = currentInputDeviceId;
+    QByteArray outputId = currentOutputDeviceId;
+    IAudioBackend *backend = audioBackend.get();
+    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, backend, capturing, inputId, outputId]() {
+        if (!inputId.isEmpty())
+            p->setInputDevice(inputId);
+        if (!outputId.isEmpty())
+            p->setOutputDevice(outputId);
+        p->start(backend, capturing);
+    });
+
     emit voiceConnected();
     emit voiceStateChanged();
 }
@@ -157,10 +328,7 @@ void VoiceManager::onVoiceClientDisconnected()
 {
     qCInfo(LogVoice) << "Voice client disconnected";
 
-    if (voiceClient) {
-        delete voiceClient;
-        voiceClient = nullptr;
-    }
+    stopVoiceThread();
 
     emit voiceDisconnected();
     emit voiceStateChanged();
@@ -170,6 +338,13 @@ void VoiceManager::onVoiceClientStateChanged(Discord::AV::VoiceClient::State sta
 {
     qCDebug(LogVoice) << "VoiceManager: client state ->" << static_cast<int>(state);
     emit voiceStateChanged();
+}
+
+void VoiceManager::onDevicesChanged(const QList<AudioDeviceInfo> &inputs, const QList<AudioDeviceInfo> &outputs)
+{
+    cachedInputDevices = inputs;
+    cachedOutputDevices = outputs;
+    emit devicesChanged();
 }
 
 } // namespace AV

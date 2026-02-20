@@ -23,6 +23,7 @@
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Core/MemberListManager.hpp"
 #include "Core/AV/VoiceManager.hpp"
+#include "VoiceStatusBar.hpp"
 
 using namespace Acheron::Core;
 
@@ -452,15 +453,18 @@ void MainWindow::setupUi()
 
     channelTree = new ChannelTreeView(leftSideWidget);
 
-    voiceStatusLabel = new QLabel(leftSideWidget);
-    voiceStatusLabel->setWordWrap(true);
-    voiceStatusLabel->setStyleSheet(
-            "QLabel { background-color: #1a1a2e; color: #999; padding: 6px 8px; "
-            "font-size: 11px; border-top: 1px solid #2a2a3e; }");
-    voiceStatusLabel->setText(tr("Voice Disconnected"));
+    voiceStatusBar = new VoiceStatusBar(leftSideWidget);
+    connect(voiceStatusBar, &VoiceStatusBar::disconnectRequested, this, [this]() {
+        for (const auto &inst : session->getClients()) {
+            if (inst && inst->isInVoice()) {
+                inst->discord()->sendVoiceStateUpdate(inst->voiceGuildId(), Snowflake::Invalid, false, false);
+                break;
+            }
+        }
+    });
 
     leftLayout->addWidget(channelTree, 1);
-    leftLayout->addWidget(voiceStatusLabel, 0);
+    leftLayout->addWidget(voiceStatusBar, 0);
 
     auto *rightSideWidget = new QWidget(central);
     auto *rightLayout = new QVBoxLayout(rightSideWidget);
@@ -765,10 +769,6 @@ void MainWindow::updateVoiceStatusLabel()
 {
     using VState = Discord::AV::VoiceClient::State;
 
-    static constexpr auto styleBase =
-            "QLabel { background-color: #1a1a2e; padding: 6px 8px; "
-            "font-size: 11px; border-top: 1px solid #2a2a3e; color: %1; }";
-
     // Find any account that is in voice or has an active voice client
     Core::ClientInstance *voiceInstance = nullptr;
     for (const auto &inst : session->getClients()) {
@@ -778,52 +778,18 @@ void MainWindow::updateVoiceStatusLabel()
         }
     }
 
-    if (!voiceInstance) {
-        voiceStatusLabel->setStyleSheet(QString(styleBase).arg("#999"));
-        voiceStatusLabel->setText(tr("Voice Disconnected"));
-        return;
-    }
-
-    VState state = voiceInstance->voice()->clientState();
-    Core::Snowflake vcId = voiceInstance->voiceChannelId();
+    Core::AV::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
+    voiceStatusBar->setVoiceManager(vm);
 
     QString channelName;
-    if (vcId.isValid()) {
-        ChannelNode *node = channelTreeModel->findChannelTreeNode(vcId);
-        channelName = node ? node->name : QString::number(vcId);
+    if (voiceInstance) {
+        Core::Snowflake vcId = voiceInstance->voiceChannelId();
+        if (vcId.isValid()) {
+            ChannelNode *node = channelTreeModel->findChannelTreeNode(vcId);
+            channelName = node ? node->name : QString::number(vcId);
+        }
     }
-
-    QString stateText;
-    QString color;
-
-    switch (state) {
-    case VState::Connecting:
-    case VState::Identifying:
-        stateText = tr("Connecting...");
-        color = "#faa61a";
-        break;
-    case VState::WaitingForReady:
-    case VState::DiscoveringIP:
-    case VState::SelectingProtocol:
-    case VState::WaitingForSession:
-        stateText = tr("Securing Connection...");
-        color = "#faa61a";
-        break;
-    case VState::Connected:
-        stateText = tr("Voice Connected");
-        color = "#43b581";
-        break;
-    default:
-        stateText = tr("Voice Disconnected");
-        color = "#999";
-        break;
-    }
-
-    voiceStatusLabel->setStyleSheet(QString(styleBase).arg(color));
-    if (!channelName.isEmpty())
-        voiceStatusLabel->setText(QStringLiteral("%1\n#%2").arg(stateText, channelName));
-    else
-        voiceStatusLabel->setText(stateText);
+    voiceStatusBar->setChannelName(channelName);
 }
 
 void MainWindow::switchToTabEntry(const TabEntry &entry)

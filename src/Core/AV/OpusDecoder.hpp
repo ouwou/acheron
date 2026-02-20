@@ -1,0 +1,34 @@
+#pragma once
+
+#include <QByteArray>
+
+#include <opus.h>
+
+namespace Acheron {
+namespace Core {
+namespace AV {
+
+class OpusDecoder
+{
+public:
+    OpusDecoder();
+    ~OpusDecoder();
+
+    OpusDecoder(const OpusDecoder &) = delete;
+    OpusDecoder &operator=(const OpusDecoder &) = delete;
+
+    bool init(int sampleRate, int channels);
+
+    QByteArray decode(const QByteArray &opusData);
+
+    QByteArray decodePlc();
+
+private:
+    ::OpusDecoder *decoder = nullptr;
+    int frameSamples = 0;
+    int frameChannels = 0;
+};
+
+} // namespace AV
+} // namespace Core
+} // namespace Acheron

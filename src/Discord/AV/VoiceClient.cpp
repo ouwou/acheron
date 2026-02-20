@@ -4,13 +4,12 @@
 #include "VoiceEncryption.hpp"
 #include "RtpPacket.hpp"
 
+#include "Core/AV/IAudioBackend.hpp"
 #include "Core/Logging.hpp"
 
 namespace Acheron {
 namespace Discord {
 namespace AV {
-
-static constexpr uint8_t OPUS_SILENCE[] = { 0xF8, 0xFF, 0xFE };
 
 // 20ms at 48khz
 static constexpr uint32_t OPUS_FRAME_SAMPLES = 960;
@@ -98,6 +97,7 @@ void VoiceClient::cleanupTransport()
 
     rtpSequence = 0;
     rtpTimestamp = 0;
+    rtpEpoch = {};
 }
 
 void VoiceClient::onGatewayConnected()
@@ -174,6 +174,8 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
     EncryptionMode mode = encryptionModeFromString(selectedMode);
     encryption = std::make_unique<VoiceEncryption>(mode, sessionKey);
 
+    rtpEpoch = std::chrono::steady_clock::now();
+
     setState(State::Connected);
     emit connected();
 
@@ -187,34 +189,69 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
     keepaliveTimer->start(KEEPALIVE_INTERVAL_MS);
 }
 
+void VoiceClient::sendAudio(const QByteArray &opusData)
+{
+    if (currentState != State::Connected || !encryption || !udpTransport)
+        return;
+
+    // snap rtp timestamp back to wall clock after a period of silence
+    // otherwise its a little behind and it will be played back delayed by discord
+    auto now = std::chrono::steady_clock::now();
+    if (newTalkspurt) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - rtpEpoch);
+        rtpTimestamp = static_cast<uint32_t>(
+                static_cast<uint64_t>(elapsed.count()) * 48 / 1000);
+    } else {
+        rtpTimestamp += OPUS_FRAME_SAMPLES;
+    }
+
+    RtpHeader header;
+    header.payloadType = 120;
+    header.marker = newTalkspurt;
+    header.sequence = rtpSequence++;
+    header.timestamp = rtpTimestamp;
+    header.ssrc = localSsrc;
+
+    newTalkspurt = false;
+
+    QByteArray headerBytes = header.serialize();
+    QByteArray encryptedSection = encryption->encrypt(headerBytes, opusData);
+    if (encryptedSection.isEmpty())
+        return;
+
+    QByteArray packet = headerBytes + encryptedSection;
+    udpTransport->send(packet);
+
+    lastAudioSendTime = now;
+}
+
+void VoiceClient::setSpeaking(bool speaking)
+{
+    if (!gateway)
+        return;
+
+    if (speaking)
+        newTalkspurt = true;
+
+    int flags = speaking ? static_cast<int>(SpeakingFlag::MICROPHONE) : 0;
+    gateway->sendSpeaking(flags, 0, localSsrc);
+}
+
 void VoiceClient::sendSilence()
 {
     if (currentState != State::Connected || !encryption || !udpTransport)
         return;
 
-    RtpHeader header;
-    header.payloadType = 120;
-    header.sequence = rtpSequence++;
-    header.timestamp = rtpTimestamp;
-    header.ssrc = localSsrc;
-
-    rtpTimestamp += OPUS_FRAME_SAMPLES;
-
-    QByteArray headerBytes = header.serialize();
-    QByteArray silencePayload(reinterpret_cast<const char *>(OPUS_SILENCE), sizeof(OPUS_SILENCE));
-
-    QByteArray encryptedSection = encryption->encrypt(headerBytes, silencePayload);
-    if (encryptedSection.isEmpty()) {
-        qCWarning(LogVoice) << "Failed to encrypt silence frame";
+    // no need to keepalive by sending silence if we spoke recently
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastAudioSendTime);
+    if (elapsed.count() < 5)
         return;
-    }
 
-    QByteArray packet = headerBytes + encryptedSection;
-    udpTransport->send(packet);
+    QByteArray silencePayload(reinterpret_cast<const char *>(Core::AV::OPUS_SILENCE), sizeof(Core::AV::OPUS_SILENCE));
+    sendAudio(silencePayload);
 
-    qCDebug(LogVoice) << "Sent silence frame, seq =" << header.sequence
-                      << "ts =" << header.timestamp
-                      << "packet size =" << packet.size();
+    qCDebug(LogVoice) << "Sent keepalive silence frame";
 }
 
 void VoiceClient::onDatagram(const QByteArray &data)
@@ -260,12 +297,15 @@ void VoiceClient::onDatagram(const QByteArray &data)
         return;
     }
 
-    Core::Snowflake speaker = ssrcToUser.value(header.ssrc, Core::Snowflake::Invalid);
-    qCDebug(LogVoice) << "Received audio: SSRC =" << header.ssrc
-                      << "user =" << speaker
-                      << "seq =" << header.sequence
-                      << "ts =" << header.timestamp
-                      << "payload =" << decrypted.size() << "bytes";
+    if (hasExtension && data.size() >= RtpHeader::FIXED_SIZE + 4) {
+        uint16_t extWords = (p[RtpHeader::FIXED_SIZE + 2] << 8) | p[RtpHeader::FIXED_SIZE + 3];
+        int extBytes = extWords * 4;
+        if (decrypted.size() <= extBytes)
+            return;
+        decrypted = decrypted.mid(extBytes);
+    }
+
+    emit audioReceived(header.ssrc, header.sequence, header.timestamp, decrypted);
 }
 
 void VoiceClient::onSpeaking(const SpeakingData &data)
@@ -297,6 +337,7 @@ void VoiceClient::onGatewayResumed()
 
     // assume session intact if we could resume
     if (localSsrc != 0 && !sessionKey.isEmpty()) {
+        rtpEpoch = std::chrono::steady_clock::now();
         setState(State::Connected);
 
         // just in case
@@ -334,7 +375,8 @@ void VoiceClient::onIpDiscoveryFailed(const QString &error)
 
 Core::Snowflake VoiceClient::userIdForSsrc(quint32 ssrc) const
 {
-    return ssrcToUser.value(ssrc, Core::Snowflake::Invalid);
+    auto it = ssrcToUser.constFind(ssrc);
+    return it != ssrcToUser.constEnd() ? it.value() : Core::Snowflake::Invalid;
 }
 
 void VoiceClient::setState(State state)
@@ -342,7 +384,7 @@ void VoiceClient::setState(State state)
     if (currentState == state)
         return;
 
-    qCDebug(LogVoice) << "VoiceClient state:" << currentState << "->" << state;
+    qCDebug(LogVoice) << "VoiceClient state:" << currentState.load() << "->" << state;
     currentState = state;
     emit stateChanged(state);
 }

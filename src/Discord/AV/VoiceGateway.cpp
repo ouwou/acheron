@@ -479,7 +479,7 @@ void VoiceGateway::networkLoop()
 
         if (shouldReconnect && running && reconnectAttempts < maxReconnectAttempts) {
             reconnectAttempts++;
-            isResuming = canResume;
+            isResuming = canResume.load();
 
             if (heartbeatThread.joinable()) {
                 heartbeatCv.notify_all();

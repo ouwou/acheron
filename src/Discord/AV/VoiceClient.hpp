@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QTimer>
 
+#include <atomic>
+#include <chrono>
 #include <memory>
 
 #include "Core/Snowflake.hpp"
@@ -48,6 +50,10 @@ public:
 
     [[nodiscard]] Core::Snowflake userIdForSsrc(quint32 ssrc) const;
 
+    void sendAudio(const QByteArray &opusData);
+
+    void setSpeaking(bool speaking);
+
 signals:
     void stateChanged(State newState);
     void connected();
@@ -56,6 +62,8 @@ signals:
     void speakingReceived(const SpeakingData &data);
     void clientConnected(const ClientConnectData &data);
     void clientDisconnected(Core::Snowflake userId);
+
+    void audioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
 
 private slots:
     void onGatewayConnected();
@@ -86,7 +94,7 @@ private:
     Core::Snowflake userId;
     QString sessionId;
 
-    State currentState = State::Disconnected;
+    std::atomic<State> currentState{ State::Disconnected };
 
     // ready
     quint32 localSsrc = 0;
@@ -104,6 +112,10 @@ private:
     QTimer *keepaliveTimer = nullptr;
     uint16_t rtpSequence = 0;
     uint32_t rtpTimestamp = 0;
+
+    std::chrono::steady_clock::time_point rtpEpoch;
+    std::chrono::steady_clock::time_point lastAudioSendTime;
+    bool newTalkspurt = false;
 
     static constexpr int KEEPALIVE_INTERVAL_MS = 10000;
 };
