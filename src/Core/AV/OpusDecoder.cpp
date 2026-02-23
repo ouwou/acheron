@@ -17,8 +17,14 @@ OpusDecoder::~OpusDecoder()
 
 bool OpusDecoder::init(int sampleRate, int channels)
 {
+    if (decoder) {
+        opus_decoder_destroy(decoder);
+        decoder = nullptr;
+    }
+
     frameSamples = sampleRate * AUDIO_FRAME_DURATION_MS / 1000;
     frameChannels = channels;
+    frameBytes = frameSamples * frameChannels * static_cast<int>(sizeof(opus_int16));
 
     int error;
     decoder = opus_decoder_create(sampleRate, channels, &error);
@@ -29,19 +35,21 @@ bool OpusDecoder::init(int sampleRate, int channels)
     return true;
 }
 
-QByteArray OpusDecoder::decode(const QByteArray &opusData)
+QVector<QByteArray> OpusDecoder::decode(const QByteArray &opusData)
 {
     if (!decoder)
         return {};
 
-    int pcmSize = frameSamples * frameChannels * static_cast<int>(sizeof(opus_int16));
+    // 120ms * 48khz
+    static constexpr int MAX_OPUS_SAMPLES = 5760;
+    int pcmSize = MAX_OPUS_SAMPLES * frameChannels * static_cast<int>(sizeof(opus_int16));
     QByteArray pcm(pcmSize, '\0');
 
     int samples = opus_decode(decoder,
                               reinterpret_cast<const unsigned char *>(opusData.constData()),
                               opusData.size(),
                               reinterpret_cast<opus_int16 *>(pcm.data()),
-                              frameSamples,
+                              MAX_OPUS_SAMPLES,
                               0);
 
     if (samples < 0) {
@@ -49,8 +57,7 @@ QByteArray OpusDecoder::decode(const QByteArray &opusData)
         return {};
     }
 
-    pcm.resize(samples * frameChannels * static_cast<int>(sizeof(opus_int16)));
-    return pcm;
+    return splitFrames(pcm, samples);
 }
 
 QByteArray OpusDecoder::decodePlc()
@@ -58,8 +65,7 @@ QByteArray OpusDecoder::decodePlc()
     if (!decoder)
         return {};
 
-    int pcmSize = frameSamples * frameChannels * static_cast<int>(sizeof(opus_int16));
-    QByteArray pcm(pcmSize, '\0');
+    QByteArray pcm(frameBytes, '\0');
 
     int samples = opus_decode(decoder,
                               nullptr, 0,
@@ -74,6 +80,26 @@ QByteArray OpusDecoder::decodePlc()
 
     pcm.resize(samples * frameChannels * static_cast<int>(sizeof(opus_int16)));
     return pcm;
+}
+
+QVector<QByteArray> OpusDecoder::splitFrames(const QByteArray &pcm, int totalSamples)
+{
+    QVector<QByteArray> frames;
+
+    int offset = 0;
+    int remaining = totalSamples;
+
+    while (remaining >= frameSamples) {
+        frames.append(pcm.mid(offset, frameBytes));
+        offset += frameBytes;
+        remaining -= frameSamples;
+    }
+
+    if (remaining > 0) {
+        qCDebug(LogVoice) << "Opus decoded partial tail:" << remaining << "samples";
+    }
+
+    return frames;
 }
 
 } // namespace AV

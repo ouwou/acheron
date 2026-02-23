@@ -5,7 +5,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <memory>
+#include <set>
+#include <string>
+#include <vector>
 
 #include "Core/Snowflake.hpp"
 #include "VoiceEnums.hpp"
@@ -18,6 +22,7 @@ namespace AV {
 class VoiceGateway;
 class UdpTransport;
 class VoiceEncryption;
+class DaveSession;
 
 class VoiceClient : public QObject
 {
@@ -48,9 +53,14 @@ public:
     [[nodiscard]] const QString &encryptionMode() const { return selectedMode; }
     [[nodiscard]] const QByteArray &secretKey() const { return sessionKey; }
 
+    void seedConnectedUsers(const QList<Core::Snowflake> &userIds);
+
     void sendAudio(const QByteArray &opusData);
 
     void setSpeaking(bool speaking);
+
+    bool isDaveEnabled() const;
+    void requestVerificationCode(Core::Snowflake targetUserId, std::function<void(const QString &)> callback);
 
 signals:
     void stateChanged(State newState);
@@ -63,12 +73,15 @@ signals:
 
     void audioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
 
+    void privacyCodeChanged(const QString &code);
+
 private slots:
     void onGatewayConnected();
     void onGatewayDisconnected(VoiceCloseCode code, const QString &reason);
     void onGatewayReady(const VoiceReady &data);
     void onSessionDescription(const SessionDescription &desc);
     void onSpeaking(const SpeakingData &data);
+    void onClientsConnect(const QStringList &userIds);
     void onClientConnect(const ClientConnectData &data);
     void onClientDisconnect(Core::Snowflake userId);
     void onGatewayResumed();
@@ -80,6 +93,7 @@ private:
     void setState(State state);
     void sendSilence();
     void cleanupTransport();
+    void ensureDaveSession(uint16_t protocolVersion);
 
 private:
     VoiceGateway *gateway = nullptr;
@@ -112,6 +126,10 @@ private:
     std::chrono::steady_clock::time_point rtpEpoch;
     std::chrono::steady_clock::time_point lastAudioSendTime;
     bool newTalkspurt = false;
+
+    std::unique_ptr<DaveSession> daveSession;
+    std::set<std::string> connectedUserIds;
+    QHash<quint32, uint64_t> ssrcToUserIdMap;
 
     static constexpr int KEEPALIVE_INTERVAL_MS = 10000;
 };

@@ -3,6 +3,14 @@
 #include "Core/AV/VoiceManager.hpp"
 #include "Core/ImageManager.hpp"
 
+#include <QContextMenuEvent>
+#include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFontDatabase>
+#include <QMenu>
+#include <QMessageBox>
+#include <QPointer>
 #include <QPainter>
 #include <QPainterPath>
 #include <QVBoxLayout>
@@ -216,6 +224,26 @@ void VoiceUserWidget::setVolume(int pct)
     volumeSlider->blockSignals(false);
 }
 
+void VoiceUserWidget::contextMenuEvent(QContextMenuEvent *event)
+{
+    if (!daveActive)
+        return;
+
+    QMenu menu(this);
+
+    auto *verifyAction = menu.addAction(tr("View Verification Code"));
+    connect(verifyAction, &QAction::triggered, this, [this]() {
+        emit verificationCodeRequested(userId);
+    });
+
+    menu.exec(event->globalPos());
+}
+
+void VoiceUserWidget::setDaveActive(bool active)
+{
+    daveActive = active;
+}
+
 void VoiceUserWidget::setDisplayName(const QString &name)
 {
     nameLabel->setText(name);
@@ -251,9 +279,23 @@ void VoiceWindow::setupUi()
     layout->setContentsMargins(10, 8, 10, 10);
     layout->setSpacing(6);
 
+    auto *usersHeaderRow = new QHBoxLayout;
+    usersHeaderRow->setContentsMargins(0, 0, 0, 0);
     auto *usersHeader = new QLabel(tr("Connected Users"), this);
     usersHeader->setStyleSheet("QLabel { font-size: 10px; font-weight: bold; text-transform: uppercase; }");
-    layout->addWidget(usersHeader);
+    usersHeaderRow->addWidget(usersHeader);
+    usersHeaderRow->addStretch();
+    privacyCodeBtn = new QPushButton(tr("Privacy Code"), this);
+    privacyCodeBtn->setFlat(true);
+    privacyCodeBtn->setCursor(Qt::PointingHandCursor);
+    privacyCodeBtn->hide();
+    privacyCodeBtn->setStyleSheet(
+            "QPushButton { font-size: 10px; color: palette(highlight); background: transparent;"
+            "  border: none; padding: 0; text-transform: uppercase; font-weight: bold; }"
+            "QPushButton:hover { text-decoration: underline; }");
+    connect(privacyCodeBtn, &QPushButton::clicked, this, &VoiceWindow::showPrivacyCode);
+    usersHeaderRow->addWidget(privacyCodeBtn);
+    layout->addLayout(usersHeaderRow);
 
     userScrollArea = new QScrollArea(this);
     userScrollArea->setWidgetResizable(true);
@@ -399,6 +441,15 @@ void VoiceWindow::setVoiceManager(Core::AV::VoiceManager *manager)
     connect(voiceManager, &Core::AV::VoiceManager::participantSpeakingChanged, this, &VoiceWindow::onParticipantSpeakingChanged);
     connect(voiceManager, &Core::AV::VoiceManager::userAudioLevelChanged, this, &VoiceWindow::onUserAudioLevelChanged);
     connect(voiceManager, &Core::AV::VoiceManager::participantsCleared, this, &VoiceWindow::onParticipantsCleared);
+    connect(voiceManager, &Core::AV::VoiceManager::privacyCodeChanged,
+            this, [this](const QString &code) {
+                bool active = !code.isEmpty();
+                privacyCodeBtn->setVisible(active);
+                for (auto *w : userWidgets)
+                    w->setDaveActive(active);
+            });
+
+    privacyCodeBtn->setVisible(!voiceManager->privacyCode().isEmpty());
 
     const auto existing = voiceManager->currentParticipants();
     for (const auto &p : existing)
@@ -482,6 +533,7 @@ void VoiceWindow::disconnectManager()
     qDeleteAll(userWidgets);
     userWidgets.clear();
     pendingAvatars.clear();
+    privacyCodeBtn->hide();
 }
 
 void VoiceWindow::onParticipantJoined(Core::Snowflake userId)
@@ -496,6 +548,7 @@ void VoiceWindow::onParticipantJoined(Core::Snowflake userId)
 
     if (voiceManager) {
         widget->setLocallyMuted(voiceManager->isUserMuted(userId));
+        widget->setDaveActive(!voiceManager->privacyCode().isEmpty());
 
         const auto *p = voiceManager->participant(userId);
         if (p)
@@ -518,6 +571,9 @@ void VoiceWindow::onParticipantJoined(Core::Snowflake userId)
                 voiceManager->setUserVolume(uid, static_cast<float>((*it)->volume()) / 100.0f);
         }
     });
+
+    connect(widget, &VoiceUserWidget::verificationCodeRequested,
+            this, &VoiceWindow::showVerificationCode);
 
     userListLayout->insertWidget(userListLayout->count() - 1, widget);
     userWidgets.insert(userId, widget);
@@ -585,6 +641,110 @@ void VoiceWindow::onImageFetched(const QUrl &url, const QSize &size, const QPixm
     auto widgetIt = userWidgets.constFind(userId);
     if (widgetIt != userWidgets.constEnd())
         widgetIt.value()->setAvatar(pixmap);
+}
+
+static QDialog *createCodeDialog(QWidget *parent, const QString &title,
+                                 const QString &description, const QString &code)
+{
+    auto *dlg = new QDialog(parent);
+    dlg->setWindowTitle(title);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto *layout = new QVBoxLayout(dlg);
+    layout->setSpacing(12);
+    layout->setContentsMargins(20, 16, 20, 16);
+
+    auto *desc = new QLabel(description, dlg);
+    desc->setWordWrap(true);
+    layout->addWidget(desc);
+
+    auto *codeLabel = new QLabel(code, dlg);
+    codeLabel->setAlignment(Qt::AlignCenter);
+    codeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    QFont codeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    codeFont.setPointSize(codeFont.pointSize() + 4);
+    codeFont.setLetterSpacing(QFont::AbsoluteSpacing, 1);
+    codeLabel->setFont(codeFont);
+    codeLabel->setStyleSheet(
+            "QLabel { background: palette(base); border: 1px solid palette(mid);"
+            "  border-radius: 6px; padding: 12px 16px; }");
+    layout->addWidget(codeLabel);
+
+    auto *btnBox = new QDialogButtonBox(QDialogButtonBox::Close, dlg);
+    QObject::connect(btnBox, &QDialogButtonBox::rejected, dlg, &QDialog::close);
+    layout->addWidget(btnBox);
+
+    dlg->setMinimumWidth(340);
+    return dlg;
+}
+
+void VoiceWindow::showVerificationCode(Core::Snowflake userId)
+{
+    if (!voiceManager) {
+        QMessageBox::information(this, tr("Verification Code"), tr("Not connected to voice."));
+        return;
+    }
+
+    if (!voiceManager->isDaveEnabled()) {
+        QMessageBox::information(this, tr("Verification Code"),
+                                 tr("End-to-end encryption is not active in this call."));
+        return;
+    }
+
+    QString userName = nameResolver ? nameResolver(userId) : QString::number(userId);
+    QPointer<VoiceWindow> self = this;
+
+    voiceManager->requestVerificationCode(userId, [self, userName](const QString &code) {
+        // callback triggered from dave created thread
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, userName, code]() {
+            if (!self)
+                return;
+
+            if (code.isEmpty()) {
+                QMessageBox::warning(self, VoiceWindow::tr("Verification Code"),
+                                     VoiceWindow::tr("Could not generate verification code for %1.\n"
+                                                     "They may not be in the MLS group yet.")
+                                             .arg(userName));
+                return;
+            }
+
+            auto *dlg = createCodeDialog(
+                    self, VoiceWindow::tr("Verification Code"),
+                    VoiceWindow::tr("Compare this code with <b>%1</b> to verify end-to-end encryption. "
+                                    "Both sides should see the same code.")
+                            .arg(userName.toHtmlEscaped()),
+                    code);
+            dlg->show();
+        });
+    });
+}
+
+void VoiceWindow::showPrivacyCode()
+{
+    if (!voiceManager) {
+        QMessageBox::information(this, tr("Privacy Code"), tr("Not connected to voice."));
+        return;
+    }
+
+    if (!voiceManager->isDaveEnabled()) {
+        QMessageBox::information(this, tr("Privacy Code"),
+                                 tr("End-to-end encryption is not active in this call."));
+        return;
+    }
+
+    QString code = voiceManager->privacyCode();
+    if (code.isEmpty()) {
+        QMessageBox::warning(this, tr("Privacy Code"),
+                             tr("Privacy code is not yet available."));
+        return;
+    }
+
+    auto *dlg = createCodeDialog(
+            this, tr("Privacy Code"),
+            tr("This code is shared by everyone in this call. "
+               "If everyone sees the same code, the call is end-to-end encrypted."),
+            code);
+    dlg->show();
 }
 
 void VoiceWindow::requestAvatar(Core::Snowflake userId, VoiceUserWidget *widget)

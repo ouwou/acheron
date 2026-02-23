@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QObject>
+#include <QByteArray>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QVector>
 
 #include <memory>
 #include <unordered_map>
@@ -24,6 +26,7 @@ struct SpeakerState
 {
     std::unique_ptr<OpusDecoder> decoder;
     std::unique_ptr<JitterBuffer> jitterBuffer;
+    QVector<QByteArray> pendingFrames; // overflow from multi-frame Opus packets
 };
 
 class AudioPipeline : public QObject

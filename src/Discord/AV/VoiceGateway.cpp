@@ -95,6 +95,69 @@ void VoiceGateway::sendSpeaking(int flags, int delay, quint32 ssrc)
     sendPayload(obj);
 }
 
+void VoiceGateway::sendBinaryPayload(int opcode, const QByteArray &data)
+{
+    QByteArray frame;
+    frame.reserve(1 + data.size());
+    frame.append(static_cast<char>(opcode));
+    frame.append(data);
+
+    qCDebug(LogVoice) << "Voice binary >>> opcode =" << opcode << "size =" << data.size();
+
+    std::lock_guard lock(curlMutex);
+    if (!curl)
+        return;
+
+    const char *payload = frame.constData();
+    size_t totalBytes = frame.size();
+    size_t bytesSentTotal = 0;
+
+    while (bytesSentTotal < totalBytes) {
+        size_t bytesSentNow = 0;
+        CURLcode res = curl_ws_send(curl, payload + bytesSentTotal, totalBytes - bytesSentTotal,
+                                    &bytesSentNow, 0, CURLWS_BINARY);
+
+        if (res == CURLE_OK) {
+            bytesSentTotal += bytesSentNow;
+        } else if (res == CURLE_AGAIN) {
+            curl_socket_t sockfd;
+            curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &sockfd);
+            if (sockfd != CURL_SOCKET_BAD) {
+                timeval timeout{ 0, 100'000 };
+                fd_set writefds;
+                FD_ZERO(&writefds);
+                FD_SET(sockfd, &writefds);
+                select((int)sockfd + 1, nullptr, &writefds, nullptr, &timeout);
+            }
+        } else {
+            qCWarning(LogVoice) << "Error sending binary voice payload:" << curl_easy_strerror(res);
+            break;
+        }
+    }
+}
+
+void VoiceGateway::sendDaveReadyForTransition(int transitionId)
+{
+    QJsonObject d;
+    d["transition_id"] = transitionId;
+
+    QJsonObject obj;
+    obj["op"] = static_cast<int>(VoiceOpCode::DAVE_PROTOCOL_READY_FOR_TRANSITION);
+    obj["d"] = d;
+    sendPayload(obj);
+}
+
+void VoiceGateway::sendDaveInvalidCommitWelcome(int transitionId)
+{
+    QJsonObject d;
+    d["transition_id"] = transitionId;
+
+    QJsonObject obj;
+    obj["op"] = static_cast<int>(VoiceOpCode::DAVE_MLS_INVALID_COMMIT_WELCOME);
+    obj["d"] = d;
+    sendPayload(obj);
+}
+
 void VoiceGateway::sendPayload(const QJsonObject &obj)
 {
     QByteArray json = QJsonDocument(obj).toJson(QJsonDocument::Compact);
@@ -167,11 +230,23 @@ void VoiceGateway::onPayloadReceived(const QJsonObject &root)
     case VoiceOpCode::RESUMED:
         handleResumed();
         break;
+    case VoiceOpCode::CLIENT_CONNECT:
+        handleClientsConnected(d.toObject());
+        break;
     case VoiceOpCode::SESSION_UPDATE:
         handleClientConnect(d.toObject());
         break;
     case VoiceOpCode::CLIENT_DISCONNECT:
         handleClientDisconnect(d.toObject());
+        break;
+    case VoiceOpCode::DAVE_PROTOCOL_PREPARE_TRANSITION:
+        handleDavePrepareTransition(d.toObject());
+        break;
+    case VoiceOpCode::DAVE_PROTOCOL_EXECUTE_TRANSITION:
+        handleDaveExecuteTransition(d.toObject());
+        break;
+    case VoiceOpCode::DAVE_PROTOCOL_PREPARE_EPOCH:
+        handleDavePrepareEpoch(d.toObject());
         break;
     default:
         qCDebug(LogVoice) << "Unhandled voice opcode:" << op;
@@ -260,6 +335,32 @@ void VoiceGateway::handleClientDisconnect(const QJsonObject &data)
     emit clientDisconnected(userId);
 }
 
+void VoiceGateway::handleClientsConnected(const QJsonObject &data)
+{
+    QStringList userIds;
+    for (const auto &val : data["user_ids"].toArray())
+        userIds.append(val.toString());
+
+    qCInfo(LogVoice) << "Clients connected:" << userIds;
+
+    emit clientsConnected(userIds);
+}
+
+void VoiceGateway::handleDavePrepareTransition(const QJsonObject &data)
+{
+    emit daveTransitionPrepare(data["protocol_version"].toInt(), data["transition_id"].toInt());
+}
+
+void VoiceGateway::handleDaveExecuteTransition(const QJsonObject &data)
+{
+    emit daveTransitionExecute(data["transition_id"].toInt());
+}
+
+void VoiceGateway::handleDavePrepareEpoch(const QJsonObject &data)
+{
+    emit daveEpochPrepare(data["protocol_version"].toInt(), data["epoch"].toInt());
+}
+
 void VoiceGateway::identify()
 {
     qCInfo(LogVoice) << "Sending voice Identify for server" << serverId;
@@ -326,7 +427,7 @@ void VoiceGateway::networkLoop()
 
         curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
-#if 1
+#if 0
         curl_easy_setopt(curl, CURLOPT_PROXY, "http://127.0.0.1:8888");
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
@@ -368,6 +469,7 @@ void VoiceGateway::networkLoop()
         size_t rlen;
         const curl_ws_frame *meta;
         QByteArray frameBuffer;
+        QByteArray binaryFrameBuffer;
 
         bool closeSent = false;
         while (running) {
@@ -441,9 +543,24 @@ void VoiceGateway::networkLoop()
             if (meta->flags & (CURLWS_PING | CURLWS_PONG))
                 continue;
 
-            // skip binary (dave) for now
-            if (meta->flags & CURLWS_BINARY)
+            if (meta->flags & CURLWS_BINARY) {
+                binaryFrameBuffer.append(chunk, rlen);
+
+                if (meta->bytesleft == 0) {
+                    if (binaryFrameBuffer.size() >= 3) {
+                        const auto *raw = reinterpret_cast<const uint8_t *>(binaryFrameBuffer.constData());
+                        // uint16_t seq = (raw[0] << 8) | raw[1];
+                        int opcode = raw[2];
+                        QByteArray payload = binaryFrameBuffer.mid(3);
+
+                        qCDebug(LogVoice) << "Voice binary frame: opcode =" << opcode
+                                          << "payload size =" << payload.size();
+                        emit binaryPayloadReceived(opcode, payload);
+                    }
+                    binaryFrameBuffer.clear();
+                }
                 continue;
+            }
 
             frameBuffer.append(chunk, rlen);
 

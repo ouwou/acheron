@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QVector>
 
 #include <opus.h>
 
@@ -19,14 +20,18 @@ public:
 
     bool init(int sampleRate, int channels);
 
-    QByteArray decode(const QByteArray &opusData);
+    // decode into frames of 20ms
+    QVector<QByteArray> decode(const QByteArray &opusData);
 
     QByteArray decodePlc();
 
 private:
+    QVector<QByteArray> splitFrames(const QByteArray &pcm, int totalSamples);
+
     ::OpusDecoder *decoder = nullptr;
     int frameSamples = 0;
     int frameChannels = 0;
+    int frameBytes = 0;
 };
 
 } // namespace AV

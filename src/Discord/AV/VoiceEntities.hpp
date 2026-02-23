@@ -97,12 +97,14 @@ struct SessionDescription : Core::JsonUtils::JsonObject
 {
     Field<QString> mode;
     Field<QByteArray> secretKey;
+    Field<int, true> daveProtocolVersion;
 
     static SessionDescription fromJson(const QJsonObject &obj)
     {
         SessionDescription desc;
         get(obj, "mode", desc.mode);
         get(obj, "secret_key", desc.secretKey);
+        get(obj, "dave_protocol_version", desc.daveProtocolVersion);
         return desc;
     }
 };
@@ -167,8 +169,7 @@ struct VoiceIdentifyData : Core::JsonUtils::JsonObject
         obj["session_id"] = sessionId.get();
         obj["token"] = token.get();
         obj["user_id"] = QString::number(userId.get());
-        // todo
-        // obj["max_dave_protocol_version"] = maxDaveProtocolVersion.get();
+        obj["max_dave_protocol_version"] = maxDaveProtocolVersion.get();
         return obj;
     }
 };

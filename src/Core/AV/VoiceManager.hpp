@@ -6,7 +6,9 @@
 #include <QList>
 #include <QSet>
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "Core/Snowflake.hpp"
 #include "Core/AV/IAudioBackend.hpp"
@@ -65,6 +67,10 @@ public:
     void setUserMuted(Snowflake userId, bool muted);
     [[nodiscard]] bool isUserMuted(Snowflake userId) const;
 
+    [[nodiscard]] bool isDaveEnabled() const;
+    [[nodiscard]] const QString &privacyCode() const { return cachedPrivacyCode; }
+    void requestVerificationCode(Snowflake targetUserId, std::function<void(const QString &)> callback);
+
 signals:
     void voiceConnected();
     void voiceDisconnected();
@@ -79,6 +85,7 @@ signals:
     void participantSpeakingChanged(Snowflake userId, bool speaking);
     void participantsCleared();
     void userAudioLevelChanged(Snowflake userId, float rms);
+    void privacyCodeChanged(const QString &code);
 
 private slots:
     void onVoiceClientConnected();
@@ -120,6 +127,7 @@ private:
     QHash<Snowflake, VoiceParticipant> participants;
     QSet<Snowflake> mutedUsers;
     QHash<Snowflake, Discord::VoiceState> knownVoiceStates;
+    QString cachedPrivacyCode;
 
     QThread *voiceThread = nullptr;
     Discord::AV::VoiceClient *voiceClient = nullptr;

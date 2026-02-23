@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
 #include <curl/curl.h>
 
@@ -32,6 +33,9 @@ public:
 
     void sendSelectProtocol(const QString &address, int port, const QString &mode);
     void sendSpeaking(int flags, int delay, quint32 ssrc);
+    void sendBinaryPayload(int opcode, const QByteArray &data);
+    void sendDaveReadyForTransition(int transitionId);
+    void sendDaveInvalidCommitWelcome(int transitionId);
 
     [[nodiscard]] uint64_t currentGeneration() const { return generation.load(); }
 
@@ -45,10 +49,16 @@ signals:
     void sessionDescriptionReceived(const SessionDescription &data);
     void speakingReceived(const SpeakingData &data);
     void clientConnected(const ClientConnectData &data);
+    void clientsConnected(const QStringList &userIds);
     void clientDisconnected(Core::Snowflake userId);
     void resumed();
 
     void payloadReceived(const QJsonObject &root);
+
+    void binaryPayloadReceived(int opcode, const QByteArray &payload);
+    void daveTransitionPrepare(int protocolVersion, int transitionId);
+    void daveTransitionExecute(int transitionId);
+    void daveEpochPrepare(int protocolVersion, int epoch);
 
 private:
     void sendPayload(const QJsonObject &obj);
@@ -62,7 +72,11 @@ private:
     void handleHeartbeatAck(quint64 nonce);
     void handleResumed();
     void handleClientConnect(const QJsonObject &data);
+    void handleClientsConnected(const QJsonObject &data);
     void handleClientDisconnect(const QJsonObject &data);
+    void handleDavePrepareTransition(const QJsonObject &data);
+    void handleDaveExecuteTransition(const QJsonObject &data);
+    void handleDavePrepareEpoch(const QJsonObject &data);
 
     void identify();
     void resume();

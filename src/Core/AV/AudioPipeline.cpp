@@ -230,19 +230,27 @@ void AudioPipeline::onMixTick()
         quint32 ssrc = it->first;
         SpeakerState &state = it->second;
 
-        if (!state.jitterBuffer->isActive())
-            continue;
-
-        if (state.jitterBuffer->size() == 0)
-            continue;
-
-        QByteArray opusData = state.jitterBuffer->pop();
         QByteArray pcm;
 
-        if (opusData.isEmpty())
-            pcm = state.decoder->decodePlc();
-        else
-            pcm = state.decoder->decode(opusData);
+        if (!state.pendingFrames.isEmpty()) {
+            pcm = state.pendingFrames.takeFirst();
+        } else {
+            if (!state.jitterBuffer->isReady())
+                continue;
+
+            QByteArray opusData = state.jitterBuffer->pop();
+
+            if (opusData.isEmpty()) {
+                pcm = state.decoder->decodePlc();
+            } else {
+                QVector<QByteArray> frames = state.decoder->decode(opusData);
+                if (frames.isEmpty())
+                    continue;
+                pcm = frames.first();
+                for (int i = 1; i < frames.size(); i++)
+                    state.pendingFrames.append(frames[i]);
+            }
+        }
 
         if (pcm.isEmpty())
             continue;

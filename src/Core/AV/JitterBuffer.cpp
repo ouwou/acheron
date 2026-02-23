@@ -43,6 +43,9 @@ void JitterBuffer::push(uint16_t sequence, const QByteArray &data)
     }
     for (uint16_t seq : stale)
         frames.remove(seq);
+
+    if (prebuffering && frames.size() >= targetDelay)
+        prebuffering = false;
 }
 
 QByteArray JitterBuffer::pop()
@@ -50,8 +53,35 @@ QByteArray JitterBuffer::pop()
     if (!initialized)
         return {};
 
+    if (prebuffering)
+        return {};
+
     QByteArray data = frames.take(nextSequence);
     nextSequence++;
+
+    if (!data.isEmpty()) {
+        consecutiveHits++;
+        consecutiveMisses = 0;
+
+        if (consecutiveHits >= 200 && targetDelay > 2) {
+            targetDelay--;
+            consecutiveHits = 0;
+        }
+    } else {
+        consecutiveMisses++;
+        consecutiveHits = 0;
+
+        if (consecutiveMisses >= 3 && targetDelay < 8) {
+            targetDelay++;
+            prebuffering = true;
+            consecutiveMisses = 0;
+        }
+
+        if (consecutiveMisses >= MAX_CONSECUTIVE_MISSES) {
+            reset();
+        }
+    }
+
     return data;
 }
 
@@ -60,6 +90,10 @@ void JitterBuffer::reset()
     frames.clear();
     nextSequence = 0;
     initialized = false;
+    targetDelay = 3;
+    prebuffering = true;
+    consecutiveMisses = 0;
+    consecutiveHits = 0;
 }
 
 } // namespace AV

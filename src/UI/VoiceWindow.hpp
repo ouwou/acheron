@@ -85,11 +85,16 @@ public:
     void setVolume(int pct);
     void setDisplayName(const QString &name);
     void setAvatar(const QPixmap &pm);
+    void setDaveActive(bool active);
     int volume() const { return volumeSlider->value(); }
 
 signals:
     void volumeChanged(Core::Snowflake userId, int pct);
     void muteToggled(Core::Snowflake userId, bool muted);
+    void verificationCodeRequested(Core::Snowflake userId);
+
+protected:
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
 private:
     Core::Snowflake userId;
@@ -101,6 +106,7 @@ private:
     QLabel *stateLabel;
     QTimer speakingDecayTimer;
     bool locallyMuted = false;
+    bool daveActive = false;
 
     static constexpr int SPEAKING_DECAY_MS = 300;
 };
@@ -133,6 +139,8 @@ private:
     void onImageFetched(const QUrl &url, const QSize &size, const QPixmap &pixmap);
 
     void requestAvatar(Core::Snowflake userId, VoiceUserWidget *widget);
+    void showVerificationCode(Core::Snowflake userId);
+    void showPrivacyCode();
 
     Core::AV::VoiceManager *voiceManager = nullptr;
     Core::ImageManager *imageManager = nullptr;
@@ -145,6 +153,7 @@ private:
     QWidget *userListContainer;
     QVBoxLayout *userListLayout;
     QHash<Core::Snowflake, VoiceUserWidget *> userWidgets;
+    QPushButton *privacyCodeBtn;
 
     VolumeMeter *volumeMeter;
     QComboBox *inputDeviceCombo;

@@ -17,8 +17,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
 
 option(BUILD_TESTS "Build test targets" ON)
-option(ACHERON_ENABLE_DAVE "Enable DAVE (Discord Audio/Video E2E Encryption) support" ON)
-
 if(BUILD_TESTS)
     enable_testing()
 endif()
@@ -76,17 +74,12 @@ else()
 endif()
 
 # libdave (Discord Audio/Video E2E Encryption)
-if(ACHERON_ENABLE_DAVE)
-    message(STATUS "DAVE support enabled")
-    set(TESTING OFF CACHE BOOL "" FORCE)
-    set(PERSISTENT_KEYS OFF CACHE BOOL "" FORCE)
-    # Prevent libdave's own vcpkg manifest from being processed; our
-    # project-level vcpkg.json already provides all required packages.
-    set(VCPKG_MANIFEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
-    add_subdirectory(vendor/libdave/cpp EXCLUDE_FROM_ALL)
-else()
-    message(STATUS "DAVE support disabled")
-endif()
+set(TESTING OFF CACHE BOOL "" FORCE)
+set(PERSISTENT_KEYS OFF CACHE BOOL "" FORCE)
+# Prevent libdave's own vcpkg manifest from being processed; our
+# project-level vcpkg.json already provides all required packages.
+set(VCPKG_MANIFEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
+add_subdirectory(vendor/libdave/cpp EXCLUDE_FROM_ALL)
 
 set(PROJECT_SOURCES
     resources.qrc
@@ -152,6 +145,7 @@ set(PROJECT_SOURCES
     src/Discord/AV/VoiceClient.cpp
     src/Discord/AV/RtpPacket.cpp
     src/Discord/AV/VoiceEncryption.cpp
+    src/Discord/AV/DaveSession.cpp
     src/Core/AV/VoiceManager.cpp
     src/Core/AV/AudioPipeline.cpp
     src/Core/AV/IAudioBackend.cpp
@@ -220,10 +214,7 @@ if(TARGET Qt::ZlibPrivate)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
 endif()
-if(ACHERON_ENABLE_DAVE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE libdave)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_DAVE_ENABLED)
-endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE libdave)
 target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
 

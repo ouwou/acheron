@@ -253,6 +253,22 @@ bool VoiceManager::isUserMuted(Snowflake userId) const
     return mutedUsers.contains(userId);
 }
 
+bool VoiceManager::isDaveEnabled() const
+{
+    return voiceClient && voiceClient->isDaveEnabled();
+}
+
+void VoiceManager::requestVerificationCode(Snowflake targetUserId, std::function<void(const QString &)> callback)
+{
+    if (!voiceClient) {
+        callback(QString());
+        return;
+    }
+    QMetaObject::invokeMethod(voiceClient, [vc = voiceClient, targetUserId, cb = std::move(callback)]() mutable {
+        vc->requestVerificationCode(targetUserId, std::move(cb));
+    });
+}
+
 void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &token)
 {
     if (voiceSessionId.isEmpty()) {
@@ -270,6 +286,14 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 
     voiceClient = new Discord::AV::VoiceClient(endpoint, token, guildId, channelId, accountId, voiceSessionId);
     audioPipeline = new AudioPipeline;
+
+    QList<Snowflake> channelUsers;
+    for (auto it = knownVoiceStates.constBegin(); it != knownVoiceStates.constEnd(); ++it) {
+        const auto &vs = it.value();
+        if (!vs.channelId.isNull() && vs.channelId.get() == channelId)
+            channelUsers.append(it.key());
+    }
+    voiceClient->seedConnectedUsers(channelUsers);
 
     cachedInputDevices = audioBackend->availableInputDevices();
     cachedOutputDevices = audioBackend->availableOutputDevices();
@@ -364,6 +388,14 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 
     connect(audioPipeline, &AudioPipeline::speakingChanged, this, &VoiceManager::speakingChanged);
 
+    connect(voiceClient, &Discord::AV::VoiceClient::privacyCodeChanged,
+            this, [this, gen](const QString &code) {
+                if (gen != voiceGeneration)
+                    return;
+                cachedPrivacyCode = code;
+                emit privacyCodeChanged(code);
+            });
+
     voiceThread->start();
     QMetaObject::invokeMethod(voiceClient, &Discord::AV::VoiceClient::start);
 }
@@ -377,6 +409,7 @@ void VoiceManager::stopVoiceThread()
     bool hadParticipants = !participants.isEmpty();
     participants.clear();
     mutedUsers.clear();
+    cachedPrivacyCode.clear();
     if (hadParticipants)
         emit participantsCleared();
 
