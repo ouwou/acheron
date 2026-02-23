@@ -20,6 +20,7 @@ struct ChannelNode
         Server,
         Category,
         Channel,
+        VoiceChannel,
         DMChannel,
     };
 
@@ -39,6 +40,7 @@ struct ChannelNode
     QString dmAvatarHash;
     Core::Snowflake dmRecipientId;
     Core::Snowflake lastMessageId;
+    bool isPrivate = false;
 
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;

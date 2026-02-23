@@ -4,3 +4,12 @@
 [submodule "vendor/emoji-segmenter"]
 	path = vendor/emoji-segmenter
 	url = https://github.com/google/emoji-segmenter/
+[submodule "vendor/libdave"]
+	path = vendor/libdave
+	url = https://github.com/discord/libdave
+[submodule "vendor/vcpkg"]
+	path = vendor/vcpkg
+	url = https://github.com/microsoft/vcpkg.git
+[submodule "vendor/miniaudio"]
+	path = vendor/miniaudio
+	url = https://github.com/mackron/miniaudio.git

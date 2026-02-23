@@ -55,13 +55,25 @@ bool ChannelFilterProxyModel::lessThan(const QModelIndex &left, const QModelInde
     auto leftType = static_cast<ChannelNode::Type>(left.data(ChannelTreeModel::TypeRole).toInt());
     auto rightType = static_cast<ChannelNode::Type>(right.data(ChannelTreeModel::TypeRole).toInt());
 
-    if ((leftType == ChannelNode::Type::Channel || leftType == ChannelNode::Type::Category) &&
-        (rightType == ChannelNode::Type::Channel || rightType == ChannelNode::Type::Category)) {
+    auto isGuildType = [](ChannelNode::Type t) {
+        return t == ChannelNode::Type::Channel || t == ChannelNode::Type::VoiceChannel ||
+               t == ChannelNode::Type::Category;
+    };
 
-        if (leftType == ChannelNode::Type::Channel && rightType == ChannelNode::Type::Category)
-            return true;
-        else if (leftType == ChannelNode::Type::Category && rightType == ChannelNode::Type::Channel)
-            return false;
+    if (isGuildType(leftType) && isGuildType(rightType)) {
+        // sort order: Channel < VoiceChannel < Category
+        auto rank = [](ChannelNode::Type t) -> int {
+            if (t == ChannelNode::Type::Channel)
+                return 0;
+            if (t == ChannelNode::Type::VoiceChannel)
+                return 1;
+            return 2; // Category
+        };
+
+        int leftRank = rank(leftType);
+        int rightRank = rank(rightType);
+        if (leftRank != rightRank)
+            return leftRank < rightRank;
 
         int leftPos = left.data(ChannelTreeModel::PositionRole).toInt();
         int rightPos = right.data(ChannelTreeModel::PositionRole).toInt();
@@ -112,7 +124,14 @@ bool ChannelFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex 
         }
     }
 
-    if (nodeType == ChannelNode::Type::Channel) {
+    // hide voice channels under collapsed categories
+    if (nodeType == ChannelNode::Type::VoiceChannel) {
+        ChannelNode *parentNode = static_cast<ChannelNode *>(sourceParent.internalPointer());
+        if (parentNode && parentNode->type == ChannelNode::Type::Category && parentNode->collapsed)
+            return false;
+    }
+
+    if (nodeType == ChannelNode::Type::Channel || nodeType == ChannelNode::Type::VoiceChannel) {
         return hasChannelViewPermission(index);
     } else if (nodeType == ChannelNode::Type::Category) {
         auto *permissionManager = instance->permissions();

@@ -22,6 +22,8 @@
 #include "ConnectionBanner.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Core/MemberListManager.hpp"
+#include "Core/AV/VoiceManager.hpp"
+#include "VoiceStatusBar.hpp"
 
 using namespace Acheron::Core;
 
@@ -313,12 +315,18 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
                 chatModel->refreshUsersInView(userIds);
             });
+
+    updateVoiceStatusLabel();
 }
 
 void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 {
     if (!instance)
         return;
+
+    if (instancesSignalsConnected.contains(instance->accountId()))
+        return;
+    instancesSignalsConnected.insert(instance->accountId());
 
     connect(instance, &Core::ClientInstance::channelCreated, this,
             [this, instance](const Discord::ChannelCreate &event) {
@@ -426,6 +434,15 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 if (state == Core::ConnectionState::Connected)
                     connectionBanner->hide();
             });
+
+    connect(instance, &Core::ClientInstance::voiceStateChanged, this,
+            [this, instance](Core::Snowflake channelId, Core::Snowflake) {
+                channelTree->setAccountVoiceChannel(instance->accountId(), channelId);
+                updateVoiceStatusLabel();
+            });
+
+    connect(instance->voice(), &Core::AV::VoiceManager::voiceStateChanged,
+            this, &MainWindow::updateVoiceStatusLabel);
 }
 
 void MainWindow::setupUi()
@@ -433,7 +450,26 @@ void MainWindow::setupUi()
     auto *central = new QWidget(this);
     auto *layout = new QHBoxLayout(central);
 
-    channelTree = new ChannelTreeView(central);
+    auto *leftSideWidget = new QWidget(central);
+    auto *leftLayout = new QVBoxLayout(leftSideWidget);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(0);
+
+    channelTree = new ChannelTreeView(leftSideWidget);
+
+    voiceStatusBar = new VoiceStatusBar(leftSideWidget);
+    voiceStatusBar->setImageManager(session->getImageManager());
+    connect(voiceStatusBar, &VoiceStatusBar::disconnectRequested, this, [this]() {
+        for (const auto &inst : session->getClients()) {
+            if (inst && inst->isInVoice()) {
+                inst->discord()->sendVoiceStateUpdate(inst->voiceGuildId(), Snowflake::Invalid, false, false);
+                break;
+            }
+        }
+    });
+
+    leftLayout->addWidget(channelTree, 1);
+    leftLayout->addWidget(voiceStatusBar, 0);
 
     auto *rightSideWidget = new QWidget(central);
     auto *rightLayout = new QVBoxLayout(rightSideWidget);
@@ -485,7 +521,7 @@ void MainWindow::setupUi()
     memberListView->setItemDelegate(new MemberListDelegate(memberListView));
 
     mainSplitter = new QSplitter(this);
-    mainSplitter->addWidget(channelTree);
+    mainSplitter->addWidget(leftSideWidget);
     mainSplitter->addWidget(rightSideWidget);
     mainSplitter->addWidget(memberListView);
 
@@ -494,7 +530,7 @@ void MainWindow::setupUi()
     mainSplitter->setStretchFactor(0, 0);
     mainSplitter->setStretchFactor(1, 1);
     mainSplitter->setStretchFactor(2, 0);
-    channelTree->setMinimumWidth(200);
+    leftSideWidget->setMinimumWidth(200);
     memberListView->setMinimumWidth(140);
     memberListView->setMaximumWidth(400);
 
@@ -678,9 +714,110 @@ void MainWindow::setupUi()
                 tabBar->openNewTab(entry);
             });
 
+    connect(channelTree, &ChannelTreeView::joinVoiceChannelRequested, this,
+            [this](const QModelIndex &proxyIndex) {
+                QModelIndex sourceIndex = channelFilterProxy->mapToSource(proxyIndex);
+                auto *node = channelTreeModel->nodeFromIndex(sourceIndex);
+                if (!node || node->type != ChannelNode::Type::VoiceChannel)
+                    return;
+
+                ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+                if (!accountNode)
+                    return;
+
+                ClientInstance *instance = session->client(accountNode->id);
+                if (!instance)
+                    return;
+
+                ChannelNode *guildNode = node;
+                while (guildNode && guildNode->type != ChannelNode::Type::Server)
+                    guildNode = guildNode->parent;
+                if (!guildNode)
+                    return;
+
+                qCInfo(LogVoice) << "Joining voice channel" << node->name << node->id
+                                 << "in guild" << guildNode->id;
+                instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, false, false);
+            });
+
+    connect(channelTree, &ChannelTreeView::disconnectVoiceRequested, this,
+            [this](const QModelIndex &proxyIndex) {
+                QModelIndex sourceIndex = channelFilterProxy->mapToSource(proxyIndex);
+                auto *node = channelTreeModel->nodeFromIndex(sourceIndex);
+                if (!node)
+                    return;
+
+                ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+                if (!accountNode)
+                    return;
+
+                ClientInstance *instance = session->client(accountNode->id);
+                if (!instance)
+                    return;
+
+                ChannelNode *guildNode = node;
+                while (guildNode && guildNode->type != ChannelNode::Type::Server)
+                    guildNode = guildNode->parent;
+                if (!guildNode)
+                    return;
+
+                qCInfo(LogVoice) << "Disconnecting from voice in guild" << guildNode->id;
+                instance->discord()->sendVoiceStateUpdate(guildNode->id, Snowflake::Invalid, false, false);
+            });
+
     layout->addWidget(mainSplitter);
     layout->setContentsMargins(0, 0, 4, 0);
     setCentralWidget(central);
+}
+
+void MainWindow::updateVoiceStatusLabel()
+{
+    using VState = Discord::AV::VoiceClient::State;
+
+    // Find any account that is in voice or has an active voice client
+    Core::ClientInstance *voiceInstance = nullptr;
+    for (const auto &inst : session->getClients()) {
+        if (inst && (inst->isInVoice() || inst->voice()->clientState() != VState::Disconnected)) {
+            voiceInstance = inst;
+            break;
+        }
+    }
+
+    Core::AV::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
+    voiceStatusBar->setVoiceManager(vm);
+
+    if (voiceInstance) {
+        QPointer<Core::UserManager> um = voiceInstance->users();
+        Core::Snowflake vGuildId = voiceInstance->voiceGuildId();
+        voiceStatusBar->setNameResolver([um, vGuildId](Core::Snowflake userId) -> QString {
+            if (!um)
+                return QString::number(userId);
+            return um->getDisplayName(userId, vGuildId.isValid() ? std::optional(vGuildId) : std::nullopt);
+        });
+        voiceStatusBar->setAvatarResolver([um](Core::Snowflake userId) -> QUrl {
+            if (!um)
+                return {};
+            Discord::User *user = um->getUser(userId);
+            if (!user || user->avatar.isNull() || user->avatar.get().isEmpty())
+                return {};
+            return QUrl(QStringLiteral("https://cdn.discordapp.com/avatars/%1/%2.png?size=32")
+                                .arg(quint64(userId))
+                                .arg(user->avatar.get()));
+        });
+    } else {
+        voiceStatusBar->setNameResolver(nullptr);
+        voiceStatusBar->setAvatarResolver(nullptr);
+    }
+
+    QString channelName;
+    if (voiceInstance) {
+        Core::Snowflake vcId = voiceInstance->voiceChannelId();
+        if (vcId.isValid()) {
+            ChannelNode *node = channelTreeModel->findChannelTreeNode(vcId);
+            channelName = node ? node->name : QString::number(vcId);
+        }
+    }
+    voiceStatusBar->setChannelName(channelName);
 }
 
 void MainWindow::switchToTabEntry(const TabEntry &entry)

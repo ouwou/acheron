@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
+
+# vcpkg toolchain must be set before project() so find_package is intercepted.
+# Allow override via -DCMAKE_TOOLCHAIN_FILE for users who manage vcpkg externally.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "Vcpkg toolchain file")
+endif()
+
 project(acheron LANGUAGES CXX)
 
 include(qt.cmake)
@@ -9,12 +17,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
 
 option(BUILD_TESTS "Build test targets" ON)
-
 if(BUILD_TESTS)
     enable_testing()
 endif()
 
 find_package(CURL REQUIRED)
+find_package(unofficial-sodium CONFIG REQUIRED)
+find_package(Opus CONFIG REQUIRED)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools)
 find_package(Qt${QT_VERSION_MAJOR}
@@ -57,10 +66,19 @@ else()
         set(BUILD_WITH_QT6 OFF CACHE BOOL "" FORCE)
     endif()
     set(BUILD_TEST_APPLICATION OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
     set(BUILD_TRANSLATIONS OFF CACHE BOOL "" FORCE)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     add_subdirectory(vendor/qtkeychain EXCLUDE_FROM_ALL)
 endif()
+
+# libdave (Discord Audio/Video E2E Encryption)
+set(TESTING OFF CACHE BOOL "" FORCE)
+set(PERSISTENT_KEYS OFF CACHE BOOL "" FORCE)
+# Prevent libdave's own vcpkg manifest from being processed; our
+# project-level vcpkg.json already provides all required packages.
+set(VCPKG_MANIFEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
+add_subdirectory(vendor/libdave/cpp EXCLUDE_FROM_ALL)
 
 set(PROJECT_SOURCES
     resources.qrc
@@ -81,6 +99,8 @@ set(PROJECT_SOURCES
     src/Core/EmojiSegmenter.cpp
     src/Core/Markdown/Parser.cpp
     src/UI/MainWindow.cpp
+    src/UI/VoiceStatusBar.cpp
+    src/UI/VoiceWindow.cpp
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
     src/UI/ConnectionBanner.cpp
@@ -119,6 +139,20 @@ set(PROJECT_SOURCES
     src/Discord/HttpClient.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/ClientIdentity.cpp
+    src/Discord/AV/VoiceGateway.cpp
+    src/Discord/AV/UdpTransport.cpp
+    src/Discord/AV/VoiceClient.cpp
+    src/Discord/AV/RtpPacket.cpp
+    src/Discord/AV/VoiceEncryption.cpp
+    src/Discord/AV/DaveSession.cpp
+    src/Core/AV/VoiceManager.cpp
+    src/Core/AV/AudioPipeline.cpp
+    src/Core/AV/IAudioBackend.cpp
+    src/Core/AV/MiniaudioAudioBackend.cpp
+    src/Core/AV/OpusEncoder.cpp
+    src/Core/AV/OpusDecoder.cpp
+    src/Core/AV/JitterBuffer.cpp
+    src/Core/AV/AudioMixer.cpp
     src/Proto/ProtoReader.cpp
     src/Proto/UserSettings.cpp
     src/Core/TokenStore.cpp
@@ -170,12 +204,16 @@ target_link_libraries(${PROJECT_NAME}
         CURL::libcurl
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain
+        unofficial-sodium::sodium
+        Opus::opus
 )
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
 endif()
+target_link_libraries(${PROJECT_NAME} PRIVATE libdave)
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
 
 include(CheckSymbolExists)

@@ -8,12 +8,11 @@ Q_LOGGING_CATEGORY(LogDiscord, "acheron.discord");
 Q_LOGGING_CATEGORY(LogDB, "acheron.db");
 Q_LOGGING_CATEGORY(LogUI, "acheron.ui");
 Q_LOGGING_CATEGORY(LogProto, "acheron.proto");
+Q_LOGGING_CATEGORY(LogDave, "acheron.dave");
+Q_LOGGING_CATEGORY(LogVoice, "acheron.voice");
 
 namespace Acheron {
 namespace Core {
-
-QFile *Logger::logFile = nullptr;
-QMutex Logger::fileMutex;
 
 void Logger::init()
 {
@@ -30,11 +29,27 @@ void Logger::init()
         stream << "\n=== Acheron startup: " << QDateTime::currentDateTime().toString() << " ===\n";
     }
 
+    stopping = false;
+    writerThread = new std::thread(&Logger::writerLoop);
+
     qInstallMessageHandler(Logger::messageHandler);
 }
 
 void Logger::cleanup()
 {
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        stopping = true;
+    }
+    queueCv.notify_one();
+
+    if (writerThread) {
+        if (writerThread->joinable())
+            writerThread->join();
+        delete writerThread;
+        writerThread = nullptr;
+    }
+
     if (logFile) {
         logFile->close();
         delete logFile;
@@ -42,9 +57,37 @@ void Logger::cleanup()
     }
 }
 
+void Logger::writerLoop()
+{
+    std::vector<std::string> batch;
+
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            queueCv.wait(lock, [] { return !queue.empty() || stopping; });
+            batch.swap(queue);
+        }
+
+        if (logFile && logFile->isOpen()) {
+            for (const auto &line : batch) {
+                logFile->write(line.data(), line.size());
+                logFile->write("\n", 1);
+            }
+            logFile->flush();
+        }
+        batch.clear();
+
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (stopping && queue.empty())
+                break;
+        }
+    }
+}
+
 void Logger::messageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    QString level;
+    const char *level;
     switch (type) {
     case QtDebugMsg:
         level = "DBG";
@@ -71,14 +114,21 @@ void Logger::messageHandler(QtMsgType type, const QMessageLogContext &context, c
 
     std::cout << formatted.toStdString() << std::endl;
 
-    if (logFile && logFile->isOpen()) {
-        QMutexLocker lock(&fileMutex);
-        QTextStream stream(logFile);
-        stream << formatted << "\n";
+    if (type == QtFatalMsg) {
+        if (logFile && logFile->isOpen()) {
+            auto utf8 = formatted.toUtf8();
+            logFile->write(utf8);
+            logFile->write("\n", 1);
+            logFile->flush();
+        }
+        abort();
     }
 
-    if (type == QtFatalMsg)
-        abort();
+    {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        queue.push_back(formatted.toUtf8().toStdString());
+    }
+    queueCv.notify_one();
 }
 
 } // namespace Core

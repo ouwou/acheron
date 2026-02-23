@@ -29,6 +29,7 @@ struct ChannelNode;
 class TypingIndicator;
 class SlowModeIndicator;
 class ConnectionBanner;
+class VoiceStatusBar;
 class TabBar;
 struct TabEntry;
 } // namespace UI
@@ -59,6 +60,7 @@ private:
     void activateChannel(const TabEntry &entry);
     void refreshTabReadStates();
     QColor resolveRoleColor(Core::Snowflake userId, Core::Snowflake guildId);
+    void updateVoiceStatusLabel();
 
 private:
     void setupUi();
@@ -82,6 +84,7 @@ private:
     MemberListModel *memberListModel;
     Core::TypingTracker *typingTracker;
 
+    VoiceStatusBar *voiceStatusBar;
     AccountsWindow *accountsWindow = nullptr;
 
 private slots:
@@ -95,6 +98,7 @@ private:
     QHash<Core::Snowflake, QList<Discord::Role>> guildRolesCache;
     QHash<Core::Snowflake, QColor> userColorCache; // current guild
 
+    QSet<Core::Snowflake> instancesSignalsConnected;
     QSplitter *mainSplitter = nullptr;
 };
 

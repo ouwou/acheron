@@ -3,6 +3,13 @@
   "configurePresets": [
     {
       "hidden": true,
+      "name": "vcpkg",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/vendor/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "hidden": true,
       "name": "Qt",
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "$env{QTDIR}"
@@ -16,7 +23,7 @@
   ],
   "vendor": {
     "qt-project.org/Presets": {
-      "checksum": "67SmY24ZeVbebyKD0fGfIzb/bGI="
+      "checksum": "CurAElSap52nQnhU9ow3iy4KtC8="
     }
   }
 }

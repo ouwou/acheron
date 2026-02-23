@@ -10,6 +10,18 @@
 namespace Acheron {
 namespace UI {
 
+static bool isChannelPrivate(const Discord::Channel &channel, Core::Snowflake guildId)
+{
+    if (!channel.permissionOverwrites.hasValue())
+        return false;
+
+    for (const auto &ow : channel.permissionOverwrites.get()) {
+        if (ow.type.get() == Discord::PermissionOverwrite::Type::Role && ow.id.get() == guildId)
+            return ow.deny->testFlag(Discord::Permission::VIEW_CHANNEL);
+    }
+    return false;
+}
+
 static QString getDMDisplayName(const Discord::Channel &channel, Storage::UserRepository &userRepo)
 {
     if (channel.name.hasValue() && !channel.name->isEmpty())
@@ -203,6 +215,10 @@ Qt::ItemFlags ChannelTreeModel::flags(const QModelIndex &index) const
 
     if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::DMChannel)
         return f | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
+
+    // Voice channels: enabled (for context menu) but not selectable
+    if (node->type == ChannelNode::Type::VoiceChannel)
+        return (f | Qt::ItemIsEnabled) & ~Qt::ItemIsSelectable;
 
     // Folders should be enabled (for expansion) but not selectable
     if (node->type == ChannelNode::Type::Folder)
@@ -432,18 +448,25 @@ std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::Ga
     }
 
     for (const auto &channel : guild.channels.get()) {
-        if (channel.type == Discord::ChannelType::GUILD_TEXT ||
-            channel.type == Discord::ChannelType::GUILD_NEWS) {
+        bool isText = channel.type == Discord::ChannelType::GUILD_TEXT ||
+                      channel.type == Discord::ChannelType::GUILD_NEWS;
+        bool isVoice = channel.type == Discord::ChannelType::GUILD_VOICE ||
+                       channel.type == Discord::ChannelType::GUILD_STAGE_VOICE;
+
+        if (isText || isVoice) {
             auto node = std::make_unique<ChannelNode>();
             node->id = channel.id;
             node->name = channel.name;
-            node->type = ChannelNode::Type::Channel;
+            node->type = isVoice ? ChannelNode::Type::VoiceChannel : ChannelNode::Type::Channel;
             node->position = channel.position;
             node->parentId =
                     channel.parentId.hasValue() ? channel.parentId.get() : Core::Snowflake();
-            node->lastMessageId = channel.lastMessageId.hasValue()
-                                          ? channel.lastMessageId.get()
-                                          : Core::Snowflake();
+            node->isPrivate = isChannelPrivate(channel, guild.properties->id);
+            if (isText) {
+                node->lastMessageId = channel.lastMessageId.hasValue()
+                                              ? channel.lastMessageId.get()
+                                              : Core::Snowflake();
+            }
 
             if (channel.parentId.hasValue() && channel.parentId->isValid()) {
                 if (categoryMap.contains(channel.parentId.get()))
@@ -490,6 +513,11 @@ QModelIndex ChannelTreeModel::indexForNode(ChannelNode *node) const
         }
     }
     return {};
+}
+
+ChannelNode *ChannelTreeModel::findChannelTreeNode(Snowflake channelId)
+{
+    return findChannelTreeNode(channelId, root.get());
 }
 
 ChannelNode *ChannelTreeModel::findChannelTreeNode(Snowflake channelId, ChannelNode *searchRoot)
@@ -619,6 +647,8 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
 
     if (channel.type != Discord::ChannelType::GUILD_TEXT &&
         channel.type != Discord::ChannelType::GUILD_NEWS &&
+        channel.type != Discord::ChannelType::GUILD_VOICE &&
+        channel.type != Discord::ChannelType::GUILD_STAGE_VOICE &&
         channel.type != Discord::ChannelType::GUILD_CATEGORY)
         return;
 
@@ -651,7 +681,10 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         guildNode->addChild(std::move(node));
         endInsertRows();
     } else {
-        node->type = ChannelNode::Type::Channel;
+        bool isVoice = channel.type == Discord::ChannelType::GUILD_VOICE ||
+                       channel.type == Discord::ChannelType::GUILD_STAGE_VOICE;
+        node->type = isVoice ? ChannelNode::Type::VoiceChannel : ChannelNode::Type::Channel;
+        node->isPrivate = isChannelPrivate(channel, guildId);
 
         ChannelNode *parentNode = nullptr;
         if (node->parentId.isValid())
@@ -721,6 +754,7 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         node->name = channel.name.get();
         node->position = channel.position.get();
         node->parentId = newParentId;
+        node->isPrivate = isChannelPrivate(channel, guildNode->id);
 
         ChannelNode *newParent = nullptr;
         if (newParentId.isValid())
@@ -751,6 +785,10 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         channelNode->name = channel.name.get();
         channelNode->position = channel.position.get();
         channelNode->parentId = newParentId;
+
+        ChannelNode *guildNode = findGuildNode(channelNode);
+        if (guildNode)
+            channelNode->isPrivate = isChannelPrivate(channel, guildNode->id);
 
         QModelIndex idx = indexForNode(channelNode);
         if (idx.isValid())

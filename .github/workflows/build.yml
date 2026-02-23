@@ -29,6 +29,18 @@ jobs:
           modules: qtimageformats
           cache: true
 
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+
       - name: Install curl-impersonate
         shell: pwsh
         run: |
@@ -43,12 +55,16 @@ jobs:
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
             -DCURL_DIR="$curlDir/lib/cmake/CURL" `
-            -DBUILD_TESTS=OFF
+            -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
 
       - name: Deploy Qt
         shell: pwsh
@@ -69,6 +85,9 @@ jobs:
 
           # Copy curl-impersonate DLLs
           Copy-Item "$curlDir/bin/*.dll" $out -Force
+
+          # Remove test executables from artifact
+          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -96,24 +115,98 @@ jobs:
           modules: qtimageformats
           cache: true
 
+      - name: Bootstrap vcpkg
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
+
       - name: Install curl-impersonate
         run: |
           curl -L -o libcurl-impersonate.tar.gz \
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          sudo cp curl-impersonate/libcurl-impersonate.a /usr/local/lib/
+          # Localize BoringSSL symbols in the static archive so they don't
+          # conflict with vcpkg OpenSSL (used by libdave). Keep only curl_*
+          # symbols as global; everything else (BoringSSL/OpenSSL) becomes local.
+          KEEP_FLAGS=$(nm --defined-only -g curl-impersonate/libcurl-impersonate.a \
+            | awk '{print $NF}' | grep '^curl_' | sort -u \
+            | sed 's/^/--keep-global-symbol=/' | tr '\n' ' ')
+          objcopy $KEEP_FLAGS \
+            curl-impersonate/libcurl-impersonate.a \
+            curl-impersonate/libcurl-impersonate-local.a
+          sudo cp curl-impersonate/libcurl-impersonate-local.a /usr/local/lib/libcurl-impersonate.a
 
       - name: Configure
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
+          -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
-          -DBUILD_TESTS=OFF
+          -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Prepare artifact
+        run: |
+          out="acheron-linux"
+          mkdir -p "$out/lib" "$out/plugins"
+
+          # Binary
+          cp build/acheron "$out/"
+
+          # Copy certs/fonts if present
+          [ -d build/certs ] && cp -r build/certs "$out/"
+          [ -d build/fonts ] && cp -r build/fonts "$out/"
+
+          # Qt libraries
+          for lib in Core Gui Widgets Network Sql Concurrent DBus XcbQpa OpenGL WaylandClient WaylandEglClientHwIntegration; do
+            f="$Qt6_DIR/lib/libQt6${lib}.so.6"
+            [ -f "$f" ] && cp "$f" "$out/lib/"
+          done
+
+          # Qt plugins
+          for pdir in platforms imageformats sqldrivers wayland-shell-integration wayland-decoration-client wayland-graphics-integration-client; do
+            if [ -d "$Qt6_DIR/plugins/$pdir" ]; then
+              mkdir -p "$out/plugins/$pdir"
+              cp "$Qt6_DIR/plugins/$pdir"/*.so "$out/plugins/$pdir/" 2>/dev/null || true
+            fi
+          done
+
+          # ICU libraries (if present)
+          for f in "$Qt6_DIR"/lib/libicu*.so.*; do
+            [ -f "$f" ] && cp "$f" "$out/lib/"
+          done
+
+          # curl-impersonate (static-linked, but copy .so if we built one)
+          [ -f curl-impersonate/libcurl-impersonate.so ] && cp curl-impersonate/libcurl-impersonate.so "$out/lib/"
+
+          # Wrapper script
+          cat > "$out/acheron.sh" <<'SCRIPT'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
+          export QT_PLUGIN_PATH="$DIR/plugins"
+          exec "$DIR/acheron" "$@"
+          SCRIPT
+          chmod +x "$out/acheron.sh"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acheron-linux
+          path: acheron-linux
 
   build-macos:
     runs-on: macos-latest
@@ -124,7 +217,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: brew install curl
+        run: brew install curl autoconf automake libtool
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -133,22 +226,93 @@ jobs:
           modules: qtimageformats
           cache: true
 
+      - name: Bootstrap vcpkg
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-arm64-osx-${{ hashFiles('vcpkg.json') }}
+
       - name: Install curl-impersonate
         run: |
           curl -L -o libcurl-impersonate.tar.gz \
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.arm64-macos.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+          # Wrap the static archive into a shared library so BoringSSL symbols
+          # stay hidden and don't conflict with vcpkg OpenSSL (used by libdave).
+          clang++ -shared -o curl-impersonate/libcurl-impersonate.dylib \
+            -Wl,-all_load curl-impersonate/libcurl-impersonate.a \
+            -framework SystemConfiguration -framework Security -framework CoreFoundation \
+            -liconv -licucore -lpthread -lz
 
       - name: Configure
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
+          -DVCPKG_TARGET_TRIPLET=arm64-osx
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
-          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.a"
-          -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -liconv -licucore"
-          -DBUILD_TESTS=OFF
+          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
+          -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Prepare artifact
+        run: |
+          # Create a .app bundle manually since the binary isn't built as MACOSX_BUNDLE
+          app="acheron-macos/Acheron.app/Contents"
+          mkdir -p "$app/MacOS" "$app/Frameworks" "$app/PlugIns"
+
+          cp build/acheron "$app/MacOS/"
+
+          # Copy certs/fonts if present
+          [ -d build/certs ] && cp -r build/certs "$app/MacOS/"
+          [ -d build/fonts ] && cp -r build/fonts "$app/MacOS/"
+
+          # Copy curl-impersonate dylib
+          cp curl-impersonate/libcurl-impersonate.dylib "$app/Frameworks/"
+          install_name_tool -change libcurl-impersonate.dylib \
+            @executable_path/../Frameworks/libcurl-impersonate.dylib \
+            "$app/MacOS/acheron" || true
+
+          # Info.plist
+          cat > "$app/Info.plist" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>acheron</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.acheron.app</string>
+            <key>CFBundleName</key>
+            <string>Acheron</string>
+            <key>CFBundleVersion</key>
+            <string>1.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>13.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Use macdeployqt to bundle Qt frameworks
+          macdeployqt acheron-macos/Acheron.app -verbose=1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acheron-macos
+          path: acheron-macos

@@ -42,6 +42,95 @@ static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option
     painter->drawRoundedRect(QRect(pillX, pillY, pillWidth * 2, pillHeight), pillWidth, pillWidth);
 }
 
+static void drawHashIcon(QPainter *painter, const QRect &contentRect, const QColor &color)
+{
+    constexpr int iconSize = 16;
+    int x = contentRect.left() + (24 - iconSize) / 2;
+    int y = contentRect.top() + (contentRect.height() - iconSize) / 2;
+
+    QPen pen(color, 1.5);
+    pen.setCapStyle(Qt::RoundCap);
+    painter->save();
+    painter->setPen(pen);
+    painter->setBrush(Qt::NoBrush);
+
+    // two slanted vertical lines
+    painter->drawLine(QLineF(x + 5.5, y + 2, x + 4, y + 14));
+    painter->drawLine(QLineF(x + 10.5, y + 2, x + 9, y + 14));
+
+    // two horizontal lines
+    painter->drawLine(QLineF(x + 2, y + 5.5, x + 13, y + 5.5));
+    painter->drawLine(QLineF(x + 2, y + 10.5, x + 13, y + 10.5));
+
+    painter->restore();
+}
+
+static void drawPadlockOverlay(QPainter *painter, const QRect &contentRect, const QColor &color,
+                               const QColor &bgColor)
+{
+    constexpr int iconSize = 16;
+    int ix = contentRect.left() + (24 - iconSize) / 2;
+    int iy = contentRect.top() + (contentRect.height() - iconSize) / 2;
+
+    // position the lock at the top-right of the icon area
+    qreal lx = ix + 10;
+    qreal ly = iy - 1;
+
+    painter->save();
+
+    // background circle to punch out the hash behind the lock
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(bgColor);
+    painter->drawEllipse(QRectF(lx - 1.5, ly - 1.5, 10, 10));
+
+    // shackle
+    QPen shacklePen(color, 1.2);
+    shacklePen.setCapStyle(Qt::RoundCap);
+    painter->setPen(shacklePen);
+    painter->setBrush(Qt::NoBrush);
+    painter->drawArc(QRectF(lx + 2, ly + 1, 3, 5), 0, 180 * 16);
+
+    // body
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(color);
+    painter->drawRoundedRect(QRectF(lx + 0.5, ly + 3, 6, 4.5), 0.8, 0.8);
+
+    painter->restore();
+}
+
+static void drawSpeakerIcon(QPainter *painter, const QRect &contentRect, const QColor &color)
+{
+    constexpr int iconSize = 16;
+    int x = contentRect.left() + (24 - iconSize) / 2;
+    int y = contentRect.top() + (contentRect.height() - iconSize) / 2;
+
+    painter->save();
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(color);
+
+    // speaker body
+    QRectF body(x + 2, y + 5, 4, 6);
+    painter->drawRect(body);
+
+    // speaker cone (triangle)
+    QPainterPath cone;
+    cone.moveTo(x + 6, y + 5);
+    cone.lineTo(x + 10, y + 2);
+    cone.lineTo(x + 10, y + 14);
+    cone.lineTo(x + 6, y + 11);
+    cone.closeSubpath();
+    painter->drawPath(cone);
+
+    // sound wave arc
+    painter->setBrush(Qt::NoBrush);
+    QPen wavePen(color, 1.5);
+    wavePen.setCapStyle(Qt::RoundCap);
+    painter->setPen(wavePen);
+    painter->drawArc(QRectF(x + 10, y + 4, 5, 8), -60 * 16, 120 * 16);
+
+    painter->restore();
+}
+
 static void drawMentionBadge(QPainter *painter, const QStyleOptionViewItem &option, int count)
 {
     int badgeHeight = option.fontMetrics.height();
@@ -139,14 +228,25 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     // determine text color
     QColor textColor = option.palette.text().color();
     bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
-    if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::DMChannel) {
+    if (node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::VoiceChannel ||
+        node->type == ChannelNode::Type::DMChannel) {
         if (node->isMuted)
             textColor = option.palette.text().color().darker(150);
-        else if (node->isUnread || isSelected)
+        else if (isSelected || (node->isUnread && node->type != ChannelNode::Type::VoiceChannel))
             textColor = option.palette.brightText().color();
     } else if (node->type == ChannelNode::Type::Server) {
         if (node->isUnread && !node->isMuted)
             textColor = option.palette.brightText().color();
+    }
+
+    if (node->type == ChannelNode::Type::Channel) {
+        drawHashIcon(painter, contentOpt.rect, textColor);
+        if (node->isPrivate)
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+    } else if (node->type == ChannelNode::Type::VoiceChannel) {
+        drawSpeakerIcon(painter, contentOpt.rect, textColor);
+        if (node->isPrivate)
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
     }
 
     QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -iconSize, 0);

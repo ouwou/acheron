@@ -15,6 +15,10 @@
 namespace Acheron {
 namespace Core {
 
+namespace AV {
+class VoiceManager;
+}
+
 class ReadStateManager;
 
 class ClientInstance : public QObject
@@ -33,11 +37,16 @@ public:
     [[nodiscard]] PermissionManager *permissions() const;
     [[nodiscard]] ReadStateManager *readState() const;
     [[nodiscard]] MemberListManager *memberList() const;
+    [[nodiscard]] AV::VoiceManager *voice() const;
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] ConnectionState state() const;
+
+    [[nodiscard]] Snowflake voiceChannelId() const;
+    [[nodiscard]] Snowflake voiceGuildId() const;
+    [[nodiscard]] bool isInVoice() const;
 
     Snowflake accountId() const;
     const AccountInfo &accountInfo() const;
@@ -58,6 +67,7 @@ signals:
     void readStateChanged(Snowflake channelId);
     void guildSettingsChanged(Snowflake guildId);
     void channelLastMessageUpdated(Snowflake channelId, Snowflake messageId);
+    void voiceStateChanged(Snowflake channelId, Snowflake guildId);
 
 private slots:
     void onChannelCreated(const Discord::ChannelCreate &event);
@@ -83,11 +93,15 @@ private:
     PermissionManager *permissionManager;
     ReadStateManager *readStateManager;
     MemberListManager *memberListManager;
+    AV::VoiceManager *voiceManager;
 
     Storage::RoleRepository roleRepo;
     Storage::GuildRepository guildRepo;
     Storage::ChannelRepository channelRepo;
     Storage::MemberRepository memberRepo;
+
+    Snowflake currentVoiceChannelId;
+    Snowflake currentVoiceGuildId;
 
     // notFound members are kept in here so we dont ask for them again
     QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;

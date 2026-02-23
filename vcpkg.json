@@ -1,0 +1,25 @@
+{
+  "name": "acheron",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "openssl",
+      "version>=": "3.0.7"
+    },
+    "mlspp",
+    "libsodium",
+    "opus"
+  ],
+  "builtin-baseline": "16c71a39e5a0fc0bdb3fad03beef8f38ee00ee3b",
+  "vcpkg-configuration": {
+    "overlay-ports": [
+      "./vcpkg-overlay-ports"
+    ]
+  },
+  "overrides": [
+    {
+      "name": "openssl",
+      "version": "3.0.7"
+    }
+  ]
+}

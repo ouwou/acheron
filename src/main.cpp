@@ -11,6 +11,9 @@
 #include <QNetworkAccessManager>
 #include <QFontDatabase>
 
+#include <dave/dave.h>
+#include <dave/logger.h>
+
 // potentially named after that river
 // or the honkai star rail character
 // who knows
@@ -21,6 +24,26 @@ void registerMetatypes()
 
     QMetaType::registerConverter<Snowflake, QString>(
             [](const Snowflake &s) { return s.toString(); });
+}
+
+static void DaveLogSink(discord::dave::LoggingSeverity severity, const char *file, int line, const std::string &message)
+{
+    switch (severity) {
+    case discord::dave::LoggingSeverity::LS_ERROR:
+        qCCritical(LogDave) << file << ":" << line << ": " << message.c_str();
+        break;
+    case discord::dave::LoggingSeverity::LS_WARNING:
+        qCWarning(LogDave) << file << ":" << line << ": " << message.c_str();
+        break;
+    case discord::dave::LoggingSeverity::LS_INFO:
+        qCInfo(LogDave) << file << ":" << line << ": " << message.c_str();
+        break;
+    case discord::dave::LoggingSeverity::LS_VERBOSE:
+        qCDebug(LogDave) << file << ":" << line << ": " << message.c_str();
+        break;
+    case discord::dave::LoggingSeverity::LS_NONE:
+        break;
+    }
 }
 
 int main(int argc, char *argv[])
@@ -167,6 +190,8 @@ int main(int argc, char *argv[])
 #endif
 
     Acheron::Core::Logger::init();
+
+    discord::dave::SetLogSink(DaveLogSink);
 
     qCInfo(LogCore) << "Starting Acheron...";
 

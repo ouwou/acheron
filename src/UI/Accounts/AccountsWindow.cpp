@@ -197,6 +197,10 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
 
     if (state == ConnectionState::Connected || state == ConnectionState::Connecting)
         actConnect->setEnabled(false);
+#ifndef ACHERON_MULTI_ACCOUNT
+    else if (session->hasActiveConnection())
+        actConnect->setEnabled(false);
+#endif
     if (state == ConnectionState::Disconnected)
         actDisconnect->setEnabled(false);
 
@@ -245,7 +249,11 @@ void AccountsWindow::updateDetails(const AccountInfo *info)
     case ConnectionState::Disconnected:
         detailStatus->setText(tr("Disconnected"));
         detailStatus->setStyleSheet("color: red; font-weight: bold;");
+#ifdef ACHERON_MULTI_ACCOUNT
         connectButton->setEnabled(true);
+#else
+        connectButton->setEnabled(!session->hasActiveConnection());
+#endif
         disconnectButton->setEnabled(false);
         break;
     case ConnectionState::Connecting:

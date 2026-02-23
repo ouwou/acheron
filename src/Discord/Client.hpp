@@ -70,6 +70,8 @@ public:
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
     void ackBulk(const QList<AckEntry> &entries);
 
+    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
+
     void debugForceReconnect();
 
     void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
@@ -106,6 +108,8 @@ signals:
     void messageReactionRemoveEmoji(const MessageReactionRemoveEmoji &event);
     void userGuildSettingsUpdated(const UserGuildSettings &settings);
     void guildMemberListUpdate(const GuildMemberListUpdate &event);
+    void voiceStateUpdated(const VoiceState &event);
+    void voiceServerUpdated(const VoiceServerUpdate &event);
     void messageSendFailed(const QString &nonce, const QString &error);
 
     void reconnecting(int attempt, int maxAttempts);

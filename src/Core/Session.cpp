@@ -108,5 +108,13 @@ AccountInfo Session::getAccountInfo(Snowflake accountId)
     return repo.getAccount(accountId);
 }
 
+bool Session::hasActiveConnection() const
+{
+    for (auto *c : clients)
+        if (c->state() == ConnectionState::Connected || c->state() == ConnectionState::Connecting)
+            return true;
+    return false;
+}
+
 } // namespace Core
 } // namespace Acheron

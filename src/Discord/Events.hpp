@@ -65,11 +65,13 @@ struct Ready : Core::JsonUtils::JsonObject
 struct SupplementalGuild : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;
+    Field<QList<VoiceState>, true> voiceStates;
 
     static SupplementalGuild fromJson(const QJsonObject &obj)
     {
         SupplementalGuild supplementalGuild;
         get(obj, "id", supplementalGuild.id);
+        get(obj, "voice_states", supplementalGuild.voiceStates);
         return supplementalGuild;
     }
 };
@@ -473,6 +475,22 @@ struct GuildMemberListUpdate : Core::JsonUtils::JsonObject
             event.ops = ops;
         }
 
+        return event;
+    }
+};
+
+struct VoiceServerUpdate : Core::JsonUtils::JsonObject
+{
+    Field<QString> token;
+    Field<Core::Snowflake> guildId;
+    Field<QString, false, true> endpoint;
+
+    static VoiceServerUpdate fromJson(const QJsonObject &obj)
+    {
+        VoiceServerUpdate event;
+        get(obj, "token", event.token);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "endpoint", event.endpoint);
         return event;
     }
 };

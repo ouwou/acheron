@@ -245,6 +245,12 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::GUILD_MEMBER_LIST_UPDATE:
         handleGuildMemberListUpdate(data);
         break;
+    case GatewayEvent::VOICE_STATE_UPDATE:
+        handleVoiceStateUpdate(data);
+        break;
+    case GatewayEvent::VOICE_SERVER_UPDATE:
+        handleVoiceServerUpdate(data);
+        break;
     case GatewayEvent::UNKNOWN:
         qCInfo(LogDiscord) << "Unknown gateway event: " << t;
         break;
@@ -418,6 +424,20 @@ void Gateway::handleGuildMemberListUpdate(const Inbound &data)
     emit gatewayGuildMemberListUpdate(update);
 }
 
+void Gateway::handleVoiceStateUpdate(const Inbound &data)
+{
+    VoiceState event = data.getData<VoiceState>();
+
+    emit gatewayVoiceStateUpdate(event);
+}
+
+void Gateway::handleVoiceServerUpdate(const Inbound &data)
+{
+    VoiceServerUpdate event = data.getData<VoiceServerUpdate>();
+
+    emit gatewayVoiceServerUpdate(event);
+}
+
 void Gateway::requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds)
 {
     RequestGuildMembers request;
@@ -426,6 +446,20 @@ void Gateway::requestGuildMembers(Core::Snowflake guildId, const QList<Core::Sno
     request.presences = false;
 
     sendPayload(request.toJson());
+}
+
+void Gateway::sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf)
+{
+    UpdateVoiceState msg;
+    msg.guildId = guildId;
+    if (channelId.isValid())
+        msg.channelId = channelId;
+    else
+        msg.channelId = nullptr;
+    msg.selfMute = selfMute;
+    msg.selfDeaf = selfDeaf;
+
+    sendPayload(msg.toJson());
 }
 
 void Gateway::handleHello(const Inbound &data)

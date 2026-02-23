@@ -1,5 +1,6 @@
 #include "ClientInstance.hpp"
 #include "ReadStateManager.hpp"
+#include "Core/AV/VoiceManager.hpp"
 
 #include <QTimer>
 
@@ -31,6 +32,7 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
+    voiceManager = new AV::VoiceManager(info.id, this);
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
     connect(client, &Discord::Client::reconnecting, this, &ClientInstance::reconnecting);
@@ -149,6 +151,16 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
                 }
 
                 db.commit();
+
+                for (const auto &guild : data.guilds.get()) {
+                    if (!guild.voiceStates.hasValue())
+                        continue;
+                    for (auto vs : guild.voiceStates.get()) {
+                        if (!vs.guildId.hasValue())
+                            vs.guildId = guild.id.get();
+                        voiceManager->handleVoiceStateUpdate(vs);
+                    }
+                }
             });
 
     connect(client, &Discord::Client::messageCreated, messageManager,
@@ -202,6 +214,38 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
             &ClientInstance::handleAckRequest);
     connect(readStateManager, &ReadStateManager::bulkAckRequested, this,
             &ClientInstance::handleBulkAckRequest);
+
+    connect(client, &Discord::Client::voiceStateUpdated, this,
+            [this](const Discord::VoiceState &event) {
+                qCInfo(LogVoice) << "VOICE_STATE_UPDATE: user" << event.userId.get()
+                                 << "channel" << (event.channelId.isNull() ? 0 : static_cast<quint64>(event.channelId.get()))
+                                 << "session" << event.sessionId.get()
+                                 << "mute" << event.selfMute.get()
+                                 << "deaf" << event.selfDeaf.get();
+
+                // track our own voice state
+                if (event.userId.get() == account.id) {
+                    if (event.channelId.isNull() || !event.channelId.get().isValid()) {
+                        currentVoiceChannelId = Snowflake::Invalid;
+                        currentVoiceGuildId = Snowflake::Invalid;
+                    } else {
+                        currentVoiceChannelId = event.channelId.get();
+                        currentVoiceGuildId = event.guildId.hasValue() ? event.guildId.get() : Snowflake::Invalid;
+                    }
+                    emit voiceStateChanged(currentVoiceChannelId, currentVoiceGuildId);
+                }
+
+                voiceManager->handleVoiceStateUpdate(event);
+            });
+
+    connect(client, &Discord::Client::voiceServerUpdated, this,
+            [this](const Discord::VoiceServerUpdate &event) {
+                qCInfo(LogVoice) << "VOICE_SERVER_UPDATE: guild" << event.guildId.get()
+                                 << "endpoint" << (event.endpoint.isNull() ? "null" : event.endpoint.get())
+                                 << "token" << event.token.get().left(8) + "...";
+
+                voiceManager->handleVoiceServerUpdate(event);
+            });
 }
 
 void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
@@ -571,6 +615,10 @@ void ClientInstance::start()
 
 void ClientInstance::stop()
 {
+    if (isInVoice()) {
+        discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false);
+        voiceManager->disconnect();
+    }
     discord()->stop();
 }
 
@@ -604,6 +652,11 @@ MemberListManager *ClientInstance::memberList() const
     return memberListManager;
 }
 
+AV::VoiceManager *ClientInstance::voice() const
+{
+    return voiceManager;
+}
+
 QList<Discord::Role> ClientInstance::getRolesForGuild(Snowflake guildId)
 {
     return roleRepo.getRolesForGuild(guildId);
@@ -631,5 +684,21 @@ const AccountInfo &ClientInstance::accountInfo() const
 {
     return account;
 }
+
+Snowflake ClientInstance::voiceChannelId() const
+{
+    return currentVoiceChannelId;
+}
+
+Snowflake ClientInstance::voiceGuildId() const
+{
+    return currentVoiceGuildId;
+}
+
+bool ClientInstance::isInVoice() const
+{
+    return currentVoiceChannelId.isValid();
+}
+
 } // namespace Core
 } // namespace Acheron
