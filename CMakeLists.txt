@@ -25,7 +25,7 @@ find_package(CURL REQUIRED)
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(Opus CONFIG REQUIRED)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools Multimedia)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools)
 find_package(Qt${QT_VERSION_MAJOR}
     COMPONENTS
         Core
@@ -36,7 +36,6 @@ find_package(Qt${QT_VERSION_MAJOR}
         Concurrent
         Test
         LinguistTools
-        Multimedia
 )
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS ZlibPrivate QUIET)
 qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES en)
@@ -202,7 +201,6 @@ target_link_libraries(${PROJECT_NAME}
         Qt::Network
         Qt::Sql
         Qt::Concurrent
-        Qt::Multimedia
         CURL::libcurl
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain

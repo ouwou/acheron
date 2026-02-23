@@ -29,6 +29,7 @@ public:
     [[nodiscard]] ClientInstance *client(Snowflake accountId) const;
     [[nodiscard]] AccountInfo getAccountInfo(Snowflake accountId);
     [[nodiscard]] ImageManager *getImageManager() { return imageManager; }
+    [[nodiscard]] bool hasActiveConnection() const;
 
 signals:
     void connectionStateChanged(Snowflake accountId, Core::ConnectionState newState);
