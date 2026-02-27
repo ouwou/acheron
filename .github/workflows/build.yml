@@ -246,12 +246,12 @@ jobs:
           # Localize BoringSSL symbols in the static archive so they don't
           # conflict with vcpkg OpenSSL (used by libdave). Merge all objects
           # into one relocatable file, hiding everything except curl_* symbols.
-          ld -r -all_load -o curl-impersonate/curl-impersonate-all.o curl-impersonate/libcurl-impersonate.a
+          ld -r -arch arm64 -all_load -o curl-impersonate/curl-impersonate-all.o curl-impersonate/libcurl-impersonate.a
           # Extract curl_* globals; mark everything else as private_extern
           nm -g -U curl-impersonate/curl-impersonate-all.o \
             | awk '{print $NF}' | grep '^_curl_' | sort -u \
             > curl-impersonate/exported_symbols.txt
-          ld -r -exported_symbols_list curl-impersonate/exported_symbols.txt \
+          ld -r -arch arm64 -exported_symbols_list curl-impersonate/exported_symbols.txt \
             -o curl-impersonate/curl-impersonate-local.o curl-impersonate/curl-impersonate-all.o
           # Re-pack into a static archive
           ar rcs curl-impersonate/libcurl-impersonate-local.a curl-impersonate/curl-impersonate-local.o
