@@ -253,18 +253,14 @@ jobs:
             -liconv -licucore -lpthread -lz
 
       - name: Configure
-        run: |
-          # Remove brew curl's cmake config so find_package(CURL) uses module
-          # mode, which respects the CURL_LIBRARY hint we pass below.
-          # This prevents the binary from also linking system /usr/lib/libcurl.
-          rm -rf "$(brew --prefix curl)/lib/cmake"
-          cmake -B build -S . \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DVCPKG_TARGET_TRIPLET=arm64-osx \
-            -DCMAKE_PREFIX_PATH="$Qt6_DIR" \
-            -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include" \
-            -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib" \
-            -DBUILD_TESTS=ON
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DVCPKG_TARGET_TRIPLET=arm64-osx
+          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
+          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
+          -DBUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)

@@ -21,7 +21,17 @@ if(BUILD_TESTS)
     enable_testing()
 endif()
 
-find_package(CURL REQUIRED)
+if(CURL_LIBRARY AND CURL_INCLUDE_DIR AND NOT TARGET CURL::libcurl)
+    # Use explicitly provided curl paths — skip find_package entirely so
+    # system/brew libcurl is never pulled in alongside curl-impersonate.
+    add_library(CURL::libcurl UNKNOWN IMPORTED)
+    set_target_properties(CURL::libcurl PROPERTIES
+        IMPORTED_LOCATION "${CURL_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIR}"
+    )
+else()
+    find_package(CURL REQUIRED)
+endif()
 find_package(unofficial-sodium CONFIG REQUIRED)
 find_package(Opus CONFIG REQUIRED)
 
