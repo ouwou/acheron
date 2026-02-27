@@ -280,9 +280,9 @@ jobs:
 
           # Copy curl-impersonate dylib
           cp curl-impersonate/libcurl-impersonate.dylib "$app/Frameworks/"
-          install_name_tool -change libcurl-impersonate.dylib \
+          install_name_tool -change curl-impersonate/libcurl-impersonate.dylib \
             @executable_path/../Frameworks/libcurl-impersonate.dylib \
-            "$app/MacOS/acheron" || true
+            "$app/MacOS/acheron"
 
           # Info.plist
           cat > "$app/Info.plist" << 'PLIST'
