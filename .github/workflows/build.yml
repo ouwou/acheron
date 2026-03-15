@@ -243,12 +243,18 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.arm64-macos.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          # Wrap the static archive into a shared library so BoringSSL symbols
-          # stay hidden and don't conflict with vcpkg OpenSSL (used by libdave).
-          clang++ -shared -o curl-impersonate/libcurl-impersonate.dylib \
-            -Wl,-all_load curl-impersonate/libcurl-impersonate.a \
-            -framework SystemConfiguration -framework Security -framework CoreFoundation \
-            -liconv -licucore -lpthread -lz
+          # Localize BoringSSL symbols in the static archive so they don't
+          # conflict with vcpkg OpenSSL (used by libdave). Merge all objects
+          # into one relocatable file, hiding everything except curl_* symbols.
+          ld -r -arch arm64 -all_load -o curl-impersonate/curl-impersonate-all.o curl-impersonate/libcurl-impersonate.a
+          # Extract curl_* globals; mark everything else as private_extern
+          nm -g -U curl-impersonate/curl-impersonate-all.o \
+            | awk '{print $NF}' | grep '^_curl_' | sort -u \
+            > curl-impersonate/exported_symbols.txt
+          ld -r -arch arm64 -exported_symbols_list curl-impersonate/exported_symbols.txt \
+            -o curl-impersonate/curl-impersonate-local.o curl-impersonate/curl-impersonate-all.o
+          # Re-pack into a static archive
+          ar rcs curl-impersonate/libcurl-impersonate-local.a curl-impersonate/curl-impersonate-local.o
 
       - name: Configure
         run: >
@@ -257,7 +263,8 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=arm64-osx
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
-          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
+          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a"
+          -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz"
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -277,12 +284,6 @@ jobs:
           # Copy certs/fonts if present
           [ -d build/certs ] && cp -r build/certs "$app/MacOS/"
           [ -d build/fonts ] && cp -r build/fonts "$app/MacOS/"
-
-          # Copy curl-impersonate dylib
-          cp curl-impersonate/libcurl-impersonate.dylib "$app/Frameworks/"
-          install_name_tool -change curl-impersonate/libcurl-impersonate.dylib \
-            @executable_path/../Frameworks/libcurl-impersonate.dylib \
-            "$app/MacOS/acheron"
 
           # Info.plist
           cat > "$app/Info.plist" << 'PLIST'
