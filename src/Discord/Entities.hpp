@@ -165,6 +165,7 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<QString, true, true> icon;
     Field<Core::Snowflake, true> ownerId;
     Field<int, true> rateLimitPerUser;
+    Field<int, true> userLimit;
 
     static Channel fromJson(const QJsonObject &obj)
     {
@@ -182,6 +183,7 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "icon", channel.icon);
         get(obj, "owner_id", channel.ownerId);
         get(obj, "rate_limit_per_user", channel.rateLimitPerUser);
+        get(obj, "user_limit", channel.userLimit);
         return channel;
     }
 };

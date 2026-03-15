@@ -25,20 +25,38 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
 
     // cache all non-self voice states so we can populate participants when joining a channel
     if (!isMe) {
+        Snowflake oldChannel;
+        auto oldIt = knownVoiceStates.constFind(userId);
+        if (oldIt != knownVoiceStates.constEnd() && !oldIt->channelId.isNull())
+            oldChannel = oldIt->channelId.get();
+
         bool leftVoice = state.channelId.isNull() || !state.channelId.get().isValid();
+        Snowflake newChannel = leftVoice ? Snowflake::Invalid : state.channelId.get();
+
         if (leftVoice)
             knownVoiceStates.remove(userId);
         else
             knownVoiceStates[userId] = state;
+
+        if (oldChannel != newChannel) {
+            if (oldChannel.isValid())
+                emit channelVoiceMemberChanged(oldChannel, userId, false);
+            if (newChannel.isValid())
+                emit channelVoiceMemberChanged(newChannel, userId, true);
+        }
     }
 
     if (isMe) {
         if (state.channelId.isNull() || !state.channelId.get().isValid()) {
             qCInfo(LogVoice) << "Voice state: disconnected from channel";
+            Snowflake oldChannel = channelId;
             voiceSessionId.clear();
             channelId = Snowflake::Invalid;
             guildId = Snowflake::Invalid;
             pending = {};
+
+            if (oldChannel.isValid())
+                emit channelVoiceMemberChanged(oldChannel, accountId, false);
 
             if (voiceThread)
                 disconnect();
@@ -46,6 +64,7 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         }
 
         Snowflake newChannelId = state.channelId.get();
+        Snowflake oldSelfChannel = channelId;
         bool channelChanged = (channelId != newChannelId);
 
         voiceSessionId = state.sessionId.get();
@@ -58,6 +77,10 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
                 emit participantsCleared();
             }
             populateParticipantsFromCache();
+
+            if (oldSelfChannel.isValid())
+                emit channelVoiceMemberChanged(oldSelfChannel, accountId, false);
+            emit channelVoiceMemberChanged(newChannelId, accountId, true);
         }
 
         bool wasMuted = selfMute;
@@ -251,6 +274,41 @@ void VoiceManager::setUserMuted(Snowflake userId, bool muted)
 bool VoiceManager::isUserMuted(Snowflake userId) const
 {
     return mutedUsers.contains(userId);
+}
+
+int VoiceManager::channelVoiceUserCount(Snowflake targetChannelId) const
+{
+    if (!targetChannelId.isValid())
+        return 0;
+
+    int count = 0;
+    for (auto it = knownVoiceStates.constBegin(); it != knownVoiceStates.constEnd(); ++it) {
+        if (!it->channelId.isNull() && it->channelId.get() == targetChannelId)
+            ++count;
+    }
+
+    // include self in count
+    if (channelId == targetChannelId && channelId.isValid())
+        ++count;
+
+    return count;
+}
+
+QList<Snowflake> VoiceManager::channelVoiceUsers(Snowflake targetChannelId) const
+{
+    QList<Snowflake> users;
+    if (!targetChannelId.isValid())
+        return users;
+
+    if (channelId == targetChannelId && channelId.isValid())
+        users.append(accountId);
+
+    for (auto it = knownVoiceStates.constBegin(); it != knownVoiceStates.constEnd(); ++it) {
+        if (!it->channelId.isNull() && it->channelId.get() == targetChannelId)
+            users.append(it.key());
+    }
+
+    return users;
 }
 
 bool VoiceManager::isDaveEnabled() const

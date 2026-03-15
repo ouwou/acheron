@@ -443,6 +443,12 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 
     connect(instance->voice(), &Core::AV::VoiceManager::voiceStateChanged,
             this, &MainWindow::updateVoiceStatusLabel);
+
+    connect(instance->voice(), &Core::AV::VoiceManager::channelVoiceMemberChanged,
+            this, [this, instance](Core::Snowflake channelId, Core::Snowflake, bool) {
+                int count = instance->voice()->channelVoiceUserCount(channelId);
+                channelTreeModel->updateVoiceCount(channelId, count, instance->accountId());
+            });
 }
 
 void MainWindow::setupUi()

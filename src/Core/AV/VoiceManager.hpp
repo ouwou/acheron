@@ -63,6 +63,8 @@ public:
 
     [[nodiscard]] QList<VoiceParticipant> currentParticipants() const;
     [[nodiscard]] const VoiceParticipant *participant(Snowflake userId) const;
+    [[nodiscard]] int channelVoiceUserCount(Snowflake channelId) const;
+    [[nodiscard]] QList<Snowflake> channelVoiceUsers(Snowflake channelId) const;
 
     void setUserMuted(Snowflake userId, bool muted);
     [[nodiscard]] bool isUserMuted(Snowflake userId) const;
@@ -83,6 +85,7 @@ signals:
     void participantLeft(Snowflake userId);
     void participantUpdated(Snowflake userId);
     void participantSpeakingChanged(Snowflake userId, bool speaking);
+    void channelVoiceMemberChanged(Snowflake channelId, Snowflake userId, bool joined);
     void participantsCleared();
     void userAudioLevelChanged(Snowflake userId, float rms);
     void privacyCodeChanged(const QString &code);
