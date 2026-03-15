@@ -41,6 +41,8 @@ struct ChannelNode
     Core::Snowflake dmRecipientId;
     Core::Snowflake lastMessageId;
     bool isPrivate = false;
+    int voiceParticipantCount = 0;
+    int userLimit = 0;
 
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;
