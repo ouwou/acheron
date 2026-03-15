@@ -11,6 +11,7 @@ namespace UI {
 ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
 {
     document()->setDocumentMargin(0);
+    setAcceptRichText(false);
 
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
