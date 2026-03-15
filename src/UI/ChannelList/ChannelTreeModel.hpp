@@ -34,6 +34,8 @@ public:
         MentionCountRole = Qt::UserRole + 5,
         IsMutedRole = Qt::UserRole + 6,
         CollapsedRole = Qt::UserRole + 7,
+        VoiceParticipantCountRole = Qt::UserRole + 8,
+        UserLimitRole = Qt::UserRole + 9,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
@@ -58,6 +60,7 @@ public:
     void updateReadState(Snowflake channelId, Snowflake accountId);
     void updateGuildSettings(Snowflake guildId, Snowflake accountId);
     void updateChannelLastMessageId(Snowflake channelId, Snowflake messageId, Snowflake accountId);
+    void updateVoiceCount(Snowflake channelId, int count, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
 
     QList<QPair<Snowflake, Snowflake>> getMarkableChannels(const QModelIndex &index);

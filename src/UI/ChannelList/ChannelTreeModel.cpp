@@ -201,6 +201,10 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return node->isMuted;
     if (role == CollapsedRole)
         return node->collapsed;
+    if (role == VoiceParticipantCountRole)
+        return node->voiceParticipantCount;
+    if (role == UserLimitRole)
+        return node->userLimit;
 
     return {};
 }
@@ -467,6 +471,8 @@ std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::Ga
                                               ? channel.lastMessageId.get()
                                               : Core::Snowflake();
             }
+            if (isVoice && channel.userLimit.hasValue())
+                node->userLimit = channel.userLimit.get();
 
             if (channel.parentId.hasValue() && channel.parentId->isValid()) {
                 if (categoryMap.contains(channel.parentId.get()))
@@ -685,6 +691,8 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
                        channel.type == Discord::ChannelType::GUILD_STAGE_VOICE;
         node->type = isVoice ? ChannelNode::Type::VoiceChannel : ChannelNode::Type::Channel;
         node->isPrivate = isChannelPrivate(channel, guildId);
+        if (isVoice && channel.userLimit.hasValue())
+            node->userLimit = channel.userLimit.get();
 
         ChannelNode *parentNode = nullptr;
         if (node->parentId.isValid())
@@ -755,6 +763,8 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         node->position = channel.position.get();
         node->parentId = newParentId;
         node->isPrivate = isChannelPrivate(channel, guildNode->id);
+        if (node->type == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
+            node->userLimit = channel.userLimit.get();
 
         ChannelNode *newParent = nullptr;
         if (newParentId.isValid())
@@ -789,6 +799,9 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         ChannelNode *guildNode = findGuildNode(channelNode);
         if (guildNode)
             channelNode->isPrivate = isChannelPrivate(channel, guildNode->id);
+
+        if (channelNode->type == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
+            channelNode->userLimit = channel.userLimit.get();
 
         QModelIndex idx = indexForNode(channelNode);
         if (idx.isValid())
@@ -1060,6 +1073,26 @@ void ChannelTreeModel::updateChannelLastMessageId(Snowflake channelId, Snowflake
 
     channelNode->lastMessageId = messageId;
     updateReadState(channelId, accountId);
+}
+
+void ChannelTreeModel::updateVoiceCount(Snowflake channelId, int count, Snowflake accountId)
+{
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return;
+
+    ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
+    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+        return;
+
+    if (channelNode->voiceParticipantCount == count)
+        return;
+
+    channelNode->voiceParticipantCount = count;
+
+    QModelIndex idx = indexForNode(channelNode);
+    if (idx.isValid())
+        emit dataChanged(idx, idx, { VoiceParticipantCountRole });
 }
 
 void ChannelTreeModel::collectMarkableChannels(ChannelNode *node,

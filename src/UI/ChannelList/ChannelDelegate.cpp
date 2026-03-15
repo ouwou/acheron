@@ -249,10 +249,19 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
             drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
     }
 
-    QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -iconSize, 0);
+    // reserve right-side space for voice limit badge
+    int rightReserve = iconSize;
+    if (node->type == ChannelNode::Type::VoiceChannel && node->userLimit > 0) {
+        QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
+        QFontMetrics fm(painter->font());
+        rightReserve = fm.horizontalAdvance(countText) + fm.height() / 2 + 8;
+    }
+
+    QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -rightReserve, 0);
     painter->setPen(textColor);
-    painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
-                      index.data(Qt::DisplayRole).toString());
+    QString elidedName = painter->fontMetrics().elidedText(
+            index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
+    painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName);
 
     // branch indicator for categories
     if (node->type == ChannelNode::Type::Category)
@@ -263,6 +272,28 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
          node->type == ChannelNode::Type::Server) &&
         node->isUnread && !node->isMuted)
         drawUnreadPill(painter, option);
+
+    // voice user limit for voice channels
+    if (node->type == ChannelNode::Type::VoiceChannel && node->userLimit > 0) {
+        QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
+        QFontMetrics fm(painter->font());
+        int textWidth = fm.horizontalAdvance(countText);
+        int badgeH = fm.height();
+        int padding = badgeH / 2;
+        int badgeW = textWidth + padding;
+        QRect badgeRect(contentOpt.rect.right() - badgeW - 4,
+                        contentOpt.rect.top() + (contentOpt.rect.height() - badgeH) / 2,
+                        badgeW, badgeH);
+
+        QColor bgColor = option.palette.text().color();
+        bgColor.setAlphaF(0.15f);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(bgColor);
+        painter->drawRoundedRect(badgeRect, badgeH / 2.0, badgeH / 2.0);
+
+        painter->setPen(textColor);
+        painter->drawText(badgeRect, Qt::AlignCenter, countText);
+    }
 
     // mention badge for channels, servers
     if (node->type != ChannelNode::Type::Category && node->mentionCount > 0 && !node->isMuted)
