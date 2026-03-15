@@ -207,6 +207,7 @@ struct LayoutContext
     QList<ReactionData> reactions;
     ReplyData replyData;
 
+    bool isSystemMessage = false;
     const ChatModel *model = nullptr;
     Core::Snowflake messageId;
 };

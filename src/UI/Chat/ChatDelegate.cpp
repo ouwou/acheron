@@ -49,6 +49,7 @@ static ChatLayout::LayoutContext buildLayoutContext(const QStyleOptionViewItem &
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
     ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
     ctx.model = qobject_cast<const ChatModel *>(index.model());
     ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
 
@@ -219,11 +220,15 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
     Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
 
+    QFont bodyFont = option.font;
+    if (ctx.isSystemMessage)
+        bodyFont.setItalic(true);
+
     DocCacheKey bodyKey = bodyDocKey(msgId);
     QTextDocument *doc = chatModel->getCachedDocument(bodyKey);
     if (!doc) {
         doc = new QTextDocument;
-        ChatLayout::setupDocument(*doc, ctx.htmlContent, option.font, layout.textRect.width());
+        ChatLayout::setupDocument(*doc, ctx.htmlContent, bodyFont, layout.textRect.width());
         registerEmojiResources(*doc, ctx.htmlContent, imageManager);
         chatModel->cacheDocument(bodyKey, doc);
     } else if (int(doc->textWidth()) != layout.textRect.width()) {
@@ -242,6 +247,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         textColor = QColor(220, 50, 50);
     } else if (isPending) {
         textColor = option.palette.text().color().lighter(50);
+    } else if (ctx.isSystemMessage) {
+        textColor = option.palette.text().color();
+        textColor.setAlpha(140);
     } else {
         textColor = (option.state & QStyle::State_Selected)
                             ? option.palette.highlightedText().color()

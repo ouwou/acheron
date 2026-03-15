@@ -566,8 +566,11 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
                 cached->setTextWidth(textWidth);
             layout.textHeight = int(std::ceil(cached->size().height()));
         } else {
+            QFont docFont = ctx.font;
+            if (ctx.isSystemMessage)
+                docFont.setItalic(true);
             QTextDocument doc;
-            setupDocument(doc, ctx.htmlContent, ctx.font, textWidth);
+            setupDocument(doc, ctx.htmlContent, docFont, textWidth);
             layout.textHeight = int(std::ceil(doc.size().height()));
         }
     }

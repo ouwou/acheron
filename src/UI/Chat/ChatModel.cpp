@@ -3,9 +3,23 @@
 #include "Core/Markdown/Parser.hpp"
 #include "Core/MessageManager.hpp"
 #include "Core/ImageManager.hpp"
+#include "Discord/Enums.hpp"
 
 namespace Acheron {
 namespace UI {
+
+static bool isSystemMessageType(Discord::MessageType type)
+{
+    switch (type) {
+    case Discord::MessageType::DEFAULT:
+    case Discord::MessageType::REPLY:
+    case Discord::MessageType::CHAT_INPUT_COMMAND:
+    case Discord::MessageType::CONTEXT_MENU_COMMAND:
+        return false;
+    default:
+        return true;
+    }
+}
 
 static EmbedType embedTypeFromString(const QString &typeStr)
 {
@@ -235,6 +249,9 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return {};
     }
     case ShowHeaderRole: {
+        if (isSystemMessageType(msg.type))
+            return false;
+
         // replies always show a header
         if (msg.type == Discord::MessageType::REPLY)
             return true;
@@ -579,6 +596,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         return QVariant::fromValue(result);
     }
+    case IsSystemMessageRole:
+        return isSystemMessageType(msg.type);
     case ReplyDataRole: {
         ReplyData reply;
 

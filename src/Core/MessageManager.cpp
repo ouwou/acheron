@@ -12,6 +12,55 @@
 namespace Acheron {
 namespace Core {
 
+static QString resolveUserJoinMessage(const Discord::Message &msg)
+{
+    QString author = msg.author->getDisplayName();
+    qint64 ms = msg.timestamp->toMSecsSinceEpoch();
+    switch (ms % 13) {
+    case 0:
+        return author + QStringLiteral(" joined the party.");
+    case 1:
+        return author + QStringLiteral(" is here.");
+    case 2:
+        return QStringLiteral("Welcome, ") + author + QStringLiteral(". We hope you brought pizza.");
+    case 3:
+        return QStringLiteral("A wild ") + author + QStringLiteral(" appeared.");
+    case 4:
+        return author + QStringLiteral(" just landed.");
+    case 5:
+        return author + QStringLiteral(" just slid into the server.");
+    case 6:
+        return author + QStringLiteral(" just showed up!");
+    case 7:
+        return QStringLiteral("Welcome ") + author + QStringLiteral(". Say hi!");
+    case 8:
+        return author + QStringLiteral(" hopped into the server.");
+    case 9:
+        return QStringLiteral("Everyone welcome ") + author + QStringLiteral("!");
+    case 10:
+        return QStringLiteral("Glad you're here, ") + author + QStringLiteral(".");
+    case 11:
+        return QStringLiteral("Good to see you, ") + author + QStringLiteral(".");
+    case 12:
+        return QStringLiteral("Yay you made it, ") + author + QStringLiteral("!");
+    default:
+        return author + QStringLiteral(" joined the party.");
+    }
+}
+
+static QString resolveSystemMessageContent(const Discord::Message &msg)
+{
+    QString author = msg.author->getDisplayName();
+    switch (static_cast<Discord::MessageType>(msg.type.get())) {
+    case Discord::MessageType::CALL:
+        return author + QStringLiteral(" started a call.");
+    case Discord::MessageType::USER_JOIN:
+        return resolveUserJoinMessage(msg);
+    default:
+        return msg.content;
+    }
+}
+
 MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
                                UserManager *userManager, QObject *parent)
     : QObject(parent), client(client), userManager(userManager), repo(accountId), parser(std::make_unique<Markdown::Parser>())
@@ -70,7 +119,7 @@ void MessageManager::requestLoadChannel(Snowflake channelId)
             for (auto &msg : msgs) {
                 Markdown::ParseState state;
                 state.isInline = true;
-                auto ast = parser->parse(msg.content, state);
+                auto ast = parser->parse(resolveSystemMessageContent(msg), state);
                 bool jumbo = Markdown::Parser::isEmojiOnly(ast);
                 msg.parsedContentCached = parser->toHtml(ast, jumbo);
             }
@@ -161,7 +210,7 @@ void MessageManager::requestLoadHistory(Snowflake channelId, Snowflake beforeId)
         for (auto &msg : msgs) {
             Markdown::ParseState state;
             state.isInline = true;
-            auto ast = parser->parse(msg.content, state);
+            auto ast = parser->parse(resolveSystemMessageContent(msg), state);
             bool jumbo = Markdown::Parser::isEmojiOnly(ast);
             msg.parsedContentCached = parser->toHtml(ast, jumbo);
         }
@@ -226,7 +275,7 @@ void MessageManager::onMessageUpdated(const Discord::Message &message)
     Discord::Message updatedMsg = message;
     Markdown::ParseState state;
     state.isInline = true;
-    auto ast = parser->parse(updatedMsg.content, state);
+    auto ast = parser->parse(resolveSystemMessageContent(updatedMsg), state);
     bool jumbo = Markdown::Parser::isEmojiOnly(ast);
     updatedMsg.parsedContentCached = parser->toHtml(ast, jumbo);
 
@@ -650,7 +699,7 @@ void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messag
     for (auto &msg : sortedMessages) {
         Markdown::ParseState state;
         state.isInline = true;
-        auto ast = parser->parse(msg.content, state);
+        auto ast = parser->parse(resolveSystemMessageContent(msg), state);
         bool jumbo = Markdown::Parser::isEmojiOnly(ast);
         msg.parsedContentCached = parser->toHtml(ast, jumbo);
     }

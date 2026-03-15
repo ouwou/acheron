@@ -194,6 +194,7 @@ public:
         MessageIdRole,
         ReplyDataRole,
         ReactionsRole,
+        IsSystemMessageRole,
     };
 
     using AvatarUrlResolver = std::function<QUrl(const Discord::User &)>;
