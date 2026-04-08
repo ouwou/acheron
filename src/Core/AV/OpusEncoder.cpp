@@ -23,18 +23,19 @@ bool OpusEncoder::init(int sampleRate, int channels)
     frameChannels = channels;
 
     int error;
-    encoder = opus_encoder_create(sampleRate, channels, OPUS_APPLICATION_VOIP, &error);
+    encoder = opus_encoder_create(sampleRate, channels, OPUS_APPLICATION_AUDIO, &error);
     if (error != OPUS_OK || !encoder) {
         qCCritical(LogVoice) << "Failed to create Opus encoder:" << opus_strerror(error);
         return false;
     }
 
-    setBitrate(64000);
-    setComplexity(5);
-    setSignalType(OPUS_SIGNAL_VOICE);
-    setFec(true);
+    setBitrate(OPUS_BITRATE_MAX);
+    setComplexity(10);
+    setSignalType(OPUS_SIGNAL_MUSIC);
+    setFec(false);
     setDtx(false);
     setPacketLossPercent(0);
+    setVbrConstraint(false);
     return true;
 }
 
@@ -101,6 +102,12 @@ void OpusEncoder::setPacketLossPercent(int percent)
 {
     if (encoder)
         opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(percent));
+}
+
+void OpusEncoder::setVbrConstraint(bool enabled)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_VBR_CONSTRAINT(enabled ? 1 : 0));
 }
 
 } // namespace AV
