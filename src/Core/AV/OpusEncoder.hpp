@@ -27,6 +27,7 @@ public:
     void setFec(bool enabled);
     void setDtx(bool enabled);
     void setPacketLossPercent(int percent);
+    void setVbrConstraint(bool enabled);
 
 private:
     ::OpusEncoder *encoder = nullptr;
