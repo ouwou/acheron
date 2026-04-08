@@ -75,7 +75,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     const QString username = index.data(ChatModel::UsernameRole).toString();
     const QPixmap avatar = qvariant_cast<QPixmap>(index.data(ChatModel::AvatarRole));
-    const QDateTime timestamp = index.data(ChatModel::TimestampRole).toDateTime();
+    const QDateTime timestamp = index.data(ChatModel::TimestampRole).toDateTime().toLocalTime();
 
 // debug paint
 #if 0
@@ -641,7 +641,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
             QString footerText = embed.footerText;
             if (embed.timestamp.isValid())
-                footerText += " • " + embed.timestamp.toString("MMM d, yyyy h:mm AP");
+                footerText += " • " + embed.timestamp.toLocalTime().toString("MMM d, yyyy h:mm AP");
 
             int textY = footerY + (ChatLayout::footerIconSize() - footerFm.height()) / 2 +
                         footerFm.ascent();

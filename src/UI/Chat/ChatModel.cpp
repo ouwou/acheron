@@ -264,7 +264,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         if (prevMsg.author->id != msg.author->id)
             return true;
 
-        if (prevMsg.timestamp->date() != msg.timestamp->date())
+        if (prevMsg.timestamp->toLocalTime().date() != msg.timestamp->toLocalTime().date())
             return true;
 
         return false;
@@ -275,7 +275,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         const auto &prevMsg = messages[index.row() - 1];
 
-        if (prevMsg.timestamp->date() != msg.timestamp->date())
+        if (prevMsg.timestamp->toLocalTime().date() != msg.timestamp->toLocalTime().date())
             return true;
 
         return false;
