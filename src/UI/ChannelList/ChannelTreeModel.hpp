@@ -65,6 +65,8 @@ public:
 
     QList<QPair<Snowflake, Snowflake>> getMarkableChannels(const QModelIndex &index);
     ChannelNode *findChannelTreeNode(Snowflake channelId);
+    ChannelNode *findChannelTreeNode(Snowflake channelId, Snowflake accountId);
+    QModelIndex indexForNode(ChannelNode *node) const;
 
 private:
     void initChannelReadStates(ChannelNode *node, Core::ClientInstance *instance);
@@ -76,7 +78,6 @@ private:
     static void aggregateChildren(ChannelNode *node);
     void recomputeSubtreeAggregates(ChannelNode *root);
     void updateNodeAggregates(ChannelNode *node);
-    QModelIndex indexForNode(ChannelNode *node) const;
     std::unique_ptr<ChannelNode> createGuildNode(const Discord::GatewayGuild &guild);
     ChannelNode *findChannelTreeNode(Snowflake channelId, ChannelNode *root);
     ChannelNode *findGuildNode(ChannelNode *node);

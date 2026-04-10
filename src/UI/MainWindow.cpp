@@ -699,6 +699,20 @@ void MainWindow::setupUi()
                     currentInstance->discord()->addReaction(channelId, messageId, emoji, isBurst);
             });
 
+    connect(chatView, &ChatView::channelMentionClicked, this, [this](Snowflake channelId) {
+        if (!currentInstance)
+            return;
+        ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, currentInstance->accountId());
+        if (!node)
+            return;
+        QModelIndex sourceIndex = channelTreeModel->indexForNode(node);
+        if (!sourceIndex.isValid())
+            return;
+        QModelIndex proxyIndex = channelFilterProxy->mapFromSource(sourceIndex);
+        if (proxyIndex.isValid())
+            channelTree->setCurrentIndex(proxyIndex);
+    });
+
     connect(channelTree->selectionModel(), &QItemSelectionModel::currentChanged, this,
             &MainWindow::onChannelSelectionChanged);
 

@@ -78,6 +78,14 @@ MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
 
 MessageManager::~MessageManager() { }
 
+void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)
+{
+    parser->setChannelResolver([resolver](const QString &channelId) {
+        Snowflake id(channelId.toULongLong());
+        return resolver(id);
+    });
+}
+
 void MessageManager::requestLoadChannel(Snowflake channelId)
 {
     if (fetchedChannels.contains(channelId)) {

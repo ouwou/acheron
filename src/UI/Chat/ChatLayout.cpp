@@ -3,6 +3,7 @@
 #include <QGraphicsBlurEffect>
 #include <QGraphicsScene>
 #include <QGraphicsPixmapItem>
+#include <QTextBlock>
 
 namespace Acheron {
 namespace UI {
@@ -857,32 +858,38 @@ QString getLinkAt(const QAbstractItemView *view, const QModelIndex &index, const
         return {};
 
     QRect rowRect = view->visualRect(index);
-    bool showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
-    bool hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
-    ReplyData reply = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
-    bool hasReply = reply.state != ReplyData::State::None;
-    int replyOffset = hasReply ? replyBarHeight() - padding() : 0;
-    QFont font = view->font();
-    QFontMetrics fm(font);
-
-    QRect textRect = textRectForRow(rowRect, showHeader, fm, hasSeparator);
-    textRect.translate(0, replyOffset);
-
-    if (!textRect.contains(mousePos))
-        return {};
 
     const auto *chatModel = qobject_cast<const ChatModel *>(index.model());
     Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+
+    LayoutContext ctx;
+    ctx.font = view->font();
+    ctx.rowWidth = rowRect.width();
+    ctx.rowTop = rowRect.top();
+    ctx.showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
+    ctx.hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
+    ctx.htmlContent = html;
+    ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
+    ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    ctx.model = chatModel;
+    ctx.messageId = msgId;
+
+    MessageLayout layout = calculateMessageLayout(ctx);
+
+    if (!layout.textRect.contains(mousePos))
+        return {};
+
     QTextDocument *doc = chatModel->getCachedDocument(bodyDocKey(msgId));
     QTextDocument localDoc;
     if (!doc) {
-        setupDocument(localDoc, html, font, textRect.width());
+        setupDocument(localDoc, html, ctx.font, layout.textRect.width());
         doc = &localDoc;
-    } else if (int(doc->textWidth()) != textRect.width()) {
-        doc->setTextWidth(textRect.width());
+    } else if (int(doc->textWidth()) != layout.textRect.width()) {
+        doc->setTextWidth(layout.textRect.width());
     }
 
-    QPointF localPos = mousePos - textRect.topLeft();
+    QPointF localPos = mousePos - layout.textRect.topLeft();
 
     return doc->documentLayout()->anchorAt(localPos);
 }

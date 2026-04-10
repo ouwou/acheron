@@ -30,6 +30,12 @@ ClientInstance::ClientInstance(const AccountInfo &info, QObject *parent)
 
     userManager = new UserManager(info.id, this);
     messageManager = new MessageManager(info.id, client, userManager, this);
+    messageManager->setChannelResolver([this](Snowflake channelId) -> QString {
+        auto ch = channelRepo.getChannel(channelId);
+        if (ch && ch->name.hasValue())
+            return ch->name.get();
+        return QString::number(channelId);
+    });
 
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);

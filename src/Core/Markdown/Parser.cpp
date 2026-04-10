@@ -148,6 +148,19 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
             continue;
         }
 
+        if (node.type == "channel") {
+            QString displayName;
+            if (channelResolver)
+                displayName = channelResolver(node.content);
+            else
+                displayName = node.content;
+
+            result += QString("<a href=\"acheron://channel/%1\" style=\"background-color: rgba(88, 101, 242, 0.3); color: #c9cdfb; text-decoration: none;\">#%2</a>")
+                              .arg(node.content.toHtmlEscaped())
+                              .arg(displayName.toHtmlEscaped());
+            continue;
+        }
+
         if (node.type == "customEmoji") {
             QString id = node.content;
             QString name = node.attributes["name"].toString();
@@ -184,6 +197,11 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
 void Parser::setUserResolver(UserResolverFn resolver)
 {
     userResolver = std::move(resolver);
+}
+
+void Parser::setChannelResolver(ChannelResolverFn resolver)
+{
+    channelResolver = std::move(resolver);
 }
 
 static MatchFn inlineRegex(QRegularExpression regex)
@@ -327,6 +345,20 @@ void Parser::setupDefaultRules()
     };
     // .html handled in toHtml() because of user resolution
     rules.append(user);
+
+    MarkdownRule channel;
+    channel.name = "channel";
+    channel.order = 21;
+    channel.regex = QRegularExpression(R"(^<#?([0-9]*)>)");
+    channel.match = anyScopeRegex(channel.regex);
+    channel.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "channel";
+        node.content = match.captured(1);
+        return node;
+    };
+    // .html handled in toHtml() because of channel resolution
+    rules.append(channel);
 
     MarkdownRule customEmoji;
     customEmoji.name = "customEmoji";

@@ -243,12 +243,19 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         QString link = ChatLayout::getLinkAt(this, idx, pos);
 
         if (!link.isEmpty()) {
-            ConfirmPopup dialog(tr("External Link"),
-                                QString(tr("Are you sure you want to open <b>%1</b>?")).arg(link),
-                                tr("Open Link"), this);
+            if (link.startsWith("acheron://channel/")) {
+                bool ok = false;
+                quint64 id = link.mid(18).toULongLong(&ok);
+                if (ok)
+                    emit channelMentionClicked(Core::Snowflake(id));
+            } else {
+                ConfirmPopup dialog(tr("External Link"),
+                                    QString(tr("Are you sure you want to open <b>%1</b>?")).arg(link),
+                                    tr("Open Link"), this);
 
-            if (dialog.exec() == QDialog::Accepted) {
-                QDesktopServices::openUrl(QUrl(link));
+                if (dialog.exec() == QDialog::Accepted) {
+                    QDesktopServices::openUrl(QUrl(link));
+                }
             }
         }
     }

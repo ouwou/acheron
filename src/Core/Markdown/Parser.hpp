@@ -47,6 +47,7 @@ struct MarkdownRule
 };
 
 using UserResolverFn = std::function<QString(const QString &userId)>;
+using ChannelResolverFn = std::function<QString(const QString &channelId)>;
 
 class Parser
 {
@@ -57,6 +58,7 @@ public:
     QString toHtml(const QList<AstNode> &nodes, bool jumboEmoji = false);
 
     void setUserResolver(UserResolverFn resolver);
+    void setChannelResolver(ChannelResolverFn resolver);
 
     static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
 
@@ -70,6 +72,7 @@ private:
     QList<MarkdownRule> rules;
     QMap<QString, MarkdownRule *> ruleMap;
     UserResolverFn userResolver;
+    ChannelResolverFn channelResolver;
 };
 
 } // namespace Markdown

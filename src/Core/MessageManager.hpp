@@ -1,6 +1,7 @@
 #pragma once
 
 #include <deque>
+#include <functional>
 #include <memory>
 
 #include "Snowflake.hpp"
@@ -34,6 +35,8 @@ public:
     explicit MessageManager(Snowflake accountId, Discord::Client *client,
                             UserManager *userManager, QObject *parent = nullptr);
     ~MessageManager() override;
+
+    void setChannelResolver(std::function<QString(Snowflake)> resolver);
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);

@@ -526,6 +526,14 @@ ChannelNode *ChannelTreeModel::findChannelTreeNode(Snowflake channelId)
     return findChannelTreeNode(channelId, root.get());
 }
 
+ChannelNode *ChannelTreeModel::findChannelTreeNode(Snowflake channelId, Snowflake accountId)
+{
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return nullptr;
+    return findChannelTreeNode(channelId, accNode);
+}
+
 ChannelNode *ChannelTreeModel::findChannelTreeNode(Snowflake channelId, ChannelNode *searchRoot)
 {
     if (!searchRoot)
