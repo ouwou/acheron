@@ -57,6 +57,8 @@ int main(int argc, char *argv[])
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
     App app(argc, argv);
+    app.setOrganizationName("ouwou");
+    app.setApplicationName("Acheron");
     app.setStyle("Fusion");
 
     registerMetatypes();

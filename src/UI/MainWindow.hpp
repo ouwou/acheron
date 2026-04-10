@@ -24,6 +24,7 @@ class ChannelTreeModel;
 class ChannelFilterProxyModel;
 class AccountsWindow;
 class AccountsModel;
+class SettingsWindow;
 class ChannelTreeView;
 struct ChannelNode;
 class TypingIndicator;
@@ -92,9 +93,11 @@ private:
     VoiceStatusBar *voiceStatusBar;
 #endif
     AccountsWindow *accountsWindow = nullptr;
+    SettingsWindow *settingsWindow = nullptr;
 
 private slots:
     void openAccountsWindow();
+    void openSettingsWindow();
 
 private:
     Core::Session *session;

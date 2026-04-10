@@ -1,5 +1,7 @@
 #include "DatabaseManager.hpp"
 
+#include <QSettings>
+
 #include "Core/Logging.hpp"
 
 namespace Acheron {
@@ -46,23 +48,31 @@ QString DatabaseManager::openCacheDatabase(Core::Snowflake accountId)
     if (QSqlDatabase::contains(connName))
         return connName;
 
-    QString dirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString dbPath = QDir(dirPath).filePath(QString("cache_%1.sqlite").arg(accountId.toString()));
-
-    if (QFile::exists(dbPath))
-        QFile::remove(dbPath);
-
     QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
-    db.setDatabaseName(dbPath);
+
+    bool inMemory = QSettings().value("general/in_memory_cache", false).toBool();
+    if (inMemory) {
+        db.setDatabaseName(":memory:");
+    } else {
+        QString dirPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QString dbPath = QDir(dirPath).filePath(QString("cache_%1.sqlite").arg(accountId.toString()));
+
+        if (QFile::exists(dbPath))
+            QFile::remove(dbPath);
+
+        db.setDatabaseName(dbPath);
+    }
 
     if (!db.open()) {
         qCCritical(LogDB) << "Cache DB init failed:" << db.lastError().text();
         return "";
     }
 
-    QSqlQuery config(db);
-    config.exec("PRAGMA journal_mode = WAL");
-    config.exec("PRAGMA synchronous = OFF");
+    if (!inMemory) {
+        QSqlQuery config(db);
+        config.exec("PRAGMA journal_mode = WAL");
+        config.exec("PRAGMA synchronous = OFF");
+    }
 
     setupCacheTables(connName);
 

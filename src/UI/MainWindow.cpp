@@ -9,6 +9,7 @@
 #include "ChannelList/ChannelTreeView.hpp"
 #include "TabBar/TabBar.hpp"
 #include "Accounts/AccountsWindow.hpp"
+#include "Settings/SettingsWindow.hpp"
 #include "Accounts/AccountsModel.hpp"
 #include "Core/ClientInstance.hpp"
 #include "Core/AccountInfo.hpp"
@@ -967,6 +968,10 @@ void MainWindow::setupMenu()
     connect(accountsAction, &QAction::triggered, this, &MainWindow::openAccountsWindow);
     viewMenu->addAction(accountsAction);
 
+    auto *settingsAction = new QAction(tr("&Settings"), this);
+    connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
+    viewMenu->addAction(settingsAction);
+
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect
     auto *debugReconnect = new QAction(this);
     debugReconnect->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
@@ -986,6 +991,16 @@ void MainWindow::openAccountsWindow()
     accountsWindow->show();
     accountsWindow->raise();
     accountsWindow->activateWindow();
+}
+
+void MainWindow::openSettingsWindow()
+{
+    if (!settingsWindow)
+        settingsWindow = new SettingsWindow();
+
+    settingsWindow->show();
+    settingsWindow->raise();
+    settingsWindow->activateWindow();
 }
 
 void MainWindow::onTypingStart(const Discord::TypingStart &event)
