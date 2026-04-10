@@ -33,7 +33,7 @@ Planned features:
 
 ### Downloads:
 
-Latest nightly Windows build: https://nightly.link/ouwou/acheron/workflows/build/master/acheron-windows-MinSizeRel.zip
+Latest nightly Windows build: https://nightly.link/ucjd/acheron/workflows/build/master/acheron-windows-MinSizeRel.zip
 
 ### Dependencies:
 
