@@ -320,7 +320,8 @@ void VoiceWindow::setupUi()
     layout->addWidget(separator);
 
     volumeMeter = new VolumeMeter(this);
-    volumeMeter->setThreshold(100.0f);
+    // Initial threshold in float PCM units (0.0–1.0 range). Slider default of 5 → 0.005f.
+    volumeMeter->setThreshold(0.005f);
     layout->addWidget(volumeMeter);
 
     auto *inputDevRow = new QHBoxLayout;
@@ -348,7 +349,7 @@ void VoiceWindow::setupUi()
     auto *inputLabel = new QLabel(tr("Input"), this);
     inputLabel->setFixedWidth(44);
     inputGainSlider = new QSlider(Qt::Horizontal, this);
-    inputGainSlider->setRange(0, 500);
+    inputGainSlider->setRange(0, 1000);
     inputGainSlider->setValue(100);
     inputGainValue = new QLabel("100%", this);
     inputGainValue->setFixedWidth(36);
@@ -378,9 +379,11 @@ void VoiceWindow::setupUi()
     auto *vadLabel = new QLabel(tr("VAD"), this);
     vadLabel->setFixedWidth(44);
     vadThresholdSlider = new QSlider(Qt::Horizontal, this);
-    vadThresholdSlider->setRange(0, 2000);
-    vadThresholdSlider->setValue(100);
-    vadThresholdValue = new QLabel("100", this);
+    // Range 0–100 maps to float threshold 0.000–0.100 (divide by 1000).
+    // Default 5 = 0.005f, a reasonable starting point for float PCM.
+    vadThresholdSlider->setRange(0, 100);
+    vadThresholdSlider->setValue(5);
+    vadThresholdValue = new QLabel("0.005", this);
     vadThresholdValue->setFixedWidth(36);
     vadThresholdValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     vadRow->addWidget(vadLabel);
@@ -401,10 +404,11 @@ void VoiceWindow::setupUi()
     });
 
     connect(vadThresholdSlider, &QSlider::valueChanged, this, [this](int value) {
-        vadThresholdValue->setText(QString::number(value));
-        volumeMeter->setThreshold(static_cast<float>(value));
+        float threshold = static_cast<float>(value) / 1000.0f;
+        vadThresholdValue->setText(QString::number(threshold, 'f', 3));
+        volumeMeter->setThreshold(threshold);
         if (voiceManager)
-            voiceManager->setVadThreshold(static_cast<float>(value));
+            voiceManager->setVadThreshold(threshold);
     });
 
     connect(inputDeviceCombo, &QComboBox::activated, this, [this](int index) {
