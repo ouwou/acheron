@@ -16,7 +16,7 @@ inline constexpr uint8_t OPUS_SILENCE[] = { 0xF8, 0xFF, 0xFE };
 
 inline constexpr int AUDIO_SAMPLE_RATE = 48000;
 inline constexpr int AUDIO_CHANNELS = 2;
-inline constexpr int AUDIO_SAMPLE_BYTES = 2;
+inline constexpr int AUDIO_SAMPLE_BYTES = sizeof(float);
 inline constexpr int AUDIO_FRAME_DURATION_MS = 20;
 inline constexpr int AUDIO_FRAME_SAMPLES = AUDIO_SAMPLE_RATE * AUDIO_FRAME_DURATION_MS / 1000; // 960
 inline constexpr int AUDIO_FRAME_SIZE = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * AUDIO_SAMPLE_BYTES; // 3840 bytes
@@ -56,7 +56,7 @@ public:
     virtual void setInputGain(float gain) = 0;
     virtual void setOutputVolume(float volume) = 0;
 
-    virtual bool pushPlaybackFrame(const int16_t *frame) = 0;
+    virtual bool pushPlaybackFrame(const float *frame) = 0;
 
 signals:
     void audioCaptured(const QByteArray &pcmData);
