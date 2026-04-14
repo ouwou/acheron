@@ -99,7 +99,7 @@ MiniaudioAudioBackend::MiniaudioAudioBackend(QObject *parent)
     else
         ma->contextInit = true;
 
-    if (ma_pcm_rb_init(ma_format_s16, AUDIO_CHANNELS, PLAYBACK_RB_FRAMES, NULL, NULL, &ma->playbackRB) != MA_SUCCESS)
+    if (ma_pcm_rb_init(ma_format_f32, AUDIO_CHANNELS, PLAYBACK_RB_FRAMES, NULL, NULL, &ma->playbackRB) != MA_SUCCESS)
         qCWarning(LogVoice) << "Failed to init playback ring buffer";
     else
         ma->playbackRBInit = true;
@@ -168,7 +168,7 @@ bool MiniaudioAudioBackend::startCapture()
         return false;
 
     ma_device_config config = ma_device_config_init(ma_device_type_capture);
-    config.capture.format = ma_format_s16;
+    config.capture.format = ma_format_f32;
     config.capture.channels = AUDIO_CHANNELS;
     config.sampleRate = AUDIO_SAMPLE_RATE;
     config.dataCallback = OnCapture;
@@ -222,7 +222,7 @@ bool MiniaudioAudioBackend::startPlayback()
     ma_pcm_rb_reset(&ma->playbackRB);
 
     ma_device_config config = ma_device_config_init(ma_device_type_playback);
-    config.playback.format = ma_format_s16;
+    config.playback.format = ma_format_f32;
     config.playback.channels = AUDIO_CHANNELS;
     config.sampleRate = AUDIO_SAMPLE_RATE;
     config.dataCallback = OnPlayback;
@@ -282,7 +282,7 @@ void MiniaudioAudioBackend::setOutputVolume(float volume)
     outputVolume.store(volume, std::memory_order_relaxed);
 }
 
-bool MiniaudioAudioBackend::pushPlaybackFrame(const int16_t *frame)
+bool MiniaudioAudioBackend::pushPlaybackFrame(const float *frame)
 {
     if (!ma->playbackRBInit)
         return false;
@@ -296,7 +296,7 @@ bool MiniaudioAudioBackend::pushPlaybackFrame(const int16_t *frame)
         void *writePtr;
         if (ma_pcm_rb_acquire_write(&ma->playbackRB, &toWrite, &writePtr) != MA_SUCCESS || toWrite == 0)
             return false;
-        std::memcpy(writePtr, frame + written * AUDIO_CHANNELS, toWrite * AUDIO_CHANNELS * sizeof(int16_t));
+        std::memcpy(writePtr, frame + written * AUDIO_CHANNELS, toWrite * AUDIO_CHANNELS * sizeof(float));
         ma_pcm_rb_commit_write(&ma->playbackRB, toWrite);
         written += toWrite;
     }
@@ -324,14 +324,10 @@ void MiniaudioAudioBackend::handleCapturedFrames(const void *input, unsigned int
         captureBuffer.remove(0, AUDIO_FRAME_SIZE);
 
         if (gain != 1.0f) {
-            auto *samples = reinterpret_cast<int16_t *>(frame.data());
-            int count = frame.size() / static_cast<int>(sizeof(int16_t));
-            for (int i = 0; i < count; i++) {
-                int32_t val = static_cast<int32_t>(std::lround(samples[i] * gain));
-                samples[i] = static_cast<int16_t>(std::clamp(val,
-                                                             static_cast<int32_t>(INT16_MIN),
-                                                             static_cast<int32_t>(INT16_MAX)));
-            }
+            auto *samples = reinterpret_cast<float *>(frame.data());
+            int count = frame.size() / static_cast<int>(sizeof(float));
+            for (int i = 0; i < count; i++)
+                samples[i] = std::clamp(samples[i] * gain, -1.0f, 1.0f);
         }
 
         emit audioCaptured(frame);
@@ -340,17 +336,17 @@ void MiniaudioAudioBackend::handleCapturedFrames(const void *input, unsigned int
 
 void MiniaudioAudioBackend::handlePlaybackFrames(void *output, unsigned int frameCount)
 {
-    auto *out = static_cast<int16_t *>(output);
+    auto *out = static_cast<float *>(output);
     ma_uint32 remaining = frameCount;
 
     while (remaining > 0) {
         ma_uint32 toRead = remaining;
         void *readPtr;
         if (ma_pcm_rb_acquire_read(&ma->playbackRB, &toRead, &readPtr) != MA_SUCCESS || toRead == 0) {
-            std::memset(out, 0, remaining * AUDIO_CHANNELS * sizeof(int16_t));
+            std::memset(out, 0, remaining * AUDIO_CHANNELS * sizeof(float));
             break;
         }
-        std::memcpy(out, readPtr, toRead * AUDIO_CHANNELS * sizeof(int16_t));
+        std::memcpy(out, readPtr, toRead * AUDIO_CHANNELS * sizeof(float));
         ma_pcm_rb_commit_read(&ma->playbackRB, toRead);
         out += toRead * AUDIO_CHANNELS;
         remaining -= toRead;
@@ -358,14 +354,10 @@ void MiniaudioAudioBackend::handlePlaybackFrames(void *output, unsigned int fram
 
     float vol = outputVolume.load(std::memory_order_relaxed);
     if (vol != 1.0f) {
-        auto *samples = static_cast<int16_t *>(output);
+        auto *samples = static_cast<float *>(output);
         int count = static_cast<int>(frameCount) * AUDIO_CHANNELS;
-        for (int i = 0; i < count; i++) {
-            int32_t val = static_cast<int32_t>(std::lround(samples[i] * vol));
-            samples[i] = static_cast<int16_t>(std::clamp(val,
-                                                         static_cast<int32_t>(INT16_MIN),
-                                                         static_cast<int32_t>(INT16_MAX)));
-        }
+        for (int i = 0; i < count; i++)
+            samples[i] = std::clamp(samples[i] * vol, -1.0f, 1.0f);
     }
 }
 
