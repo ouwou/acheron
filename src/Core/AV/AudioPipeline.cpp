@@ -262,8 +262,8 @@ void AudioPipeline::onMixTick()
             userId = userIt.value();
 
         if (userId.isValid()) {
-            const auto *samples = reinterpret_cast<const int16_t *>(pcm.constData());
-            int count = pcm.size() / static_cast<int>(sizeof(int16_t));
+            const auto *samples = reinterpret_cast<const float *>(pcm.constData());
+            int count = pcm.size() / static_cast<int>(sizeof(float));
             if (count > 0) {
                 float rms = computeRms(samples, count);
 
@@ -297,13 +297,13 @@ void AudioPipeline::onMixTick()
     if (mixed.isEmpty())
         return;
 
-    audioBackend->pushPlaybackFrame(reinterpret_cast<const int16_t *>(mixed.constData()));
+    audioBackend->pushPlaybackFrame(reinterpret_cast<const float *>(mixed.constData()));
 }
 
 bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRms) const
 {
-    const auto *samples = reinterpret_cast<const int16_t *>(pcmFrame.constData());
-    int count = pcmFrame.size() / static_cast<int>(sizeof(int16_t));
+    const auto *samples = reinterpret_cast<const float *>(pcmFrame.constData());
+    int count = pcmFrame.size() / static_cast<int>(sizeof(float));
     if (count == 0) {
         outRms = 0.0f;
         return false;
@@ -313,7 +313,7 @@ bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRm
     return outRms > vadThreshold;
 }
 
-float AudioPipeline::computeRms(const int16_t *samples, int count)
+float AudioPipeline::computeRms(const float *samples, int count)
 {
     double sum = 0;
     for (int i = 0; i < count; i++)
