@@ -4,6 +4,13 @@
 #include <QKeyEvent>
 #include <QAbstractTextDocumentLayout>
 #include <QToolButton>
+#include <QMimeData>
+#include <QBuffer>
+#include <QDateTime>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFile>
+#include <QMimeDatabase>
 
 namespace Acheron {
 namespace UI {
@@ -32,6 +39,19 @@ void ChatTextEdit::keyPressEvent(QKeyEvent *e)
         return;
     }
     QTextEdit::keyPressEvent(e);
+}
+
+void ChatTextEdit::insertFromMimeData(const QMimeData *source)
+{
+    if (source && source->hasImage()) {
+        QImage img = qvariant_cast<QImage>(source->imageData());
+        if (!img.isNull()) {
+            emit imagePasted(img);
+            return;
+        }
+    }
+
+    QTextEdit::insertFromMimeData(source);
 }
 
 MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
@@ -63,30 +83,111 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
     outerLayout->addWidget(replyBar);
 
+    // Attachments bar
+    attachmentsBar = new QWidget(this);
+    attachmentsBar->setVisible(false);
+    auto *attLayout = new QHBoxLayout(attachmentsBar);
+    attLayout->setContentsMargins(8, 4, 4, 2);
+    attLayout->setSpacing(4);
+
+    attachmentsLabel = new QLabel(attachmentsBar);
+    attachmentsLabel->setStyleSheet("color: #b5bac1; font-size: 12px;");
+    attLayout->addWidget(attachmentsLabel, 1);
+
+    attachmentsCancelButton = new QToolButton(attachmentsBar);
+    attachmentsCancelButton->setText(QStringLiteral("\u00D7"));
+    attachmentsCancelButton->setFixedSize(16, 16);
+    attachmentsCancelButton->setStyleSheet(
+            "QToolButton { border: none; color: #b5bac1; font-size: 14px; }"
+            "QToolButton:hover { color: #ffffff; }");
+    attLayout->addWidget(attachmentsCancelButton);
+
+    connect(attachmentsCancelButton, &QToolButton::clicked, [this]() {
+        pendingUploads.clear();
+        updateAttachmentsUi();
+        adjustHeight();
+        textEdit->setFocus();
+    });
+
+    outerLayout->addWidget(attachmentsBar);
+
     // Text edit
     auto *inputContainer = new QWidget(this);
     auto *inputLayout = new QHBoxLayout(inputContainer);
     inputLayout->setContentsMargins(0, 0, 0, 0);
     inputLayout->setSpacing(0);
 
+    attachButton = new QToolButton(inputContainer);
+    attachButton->setText("+");
+    attachButton->setFixedWidth(28);
+    attachButton->setStyleSheet(
+            "QToolButton { border: none; color: #b5bac1; font-size: 16px; }"
+            "QToolButton:hover { color: #ffffff; }");
+
     textEdit = new ChatTextEdit(inputContainer);
     setFocusProxy(textEdit);
+
+    connect(attachButton, &QToolButton::clicked, this, [this]() {
+        QStringList paths =
+                QFileDialog::getOpenFileNames(this, tr("Attach files"), QString(), tr("All Files (*.*)"));
+        if (paths.isEmpty())
+            return;
+
+        QMimeDatabase mimeDb;
+        for (const QString &path : paths) {
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly))
+                continue;
+
+            Discord::FileUpload upload;
+            upload.filename = QFileInfo(path).fileName();
+            upload.data = f.readAll();
+            upload.mimeType = mimeDb.mimeTypeForFile(path).name();
+            if (upload.mimeType.isEmpty())
+                upload.mimeType = "application/octet-stream";
+
+            pendingUploads.append(upload);
+        }
+
+        updateAttachmentsUi();
+        adjustHeight();
+        textEdit->setFocus();
+    });
 
     connect(textEdit, &ChatTextEdit::returnPressed, [this]() {
         if (sendBlocked)
             return;
         QString txt = textEdit->toPlainText().trimmed();
-        if (!txt.isEmpty()) {
-            emit sendMessage(txt);
+        if (!txt.isEmpty() || !pendingUploads.isEmpty()) {
+            emit sendMessage(txt, pendingUploads);
             clear();
         }
     });
 
     connect(textEdit, &ChatTextEdit::escapePressed, this, &MessageInput::clearReplyTarget);
 
+    connect(textEdit, &ChatTextEdit::imagePasted, this, [this](const QImage &image) {
+        QByteArray data;
+        QBuffer buffer(&data);
+        buffer.open(QIODevice::WriteOnly);
+        if (!image.save(&buffer, "PNG"))
+            return;
+
+        Discord::FileUpload upload;
+        upload.mimeType = "image/png";
+        upload.data = data;
+        upload.filename = QString("pasted-%1.png")
+                                  .arg(QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss"));
+
+        pendingUploads.append(upload);
+        updateAttachmentsUi();
+        adjustHeight();
+    });
+
     connect(textEdit->document(), &QTextDocument::contentsChanged, this,
             &MessageInput::adjustHeight);
 
+    inputLayout->addWidget(attachButton);
     inputLayout->addWidget(textEdit);
     outerLayout->addWidget(inputContainer);
 
@@ -107,6 +208,8 @@ void MessageInput::clear()
 {
     textEdit->clear();
     clearReplyTarget();
+    pendingUploads.clear();
+    updateAttachmentsUi();
     adjustHeight();
 }
 
@@ -161,8 +264,24 @@ void MessageInput::adjustHeight()
     int totalHeight = newHeight + 12;
     if (replyBar->isVisible())
         totalHeight += replyBar->sizeHint().height();
+    if (attachmentsBar->isVisible())
+        totalHeight += attachmentsBar->sizeHint().height();
 
     setFixedHeight(totalHeight);
+}
+
+void MessageInput::updateAttachmentsUi()
+{
+    if (pendingUploads.isEmpty()) {
+        attachmentsBar->setVisible(false);
+        return;
+    }
+
+    int count = pendingUploads.size();
+    attachmentsLabel->setText(tr("%1 file%2 attached")
+                                      .arg(count)
+                                      .arg(count == 1 ? QString() : QStringLiteral("s")));
+    attachmentsBar->setVisible(true);
 }
 
 } // namespace UI

@@ -148,6 +148,18 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
             continue;
         }
 
+        if (node.type == "channel") {
+            QString channelName;
+            if (channelResolver)
+                channelName = channelResolver(node.content);
+            else
+                channelName = "#" + node.content;
+
+            result += QString("<span style=\"color: #5865F2; font-weight: 500;\">#%1</span>")
+                              .arg(channelName.toHtmlEscaped());
+            continue;
+        }
+
         if (node.type == "customEmoji") {
             QString id = node.content;
             QString name = node.attributes["name"].toString();
@@ -186,6 +198,11 @@ void Parser::setUserResolver(UserResolverFn resolver)
     userResolver = std::move(resolver);
 }
 
+void Parser::setChannelResolver(ChannelResolverFn resolver)
+{
+    channelResolver = std::move(resolver);
+}
+
 static MatchFn inlineRegex(QRegularExpression regex)
 {
     return [regex](const QString &source, const ParseState &state) -> Capture {
@@ -211,6 +228,18 @@ static MatchFn blockRegex(QRegularExpression regex)
 static MatchFn anyScopeRegex(QRegularExpression regex)
 {
     return [regex](const QString &source, const ParseState &state) -> Capture {
+        return regex.match(source, 0, QRegularExpression::NormalMatch,
+                           QRegularExpression::AnchorAtOffsetMatchOption);
+    };
+}
+
+static MatchFn startOfLineRegex(QRegularExpression regex)
+{
+    return [regex](const QString &source, const ParseState &state) -> Capture {
+        // In "inline" mode we still want to match patterns that start a new line
+        // (Discord supports headers/subtext inside regular messages).
+        if (!state.prevCapture.isEmpty() && !state.prevCapture.endsWith('\n'))
+            return Capture();
         return regex.match(source, 0, QRegularExpression::NormalMatch,
                            QRegularExpression::AnchorAtOffsetMatchOption);
     };
@@ -249,6 +278,55 @@ void Parser::setupDefaultRules()
     };
     rules.append(escape);
 
+    MarkdownRule subtext;
+    subtext.name = "subtext";
+    subtext.order = 13;
+    subtext.regex = QRegularExpression(R"(^(?:-#)[ \t]+([^\n]*)(?:\n|$))");
+    subtext.match = startOfLineRegex(subtext.regex);
+    subtext.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "subtext";
+        ParseState childState = state;
+        childState.isInline = true;
+        node.children = nestedParse(match.captured(1), childState);
+        return node;
+    };
+    subtext.html = [](const AstNode &node,
+                      std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        return QString(R"(<span style="color:#b5bac1; font-size:10px;">%1</span><br>)")
+                .arg(renderChildren(node.children));
+    };
+    rules.append(subtext);
+
+    MarkdownRule header;
+    header.name = "header";
+    header.order = 14;
+    header.regex = QRegularExpression(R"(^(#{1,3})[ \t]+([^\n]*)(?:\n|$))");
+    header.match = startOfLineRegex(header.regex);
+    header.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "header";
+        node.attributes["level"] = match.captured(1).length();
+        ParseState childState = state;
+        childState.isInline = true;
+        node.children = nestedParse(match.captured(2), childState);
+        return node;
+    };
+    header.html = [](const AstNode &node,
+                     std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        int level = node.attributes.value("level").toInt();
+        level = qBound(1, level, 3);
+        // Use spans (Qt rich text can add extra paragraph spacing for block tags).
+        int size = (level == 1) ? 20 : (level == 2 ? 18 : 16);
+        int weight = 700;
+        // Include a <br> because the rule consumes the newline.
+        return QString(R"(<span style="font-size:%1px; font-weight:%2; line-height:1.25;">%3</span><br>)")
+                .arg(size)
+                .arg(weight)
+                .arg(renderChildren(node.children));
+    };
+    rules.append(header);
+
     MarkdownRule url;
     url.name = "url";
     url.order = 16;
@@ -268,6 +346,26 @@ void Parser::setupDefaultRules()
                 .arg(node.content.toHtmlEscaped());
     };
     rules.append(url);
+
+    // Autolink format: <https://example.com>
+    // Discord and markdown often wrap naked links in angle brackets; we should not render the <>.
+    MarkdownRule autolink;
+    autolink.name = "autolink";
+    autolink.order = 16; // same order group as url; will win on longer capture
+    autolink.regex = QRegularExpression(R"(^(?:<)(https?:\/\/[^>\s]+)(?:>))");
+    autolink.match = inlineRegex(autolink.regex);
+    autolink.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "url";
+        node.content = match.captured(1);
+        node.attributes["href"] = node.content;
+        return node;
+    };
+    autolink.html = url.html; // render identically to url
+    autolink.quality = [](const Capture &match, const ParseState &, const QString &) -> double {
+        return match.capturedLength() + 0.3; // prefer over plain text
+    };
+    rules.append(autolink);
 
     MarkdownRule link;
     link.name = "link";
@@ -327,6 +425,20 @@ void Parser::setupDefaultRules()
     };
     // .html handled in toHtml() because of user resolution
     rules.append(user);
+
+    MarkdownRule channel;
+    channel.name = "channel";
+    channel.order = 21;
+    channel.regex = QRegularExpression(R"(^<#([0-9]*)>)");
+    channel.match = anyScopeRegex(channel.regex);
+    channel.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "channel";
+        node.content = match.captured(1);
+        return node;
+    };
+    // .html handled in toHtml() because of channel resolution
+    rules.append(channel);
 
     MarkdownRule customEmoji;
     customEmoji.name = "customEmoji";

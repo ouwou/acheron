@@ -110,6 +110,9 @@ QVariant AccountsModel::data(const QModelIndex &index, int role) const
     case ConnectionStateRole:
         return QVariant::fromValue(acc.state);
 
+    case AutoConnectRole:
+        return acc.autoConnect;
+
     default:
         return {};
     }
@@ -163,6 +166,23 @@ void AccountsModel::setConnectionState(int row, ConnectionState state)
     QModelIndex idx = index(row, 0);
 
     emit dataChanged(idx, idx, { Qt::DisplayRole, ConnectionStateRole, AccountObjectRole });
+}
+
+void AccountsModel::setAutoConnect(int row, bool enabled)
+{
+    if (row < 0 || row >= accounts.size())
+        return;
+
+    if (accounts[row].autoConnect == enabled)
+        return;
+
+    accounts[row].autoConnect = enabled;
+
+    AccountRepository repo;
+    repo.updateAutoConnect(accounts[row].id, enabled);
+
+    QModelIndex idx = index(row, 0);
+    emit dataChanged(idx, idx, { AutoConnectRole, AccountObjectRole });
 }
 
 Qt::ItemFlags AccountsModel::flags(const QModelIndex &index) const

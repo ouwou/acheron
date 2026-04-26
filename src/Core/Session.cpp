@@ -21,6 +21,19 @@ Session::~Session()
 void Session::start()
 {
     qCDebug(LogCore) << "Session started";
+
+    // Auto-connect configured accounts
+    QVector<AccountInfo> accounts = repo.getAllAccounts();
+    for (const auto &acc : accounts) {
+        if (!acc.autoConnect)
+            continue;
+
+#ifndef ACHERON_MULTI_ACCOUNT
+        if (hasActiveConnection())
+            break;
+#endif
+        connectAccount(acc.id);
+    }
 }
 
 void Session::shutdown()

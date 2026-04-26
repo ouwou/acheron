@@ -50,6 +50,9 @@ public:
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
                      Snowflake replyToMessageId = Snowflake::Invalid);
+    void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
+                     const QList<FileUpload> &files,
+                     Snowflake replyToMessageId = Snowflake::Invalid);
     void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
     void pinMessage(Snowflake channelId, Snowflake messageId);

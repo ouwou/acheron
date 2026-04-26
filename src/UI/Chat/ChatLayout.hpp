@@ -250,6 +250,7 @@ QFont getFontForIndex(const QAbstractItemView *view, const QModelIndex &index);
 int hitTestCharIndex(QAbstractItemView *view, const QModelIndex &index, const QPoint &viewportPos);
 QRectF charRectInDocument(const QTextDocument &doc, int charIndex);
 QString getLinkAt(const QAbstractItemView *view, const QModelIndex &index, const QPoint &mousePos);
+bool isAvatarAt(const QAbstractItemView *view, const QModelIndex &index, const QPoint &mousePos);
 std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
                                               const QModelIndex &index, const QPoint &mousePos);
 std::optional<EmbedHitResult> getEmbedAt(const QAbstractItemView *view, const QModelIndex &index,

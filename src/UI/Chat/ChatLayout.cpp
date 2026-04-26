@@ -887,6 +887,35 @@ QString getLinkAt(const QAbstractItemView *view, const QModelIndex &index, const
     return doc->documentLayout()->anchorAt(localPos);
 }
 
+bool isAvatarAt(const QAbstractItemView *view, const QModelIndex &index, const QPoint &mousePos)
+{
+    if (!index.isValid() || !view)
+        return false;
+
+    const bool showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
+    if (!showHeader)
+        return false;
+
+    LayoutContext ctx;
+    ctx.font = getFontForIndex(view, index);
+    QRect rowRect = view->visualRect(index);
+    ctx.rowWidth = rowRect.width();
+    ctx.rowTop = rowRect.top();
+    ctx.showHeader = showHeader;
+    ctx.hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
+    ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
+    ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
+    ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
+    ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
+    ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
+    ctx.model = qobject_cast<const ChatModel *>(index.model());
+    ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
+
+    MessageLayout layout = calculateMessageLayout(ctx);
+    return layout.avatarRect.contains(mousePos);
+}
+
 std::optional<AttachmentData> getAttachmentAt(const QAbstractItemView *view,
                                               const QModelIndex &index, const QPoint &mousePos)
 {

@@ -358,6 +358,9 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     if (!chatModel)
         return;
 
+    QString hoveredLink = ChatLayout::getLinkAt(this, index, event->pos());
+    bool onAvatar = ChatLayout::isAvatarAt(this, index, event->pos());
+
     Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
     Core::Snowflake authorId = index.data(ChatModel::UserIdRole).toULongLong();
     Core::Snowflake channelId = chatModel->getActiveChannelId();
@@ -365,6 +368,33 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     bool isOwnMessage = (authorId == currentUserId);
 
     QMenu menu(this);
+
+    if (onAvatar && authorId.isValid()) {
+        QAction *copyUserIdAction = menu.addAction(tr("Copy User ID"));
+        connect(copyUserIdAction, &QAction::triggered, this, [authorId]() {
+            QGuiApplication::clipboard()->setText(QString::number(quint64(authorId)));
+        });
+        menu.addSeparator();
+    }
+
+    if (!hoveredLink.isEmpty()) {
+        QAction *copyLinkAction = menu.addAction(tr("Copy Link"));
+        connect(copyLinkAction, &QAction::triggered, this, [hoveredLink]() {
+            QGuiApplication::clipboard()->setText(hoveredLink);
+        });
+
+        QAction *openLinkAction = menu.addAction(tr("Open Link"));
+        connect(openLinkAction, &QAction::triggered, this, [this, hoveredLink]() {
+            ConfirmPopup dialog(tr("External Link"),
+                                QString(tr("Are you sure you want to open <b>%1</b>?")).arg(hoveredLink),
+                                tr("Open Link"), this);
+
+            if (dialog.exec() == QDialog::Accepted)
+                QDesktopServices::openUrl(QUrl(hoveredLink));
+        });
+
+        menu.addSeparator();
+    }
 
     QAction *copyAction = menu.addAction(tr("Copy Text"));
     copyAction->setShortcut(QKeySequence::Copy);

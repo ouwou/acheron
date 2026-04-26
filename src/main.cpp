@@ -226,8 +226,9 @@ int main(int argc, char *argv[])
 
     {
         Core::Session session;
+        session.start();
         UI::MainWindow window(&session);
-        window.show();
+        window.showMaximized();
 
         exitCode = app.exec();
     }

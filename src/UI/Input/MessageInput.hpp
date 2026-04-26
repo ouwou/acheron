@@ -5,6 +5,7 @@
 #include <QLabel>
 
 #include "Core/Snowflake.hpp"
+#include "Discord/HttpClient.hpp"
 
 class QToolButton;
 
@@ -19,9 +20,11 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent *e) override;
+    void insertFromMimeData(const QMimeData *source) override;
 signals:
     void returnPressed();
     void escapePressed();
+    void imagePasted(const QImage &image);
 };
 
 class MessageInput : public QWidget
@@ -44,18 +47,25 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 signals:
-    void sendMessage(const QString &text);
+    void sendMessage(const QString &text, const QList<Discord::FileUpload> &files);
 
 private:
     ChatTextEdit *textEdit;
+    QToolButton *attachButton = nullptr;
     QWidget *replyBar;
     QLabel *replyLabel;
     QToolButton *replyCancelButton;
+
+    QWidget *attachmentsBar;
+    QLabel *attachmentsLabel;
+    QToolButton *attachmentsCancelButton;
+    QList<Discord::FileUpload> pendingUploads;
 
     Core::Snowflake replyMessageId;
     bool sendBlocked = false;
 
     void adjustHeight();
+    void updateAttachmentsUi();
 };
 
 } // namespace UI

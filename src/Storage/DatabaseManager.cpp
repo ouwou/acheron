@@ -110,9 +110,29 @@ void DatabaseManager::setupPersistentTables()
             gateway_url TEXT,
             rest_url TEXT,
             cdn_url TEXT,
-            display_order INTEGER DEFAULT 0
+            display_order INTEGER DEFAULT 0,
+            auto_connect INTEGER DEFAULT 0
         )
     )");
+
+    // Lightweight migration for existing installs: ensure auto_connect exists
+    bool hasAutoConnect = false;
+    QSqlQuery infoQuery(db);
+    if (infoQuery.exec("PRAGMA table_info(accounts)")) {
+        while (infoQuery.next()) {
+            if (infoQuery.value("name").toString() == "auto_connect") {
+                hasAutoConnect = true;
+                break;
+            }
+        }
+    }
+
+    if (!hasAutoConnect) {
+        if (!query.exec("ALTER TABLE accounts ADD COLUMN auto_connect INTEGER DEFAULT 0")) {
+            qCWarning(LogDB) << "Failed to migrate accounts.auto_connect:"
+                             << query.lastError().text();
+        }
+    }
 }
 
 void DatabaseManager::setupCacheTables(const QString &connName)

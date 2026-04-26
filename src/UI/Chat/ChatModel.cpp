@@ -291,7 +291,12 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     return QString();
             }
         }
-        return msg.parsedContentCached;
+        // Trim trailing <br> tags to prevent extra spacing when message ends with header/subtext
+        QString html = msg.parsedContentCached;
+        while (html.endsWith("<br>")) {
+            html.chop(4);
+        }
+        return html;
     }
     case AttachmentsRole: {
         if (!msg.attachments.hasValue() || msg.attachments->isEmpty())

@@ -188,10 +188,14 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
         return;
 
     ConnectionState state = index.data(AccountsModel::ConnectionStateRole).value<ConnectionState>();
+    bool autoConnect = index.data(AccountsModel::AutoConnectRole).toBool();
 
     QMenu menu(this);
     QAction *actConnect = menu.addAction("Connect");
     QAction *actDisconnect = menu.addAction("Disconnect");
+    QAction *actAutoConnect = menu.addAction("Auto connect");
+    actAutoConnect->setCheckable(true);
+    actAutoConnect->setChecked(autoConnect);
     menu.addSeparator();
     QAction *actRemove = menu.addAction("Remove Account");
 
@@ -210,6 +214,20 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
         performConnect(index.row());
     else if (selected == actDisconnect)
         performDisconnect(index.row());
+    else if (selected == actAutoConnect) {
+        bool enabled = actAutoConnect->isChecked();
+        model->setAutoConnect(index.row(), enabled);
+
+        // Convenience: enabling auto-connect also connects immediately if possible.
+        if (enabled && state == ConnectionState::Disconnected) {
+#ifndef ACHERON_MULTI_ACCOUNT
+            if (!session->hasActiveConnection())
+                performConnect(index.row());
+#else
+            performConnect(index.row());
+#endif
+        }
+    }
     else if (selected == actRemove)
         model->removeAccount(index.row());
 }

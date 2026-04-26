@@ -17,8 +17,8 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     QSqlQuery query(db);
     query.prepare(R"(
             INSERT OR REPLACE INTO accounts
-            (id, username, display_name, avatar, gateway_url, rest_url, cdn_url, display_order)
-            VALUES (:id, :username, :display_name, :avatar, :gateway_url, :rest_url, :cdn_url, :display_order)
+            (id, username, display_name, avatar, gateway_url, rest_url, cdn_url, display_order, auto_connect)
+            VALUES (:id, :username, :display_name, :avatar, :gateway_url, :rest_url, :cdn_url, :display_order, :auto_connect)
         )");
 
     query.bindValue(":id", static_cast<qint64>(acc.id));
@@ -29,6 +29,7 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     query.bindValue(":rest_url", acc.restUrl);
     query.bindValue(":cdn_url", acc.cdnUrl);
     query.bindValue(":display_order", acc.displayOrder);
+    query.bindValue(":auto_connect", acc.autoConnect ? 1 : 0);
 
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Save failed:" << query.lastError().text();
@@ -63,6 +64,7 @@ Core::AccountInfo AccountRepository::getAccount(quint64 id)
     acc.restUrl = query.value("rest_url").toString();
     acc.cdnUrl = query.value("cdn_url").toString();
     acc.displayOrder = query.value("display_order").toInt();
+    acc.autoConnect = query.value("auto_connect").toInt() != 0;
 
     return acc;
 }
@@ -89,6 +91,7 @@ QVector<Core::AccountInfo> AccountRepository::getAllAccounts()
         acc.restUrl = query.value("rest_url").toString();
         acc.cdnUrl = query.value("cdn_url").toString();
         acc.displayOrder = query.value("display_order").toInt();
+        acc.autoConnect = query.value("auto_connect").toInt() != 0;
 
         acc.state = Core::ConnectionState::Disconnected;
 
@@ -123,6 +126,20 @@ void AccountRepository::updateDisplayOrder(quint64 id, int order)
 
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Update display order failed:"
+                         << query.lastError().text();
+}
+
+void AccountRepository::updateAutoConnect(quint64 id, bool enabled)
+{
+    QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
+    QSqlQuery query(db);
+
+    query.prepare("UPDATE accounts SET auto_connect = :enabled WHERE id = :id");
+    query.bindValue(":enabled", enabled ? 1 : 0);
+    query.bindValue(":id", static_cast<qint64>(id));
+
+    if (!query.exec())
+        qCWarning(LogDB) << "AccountRepository: Update auto connect failed:"
                          << query.lastError().text();
 }
 

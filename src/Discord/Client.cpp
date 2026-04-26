@@ -251,6 +251,55 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
     });
 }
 
+void Client::sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
+                         const QList<FileUpload> &files, Snowflake replyToMessageId)
+{
+    if (files.isEmpty()) {
+        sendMessage(channelId, content, nonce, replyToMessageId);
+        return;
+    }
+
+    QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
+
+    QJsonObject payload;
+    payload["content"] = content;
+    payload["flags"] = 0;
+    payload["mobile_network_type"] = "unknown";
+    payload["nonce"] = nonce;
+    payload["tts"] = false;
+
+    if (replyToMessageId.isValid()) {
+        QJsonObject messageReference;
+        messageReference["message_id"] = QString::number(replyToMessageId);
+        messageReference["channel_id"] = QString::number(channelId);
+        payload["message_reference"] = messageReference;
+    }
+
+    QJsonArray attachments;
+    for (int i = 0; i < files.size(); ++i) {
+        QJsonObject a;
+        a["id"] = i;
+        a["filename"] = files[i].filename;
+        attachments.append(a);
+    }
+    payload["attachments"] = attachments;
+
+    httpClient->postMultipart(endpoint, payload, files,
+                              [this, channelId, nonce](const HttpResponse &response) {
+                                  if (!response.success) {
+                                      qCWarning(LogDiscord)
+                                              << "Failed to send multipart message:" << response.error
+                                              << "Status:" << response.statusCode;
+                                      emit messageSendFailed(nonce, response.error);
+                                      return;
+                                  }
+
+                                  qCInfo(LogDiscord)
+                                          << "Multipart message sent successfully to channel"
+                                          << channelId;
+                              });
+}
+
 void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString &content)
 {
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +

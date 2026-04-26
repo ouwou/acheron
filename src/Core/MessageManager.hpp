@@ -5,6 +5,7 @@
 
 #include "Snowflake.hpp"
 #include "Storage/MessageRepository.hpp"
+#include "Storage/ChannelRepository.hpp"
 #include "Discord/Entities.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/Client.hpp"
@@ -39,6 +40,9 @@ public:
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
     void sendMessage(Snowflake channelId, const QString &content,
                      Snowflake replyToMessageId = Snowflake::Invalid);
+    void sendMessage(Snowflake channelId, const QString &content,
+                     const QList<Discord::FileUpload> &files,
+                     Snowflake replyToMessageId = Snowflake::Invalid);
 
 signals:
     void messagesReceived(const MessageRequestResult &result);
@@ -66,6 +70,7 @@ private:
     void emitReactionUpdate(Discord::Message &msg);
 
     Storage::MessageRepository repo;
+    Storage::ChannelRepository channelRepo;
 
     Discord::Client *client;
     UserManager *userManager;

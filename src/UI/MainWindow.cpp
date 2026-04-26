@@ -598,7 +598,8 @@ void MainWindow::setupUi()
     chatView->setWordWrap(true);
     chatView->setResizeMode(QListView::Adjust);
 
-    connect(messageInput, &MessageInput::sendMessage, this, [this](const QString &text) {
+    connect(messageInput, &MessageInput::sendMessage, this,
+            [this](const QString &text, const QList<Acheron::Discord::FileUpload> &files) {
         if (!currentInstance) {
             qCWarning(LogCore) << "Cannot send message: no active instance";
             return;
@@ -616,7 +617,7 @@ void MainWindow::setupUi()
         }
 
         Snowflake replyTo = messageInput->replyTargetMessageId();
-        currentInstance->messages()->sendMessage(channelId, text, replyTo);
+        currentInstance->messages()->sendMessage(channelId, text, files, replyTo);
 
         int rateLimit = currentInstance->getChannelRateLimit(channelId);
         Snowflake userId = currentInstance->accountId();

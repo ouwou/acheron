@@ -63,13 +63,22 @@ static QString resolveSystemMessageContent(const Discord::Message &msg)
 
 MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
                                UserManager *userManager, QObject *parent)
-    : QObject(parent), client(client), userManager(userManager), repo(accountId), parser(std::make_unique<Markdown::Parser>())
+    : QObject(parent), client(client), userManager(userManager), repo(accountId), channelRepo(accountId), parser(std::make_unique<Markdown::Parser>())
 {
     messageCache.setMaxCost(1'000);
 
     parser->setUserResolver([this](const QString &userId) {
         Snowflake id(userId.toULongLong());
         return this->userManager->getDisplayName(id);
+    });
+
+    parser->setChannelResolver([this](const QString &channelId) {
+        Snowflake id(channelId.toULongLong());
+        auto channel = this->channelRepo.getChannel(id);
+        if (channel.has_value() && channel->name.hasValue()) {
+            return channel->name.get();
+        }
+        return channelId; // fallback to ID if not found
     });
 
     // connect(client, &Discord::Client::messagesReceived, this, &MessageManager::onApiMessagesReceived);
@@ -349,6 +358,44 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
             { true, Discord::Client::MessageLoadType::Created, channelId, { preview } });
 
     client->sendMessage(channelId, content, nonce, replyToMessageId);
+}
+
+void MessageManager::sendMessage(Snowflake channelId, const QString &content,
+                                 const QList<Discord::FileUpload> &files,
+                                 Snowflake replyToMessageId)
+{
+    Snowflake nonceId = Snowflake::generateNonce();
+    QString nonce = QString::number(nonceId);
+
+    Discord::Message preview;
+    preview.id = nonceId;
+    preview.nonce = nonce;
+    preview.channelId = channelId;
+    preview.content = content;
+    preview.timestamp = QDateTime::currentDateTimeUtc();
+    preview.author = client->getMe();
+    preview.flags = Discord::MessageFlags(0);
+    preview.isPendingOutbound = true;
+
+    if (replyToMessageId.isValid()) {
+        preview.type = Discord::MessageType::REPLY;
+        Discord::MessageReference ref;
+        ref.messageId = replyToMessageId;
+        ref.channelId = channelId;
+        preview.messageReference = ref;
+    } else {
+        preview.type = Discord::MessageType::DEFAULT;
+    }
+
+    Markdown::ParseState state;
+    state.isInline = true;
+    auto ast = parser->parse(content, state);
+    bool jumbo = Markdown::Parser::isEmojiOnly(ast);
+    preview.parsedContentCached = parser->toHtml(ast, jumbo);
+
+    emit messagesReceived({ true, Discord::Client::MessageLoadType::Created, channelId, { preview } });
+
+    client->sendMessage(channelId, content, nonce, files, replyToMessageId);
 }
 
 static bool emojisMatch(const Discord::Emoji &a, const Discord::Emoji &b)
