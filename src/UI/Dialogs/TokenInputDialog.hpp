@@ -5,11 +5,11 @@
 namespace Acheron {
 namespace UI {
 
-class AddAccountDialog : public QDialog
+class TokenInputDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit AddAccountDialog(QWidget *parent = nullptr);
+    explicit TokenInputDialog(const QString &title, const QString &prompt, QWidget *parent = nullptr);
     QString getToken() const;
 
 private:

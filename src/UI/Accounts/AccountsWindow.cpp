@@ -1,8 +1,10 @@
 #include "AccountsWindow.hpp"
 
+#include <QMessageBox>
 #include <QRandomGenerator>
 
 #include "Core/Session.hpp"
+#include "Core/TokenStore.hpp"
 #include "Core/TokenUtils.hpp"
 
 namespace Acheron {
@@ -154,7 +156,7 @@ void AccountsWindow::performDisconnect(int row)
 
 void AccountsWindow::onAddClicked()
 {
-    AddAccountDialog dlg(this);
+    TokenInputDialog dlg(tr("Add Account"), tr("Enter your token:"), this);
     if (dlg.exec() != QDialog::Accepted) {
         return;
     }
@@ -193,6 +195,8 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
     QAction *actConnect = menu.addAction("Connect");
     QAction *actDisconnect = menu.addAction("Disconnect");
     menu.addSeparator();
+    QAction *actSetToken = menu.addAction("Set Token");
+    menu.addSeparator();
     QAction *actRemove = menu.addAction("Remove Account");
 
     if (state == ConnectionState::Connected || state == ConnectionState::Connecting)
@@ -204,14 +208,71 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
     if (state == ConnectionState::Disconnected)
         actDisconnect->setEnabled(false);
 
+    if (state != ConnectionState::Disconnected)
+        actSetToken->setEnabled(false);
+
     QAction *selected = menu.exec(listView->viewport()->mapToGlobal(pos));
 
     if (selected == actConnect)
         performConnect(index.row());
     else if (selected == actDisconnect)
         performDisconnect(index.row());
+    else if (selected == actSetToken)
+        onSetTokenRequested(index.row());
     else if (selected == actRemove)
         model->removeAccount(index.row());
+}
+
+void AccountsWindow::onSetTokenRequested(int row)
+{
+    QModelIndex idx = model->index(row, 0);
+    if (!idx.isValid())
+        return;
+
+    auto *info =
+            static_cast<AccountInfo *>(idx.data(AccountsModel::AccountObjectRole).value<void *>());
+    if (!info)
+        return;
+
+    const QString accountLabel = info->displayName.isEmpty() ? info->username : info->displayName;
+
+    TokenInputDialog dlg(tr("Set Token"), tr("Enter the new token for %1:").arg(accountLabel), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    QString newToken = dlg.getToken();
+    if (newToken.isEmpty())
+        return;
+
+    Snowflake tokenUserId = TokenUtils::getIdAndCheckToken(newToken);
+    if (!tokenUserId.isValid()) {
+        QMessageBox::warning(this, tr("Invalid Token"),
+                             tr("The token couldn't be parsed. Make sure you copied the token correctly."));
+        return;
+    }
+
+    if (tokenUserId != info->id) {
+        QMessageBox::warning(this, tr("Token Mismatch"),
+                             tr("This token belongs to user ID %1, but this account is %2. "
+                                "Tokens are bound to a specific user. Use \"Add\" to create a "
+                                "separate account for a different user.")
+                                     .arg(static_cast<quint64>(tokenUserId))
+                                     .arg(static_cast<quint64>(info->id)));
+        return;
+    }
+
+    if (!TokenStore::saveToken(info->id, newToken)) {
+        QMessageBox::critical(this, tr("Token Save Failed"),
+                              tr("Failed to save the token."));
+        return;
+    }
+
+    QString followup;
+    if (info->state == ConnectionState::Connected)
+        followup = tr(" Disconnect and reconnect this account for the new token to take effect.");
+
+    QMessageBox::information(this, tr("Token Updated"),
+                             tr("Token saved for %1.").arg(accountLabel) + followup);
 }
 
 void AccountsWindow::onSelectionChanged(const QModelIndex &current, const QModelIndex &prev)

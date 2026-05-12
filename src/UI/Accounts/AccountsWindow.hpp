@@ -3,7 +3,7 @@
 #include <QtWidgets>
 
 #include "AccountsModel.hpp"
-#include "UI/Dialogs/AddAccountDialog.hpp"
+#include "UI/Dialogs/TokenInputDialog.hpp"
 
 namespace Acheron {
 
@@ -27,6 +27,7 @@ private slots:
     void onContextMenuRequested(const QPoint &pos);
     void onConnectClicked();
     void onDisconnectClicked();
+    void onSetTokenRequested(int row);
 
 private:
     Core::Session *session;

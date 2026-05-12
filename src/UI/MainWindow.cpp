@@ -447,14 +447,17 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 connectionBanner->hide();
                 const QString accountLabel = info.displayName.isEmpty() ? info.username
                                                                         : info.displayName;
-                auto *box = new QMessageBox(this);
+                QWidget *parent = (accountsWindow && accountsWindow->isVisible())
+                                          ? static_cast<QWidget *>(accountsWindow)
+                                          : static_cast<QWidget *>(this);
+                auto *box = new QMessageBox(parent);
                 box->setAttribute(Qt::WA_DeleteOnClose);
                 box->setIcon(QMessageBox::Critical);
                 box->setWindowTitle(tr("Authentication Failed"));
                 box->setText(tr("Discord rejected the token for account \"%1\".").arg(accountLabel));
                 box->setInformativeText(tr("Discord's gateway rejected your token. The stored token is invalid. Check or update your token and try again."));
                 box->setStandardButtons(QMessageBox::Ok);
-                box->setWindowModality(Qt::ApplicationModal);
+                box->setWindowModality(Qt::WindowModal);
                 box->show();
             });
 
