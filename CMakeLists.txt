@@ -147,6 +147,7 @@ set(PROJECT_SOURCES
     src/Discord/RemoteAuthClient.cpp
     src/Discord/IngestThread.cpp
     src/Discord/HttpClient.cpp
+    src/Discord/RequestWorker.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/CdnUrls.cpp
     src/Discord/ClientIdentity.cpp
