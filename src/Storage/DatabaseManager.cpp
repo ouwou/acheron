@@ -84,9 +84,11 @@ void DatabaseManager::closeCacheDatabase(Core::Snowflake accountId)
     QString connName = getCacheConnectionName(accountId);
 
     if (QSqlDatabase::contains(connName)) {
-        QSqlDatabase db = QSqlDatabase::database(connName);
-        if (db.isOpen())
-            db.close();
+        {
+            QSqlDatabase db = QSqlDatabase::database(connName);
+            if (db.isOpen())
+                db.close();
+        }
         QSqlDatabase::removeDatabase(connName);
     }
 }
