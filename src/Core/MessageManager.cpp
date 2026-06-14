@@ -289,9 +289,10 @@ void MessageManager::onMessageUpdated(const Discord::Message &message)
     bool jumbo = Markdown::Parser::isEmojiOnly(ast);
     updatedMsg.parsedContentCached = parser->toHtml(ast, jumbo);
 
-    messageCache.insert(message.id, new Discord::Message(updatedMsg));
+    if (messageCache.contains(message.id))
+        messageCache.insert(message.id, new Discord::Message(updatedMsg));
 
-    repo.saveMessages({ updatedMsg });
+    repo.updateMessageContent(updatedMsg);
 
     emit messagesReceived({ true, Discord::Client::MessageLoadType::Created, message.channelId, { updatedMsg } });
 }

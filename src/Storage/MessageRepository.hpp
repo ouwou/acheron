@@ -20,6 +20,7 @@ public:
     void saveMessages(const QList<Discord::Message> &messages);
     void saveMessages(const QList<Discord::Message> &messages, QSqlDatabase &db);
     void markMessageDeleted(Core::Snowflake messageId);
+    void updateMessageContent(const Discord::Message &message);
     void updateReactionsJson(Core::Snowflake messageId, const QString &reactionsJson);
     QString getReactionsJson(Core::Snowflake messageId);
 

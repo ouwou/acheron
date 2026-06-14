@@ -31,9 +31,9 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     qMsg.prepare(R"(
         INSERT OR REPLACE INTO messages
 		(id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, reactions, deleted,
-		 referenced_message_id)
+		 referenced_message_id, context_only)
 		VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, :reactions, 0,
-		        :ref_msg_id)
+		        :ref_msg_id, 0)
     )");
 
     QSqlQuery qAtt(db);
@@ -101,8 +101,8 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
         QSqlQuery qRef(db);
         qRef.prepare(R"(
             INSERT OR IGNORE INTO messages
-            (id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, deleted)
-            VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, 0)
+            (id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, deleted, context_only)
+            VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, 0, 1)
         )");
 
         for (const auto &ref : referencedMessages) {
@@ -139,6 +139,25 @@ void MessageRepository::markMessageDeleted(Core::Snowflake messageId)
 
     if (!q.exec())
         qCWarning(LogDB) << "MessageRepository: Mark message deleted failed:" << q.lastError().text();
+}
+
+void MessageRepository::updateMessageContent(const Discord::Message &message)
+{
+    auto db = getDb();
+    QSqlQuery q(db);
+    q.prepare(R"(
+        UPDATE messages
+        SET content = :content, edited_timestamp = :edited_timestamp, embeds = :embeds, flags = :flags
+        WHERE id = :id
+    )");
+    q.bindValue(":content", message.content);
+    q.bindValue(":edited_timestamp", message.editedTimestamp);
+    q.bindValue(":embeds", message.embedsJson.isEmpty() ? QVariant() : message.embedsJson);
+    q.bindValue(":flags", static_cast<qint64>(message.flags.get()));
+    q.bindValue(":id", static_cast<qint64>(message.id.get()));
+
+    if (!q.exec())
+        qCWarning(LogDB) << "MessageRepository: Update message content failed:" << q.lastError().text();
 }
 
 void MessageRepository::updateReactionsJson(Core::Snowflake messageId, const QString &reactionsJson)
@@ -186,7 +205,7 @@ QList<Discord::Message> MessageRepository::getLatestMessages(Core::Snowflake cha
         INNER JOIN users u ON m.author_id = u.id
         LEFT JOIN messages rm ON m.referenced_message_id = rm.id
         LEFT JOIN users ru ON rm.author_id = ru.id
-		WHERE m.channel_id = :channel_id AND m.deleted = 0
+		WHERE m.channel_id = :channel_id AND m.deleted = 0 AND m.context_only = 0
 		ORDER BY m.id DESC
         LIMIT :limit
     )");
@@ -226,7 +245,7 @@ QList<Discord::Message> MessageRepository::getMessagesBefore(Core::Snowflake cha
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
 		LEFT JOIN users ru ON rm.author_id = ru.id
-		WHERE m.channel_id = :channel_id AND m.id < :before_id AND m.deleted = 0
+		WHERE m.channel_id = :channel_id AND m.id < :before_id AND m.deleted = 0 AND m.context_only = 0
 		ORDER BY m.id DESC
 		LIMIT :limit
 	)");

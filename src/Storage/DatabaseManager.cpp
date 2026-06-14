@@ -162,6 +162,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "reactions" TEXT,
 	        "deleted" INTEGER NOT NULL,
 	        "referenced_message_id" INTEGER,
+	        "context_only" INTEGER NOT NULL DEFAULT 0,
 	        PRIMARY KEY("id")
         );
     )");
