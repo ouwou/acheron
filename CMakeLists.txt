@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-# vcpkg toolchain must be set before project() so find_package is intercepted.
-# Allow override via -DCMAKE_TOOLCHAIN_FILE for users who manage vcpkg externally.
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vcpkg/scripts/buildsystems/vcpkg.cmake"
+option(USE_VCPKG "Use bundled vcpkg toolchain" ON)
+
+# Must happen before project()
+if(USE_VCPKG AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    set(CMAKE_TOOLCHAIN_FILE
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vcpkg/scripts/buildsystems/vcpkg.cmake"
         CACHE STRING "Vcpkg toolchain file")
 endif()
 
@@ -18,15 +20,31 @@ set(CMAKE_AUTORCC ON)
 
 option(BUILD_TESTS "Build test targets" ON)
 option(ENABLE_VOICE "Build with voice/audio support" ON)
+
 if(BUILD_TESTS)
     enable_testing()
 endif()
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
+option(USE_VCPKG "Use vcpkg-provided dependencies" ON)
+
 if(ENABLE_VOICE)
-    find_package(unofficial-sodium CONFIG REQUIRED)
-    find_package(Opus CONFIG REQUIRED)
+    if(USE_VCPKG)
+        find_package(unofficial-sodium CONFIG REQUIRED)
+        find_package(Opus CONFIG REQUIRED)
+
+	set(SODIUM_TARGET unofficial-sodium::sodium)
+        set(OPUS_TARGET Opus::opus)
+    else()
+        find_package(PkgConfig REQUIRED)
+
+	pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+	pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+
+	set(SODIUM_TARGET PkgConfig::SODIUM)
+        set(OPUS_TARGET PkgConfig::OPUS)
+    endif()
 endif()
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql Test LinguistTools)
@@ -77,6 +95,32 @@ else()
 endif()
 
 if(ENABLE_VOICE)
+    find_package(MLSPP QUIET)
+    if (NOT MLSPP_FOUND)
+        message(STATUS "mlspp not found, using subproject")
+        set(DISABLE_GREASE ON CACHE BOOL "" FORCE)
+        set(TESTING OFF CACHE BOOL "" FORCE)
+        set(MLS_CXX_NAMESPACE "mlspp" CACHE STRING "" FORCE)
+        set(CMAKE_EXPORT_PACKAGE_REGISTRY OFF CACHE BOOL "" FORCE)
+        add_subdirectory(vendor/mlspp EXCLUDE_FROM_ALL)
+        if (NOT TARGET MLSPP::mlspp)
+            add_library(MLSPP::mlspp ALIAS mlspp)
+        endif ()
+        if (NOT TARGET MLSPP::hpke)
+            add_library(MLSPP::hpke ALIAS hpke)
+        endif ()
+        set(MLSPP_FOUND TRUE CACHE BOOL "" FORCE)
+        # Write a shim config so libdave's find_dependency(MLSPP) finds this
+        # instead of the broken build-tree config that add_subdirectory generates
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mlspp-shim/MLSPPConfig.cmake"
+            "set(MLSPP_FOUND TRUE)\n")
+        set(MLSPP_DIR "${CMAKE_CURRENT_BINARY_DIR}/mlspp-shim" CACHE PATH "" FORCE)
+    else ()
+        message(STATUS "Found system mlspp")
+    endif ()
+
+    # Prevent find_package from finding mlspp's broken build-tree config via registry
+    set(CMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY ON)
     # libdave (Discord Audio/Video E2E Encryption)
     set(TESTING OFF CACHE BOOL "" FORCE)
     set(PERSISTENT_KEYS OFF CACHE BOOL "" FORCE)
@@ -251,11 +295,14 @@ target_link_libraries(${PROJECT_NAME}
 )
 if(ENABLE_VOICE)
     target_link_libraries(${PROJECT_NAME} PRIVATE
-        unofficial-sodium::sodium
-        Opus::opus
+        ${SODIUM_TARGET}
+        ${OPUS_TARGET}
         libdave
     )
-    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
+
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio"
+    )
 endif()
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)
