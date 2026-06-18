@@ -27,7 +27,6 @@ endif()
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
-option(USE_VCPKG "Use vcpkg-provided dependencies" ON)
 
 if(ENABLE_VOICE)
     if(USE_VCPKG)
