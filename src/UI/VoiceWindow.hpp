@@ -185,6 +185,8 @@ private:
     QCheckBox *fecCheckbox = nullptr;
     QSlider *packetLossSlider = nullptr;
     QLabel *packetLossValue = nullptr;
+    QCheckBox *noiseSuppressionCheckbox = nullptr;
+    QCheckBox *rnnoiseVadCheckbox = nullptr;
 
     static constexpr QSize AVATAR_REQUEST_SIZE = QSize(32, 32);
 };

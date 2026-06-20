@@ -53,6 +53,8 @@ public:
     [[nodiscard]] virtual bool isCapturing() const = 0;
     [[nodiscard]] virtual bool isPlaying() const = 0;
 
+    [[nodiscard]] virtual int nativeCaptureChannels() const = 0;
+
     virtual void setInputGain(float gain) = 0;
     virtual void setOutputVolume(float volume) = 0;
 

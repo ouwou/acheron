@@ -311,6 +311,13 @@ bool MiniaudioAudioBackend::isPlaying() const
     return ma->playbackDeviceInit;
 }
 
+int MiniaudioAudioBackend::nativeCaptureChannels() const
+{
+    if (!ma->captureDeviceInit)
+        return 0;
+    return static_cast<int>(ma->captureDevice.capture.internalChannels);
+}
+
 void MiniaudioAudioBackend::setInputGain(float gain)
 {
     inputGain.store(gain, std::memory_order_relaxed);

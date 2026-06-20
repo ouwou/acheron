@@ -4,6 +4,7 @@
 #include "OpusDecoder.hpp"
 #include "JitterBuffer.hpp"
 #include "AudioMixer.hpp"
+#include "NoiseSuppressor.hpp"
 
 #include "Core/Logging.hpp"
 
@@ -36,11 +37,16 @@ void AudioPipeline::start(IAudioBackend *backend, bool capturing)
 
     initializeEncoder();
 
+    noiseSuppressor = std::make_unique<NoiseSuppressor>();
+    if (!noiseSuppressor->init())
+        noiseSuppressor.reset();
+
     rmsThrottleTimer.start();
     userRmsThrottleTimer.start();
 
     if (capturing)
         audioBackend->startCapture();
+    reconfigureNoiseSuppressorChannels();
 
     audioBackend->startPlayback();
 
@@ -69,6 +75,7 @@ void AudioPipeline::stop()
     pendingUserRms.clear();
 
     encoder.reset();
+    noiseSuppressor.reset();
 
     audioBackend = nullptr;
 
@@ -80,8 +87,11 @@ void AudioPipeline::stop()
 
 void AudioPipeline::startCapture()
 {
-    if (audioBackend)
-        audioBackend->startCapture();
+    if (!audioBackend)
+        return;
+
+    audioBackend->startCapture();
+    reconfigureNoiseSuppressorChannels();
 }
 
 void AudioPipeline::stopCapture()
@@ -152,8 +162,17 @@ void AudioPipeline::setUserVolume(Snowflake userId, float volume)
 
 void AudioPipeline::setInputDevice(const QByteArray &deviceId)
 {
-    if (audioBackend)
-        audioBackend->setInputDevice(deviceId);
+    if (!audioBackend)
+        return;
+
+    audioBackend->setInputDevice(deviceId);
+    reconfigureNoiseSuppressorChannels();
+}
+
+void AudioPipeline::reconfigureNoiseSuppressorChannels()
+{
+    if (noiseSuppressor && audioBackend && audioBackend->isCapturing())
+        noiseSuppressor->reconfigure(audioBackend->nativeCaptureChannels());
 }
 
 void AudioPipeline::setOutputDevice(const QByteArray &deviceId)
@@ -177,6 +196,16 @@ void AudioPipeline::setOutputVolume(float volume)
 void AudioPipeline::setVadThreshold(float threshold)
 {
     vadThreshold = threshold;
+}
+
+void AudioPipeline::setNoiseSuppressionEnabled(bool enabled)
+{
+    noiseSuppressionEnabled = enabled;
+}
+
+void AudioPipeline::setUseRnnoiseVad(bool enabled)
+{
+    useRnnoiseVad = enabled;
 }
 
 void AudioPipeline::initializeEncoder()
@@ -250,8 +279,22 @@ void AudioPipeline::onAudioCaptured(const QByteArray &pcmData)
     if (!encoder)
         return;
 
+    QByteArray frame = pcmData;
+    float voiceProb = -1.0f;
+    if (noiseSuppressor && (noiseSuppressionEnabled || useRnnoiseVad)) {
+        QByteArray denoised = noiseSuppressor->process(pcmData, voiceProb);
+        if (noiseSuppressionEnabled)
+            frame = denoised;
+    }
+
     float rms = 0.0f;
-    bool voiceDetected = detectVoiceActivity(pcmData, rms);
+    bool rmsVoice = detectVoiceActivity(frame, rms);
+
+    bool voiceDetected;
+    if (useRnnoiseVad && voiceProb >= 0.0f)
+        voiceDetected = voiceProb > vadProbabilityThreshold;
+    else
+        voiceDetected = rmsVoice;
 
     if (rmsThrottleTimer.elapsed() >= RMS_EMIT_INTERVAL_MS) {
         emit audioLevelChanged(rms);
@@ -276,7 +319,7 @@ void AudioPipeline::onAudioCaptured(const QByteArray &pcmData)
     if (!isSpeaking)
         return;
 
-    QByteArray encoded = encoder->encode(pcmData);
+    QByteArray encoded = encoder->encode(frame);
     if (!encoded.isEmpty())
         emit encodedAudioReady(encoded);
 }

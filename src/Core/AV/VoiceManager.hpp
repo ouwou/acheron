@@ -64,12 +64,17 @@ public:
     void setOpusFec(bool enabled);
     void setOpusPacketLossPercent(int percent);
 
+    void setNoiseSuppressionEnabled(bool enabled);
+    void setUseRnnoiseVad(bool enabled);
+
     [[nodiscard]] int opusApplication() const { return cachedOpusApplication; }
     [[nodiscard]] int opusBitrate() const { return cachedOpusBitrate; }
     [[nodiscard]] int opusComplexity() const { return cachedOpusComplexity; }
     [[nodiscard]] int opusSignalType() const { return cachedOpusSignalType; }
     [[nodiscard]] bool opusFec() const { return cachedOpusFec; }
     [[nodiscard]] int opusPacketLossPercent() const { return cachedOpusPacketLossPercent; }
+    [[nodiscard]] bool noiseSuppression() const { return cachedNoiseSuppression; }
+    [[nodiscard]] bool rnnoiseVad() const { return cachedUseRnnoiseVad; }
 
     [[nodiscard]] QList<AudioDeviceInfo> availableInputDevices() const;
     [[nodiscard]] QList<AudioDeviceInfo> availableOutputDevices() const;
@@ -150,6 +155,12 @@ private:
     int cachedOpusSignalType = OPUS_SIGNAL_VOICE;
     bool cachedOpusFec = true;
     int cachedOpusPacketLossPercent = 0;
+    bool cachedNoiseSuppression = true;
+#ifdef ACHERON_HAVE_RNNOISE
+    bool cachedUseRnnoiseVad = true;
+#else
+    bool cachedUseRnnoiseVad = false;
+#endif
     QList<AudioDeviceInfo> cachedInputDevices;
     QList<AudioDeviceInfo> cachedOutputDevices;
 

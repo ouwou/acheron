@@ -35,6 +35,7 @@ public:
 
     [[nodiscard]] bool isCapturing() const override;
     [[nodiscard]] bool isPlaying() const override;
+    [[nodiscard]] int nativeCaptureChannels() const override;
 
     void setInputGain(float gain) override;
     void setOutputVolume(float volume) override;
