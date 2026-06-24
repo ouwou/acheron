@@ -20,6 +20,8 @@ set(CMAKE_AUTORCC ON)
 
 option(BUILD_TESTS "Build test targets" ON)
 option(ENABLE_VOICE "Build with voice/audio support" ON)
+option(ENABLE_RNNOISE "Build with RNNoise noise suppression (requires ENABLE_VOICE)" ON)
+option(ENABLE_RNNOISE_RTCD "Use RNNoise x86 runtime SIMD dispatch (SSE4.1/AVX2)" ON)
 
 if(BUILD_TESTS)
     enable_testing()
@@ -129,6 +131,9 @@ if(ENABLE_VOICE)
     add_subdirectory(vendor/libdave/cpp EXCLUDE_FROM_ALL)
 endif()
 
+# find or build rnnoise
+include(rnnoise.cmake)
+
 set(PROJECT_SOURCES
     resources.qrc
     src/main.cpp
@@ -226,6 +231,7 @@ if(ENABLE_VOICE)
         src/Core/AV/OpusDecoder.cpp
         src/Core/AV/JitterBuffer.cpp
         src/Core/AV/AudioMixer.cpp
+	src/Core/AV/NoiseSuppressor.cpp
     )
 endif()
 
@@ -302,6 +308,10 @@ if(ENABLE_VOICE)
     target_include_directories(${PROJECT_NAME} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio"
     )
+    if(ENABLE_RNNOISE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE rnnoise)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_RNNOISE)
+    endif()
 endif()
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)
