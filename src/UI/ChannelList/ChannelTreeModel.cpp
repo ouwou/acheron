@@ -1108,7 +1108,16 @@ void ChannelTreeModel::toggleCollapsed(const QModelIndex &index)
     if (!node)
         return;
 
-    node->collapsed = !node->collapsed;
+    setCollapsed(index, !node->collapsed);
+}
+
+void ChannelTreeModel::setCollapsed(const QModelIndex &index, bool collapsed)
+{
+    ChannelNode *node = nodeFromIndex(index);
+    if (!node || node->collapsed == collapsed)
+        return;
+
+    node->collapsed = collapsed;
     emit dataChanged(index, index, { CollapsedRole });
 }
 

@@ -231,7 +231,7 @@ if(ENABLE_VOICE)
         src/Core/AV/OpusDecoder.cpp
         src/Core/AV/JitterBuffer.cpp
         src/Core/AV/AudioMixer.cpp
-	src/Core/AV/NoiseSuppressor.cpp
+        src/Core/AV/NoiseSuppressor.cpp
     )
 endif()
 

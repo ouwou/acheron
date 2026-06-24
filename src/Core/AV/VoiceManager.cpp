@@ -285,6 +285,22 @@ void VoiceManager::setOpusPacketLossPercent(int percent)
         QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, percent]() { p->setOpusPacketLossPercent(percent); });
 }
 
+void VoiceManager::setNoiseSuppressionEnabled(bool enabled)
+{
+    cachedNoiseSuppression = enabled;
+
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, enabled]() { p->setNoiseSuppressionEnabled(enabled); });
+}
+
+void VoiceManager::setUseRnnoiseVad(bool enabled)
+{
+    cachedUseRnnoiseVad = enabled;
+
+    if (audioPipeline)
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, enabled]() { p->setUseRnnoiseVad(enabled); });
+}
+
 QList<AudioDeviceInfo> VoiceManager::availableInputDevices() const
 {
     if (voiceThread)
@@ -625,14 +641,18 @@ void VoiceManager::onVoiceClientConnected()
     int signalType = cachedOpusSignalType;
     bool fec = cachedOpusFec;
     int plp = cachedOpusPacketLossPercent;
+    bool ns = cachedNoiseSuppression;
+    bool nsVad = cachedUseRnnoiseVad;
     QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, backend, capturing, inputId, outputId,
-                                              application, bitrate, complexity, signalType, fec, plp]() {
+                                              application, bitrate, complexity, signalType, fec, plp, ns, nsVad]() {
         p->setOpusApplication(application);
         p->setOpusBitrate(bitrate);
         p->setOpusComplexity(complexity);
         p->setOpusSignalType(signalType);
         p->setOpusFec(fec);
         p->setOpusPacketLossPercent(plp);
+        p->setNoiseSuppressionEnabled(ns);
+        p->setUseRnnoiseVad(nsVad);
         p->start(backend, capturing);
         if (!inputId.isEmpty())
             p->setInputDevice(inputId);

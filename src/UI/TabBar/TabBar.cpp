@@ -87,6 +87,34 @@ void TabBar::openNewTab(const TabEntry &entry)
     emit tabChanged(entry);
 }
 
+QList<TabEntry> TabBar::tabEntries() const
+{
+    QList<TabEntry> out;
+    out.reserve(tabs.size());
+    for (const auto &tab : tabs)
+        out.append(tab.current());
+    return out;
+}
+
+void TabBar::restoreTabs(const QList<TabEntry> &entries, int activeIndex)
+{
+    if (entries.isEmpty())
+        return;
+
+    tabs.clear();
+    for (const auto &entry : entries) {
+        Tab tab;
+        tab.history.append(entry);
+        tab.historyIndex = 0;
+        tabs.append(tab);
+    }
+
+    currentTabIndex = qBound(0, activeIndex, tabs.size() - 1);
+
+    updateVisibility();
+    update();
+}
+
 void TabBar::navigateBack()
 {
     Tab &tab = tabs[currentTabIndex];

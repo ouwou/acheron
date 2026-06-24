@@ -87,6 +87,9 @@ void AccountsWindow::setupUi()
     detailStatus = new QLabel(detailsContainer);
     detailStatus->setStyleSheet("font-weight: bold;");
 
+    autoConnectCheck = new QCheckBox(tr("Connect on startup"), detailsContainer);
+    autoConnectCheck->setToolTip(tr("Connect this account automatically when Acheron starts"));
+
     QHBoxLayout *actionBtnLayout = new QHBoxLayout();
     connectButton = new QPushButton(tr("Connect"), detailsContainer);
     disconnectButton = new QPushButton(tr("Disconnect"), detailsContainer);
@@ -97,6 +100,7 @@ void AccountsWindow::setupUi()
     form->addRow(tr("Status:"), detailStatus);
     form->addRow(tr("Username:"), detailUsername);
     form->addRow(tr("User ID:"), detailId);
+    form->addRow(autoConnectCheck);
     form->addRow(tr("Actions:"), actionBtnLayout);
 
     containerLayout->addLayout(form);
@@ -129,6 +133,12 @@ void AccountsWindow::setupUi()
 
     connect(connectButton, &QPushButton::clicked, this, &AccountsWindow::onConnectClicked);
     connect(disconnectButton, &QPushButton::clicked, this, &AccountsWindow::onDisconnectClicked);
+
+    connect(autoConnectCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        QModelIndex idx = listView->selectionModel()->currentIndex();
+        if (idx.isValid())
+            model->setAutoConnect(idx.row(), checked);
+    });
 }
 
 void AccountsWindow::performConnect(int row)
@@ -225,6 +235,10 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
     QAction *actConnect = menu.addAction("Connect");
     QAction *actDisconnect = menu.addAction("Disconnect");
     menu.addSeparator();
+    QAction *actAutoConnect = menu.addAction("Connect on Startup");
+    actAutoConnect->setCheckable(true);
+    actAutoConnect->setChecked(index.data(AccountsModel::AutoConnectRole).toBool());
+    menu.addSeparator();
     QAction *actSetToken = menu.addAction("Set Token");
     menu.addSeparator();
     QAction *actRemove = menu.addAction("Remove Account");
@@ -247,6 +261,8 @@ void AccountsWindow::onContextMenuRequested(const QPoint &pos)
         performConnect(index.row());
     else if (selected == actDisconnect)
         performDisconnect(index.row());
+    else if (selected == actAutoConnect)
+        model->setAutoConnect(index.row(), actAutoConnect->isChecked());
     else if (selected == actSetToken)
         onSetTokenRequested(index.row());
     else if (selected == actRemove)
@@ -332,6 +348,9 @@ void AccountsWindow::updateDetails(const AccountInfo *info)
     detailDisplayName->setText(info->displayName);
     detailUsername->setText(info->username);
     detailId->setText(QString::number(info->id));
+
+    QSignalBlocker autoConnectBlocker(autoConnectCheck);
+    autoConnectCheck->setChecked(info->autoConnect);
 
     switch (info->state) {
     case ConnectionState::Disconnected:

@@ -19,3 +19,6 @@
 [submodule "vendor/mlspp"]
 	path = vendor/mlspp
 	url = https://github.com/cisco/mlspp.git
+[submodule "vendor/rnnoise"]
+	path = vendor/rnnoise
+	url = https://github.com/xiph/rnnoise

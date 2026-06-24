@@ -42,6 +42,7 @@ private:
     QLabel *detailUsername;
     QLabel *detailId;
     QLabel *detailStatus;
+    QCheckBox *autoConnectCheck;
     QWidget *detailsContainer;
     QLabel *emptyStateLabel;
 

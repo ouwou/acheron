@@ -491,6 +491,14 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
     advLayout->addRow(tr("Packet Loss"),
                       makeSliderRow(packetLossSlider, packetLossValue, 0, 100, 36));
 
+#ifdef ACHERON_HAVE_RNNOISE
+    noiseSuppressionCheckbox = new QCheckBox(tr("Noise Suppression"), advancedContainer);
+    advLayout->addRow(QString(), noiseSuppressionCheckbox);
+
+    rnnoiseVadCheckbox = new QCheckBox(tr("Use RNNoise voice detection"), advancedContainer);
+    advLayout->addRow(QString(), rnnoiseVadCheckbox);
+#endif
+
     parentLayout->addWidget(advancedContainer);
 
     installResetOnDoubleClick(applicationCombo, OPUS_APPLICATION_VOIP);
@@ -499,6 +507,10 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
     installResetOnDoubleClick(signalTypeCombo, OPUS_SIGNAL_VOICE);
     installResetOnDoubleClick(fecCheckbox, true);
     installResetOnDoubleClick(packetLossSlider, 0);
+#ifdef ACHERON_HAVE_RNNOISE
+    installResetOnDoubleClick(noiseSuppressionCheckbox, true);
+    installResetOnDoubleClick(rnnoiseVadCheckbox, true);
+#endif
 
     connect(advancedToggle, &QToolButton::toggled, this, [this](bool checked) {
         advancedToggle->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
@@ -546,6 +558,20 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
         if (voiceManager)
             voiceManager->setOpusPacketLossPercent(value);
     });
+
+#ifdef ACHERON_HAVE_RNNOISE
+    connect(noiseSuppressionCheckbox, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue("voice/noise_suppression", checked);
+        if (voiceManager)
+            voiceManager->setNoiseSuppressionEnabled(checked);
+    });
+
+    connect(rnnoiseVadCheckbox, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue("voice/rnnoise_vad", checked);
+        if (voiceManager)
+            voiceManager->setUseRnnoiseVad(checked);
+    });
+#endif
 }
 
 void VoiceWindow::loadCodecSettings()
@@ -571,6 +597,11 @@ void VoiceWindow::loadCodecSettings()
     fecCheckbox->setChecked(fec);
     packetLossSlider->setValue(packetLoss);
     packetLossValue->setText(QString("%1%").arg(packetLoss));
+
+#ifdef ACHERON_HAVE_RNNOISE
+    noiseSuppressionCheckbox->setChecked(settings.value("voice/noise_suppression", true).toBool());
+    rnnoiseVadCheckbox->setChecked(settings.value("voice/rnnoise_vad", true).toBool());
+#endif
 }
 
 void VoiceWindow::applyCodecSettingsToManager()
@@ -583,6 +614,10 @@ void VoiceWindow::applyCodecSettingsToManager()
     voiceManager->setOpusSignalType(signalTypeCombo->currentData().toInt());
     voiceManager->setOpusFec(fecCheckbox->isChecked());
     voiceManager->setOpusPacketLossPercent(packetLossSlider->value());
+#ifdef ACHERON_HAVE_RNNOISE
+    voiceManager->setNoiseSuppressionEnabled(noiseSuppressionCheckbox->isChecked());
+    voiceManager->setUseRnnoiseVad(rnnoiseVadCheckbox->isChecked());
+#endif
 }
 
 bool VoiceWindow::eventFilter(QObject *obj, QEvent *event)

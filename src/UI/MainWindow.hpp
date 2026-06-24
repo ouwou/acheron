@@ -1,11 +1,15 @@
 #pragma once
 #include <QtWidgets>
 
+#include <functional>
+#include <optional>
+
 #include <Core/Snowflake.hpp>
 #include "Input/MessageInput.hpp"
 #include "MemberList/MemberListView.hpp"
 #include "MemberList/MemberListModel.hpp"
 #include "MemberList/MemberListDelegate.hpp"
+#include "TabBar/TabBar.hpp"
 #include "Discord/Entities.hpp"
 
 namespace Acheron {
@@ -33,8 +37,6 @@ class ConnectionBanner;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
 #endif
-class TabBar;
-struct TabEntry;
 } // namespace UI
 } // namespace Acheron
 
@@ -62,6 +64,17 @@ private:
     void switchToTabEntry(const TabEntry &entry);
     void activateChannel(const TabEntry &entry);
     void refreshTabReadStates();
+
+    void saveWindowState();
+    void restoreWindowState();
+    void applyTreeState();
+    void captureTreeState(QStringList &expanded,
+                          QStringList &collapsed,
+                          QStringList &collapsedCategories,
+                          QSet<QString> &presentAccounts) const;
+    void forEachSourceNode(const std::function<void(const QModelIndex &, ChannelNode *)> &fn) const;
+    QString treeNodeKey(const ChannelNode *node) const;
+    void maybeActivatePendingChannel(Core::Snowflake accountId);
     QColor resolveRoleColor(Core::Snowflake userId, Core::Snowflake guildId);
     void refreshGuildRoleData(Core::Snowflake guildId);
     void showUserContextMenu(Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos);
@@ -111,6 +124,14 @@ private:
 
     QSet<Core::Snowflake> instancesSignalsConnected;
     QSplitter *mainSplitter = nullptr;
+
+    // restored-but-not-yet-activated channel. gotta wait for READY
+    std::optional<TabEntry> pendingActiveEntry;
+    // same thing for expansion state
+    bool hasSavedTreeState = false;
+    QSet<QString> savedExpandedNodes;
+    QSet<QString> savedCollapsedNodes;
+    QSet<QString> savedCollapsedCategories;
 };
 
 } // namespace UI

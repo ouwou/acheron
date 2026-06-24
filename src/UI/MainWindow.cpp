@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 
 #include <QMessageBox>
+#include <QSettings>
 
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
@@ -84,6 +85,9 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
     connect(session, &Session::ready, this, [this](const Discord::Ready &ready) {
         channelTreeModel->populateFromReady(ready);
         channelTree->performDefaultExpansion();
+        applyTreeState();
+        maybeActivatePendingChannel(ready.user->id);
+        refreshTabReadStates();
     });
 
     connect(accountsModel, &AccountsModel::dataChanged, this,
@@ -120,10 +124,14 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
         if (instance)
             setupPermanentConnections(instance);
     }
+
+    restoreWindowState();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    saveWindowState();
+
     hide();
 
     // if (session)
@@ -1007,6 +1015,222 @@ void MainWindow::refreshTabReadStates()
         auto state = inst->readState()->computeChannelReadState(
                 entry.channelId, entry.guildId, entry.isDm);
         tabBar->updateChannelReadState(entry.channelId, state.isUnread, state.mentionCount);
+    }
+}
+
+namespace {
+
+bool isNativeExpandable(ChannelNode::Type type)
+{
+    return type == ChannelNode::Type::Account ||
+           type == ChannelNode::Type::DMHeader ||
+           type == ChannelNode::Type::Folder ||
+           type == ChannelNode::Type::Server;
+}
+
+// <accountId>:<type>:<nodeId>
+QStringList mergeTreeKeys(const QStringList &previous, const QStringList &captured,
+                          const QSet<QString> &presentAccounts)
+{
+    QStringList result;
+    for (const QString &key : previous) {
+        if (!presentAccounts.contains(key.section(':', 0, 0)))
+            result.append(key);
+    }
+    result.append(captured);
+    return result;
+}
+
+} // namespace
+
+void MainWindow::forEachSourceNode(const std::function<void(const QModelIndex &, ChannelNode *)> &fn) const
+{
+    std::function<void(const QModelIndex &)> walk = [&](const QModelIndex &parent) {
+        int rows = channelTreeModel->rowCount(parent);
+        for (int i = 0; i < rows; ++i) {
+            QModelIndex idx = channelTreeModel->index(i, 0, parent);
+            if (ChannelNode *node = channelTreeModel->nodeFromIndex(idx))
+                fn(idx, node);
+            walk(idx);
+        }
+    };
+    walk({});
+}
+
+QString MainWindow::treeNodeKey(const ChannelNode *node) const
+{
+    const ChannelNode *acct = node;
+    while (acct && acct->type != ChannelNode::Type::Account)
+        acct = acct->parent;
+
+    quint64 acctId = acct ? static_cast<quint64>(acct->id) : 0;
+    return QStringLiteral("%1:%2:%3")
+            .arg(acctId)
+            .arg(static_cast<int>(node->type))
+            .arg(static_cast<quint64>(node->id));
+}
+
+void MainWindow::captureTreeState(QStringList &expanded,
+                                  QStringList &collapsed,
+                                  QStringList &collapsedCategories,
+                                  QSet<QString> &presentAccounts) const
+{
+    forEachSourceNode([&](const QModelIndex &sourceIndex, ChannelNode *node) {
+        if (node->type == ChannelNode::Type::Account)
+            presentAccounts.insert(QString::number(static_cast<quint64>(node->id)));
+
+        if (node->type == ChannelNode::Type::Category) {
+            if (node->collapsed)
+                collapsedCategories.append(treeNodeKey(node));
+            return;
+        }
+
+        if (!isNativeExpandable(node->type))
+            return;
+
+        QModelIndex proxyIndex = channelFilterProxy->mapFromSource(sourceIndex);
+        if (!proxyIndex.isValid())
+            return;
+
+        if (channelTree->isExpanded(proxyIndex))
+            expanded.append(treeNodeKey(node));
+        else
+            collapsed.append(treeNodeKey(node));
+    });
+}
+
+void MainWindow::applyTreeState()
+{
+    if (!hasSavedTreeState)
+        return;
+
+    // first restore the pseudo-collapsed stuff for categories
+    forEachSourceNode([this](const QModelIndex &sourceIndex, ChannelNode *node) {
+        if (node->type == ChannelNode::Type::Category)
+            channelTreeModel->setCollapsed(sourceIndex, savedCollapsedCategories.contains(treeNodeKey(node)));
+    });
+    channelFilterProxy->invalidateFilter();
+
+    // the rest
+    forEachSourceNode([this](const QModelIndex &sourceIndex, ChannelNode *node) {
+        if (!isNativeExpandable(node->type))
+            return;
+
+        QString key = treeNodeKey(node);
+        QModelIndex proxyIndex = channelFilterProxy->mapFromSource(sourceIndex);
+        if (!proxyIndex.isValid())
+            return;
+
+        if (savedExpandedNodes.contains(key))
+            channelTree->expand(proxyIndex);
+        else if (savedCollapsedNodes.contains(key))
+            channelTree->collapse(proxyIndex);
+    });
+}
+
+void MainWindow::maybeActivatePendingChannel(Core::Snowflake accountId)
+{
+    if (!pendingActiveEntry.has_value() || pendingActiveEntry->accountId != accountId)
+        return;
+
+    TabEntry entry = *pendingActiveEntry;
+    pendingActiveEntry.reset();
+    activateChannel(entry);
+}
+
+void MainWindow::saveWindowState()
+{
+    QSettings settings;
+
+    settings.setValue("layout/geometry", saveGeometry());
+    if (mainSplitter)
+        settings.setValue("layout/splitter", mainSplitter->saveState());
+
+    const QList<TabEntry> all = tabBar->tabEntries();
+    int activeIndex = tabBar->activeTabIndex();
+    QList<TabEntry> valid;
+    int newActive = 0;
+    for (int i = 0; i < all.size(); ++i) {
+        if (!all[i].channelId.isValid())
+            continue;
+        if (i == activeIndex)
+            newActive = valid.size();
+        valid.append(all[i]);
+    }
+
+    settings.remove("layout/tabs");
+    settings.beginWriteArray("layout/tabs");
+    for (int i = 0; i < valid.size(); ++i) {
+        settings.setArrayIndex(i);
+        const TabEntry &entry = valid[i];
+        settings.setValue("channelId", static_cast<quint64>(entry.channelId));
+        settings.setValue("guildId", static_cast<quint64>(entry.guildId));
+        settings.setValue("accountId", static_cast<quint64>(entry.accountId));
+        settings.setValue("name", entry.name);
+        settings.setValue("iconUrl", entry.iconUrl);
+        settings.setValue("isDm", entry.isDm);
+    }
+    settings.endArray();
+    settings.setValue("layout/activeTab", newActive);
+
+    QStringList expanded, collapsed, collapsedCategories;
+    QSet<QString> presentAccounts;
+    captureTreeState(expanded, collapsed, collapsedCategories, presentAccounts);
+
+    settings.setValue("layout/tree/expanded",
+                      mergeTreeKeys(settings.value("layout/tree/expanded").toStringList(),
+                                    expanded,
+                                    presentAccounts));
+    settings.setValue("layout/tree/collapsed",
+                      mergeTreeKeys(settings.value("layout/tree/collapsed").toStringList(),
+                                    collapsed,
+                                    presentAccounts));
+    settings.setValue("layout/tree/collapsedCategories",
+                      mergeTreeKeys(settings.value("layout/tree/collapsedCategories").toStringList(),
+                                    collapsedCategories,
+                                    presentAccounts));
+}
+
+void MainWindow::restoreWindowState()
+{
+    QSettings settings;
+
+    if (settings.contains("layout/geometry"))
+        restoreGeometry(settings.value("layout/geometry").toByteArray());
+    if (mainSplitter && settings.contains("layout/splitter"))
+        mainSplitter->restoreState(settings.value("layout/splitter").toByteArray());
+
+    const auto toSet = [](const QStringList &list) {
+        return QSet<QString>(list.cbegin(), list.cend());
+    };
+    savedExpandedNodes = toSet(settings.value("layout/tree/expanded").toStringList());
+    savedCollapsedNodes = toSet(settings.value("layout/tree/collapsed").toStringList());
+    savedCollapsedCategories = toSet(settings.value("layout/tree/collapsedCategories").toStringList());
+    hasSavedTreeState = !savedExpandedNodes.isEmpty() ||
+                        !savedCollapsedNodes.isEmpty() ||
+                        !savedCollapsedCategories.isEmpty();
+
+    QList<TabEntry> entries;
+    int count = settings.beginReadArray("layout/tabs");
+    for (int i = 0; i < count; ++i) {
+        settings.setArrayIndex(i);
+        TabEntry entry;
+        entry.channelId = Core::Snowflake(settings.value("channelId").toULongLong());
+        entry.guildId = Core::Snowflake(settings.value("guildId").toULongLong());
+        entry.accountId = Core::Snowflake(settings.value("accountId").toULongLong());
+        entry.name = settings.value("name").toString();
+        entry.iconUrl = settings.value("iconUrl").toUrl();
+        entry.isDm = settings.value("isDm").toBool();
+        if (entry.channelId.isValid())
+            entries.append(entry);
+    }
+    settings.endArray();
+
+    if (!entries.isEmpty()) {
+        int activeTab = qBound(0, settings.value("layout/activeTab", 0).toInt(), entries.size() - 1);
+        tabBar->restoreTabs(entries, activeTab);
+        // wait for READY
+        pendingActiveEntry = entries[activeTab];
     }
 }
 

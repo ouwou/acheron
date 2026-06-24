@@ -55,6 +55,10 @@ public:
     const TabEntry &tabEntry(int index) const { return tabs[index].current(); }
     QString activeTabName() const { return tabs.isEmpty() ? QString() : tabs[currentTabIndex].current().name; }
 
+    int activeTabIndex() const { return currentTabIndex; }
+    QList<TabEntry> tabEntries() const;
+    void restoreTabs(const QList<TabEntry> &entries, int activeIndex);
+
     void updateChannelReadState(Core::Snowflake channelId, bool unread, int mentionCount);
 
 signals:

@@ -7,6 +7,21 @@
 namespace Acheron {
 namespace Storage {
 
+namespace {
+bool columnExists(QSqlDatabase &db, const QString &table, const QString &column)
+{
+    QSqlQuery query(db);
+    if (!query.exec(QString("PRAGMA table_info(%1)").arg(table)))
+        return false;
+
+    while (query.next()) {
+        if (query.value(1).toString() == column)
+            return true;
+    }
+    return false;
+}
+} // namespace
+
 DatabaseManager &DatabaseManager::instance()
 {
     static DatabaseManager instance;
@@ -112,9 +127,13 @@ void DatabaseManager::setupPersistentTables()
             gateway_url TEXT,
             rest_url TEXT,
             cdn_url TEXT,
-            display_order INTEGER DEFAULT 0
+            display_order INTEGER DEFAULT 0,
+            auto_connect INTEGER NOT NULL DEFAULT 0
         )
     )");
+
+    if (!columnExists(db, "accounts", "auto_connect"))
+        query.exec("ALTER TABLE accounts ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0");
 }
 
 void DatabaseManager::setupCacheTables(const QString &connName)

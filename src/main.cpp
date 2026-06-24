@@ -105,6 +105,8 @@ int main(int argc, char *argv[])
         UI::MainWindow window(&session);
         window.show();
 
+        session.autoConnectAccounts();
+
         exitCode = app.exec();
     }
 

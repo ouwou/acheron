@@ -85,6 +85,14 @@ void Session::connectAccount(Snowflake accountId)
     instance->start();
 }
 
+void Session::autoConnectAccounts()
+{
+    for (const auto &acc : repo.getAllAccounts()) {
+        if (acc.autoConnect)
+            connectAccount(acc.id);
+    }
+}
+
 void Session::disconnectAccount(Snowflake accountId)
 {
     if (!clients.contains(accountId))

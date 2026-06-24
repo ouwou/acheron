@@ -66,6 +66,7 @@ public:
     void updateVoiceParticipant(Snowflake channelId, Snowflake userId, bool joined, Snowflake accountId);
     void updateVoiceParticipantState(Snowflake channelId, Snowflake userId, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
+    void setCollapsed(const QModelIndex &index, bool collapsed);
 
     QList<QPair<Snowflake, Snowflake>> getMarkableChannels(const QModelIndex &index);
     ChannelNode *findChannelTreeNode(Snowflake channelId);

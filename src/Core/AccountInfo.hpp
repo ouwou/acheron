@@ -22,6 +22,7 @@ struct AccountInfo
     QString cdnUrl = "https://cdn.discordapp.com";
 
     int displayOrder = 0;
+    bool autoConnect = false;
 
     ConnectionState state = ConnectionState::Disconnected;
 

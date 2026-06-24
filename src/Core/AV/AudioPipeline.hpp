@@ -23,6 +23,7 @@ class IAudioBackend;
 class OpusEncoder;
 class OpusDecoder;
 class JitterBuffer;
+class NoiseSuppressor;
 
 struct SpeakerState
 {
@@ -56,6 +57,8 @@ public slots:
     void setInputGain(float gain);
     void setOutputVolume(float volume);
     void setVadThreshold(float threshold);
+    void setNoiseSuppressionEnabled(bool enabled);
+    void setUseRnnoiseVad(bool enabled);
 
     void setOpusApplication(int application);
     void setOpusBitrate(int bitrate);
@@ -78,11 +81,13 @@ private:
     bool detectVoiceActivity(const QByteArray &pcmFrame, float &outRms) const;
     void sendTrailingSilence();
     void initializeEncoder();
+    void reconfigureNoiseSuppressorChannels();
     static float computeRms(const int16_t *samples, int count);
 
     IAudioBackend *audioBackend = nullptr;
     QTimer *mixTimer = nullptr;
     std::unique_ptr<OpusEncoder> encoder;
+    std::unique_ptr<NoiseSuppressor> noiseSuppressor;
     std::unordered_map<quint32, SpeakerState> speakers;
 
     QHash<quint32, Snowflake> ssrcToUser;
@@ -93,6 +98,14 @@ private:
     float vadThreshold = 100.0f;
     int vadHoldoffFrames = 25;
     int vadHoldoffCounter = 0;
+
+    bool noiseSuppressionEnabled = true;
+#ifdef ACHERON_HAVE_RNNOISE
+    bool useRnnoiseVad = true;
+#else
+    bool useRnnoiseVad = false;
+#endif
+    float vadProbabilityThreshold = 0.5f;
 
     int opusApplication = OPUS_APPLICATION_VOIP;
     int opusBitrate = 64000;

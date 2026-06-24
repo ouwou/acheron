@@ -21,6 +21,7 @@ public:
     enum Roles {
         AccountObjectRole = Qt::UserRole + 1,
         ConnectionStateRole,
+        AutoConnectRole,
     };
 
     int rowCount(const QModelIndex &parent = {}) const override;
@@ -37,6 +38,7 @@ public:
     void removeAccount(int row);
 
     void setConnectionState(int row, Core::ConnectionState state);
+    void setAutoConnect(int row, bool enabled);
 
 private:
     Core::Session *session;
