@@ -22,14 +22,12 @@ option(BUILD_TESTS "Build test targets" ON)
 option(ENABLE_VOICE "Build with voice/audio support" ON)
 option(ENABLE_RNNOISE "Build with RNNoise noise suppression (requires ENABLE_VOICE)" ON)
 option(ENABLE_RNNOISE_RTCD "Use RNNoise x86 runtime SIMD dispatch (SSE4.1/AVX2)" ON)
-
 if(BUILD_TESTS)
     enable_testing()
 endif()
 
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
-
 if(ENABLE_VOICE)
     if(USE_VCPKG)
         find_package(unofficial-sodium CONFIG REQUIRED)
