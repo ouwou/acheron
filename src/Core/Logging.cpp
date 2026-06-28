@@ -68,6 +68,8 @@ void Logger::rotateLogFile()
 
 void Logger::cleanup()
 {
+    qInstallMessageHandler(nullptr);
+
     {
         std::lock_guard<std::mutex> lock(queueMutex);
         stopping = true;
