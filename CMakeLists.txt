@@ -33,15 +33,15 @@ if(ENABLE_VOICE)
         find_package(unofficial-sodium CONFIG REQUIRED)
         find_package(Opus CONFIG REQUIRED)
 
-	set(SODIUM_TARGET unofficial-sodium::sodium)
+        set(SODIUM_TARGET unofficial-sodium::sodium)
         set(OPUS_TARGET Opus::opus)
     else()
         find_package(PkgConfig REQUIRED)
 
-	pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
-	pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
+        pkg_check_modules(SODIUM REQUIRED IMPORTED_TARGET libsodium)
+        pkg_check_modules(OPUS REQUIRED IMPORTED_TARGET opus)
 
-	set(SODIUM_TARGET PkgConfig::SODIUM)
+        set(SODIUM_TARGET PkgConfig::SODIUM)
         set(OPUS_TARGET PkgConfig::OPUS)
     endif()
 endif()
@@ -95,28 +95,28 @@ endif()
 
 if(ENABLE_VOICE)
     find_package(MLSPP QUIET)
-    if (NOT MLSPP_FOUND)
+    if(NOT TARGET MLSPP::mlspp)
         message(STATUS "mlspp not found, using subproject")
         set(DISABLE_GREASE ON CACHE BOOL "" FORCE)
         set(TESTING OFF CACHE BOOL "" FORCE)
         set(MLS_CXX_NAMESPACE "mlspp" CACHE STRING "" FORCE)
         set(CMAKE_EXPORT_PACKAGE_REGISTRY OFF CACHE BOOL "" FORCE)
         add_subdirectory(vendor/mlspp EXCLUDE_FROM_ALL)
-        if (NOT TARGET MLSPP::mlspp)
+        if(NOT TARGET MLSPP::mlspp)
             add_library(MLSPP::mlspp ALIAS mlspp)
-        endif ()
-        if (NOT TARGET MLSPP::hpke)
+        endif()
+        if(NOT TARGET MLSPP::hpke)
             add_library(MLSPP::hpke ALIAS hpke)
-        endif ()
+        endif()
         set(MLSPP_FOUND TRUE CACHE BOOL "" FORCE)
         # Write a shim config so libdave's find_dependency(MLSPP) finds this
         # instead of the broken build-tree config that add_subdirectory generates
         file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mlspp-shim/MLSPPConfig.cmake"
             "set(MLSPP_FOUND TRUE)\n")
         set(MLSPP_DIR "${CMAKE_CURRENT_BINARY_DIR}/mlspp-shim" CACHE PATH "" FORCE)
-    else ()
+    else()
         message(STATUS "Found system mlspp")
-    endif ()
+    endif()
 
     # Prevent find_package from finding mlspp's broken build-tree config via registry
     set(CMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY ON)
@@ -303,9 +303,7 @@ if(ENABLE_VOICE)
         libdave
     )
 
-    target_include_directories(${PROJECT_NAME} PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio"
-    )
+    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
     if(ENABLE_RNNOISE)
         target_link_libraries(${PROJECT_NAME} PRIVATE rnnoise)
         target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_RNNOISE)
