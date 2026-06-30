@@ -16,6 +16,9 @@
 [submodule "vendor/qrcodegen"]
 	path = vendor/qrcodegen
 	url = https://github.com/nayuki/QR-Code-generator.git
+[submodule "vendor/mlspp"]
+	path = vendor/mlspp
+	url = https://github.com/cisco/mlspp.git
 [submodule "vendor/rnnoise"]
 	path = vendor/rnnoise
 	url = https://github.com/xiph/rnnoise
