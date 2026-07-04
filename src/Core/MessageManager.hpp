@@ -3,6 +3,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <QCache>
 
 #include "PendingAttachment.hpp"
 #include "Snowflake.hpp"
