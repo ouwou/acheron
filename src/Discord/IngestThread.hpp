@@ -4,6 +4,7 @@
 #include <QtZlib/zlib.h>
 
 #include <deque>
+#include <thread>
 
 namespace Acheron {
 namespace Discord {

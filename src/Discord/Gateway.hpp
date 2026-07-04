@@ -6,6 +6,7 @@
 #include <curl/curl.h>
 
 #include <memory>
+#include <thread>
 
 #include "Enums.hpp"
 #include "IngestThread.hpp"
