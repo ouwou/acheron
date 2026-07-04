@@ -1,3 +1,8 @@
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QDialogButtonBox>
+#include <QPushButton>
+
 #include "ConfirmPopup.hpp"
 
 namespace Acheron {
