@@ -1,3 +1,5 @@
+#include <QTimeZone>
+
 #include "ReadStateManager.hpp"
 
 #include "Core/Logging.hpp"
