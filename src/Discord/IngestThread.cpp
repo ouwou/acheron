@@ -1,3 +1,6 @@
+#include <QJsonDocument>
+#include <QJsonParseError>
+
 #include "IngestThread.hpp"
 
 #include "Core/Logging.hpp"
