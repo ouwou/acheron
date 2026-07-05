@@ -351,3 +351,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/TwemojiCOLRv0.ttf")
         COMMENT "Copying TwemojiCOLRv0.ttf to build directory"
     )
 endif()
+
+include(GNUInstallDirs)
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
