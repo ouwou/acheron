@@ -94,6 +94,8 @@ else()
 endif()
 
 if(ENABLE_VOICE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
     find_package(MLSPP QUIET)
     if(NOT TARGET MLSPP::mlspp)
         message(STATUS "mlspp not found, using subproject")
@@ -126,7 +128,6 @@ if(ENABLE_VOICE)
     # Prevent libdave's own vcpkg manifest from being processed; our
     # project-level vcpkg.json already provides all required packages.
     set(VCPKG_MANIFEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     add_subdirectory(vendor/libdave/cpp EXCLUDE_FROM_ALL)
 endif()
 
