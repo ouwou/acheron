@@ -1,0 +1,12 @@
+#!/usr/bin/env xdg-open
+[Desktop Entry]
+Version=1.5
+Type=Application
+
+Name=Acheron
+Comment=An alternative Discord client with voice support made with C++ and QT 6
+Categories=Network;Chat;
+
+Icon=io.github.ouwou.acheron
+Exec=acheron
+Terminal=false
