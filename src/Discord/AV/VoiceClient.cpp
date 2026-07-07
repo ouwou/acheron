@@ -559,25 +559,25 @@ void VoiceClient::onGatewayResumed()
 {
     qCInfo(LogVoice) << "Voice session resumed, restoring to Connected state";
 
-    // assume session intact if we could resume
-    if (localSsrc != 0 && !sessionKey.isEmpty()) {
-        rtpEpoch = std::chrono::steady_clock::now();
-        setState(State::Connected);
-
-        // just in case
-        if (!encryption) {
-            EncryptionMode mode = encryptionModeFromString(selectedMode);
-            encryption = std::make_unique<VoiceEncryption>(mode, sessionKey);
+    if (localSsrc == 0 || sessionKey.isEmpty() || !encryption || !udpTransport) {
+        cleanupTransport();
+        if (currentState != State::Disconnected) {
+            setState(State::Disconnected);
+            emit disconnected();
         }
-
-        sendSilence();
-        if (!keepaliveTimer) {
-            keepaliveTimer = new QTimer(this);
-            connect(keepaliveTimer, &QTimer::timeout, this, &VoiceClient::sendSilence);
-        }
-        if (!keepaliveTimer->isActive())
-            keepaliveTimer->start(KEEPALIVE_INTERVAL_MS);
+        return;
     }
+
+    rtpEpoch = std::chrono::steady_clock::now();
+    setState(State::Connected);
+
+    sendSilence();
+    if (!keepaliveTimer) {
+        keepaliveTimer = new QTimer(this);
+        connect(keepaliveTimer, &QTimer::timeout, this, &VoiceClient::sendSilence);
+    }
+    if (!keepaliveTimer->isActive())
+        keepaliveTimer->start(KEEPALIVE_INTERVAL_MS);
 }
 
 void VoiceClient::onIpDiscovered(const QString &ip, int port)

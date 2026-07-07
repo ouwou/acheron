@@ -348,6 +348,10 @@ bool VoiceGateway::isFatalCloseCode(VoiceCloseCode code) const
 
 void VoiceGateway::networkLoop()
 {
+    VoiceCloseCode lastCloseCode = VoiceCloseCode::INTERNAL;
+    QString lastCloseReason;
+    bool terminalEmitted = false;
+
     do {
         shouldReconnect = false;
 
@@ -455,10 +459,15 @@ void VoiceGateway::networkLoop()
                                  << "reason:" << closeReason;
 
                 VoiceCloseCode cc = static_cast<VoiceCloseCode>(closeCode);
-                emit disconnected(cc, closeReason);
 
-                if (!wantToClose && !isFatalCloseCode(cc) && canResume)
+                if (!wantToClose && !isFatalCloseCode(cc) && canResume) {
+                    lastCloseCode = cc;
+                    lastCloseReason = closeReason;
                     shouldReconnect = true;
+                } else {
+                    terminalEmitted = true;
+                    emit disconnected(cc, closeReason);
+                }
                 break;
             }
 
@@ -522,7 +531,10 @@ void VoiceGateway::networkLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
         }
 
-    } while (shouldReconnect && running && reconnectAttempts <= maxReconnectAttempts);
+    } while (shouldReconnect && running && reconnectAttempts < maxReconnectAttempts);
+
+    if (running && !wantToClose && !terminalEmitted)
+        emit disconnected(lastCloseCode, lastCloseReason);
 
     running = false;
     heartbeatCv.notify_all();
