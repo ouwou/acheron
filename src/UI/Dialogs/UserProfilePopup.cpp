@@ -517,15 +517,11 @@ void UserProfilePopup::renderFromCachedData()
     }
 
     QString avatarHash = resolvedAvatarHash();
-    if (!avatarHash.isEmpty()) {
-        Core::Snowflake owner = resolvedGuildAvatarOwner();
-        QUrl url = owner.isValid()
-                           ? Discord::Cdn::guildMemberAvatar(guildId, userId, avatarHash, 256)
-                           : Discord::Cdn::userAvatar(userId, avatarHash, 256);
-        images->assign(avatarLabel, url, QSize(AvatarSize, AvatarSize));
-    } else {
-        avatarLabel->setPixmap(images->placeholder(QSize(AvatarSize, AvatarSize)));
-    }
+    Core::Snowflake owner = resolvedGuildAvatarOwner();
+    QUrl url = owner.isValid()
+                       ? Discord::Cdn::guildMemberAvatar(guildId, userId, avatarHash, 256)
+                       : Discord::Cdn::userAvatar(userId, avatarHash, 256);
+    images->assign(avatarLabel, url, QSize(AvatarSize, AvatarSize));
 
     discordJoinLabel->setText(tr("Joined Discord on %1").arg(formatDate(userId.toDateTime())));
 

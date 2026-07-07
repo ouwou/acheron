@@ -1253,7 +1253,7 @@ void MainWindow::updateVoiceStatusLabel()
             if (!um)
                 return {};
             auto user = um->getUser(userId);
-            if (!user || user->avatar.isNull())
+            if (!user)
                 return {};
             return Discord::Cdn::userAvatar(userId, user->avatar.get(), 32);
         });
@@ -1808,12 +1808,8 @@ QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake us
     constexpr QSize avatarSize(64, 64);
     auto *avatar = new QLabel(header);
     avatar->setFixedSize(avatarSize);
-    if (!avatarHash.isEmpty()) {
-        QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, 128);
-        session->getImageManager()->assign(avatar, url, avatarSize);
-    } else {
-        avatar->setPixmap(session->getImageManager()->placeholder(avatarSize));
-    }
+    QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, 128);
+    session->getImageManager()->assign(avatar, url, avatarSize);
     layout->addWidget(avatar);
 
     auto *textLayout = new QVBoxLayout;

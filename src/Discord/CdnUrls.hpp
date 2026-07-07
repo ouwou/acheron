@@ -14,10 +14,19 @@ inline QString assetExtension(const QString &hash)
     return hash.startsWith(QStringLiteral("a_")) ? QStringLiteral("gif") : QStringLiteral("png");
 }
 
+inline QUrl defaultUserAvatar(Core::Snowflake userId, int size = 128)
+{
+    if (!userId.isValid())
+        return {};
+    const quint64 index = (quint64(userId) >> 22) % 6;
+    return QUrl(QStringLiteral("https://cdn.discordapp.com/embed/avatars/%1.png?size=%2")
+                        .arg(QString::number(index), QString::number(size)));
+}
+
 inline QUrl userAvatar(Core::Snowflake userId, const QString &hash, int size = 128)
 {
     if (hash.isEmpty())
-        return {};
+        return defaultUserAvatar(userId, size);
     return QUrl(QStringLiteral("https://cdn.discordapp.com/avatars/%1/%2.%3?size=%4")
                         .arg(QString::number(quint64(userId)), hash, assetExtension(hash),
                              QString::number(size)));

@@ -132,7 +132,7 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             const QSize desiredSize(64, 64);
             QUrl avatarUrl;
 
-            if (node->dmRecipientId.isValid() && !node->dmAvatarHash.isEmpty()) {
+            if (node->dmRecipientId.isValid()) {
                 avatarUrl = Discord::Cdn::userAvatar(node->dmRecipientId, node->dmAvatarHash,
                                                      desiredSize.width());
             } else if (!node->TEMP_iconHash.isEmpty()) {
@@ -145,7 +145,7 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         }
 
         if (node->type == ChannelNode::Type::VoiceParticipant &&
-            node->dmRecipientId.isValid() && !node->dmAvatarHash.isEmpty()) {
+            node->dmRecipientId.isValid()) {
             const QSize desiredSize(32, 32);
             QUrl avatarUrl = Discord::Cdn::userAvatar(node->dmRecipientId, node->dmAvatarHash,
                                                       desiredSize.width());

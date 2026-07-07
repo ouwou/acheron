@@ -70,15 +70,10 @@ QVariant MemberListModel::data(const QModelIndex &index, int role) const
         if (item->type != Core::MemberListItem::Type::Member)
             return QVariant();
 
-        if (!item->member.user->avatar.hasValue())
-            return QVariant();
-
         Core::Snowflake userId = item->userId;
-        QString avatarHash = item->member.user->avatar.get();
-        if (avatarHash.isEmpty())
+        QUrl url = Discord::Cdn::userAvatar(userId, item->member.user->avatar.get(), AvatarRequestSize.width());
+        if (url.isEmpty())
             return QVariant();
-
-        QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, AvatarRequestSize.width());
 
         if (imageManager->isCached(url, AvatarRequestSize))
             return imageManager->get(url, AvatarRequestSize);
