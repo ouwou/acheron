@@ -192,6 +192,7 @@ set(PROJECT_SOURCES
     src/UI/Input/AttachmentPreviewPanel.cpp
     src/Storage/DatabaseManager.cpp
     src/Storage/BaseRepository.cpp
+    src/Storage/Transaction.cpp
     src/Storage/AccountRepository.cpp
     src/Storage/GuildRepository.cpp
     src/Storage/ChannelRepository.cpp
