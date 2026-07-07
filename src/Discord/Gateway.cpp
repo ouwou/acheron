@@ -42,7 +42,12 @@ void Gateway::start()
         return;
     }
 
+    teardown();
+
     wantToClose = false;
+    shouldReconnect = false;
+    reconnectAttempts = 0;
+    isResuming = false;
 
     ingest = new IngestThread(this);
     connect(ingest, &IngestThread::payloadReceived, this, &Gateway::onPayloadReceived);
@@ -57,14 +62,16 @@ void Gateway::stop()
 {
     wantToClose = true;
     closeTime = std::chrono::steady_clock::now();
-
-    ingest->stop();
-    ingest->deleteLater();
 }
 
 void Gateway::hardStop()
 {
     shouldReconnect = false;
+    teardown();
+}
+
+void Gateway::teardown()
+{
     running = false;
 
     heartbeatCv.notify_all();
@@ -72,6 +79,9 @@ void Gateway::hardStop()
         networkThread.join();
     if (heartbeatThread.joinable())
         heartbeatThread.join();
+
+    delete ingest;
+    ingest = nullptr;
 }
 
 void Gateway::subscribeToGuild(Core::Snowflake guildId, Core::Snowflake channelId, const QList<QPair<int, int>> &ranges)
@@ -564,6 +574,8 @@ void Gateway::networkLoop()
         curl = curl_easy_init();
         if (!curl) {
             qCCritical(LogDiscord) << "Failed to initialize curl";
+            running = false;
+            emit disconnected(CloseCode::INTERNAL, "Failed to initialize curl");
             return;
         }
 
@@ -593,6 +605,12 @@ void Gateway::networkLoop()
                 continue;
             }
 
+            {
+                std::lock_guard lock(curlMutex);
+                curl_easy_cleanup(curl);
+                curl = nullptr;
+            }
+            running = false;
             emit disconnected(CloseCode::INTERNAL,
                               QString("Failed to connect to gateway: ") + curl_easy_strerror(res));
             return;
@@ -601,8 +619,8 @@ void Gateway::networkLoop()
         emit connected();
 
         char chunk[8192];
-        size_t rlen;
-        const curl_ws_frame *meta;
+        size_t rlen = 0;
+        const curl_ws_frame *meta = nullptr;
 
         bool closeSent = false;
         while (running) {
@@ -629,10 +647,12 @@ void Gateway::networkLoop()
                     }
                 }
 
+                rlen = 0;
+                meta = nullptr;
                 res = curl_ws_recv(curl, chunk, sizeof(chunk), &rlen, &meta);
             }
 
-            if (res == CURLE_AGAIN || res == CURLE_GOT_NOTHING || !meta) {
+            if (res == CURLE_AGAIN || res == CURLE_GOT_NOTHING) {
                 CurlUtils::wsRecvWait(curl, curlMutex);
 
                 if (shouldReconnect)
@@ -640,6 +660,16 @@ void Gateway::networkLoop()
 
                 continue;
             }
+
+            if (res != CURLE_OK) {
+                qCWarning(LogDiscord) << "curl_ws_recv failed:" << curl_easy_strerror(res);
+                if (!wantToClose && canResume)
+                    shouldReconnect = true;
+                break;
+            }
+
+            if (!meta)
+                continue;
 
             if (meta->flags & CURLWS_CLOSE) {
                 int closeCode = 1000;

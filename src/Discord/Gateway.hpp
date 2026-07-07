@@ -122,6 +122,9 @@ private:
     void networkLoop();
     void heartbeatLoop();
 
+    // join network and heartbeat threads, destroy ingest thread
+    void teardown();
+
 private:
     QString token;
     QString gatewayUrl;
@@ -133,7 +136,7 @@ private:
     CURL *curl = nullptr;
 
     QByteArray receiveBuffer;
-    IngestThread *ingest;
+    IngestThread *ingest = nullptr;
 
     bool wantToClose = false;
     std::thread networkThread;
