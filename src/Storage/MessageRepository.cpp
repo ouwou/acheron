@@ -4,6 +4,7 @@
 #include <QJsonArray>
 
 #include "DatabaseManager.hpp"
+#include "Transaction.hpp"
 
 #include "Core/Logging.hpp"
 
@@ -26,7 +27,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     if (messages.isEmpty())
         return;
 
-    db.transaction();
+    Transaction txn(db);
     QSqlQuery qMsg(db);
     qMsg.prepare(R"(
         INSERT OR REPLACE INTO messages
@@ -115,7 +116,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
         }
     }
 
-    db.commit();
+    txn.commit();
 }
 
 void MessageRepository::markMessageDeleted(Core::Snowflake messageId)

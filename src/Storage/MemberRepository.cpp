@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 
 #include "DatabaseManager.hpp"
+#include "Transaction.hpp"
 #include "Core/Logging.hpp"
 
 namespace Acheron {
@@ -77,13 +78,13 @@ void MemberRepository::saveMembers(Core::Snowflake guildId, const QList<Discord:
         return;
 
     auto db = getDb();
-    db.transaction();
+    Transaction txn(db);
     for (const auto &member : members) {
         if (!member.user.hasValue() || !member.user->id.hasValue())
             continue;
         saveMember(guildId, member.user->id.get(), member, db);
     }
-    db.commit();
+    txn.commit();
 }
 
 std::optional<Discord::Member> MemberRepository::getMember(Core::Snowflake guildId,

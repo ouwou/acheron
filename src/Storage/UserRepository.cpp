@@ -1,6 +1,7 @@
 #include "UserRepository.hpp"
 
 #include "DatabaseManager.hpp"
+#include "Transaction.hpp"
 #include "Core/Logging.hpp"
 
 namespace Acheron {
@@ -46,11 +47,11 @@ void UserRepository::saveUsers(const QList<Discord::User> &users, QSqlDatabase &
     if (users.isEmpty())
         return;
 
-    db.transaction();
+    Transaction txn(db);
     for (const auto &user : users)
         saveUser(user, db);
 
-    db.commit();
+    txn.commit();
 }
 
 std::optional<Discord::User> UserRepository::getUser(Core::Snowflake userId)
