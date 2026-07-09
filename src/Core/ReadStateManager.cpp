@@ -1,6 +1,6 @@
-#include <QTimeZone>
-
 #include "ReadStateManager.hpp"
+
+#include <QTimeZone>
 
 #include "Core/Logging.hpp"
 #include "Core/PermissionManager.hpp"
