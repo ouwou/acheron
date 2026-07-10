@@ -2,6 +2,8 @@
 #include "Core/EmojiSegmenter.hpp"
 
 #include <QRegularExpression>
+#include <QStringList>
+#include <QUrl>
 
 using Acheron::Core::countUnicodeEmojisSegmented;
 
@@ -234,6 +236,69 @@ static MatchFn anyScopeRegex(QRegularExpression regex)
     };
 }
 
+static bool isAllowedAutolinkTarget(const QString &target)
+{
+    // this is what discord permits
+    static const QStringList allowedSchemes = { "http", "https", "discord", "tel", "sms", "mailto" };
+
+    QUrl url(target, QUrl::TolerantMode);
+    if (!url.isValid())
+        return false;
+
+    const QString scheme = url.scheme();
+    if (!allowedSchemes.contains(scheme))
+        return false;
+
+    if ((scheme == "http" || scheme == "https") && url.host().isEmpty())
+        return false;
+
+    return true;
+}
+
+static QString normalizeLinkUrl(const QString &url)
+{
+    int authStart;
+    if (url.startsWith(QLatin1String("http://"), Qt::CaseInsensitive))
+        authStart = 7;
+    else if (url.startsWith(QLatin1String("https://"), Qt::CaseInsensitive))
+        authStart = 8;
+    else
+        return url;
+
+    int i = authStart;
+    while (i < url.length()) {
+        const QChar c = url.at(i);
+        if (c == QLatin1Char('/') || c == QLatin1Char('?') || c == QLatin1Char('#'))
+            break;
+        ++i;
+    }
+    if (i == authStart) // no host present
+        return url;
+    if (i < url.length() && url.at(i) == QLatin1Char('/')) // path already present
+        return url;
+    return url.left(i) + QLatin1Char('/') + url.mid(i);
+}
+
+static QString trimUnbalancedTrailingParens(QString url)
+{
+    int searchFrom = 0;
+    for (int i = url.length() - 1; i >= 0 && url.at(i) == QLatin1Char(')'); --i) {
+        int open = url.indexOf(QLatin1Char('('), searchFrom);
+        if (open == -1) {
+            url.chop(1);
+            break;
+        }
+        searchFrom = open + 1;
+    }
+    return url;
+}
+
+static Capture wholeMatch(const QString &text)
+{
+    static const QRegularExpression whole(R"(^([\s\S]*))");
+    return whole.match(text);
+}
+
 void Parser::setupDefaultRules()
 {
     MarkdownRule newline;
@@ -267,15 +332,47 @@ void Parser::setupDefaultRules()
     };
     rules.append(escape);
 
+    MarkdownRule autolink;
+    autolink.name = "autolink";
+    autolink.order = 15;
+    autolink.regex = QRegularExpression(R"(^<([^: >]+:\/[^ >]+)>)");
+    autolink.match = inlineRegex(autolink.regex);
+    autolink.parse = [](const Capture &match, NestedParseFn nestedParse,
+                        ParseState state) -> AstNode {
+        AstNode node;
+        QString target = match.captured(1);
+        if (!isAllowedAutolinkTarget(target)) {
+            node.type = "text";
+            node.content = target;
+            return node;
+        }
+
+        node.type = "url";
+        node.content = normalizeLinkUrl(target);
+        node.attributes["href"] = node.content;
+        return node;
+    };
+    rules.append(autolink);
+
     MarkdownRule url;
     url.name = "url";
     url.order = 16;
-    url.regex = QRegularExpression(R"(^(https?:\/\/[^\s<]+[^<.,:;"')\]\s]))");
-    url.match = inlineRegex(url.regex);
+    url.regex = QRegularExpression(R"(^(https?:\/\/[^\s<]+[^<.,:;"'\]\s]))");
+    url.match = [regex = url.regex](const QString &source, const ParseState &state) -> Capture {
+        if (!state.isInline)
+            return Capture();
+        Capture m = regex.match(source, 0, QRegularExpression::NormalMatch, QRegularExpression::AnchorAtOffsetMatchOption);
+        if (!m.hasMatch())
+            return m;
+        QString trimmed = trimUnbalancedTrailingParens(m.captured(1));
+        if (trimmed.length() == m.captured(1).length())
+            return m;
+        return wholeMatch(trimmed);
+    };
     url.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;
         node.type = "url";
-        node.content = match.captured(1);
+        node.content = normalizeLinkUrl(match.captured(1));
         node.attributes["href"] = node.content;
         return node;
     };
