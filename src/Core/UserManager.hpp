@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCache>
 #include <QObject>
 #include <QHash>
 #include <optional>

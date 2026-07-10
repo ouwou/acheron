@@ -1,5 +1,11 @@
 #include "BasePopup.hpp"
 
+#include <QVBoxLayout>
+#include <QGraphicsDropShadowEffect>
+#include <QPainter>
+#include <QMouseEvent>
+#include <QEvent>
+
 namespace Acheron {
 namespace UI {
 

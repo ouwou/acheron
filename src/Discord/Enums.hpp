@@ -2,6 +2,9 @@
 
 #include <cstdint>
 
+#include <QDebug>
+#include <QHash>
+
 namespace Acheron {
 namespace Discord {
 

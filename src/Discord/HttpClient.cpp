@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QUrlQuery>
 
 namespace Acheron {
 namespace Discord {

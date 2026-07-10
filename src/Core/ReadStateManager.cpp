@@ -1,5 +1,7 @@
 #include "ReadStateManager.hpp"
 
+#include <QTimeZone>
+
 #include "Core/Logging.hpp"
 #include "Core/PermissionManager.hpp"
 #include "Discord/Enums.hpp"

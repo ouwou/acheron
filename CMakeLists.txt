@@ -94,6 +94,8 @@ else()
 endif()
 
 if(ENABLE_VOICE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
     find_package(MLSPP QUIET)
     if(NOT TARGET MLSPP::mlspp)
         message(STATUS "mlspp not found, using subproject")
@@ -350,5 +352,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/TwemojiCOLRv0.ttf")
             "${CMAKE_CURRENT_SOURCE_DIR}/resources/TwemojiCOLRv0.ttf"
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts/TwemojiCOLRv0.ttf"
         COMMENT "Copying TwemojiCOLRv0.ttf to build directory"
+    )
+endif()
+
+include(GNUInstallDirs)
+install(TARGETS ${PROJECT_NAME}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+if(UNIX AND NOT APPLE)
+    install(FILES resources/desktop/io.github.ouwou.acheron.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
     )
 endif()

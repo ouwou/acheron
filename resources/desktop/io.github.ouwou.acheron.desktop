@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Acheron
+GenericName=Discord Client
+Comment=An alternative Discord client with voice support made with C++ and Qt 6
+Exec=acheron
+Icon=io.github.ouwou.acheron
+Categories=Network;Chat;
+Terminal=false

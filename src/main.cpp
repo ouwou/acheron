@@ -60,6 +60,7 @@ int main(int argc, char *argv[])
     App app(argc, argv);
     app.setOrganizationName("ouwou");
     app.setApplicationName("Acheron");
+    app.setDesktopFileName("io.github.ouwou.acheron");
     app.setStyle("Fusion");
 
     Core::Theme::Manager::instance().load();
