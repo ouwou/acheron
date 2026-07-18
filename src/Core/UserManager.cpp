@@ -10,7 +10,7 @@ UserManager::UserManager(Snowflake accountId, QObject *parent)
 {
 }
 
-UserManager::~UserManager() { }
+UserManager::~UserManager() {}
 
 std::optional<Discord::User> UserManager::getUser(Snowflake userId)
 {

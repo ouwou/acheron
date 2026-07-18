@@ -78,7 +78,7 @@ MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
     // connect(client, &Discord::Client::messagesFailed, this, &MessageManager::onMessagesFailed);
 }
 
-MessageManager::~MessageManager() { }
+MessageManager::~MessageManager() {}
 
 void MessageManager::parseMessageContent(Discord::Message &msg)
 {

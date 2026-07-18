@@ -161,7 +161,7 @@ void fillGroupBackground(QPainter *painter, const QRectF &rect, const QColor &co
 
 } // namespace
 
-ServerRailDelegate::ServerRailDelegate(QObject *parent) : QStyledItemDelegate(parent) { }
+ServerRailDelegate::ServerRailDelegate(QObject *parent) : QStyledItemDelegate(parent) {}
 
 void ServerRailDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {

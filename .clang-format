@@ -106,6 +106,8 @@ SpaceBeforeCpp11BracedList: false
 # Do not reflow any comment
 ReflowComments: false
 
+SpaceInEmptyBraces: Never
+
 ---
 # Use the Google-based style for .proto files.
 Language: Proto

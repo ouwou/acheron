@@ -10,9 +10,9 @@ constexpr quint64 DISCORD_EPOCH = 1420070400000ULL;
 
 const Snowflake Snowflake::Invalid = -1ULL;
 
-Snowflake::Snowflake() : value(Invalid) { }
+Snowflake::Snowflake() : value(Invalid) {}
 
-Snowflake::Snowflake(quint64 n) : value(n) { }
+Snowflake::Snowflake(quint64 n) : value(n) {}
 
 bool Snowflake::isValid() const noexcept
 {

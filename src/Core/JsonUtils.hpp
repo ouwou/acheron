@@ -78,7 +78,7 @@ protected:
         {
         }
 
-        Field(const T &value) : state(State::Value), value(value) { }
+        Field(const T &value) : state(State::Value), value(value) {}
 
         Field(Field<T, IsOptional, IsNullable> &&other)
             : state(other.state), value(std::move(other.value))

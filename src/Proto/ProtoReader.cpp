@@ -5,7 +5,7 @@
 namespace Acheron {
 namespace Proto {
 
-ProtoReader::ProtoReader(const QByteArray &data) : data(data) { }
+ProtoReader::ProtoReader(const QByteArray &data) : data(data) {}
 
 bool ProtoReader::readByte(uint8_t &byte)
 {

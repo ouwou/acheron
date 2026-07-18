@@ -55,7 +55,7 @@ public:
     virtual void resolve(const CaptchaChallenge &challenge, Callback cb) = 0;
 
     // called by the consumer after a success or give-up. a follow up resolve() signals a retry instead
-    virtual void notifyConcluded() { }
+    virtual void notifyConcluded() {}
 };
 
 inline std::optional<CaptchaChallenge> CaptchaChallenge::fromResponseBody(const QByteArray &body)

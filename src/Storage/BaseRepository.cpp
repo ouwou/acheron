@@ -6,7 +6,7 @@
 
 namespace Acheron {
 namespace Storage {
-BaseRepository::BaseRepository(const QString &connName) : connName(connName) { }
+BaseRepository::BaseRepository(const QString &connName) : connName(connName) {}
 
 QSqlDatabase BaseRepository::getDb() const
 {

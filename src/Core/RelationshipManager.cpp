@@ -5,7 +5,7 @@
 namespace Acheron {
 namespace Core {
 
-RelationshipManager::RelationshipManager(QObject *parent) : QObject(parent) { }
+RelationshipManager::RelationshipManager(QObject *parent) : QObject(parent) {}
 
 void RelationshipManager::loadFromReady(const QList<Discord::Relationship> &relationships)
 {
