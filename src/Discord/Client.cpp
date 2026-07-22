@@ -864,6 +864,20 @@ void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QStr
     });
 }
 
+void Client::leaveGuild(Snowflake guildId)
+{
+    QString endpoint = "/users/@me/guilds/" + QString::number(guildId);
+    httpClient->delete_(endpoint, QJsonObject{}, [this, guildId](const HttpResponse &response) {
+        if (!response.success) {
+            QString err = QStringLiteral("status=%1 error=%2")
+                                  .arg(response.statusCode)
+                                  .arg(response.error);
+            qCWarning(LogDiscord) << "Failed to leave guild" << guildId << err;
+            emit guildLeaveFailed(guildId, err);
+        }
+    });
+}
+
 void Client::debugForceReconnect()
 {
     gateway->debugForceReconnect();

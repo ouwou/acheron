@@ -775,6 +775,34 @@ void MainWindow::setupUi()
                                                     : channelTreeModel->serverIndex(accountId, id));
             });
 
+    connect(serverRail, &ServerRailView::leaveGuildRequested, this,
+            [this](Snowflake accountId, Snowflake guildId) {
+                ClientInstance *instance = session->client(accountId);
+                if (!instance)
+                    return;
+
+                auto guild = instance->getGuild(guildId);
+                QString guildName = guild.has_value() ? guild->name.get() : QString::number(guildId);
+
+                ConfirmPopup dialog(tr("Leave Server"),
+                                    tr("Are you sure you want to leave <b>%1</b>?").arg(guildName.toHtmlEscaped()),
+                                    tr("Leave"), this);
+                if (dialog.exec() == QDialog::Accepted) {
+                    instance->discord()->leaveGuild(guildId);
+                    channelTreeModel->removeGuild(accountId, guildId);
+                    auto conn = std::make_shared<QMetaObject::Connection>();
+                    *conn = connect(instance->discord(), &Discord::Client::guildLeaveFailed, this,
+                            [this, guildId, accountId, conn, guildName](Snowflake failedGuildId, const QString &error) {
+                                if (failedGuildId != guildId)
+                                    return;
+                                disconnect(*conn);
+                                QMessageBox::warning(this, tr("Failed to leave server"),
+                                    tr("Could not leave <b>%1</b>.<br>Error: %2")
+                                        .arg(guildName.toHtmlEscaped(), error));
+                            });
+                }
+            });
+
     guildHeaderLabel = new QLabel(this);
     guildHeaderLabel->setContentsMargins(12, 8, 12, 8);
     {
@@ -1146,6 +1174,34 @@ void MainWindow::setupUi()
     };
     connect(channelTree, &ChannelTreeView::joinThreadRequested, this, [threadMembership](const QModelIndex &proxyIndex) { threadMembership(proxyIndex, true); });
     connect(channelTree, &ChannelTreeView::leaveThreadRequested, this, [threadMembership](const QModelIndex &proxyIndex) { threadMembership(proxyIndex, false); });
+
+    connect(channelTree, &ChannelTreeView::leaveGuildRequested, this,
+            [this](Snowflake accountId, Snowflake guildId) {
+                ClientInstance *instance = session->client(accountId);
+                if (!instance)
+                    return;
+
+                auto guild = instance->getGuild(guildId);
+                QString guildName = guild.has_value() ? guild->name.get() : QString::number(guildId);
+
+                ConfirmPopup dialog(tr("Leave Server"),
+                                    tr("Are you sure you want to leave <b>%1</b>?").arg(guildName.toHtmlEscaped()),
+                                    tr("Leave"), this);
+                if (dialog.exec() == QDialog::Accepted) {
+                    instance->discord()->leaveGuild(guildId);
+                    channelTreeModel->removeGuild(accountId, guildId);
+                    auto conn = std::make_shared<QMetaObject::Connection>();
+                    *conn = connect(instance->discord(), &Discord::Client::guildLeaveFailed, this,
+                            [this, guildId, accountId, conn, guildName](Snowflake failedGuildId, const QString &error) {
+                                if (failedGuildId != guildId)
+                                    return;
+                                disconnect(*conn);
+                                QMessageBox::warning(this, tr("Failed to leave server"),
+                                    tr("Could not leave <b>%1</b>.<br>Error: %2")
+                                        .arg(guildName.toHtmlEscaped(), error));
+                            });
+                }
+            });
 
 #ifndef ACHERON_NO_VOICE
     connect(channelTree, &ChannelTreeView::joinVoiceChannelRequested, this,

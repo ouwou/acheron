@@ -18,6 +18,7 @@ signals:
     void guildClicked(Core::Snowflake accountId, Core::Snowflake guildId);
     void folderToggleClicked(Core::Snowflake accountId, Core::Snowflake folderId);
     void markAsReadRequested(Core::Snowflake accountId, Core::Snowflake id, bool isFolder);
+    void leaveGuildRequested(Core::Snowflake accountId, Core::Snowflake guildId);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;

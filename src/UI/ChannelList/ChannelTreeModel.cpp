@@ -215,6 +215,9 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             return static_cast<quint64>(node->folderColor.value());
         return {};
     }
+    if (role == OwnerIdRole)
+        return static_cast<quint64>(node->ownerId);
+
     if (role == ThreadJoinedRole) {
         if (node->type != ChannelNode::Type::Thread ||
             !node->parent ||
@@ -476,6 +479,7 @@ std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::Ga
     guildNode->name = guild.properties->name;
     guildNode->type = ChannelNode::Type::Server;
     guildNode->TEMP_iconHash = guild.properties->icon;
+    guildNode->ownerId = guild.properties->ownerId;
     guildNode->unavailable = guild.unavailable.hasValue() && guild.unavailable.get();
     if (guild.properties->rulesChannelId.hasValue() && guild.properties->rulesChannelId->isValid())
         guildNode->rulesChannelId = guild.properties->rulesChannelId.get();
@@ -1041,6 +1045,23 @@ void ChannelTreeModel::addGuild(const Discord::GatewayGuild &guild, Snowflake ac
     }
 
     placeGuildNode(accNode, guildId, std::move(guildNode), instance);
+}
+
+void ChannelTreeModel::removeGuild(Snowflake accountId, Snowflake guildId)
+{
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return;
+
+    ChannelNode *guildNode = findGuildNodeById(guildId, accNode);
+    if (!guildNode)
+        return;
+
+    ChannelNode *parent = guildNode->parent;
+    if (!parent)
+        return;
+
+    removeChildRow(parent, guildNode);
 }
 
 void ChannelTreeModel::placeGuildNode(ChannelNode *accNode, Snowflake guildId,

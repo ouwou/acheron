@@ -45,6 +45,7 @@ struct ChannelNode
     bool isTemporary = false;
     Core::Snowflake parentId;
     Core::Snowflake rulesChannelId;
+    Core::Snowflake ownerId;
     QString TEMP_iconHash;
     std::optional<QString> folderName;
     std::optional<uint64_t> folderColor;

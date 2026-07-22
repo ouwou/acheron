@@ -125,6 +125,8 @@ public:
 
     void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
 
+    void leaveGuild(Snowflake guildId);
+
     void debugForceReconnect();
 
     void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
@@ -180,6 +182,7 @@ signals:
     void relationshipRemoved(const RelationshipPartial &event);
     void userNoteUpdated(const UserNoteUpdate &event);
     void messageSendFailed(const QString &nonce, const QString &error);
+    void guildLeaveFailed(Core::Snowflake guildId, const QString &error);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
 
     void reconnecting(int attempt, int maxAttempts);

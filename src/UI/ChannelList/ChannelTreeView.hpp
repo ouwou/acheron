@@ -27,6 +27,7 @@ signals:
     void disconnectVoiceRequested(const QModelIndex &proxyIndex);
     void joinThreadRequested(const QModelIndex &proxyIndex);
     void leaveThreadRequested(const QModelIndex &proxyIndex);
+    void leaveGuildRequested(Core::Snowflake accountId, Core::Snowflake guildId);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;

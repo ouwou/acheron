@@ -71,6 +71,18 @@ void ServerRailView::contextMenuEvent(QContextMenuEvent *event)
     connect(markRead, &QAction::triggered, this, [this, accountId, id, isFolder]() {
         emit markAsReadRequested(accountId, id, isFolder);
     });
+
+    if (!isFolder) {
+        Core::Snowflake ownerId(idx.data(ServerRailModel::OwnerIdRole).toULongLong());
+
+        menu.addSeparator();
+        QAction *leaveAction = menu.addAction(tr("Leave"));
+        leaveAction->setEnabled(ownerId != accountId);
+        connect(leaveAction, &QAction::triggered, this, [this, accountId, id]() {
+            emit leaveGuildRequested(accountId, id);
+        });
+    }
+
     menu.exec(event->globalPos());
 }
 
