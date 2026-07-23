@@ -112,9 +112,6 @@ jobs:
         with:
           version: '5.15.2'
           arch: win64_msvc2019_64
-          # OpenSSL 1.1.1 toolkit — Qt5's QNetworkAccessManager loads it at runtime
-          # for HTTPS (images). The 3.x variant is tools_opensslv3_x64, which Qt5 can't use.
-          tools: 'tools_openssl_x64'
           cache: true
 
       - name: Bootstrap vcpkg
@@ -136,6 +133,22 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Fetch OpenSSL 1.1 (Qt5 runtime TLS)
+        shell: pwsh
+        run: |
+          # Qt 5.15.2's QNetworkAccessManager loads OpenSSL 1.1 at runtime for HTTPS
+          # (avatars/attachments/emoji). The Qt repo only ships OpenSSL 3 now, which the
+          # official 5.15.2 binaries can't use, so pull the 1.1.1 x64 DLLs from FireDaemon.
+          Invoke-WebRequest -Uri "https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-1.1.1w.zip" -OutFile openssl.zip
+          if ((Get-FileHash openssl.zip -Algorithm SHA256).Hash -ne '1870B15BF6749E65FFBBADF52CDFF3EE0E9F02943550BF4395574BB432AF3EB8') {
+              throw "OpenSSL zip checksum mismatch"
+          }
+          Expand-Archive openssl.zip -DestinationPath openssl11 -Force
+          New-Item -ItemType Directory -Path openssl-bin -Force | Out-Null
+          Get-ChildItem -Path openssl11 -Recurse -Include 'libssl-1_1-x64.dll','libcrypto-1_1-x64.dll' |
+            ForEach-Object { Copy-Item $_.FullName openssl-bin -Force }
+          if (-not (Test-Path openssl-bin/libssl-1_1-x64.dll)) { throw "OpenSSL 1.1 x64 DLLs not found in archive" }
 
       - name: Configure
         shell: pwsh
@@ -174,16 +187,9 @@ jobs:
           # Copy curl-impersonate DLLs
           Copy-Item "$curlDir/bin/*.dll" $out -Force
 
-          # Bundle OpenSSL 1.1 next to the exe: Qt5's QNetworkAccessManager needs it for
-          # HTTPS (avatars/attachments/emoji) and windeployqt does not deploy it. Locate the
-          # DLLs from the aqt OpenSSL toolkit; fail loudly if only a non-1.1 build is present.
-          $roots = @($env:IQTA_TOOLS, (Join-Path (Split-Path (Split-Path $env:QT_ROOT_DIR)) 'Tools')) |
-            Where-Object { $_ -and (Test-Path $_) }
-          $ssl = Get-ChildItem -Path $roots -Recurse -Filter 'libssl-1_1-x64.dll' -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $ssl) { throw "OpenSSL 1.1 (libssl-1_1-x64.dll) not found under: $($roots -join '; ')" }
-          Copy-Item (Join-Path $ssl.DirectoryName 'libssl-1_1-x64.dll') $out -Force
-          Copy-Item (Join-Path $ssl.DirectoryName 'libcrypto-1_1-x64.dll') $out -Force
+          # Bundle OpenSSL 1.1 (fetched from FireDaemon above) next to the exe: Qt5's
+          # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
+          Copy-Item "openssl-bin/*.dll" $out -Force
 
           # Remove test executables from artifact
           Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
