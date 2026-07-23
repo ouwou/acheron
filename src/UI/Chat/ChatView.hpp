@@ -6,6 +6,7 @@
 
 #include "ChatLayout.hpp"
 #include "ChatModel.hpp"
+#include "UI/VideoPlayer.hpp"
 #include "Core/Snowflake.hpp"
 
 namespace Acheron {

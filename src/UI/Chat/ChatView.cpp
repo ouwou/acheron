@@ -3,6 +3,7 @@
 #include <QMenu>
 #include <QTextDocument>
 #include <QTextCursor>
+#include <QDesktopServices>
 
 #include <algorithm>
 
@@ -201,6 +202,29 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         QString emojiStr = r.emojiId.isValid() ? (r.emojiName + ":" + QString::number(r.emojiId))
                                                : r.emojiName;
         emit toggleReactionClicked(channelId, messageId, emojiStr, r.me, r.isBurst);
+        break;
+    }
+
+    case Kind::AttachmentVideo: {
+        if (region->index < 0 || region->index >= resolved.ctx.attachments.size())
+            break;
+        const AttachmentData &att = resolved.ctx.attachments[region->index];
+        if (att.isSpoiler) {
+            auto *chatModel = qobject_cast<ChatModel *>(model());
+            if (chatModel && !chatModel->isSpoilerRevealed(att.id)) {
+                chatModel->revealSpoiler(att.id);
+                break;
+            }
+        }
+        auto *player = new VideoPlayer(window());
+        player->showVideo(att.proxyUrl);
+        break;
+    }
+    case Kind::AttachmentVideoDownload: {
+        if (region->index < 0 || region->index >= resolved.ctx.attachments.size())
+            break;
+        const AttachmentData &att = resolved.ctx.attachments[region->index];
+        QDesktopServices::openUrl(att.originalUrl);
         break;
     }
 

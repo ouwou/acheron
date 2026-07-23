@@ -633,6 +633,14 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
                         attLayout.rect = layout.imageGrid.cells[imageIndex].rect.translated(
                                 textLeft, layout.attachmentsTop);
                     }
+
+                    if (ctx.attachments[i].isVideo) {
+                        int btnSize = videoDownloadBtnSize();
+                        attLayout.downloadRect = QRect(attLayout.rect.right() - btnSize - 4,
+                                                       attLayout.rect.top() + 4,
+                                                       btnSize, btnSize);
+                    }
+
                     layout.imageLayouts.append(attLayout);
                     imageIndex++;
                 }
@@ -772,8 +780,15 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         }
     }
 
-    for (const auto &al : layout.imageLayouts)
-        layout.hitRegions.append({ HitRegion::Kind::AttachmentImage, al.rect, al.index, -1, {} });
+    for (const auto &al : layout.imageLayouts) {
+        const auto &att = ctx.attachments[al.index];
+
+        if (att.isVideo && !al.downloadRect.isNull())
+            layout.hitRegions.append({ HitRegion::Kind::AttachmentVideoDownload, al.downloadRect, al.index, -1, {} });
+
+        auto kind = att.isVideo ? HitRegion::Kind::AttachmentVideo : HitRegion::Kind::AttachmentImage;
+        layout.hitRegions.append({ kind, al.rect, al.index, -1, {} });
+    }
     for (const auto &al : layout.fileLayouts)
         layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, al.rect, al.index, -1, {} });
 

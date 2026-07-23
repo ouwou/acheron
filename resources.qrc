@@ -9,6 +9,7 @@
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/message-circle.svg</file>
         <file>resources/icons/lucide/pencil.svg</file>
+        <file>resources/icons/lucide/play.svg</file>
         <file>resources/icons/lucide/spool.svg</file>
         <file>resources/icons/lucide/x.svg</file>
     </qresource>

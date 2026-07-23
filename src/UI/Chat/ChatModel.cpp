@@ -1,11 +1,13 @@
 #include "ChatModel.hpp"
 
 #include <QImageReader>
+#include <QPainter>
 
 #include "Core/Markdown/Parser.hpp"
 #include "Core/MessageManager.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Manager.hpp"
+#include "Core/Theme/Icons.hpp"
 #include "Discord/Enums.hpp"
 
 namespace Acheron {
@@ -59,6 +61,52 @@ static EmbedType embedTypeFromString(const QString &typeStr)
     else if (typeStr == "video")
         return EmbedType::Video;
     return EmbedType::Rich;
+}
+
+static QPixmap createVideoThumbnail(const QSize &size, const QPixmap &frame = {})
+{
+    qreal dpr = qApp->devicePixelRatio();
+    QPixmap pixmap(size * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+
+    if (!frame.isNull()) {
+        QPainter p(&pixmap);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        QPixmap scaled = frame.scaled(pixmap.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        int x = (pixmap.width() - scaled.width()) / 2;
+        int y = (pixmap.height() - scaled.height()) / 2;
+        p.drawPixmap(x, y, scaled);
+        p.end();
+    } else {
+        pixmap.fill(QColor(40, 40, 40));
+    }
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    int iconSize = qMin(size.width(), size.height()) / 3;
+    QColor playColor(255, 255, 255, 200);
+    QPixmap playIcon = Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Play,
+                                                   iconSize, playColor, dpr);
+    QRect iconRect(0, 0, playIcon.width() / playIcon.devicePixelRatio(),
+                   playIcon.height() / playIcon.devicePixelRatio());
+    iconRect.moveCenter(pixmap.rect().center());
+    painter.drawPixmap(iconRect, playIcon);
+
+    return pixmap;
+}
+
+static QUrl videoThumbnailUrl(const QUrl &videoUrl)
+{
+    QString url = videoUrl.toString();
+    if (url.contains("cdn.discordapp.com/attachments/")) {
+        url.replace("cdn.discordapp.com", "media.discordapp.net");
+        if (!url.contains('?'))
+            url += "?format=jpeg";
+        else
+            url += "&format=jpeg";
+    }
+    return QUrl(url);
 }
 
 ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
@@ -355,7 +403,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             data.id = att.id;
             data.proxyUrl = QUrl(*att.proxyUrl);
             data.originalUrl = QUrl(*att.url);
-            data.isImage = att.isImage();
+            data.isImage = att.isImage() || att.isVideo();
+            data.isVideo = att.isVideo();
             data.filename = att.filename.hasValue() ? *att.filename : "unknown";
             data.fileSizeBytes = att.size.hasValue() ? *att.size : 0;
             data.isSpoiler = att.isSpoiler();
@@ -386,6 +435,20 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                           : imageManager->get(data.proxyUrl, data.displaySize);
                     data.isLoading = !imageManager->isCached(data.proxyUrl, data.displaySize);
                 }
+            } else if (att.isVideo()) {
+                QSize original;
+                if (att.width.hasValue() && att.height.hasValue())
+                    original = QSize(*att.width, *att.height);
+
+                data.displaySize = Core::ImageManager::calculateDisplaySize(original);
+
+                QUrl thumbUrl = videoThumbnailUrl(data.proxyUrl);
+                QPixmap thumb = suppressImageFetch
+                                        ? imageManager->getIfCached(thumbUrl, data.displaySize)
+                                        : imageManager->get(thumbUrl, data.displaySize);
+                bool hasThumb = !thumb.isNull();
+                data.pixmap = createVideoThumbnail(data.displaySize, hasThumb ? thumb : QPixmap());
+                data.isLoading = !hasThumb && !suppressImageFetch;
             } else {
                 data.displaySize = QSize();
                 data.isLoading = false;

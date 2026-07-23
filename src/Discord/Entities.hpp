@@ -543,6 +543,13 @@ struct Attachment : Core::JsonUtils::JsonObject
         return contentType->startsWith("image/");
     }
 
+    bool isVideo() const
+    {
+        if (!contentType.hasValue())
+            return false;
+        return contentType->startsWith("video/");
+    }
+
     bool isSpoiler() const
     {
         return flags.hasValue() && flags->testFlag(AttachmentFlag::IS_SPOILER);
