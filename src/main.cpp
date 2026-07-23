@@ -13,8 +13,8 @@
 #include <QFontDatabase>
 
 #ifndef ACHERON_NO_VOICE
-#  include <dave/dave.h>
-#  include <dave/logger.h>
+#include <dave/dave.h>
+#include <dave/logger.h>
 #endif
 
 // potentially named after that river

@@ -43,8 +43,8 @@
 #include "Core/Session.hpp"
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
-#  include "Core/AV/VoiceManager.hpp"
-#  include "VoiceStatusBar.hpp"
+#include "Core/AV/VoiceManager.hpp"
+#include "VoiceStatusBar.hpp"
 #endif
 
 using namespace Acheron::Core;
