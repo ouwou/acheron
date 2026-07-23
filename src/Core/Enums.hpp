@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QMetaType>
+
 namespace Acheron {
 namespace Core {
 
@@ -12,3 +14,5 @@ enum class ConnectionState {
 
 } // namespace Core
 } // namespace Acheron
+
+Q_DECLARE_METATYPE(Acheron::Core::ConnectionState)

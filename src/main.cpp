@@ -57,6 +57,11 @@ int main(int argc, char *argv[])
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+#endif
+
     App app(argc, argv);
     app.setOrganizationName("ouwou");
     app.setApplicationName("Acheron");
@@ -86,8 +91,10 @@ int main(int argc, char *argv[])
     if (emojiFontId != -1) {
         QStringList families = QFontDatabase::applicationFontFamilies(emojiFontId);
         qCInfo(LogCore) << "Loaded emoji font:" << families;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
         if (!families.isEmpty())
             QFontDatabase::addApplicationEmojiFontFamily(families.first());
+#endif
     } else {
         qCWarning(LogCore) << "Failed to load TwemojiCOLRv0.ttf";
     }

@@ -738,7 +738,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
     if (result.messages.isEmpty())
         return;
 
-    auto incomingMessages = result.messages;
+    QVector<Discord::Message> incomingMessages{ result.messages.cbegin(), result.messages.cend() };
     std::sort(incomingMessages.begin(), incomingMessages.end(),
               [](const Discord::Message &a, const Discord::Message &b) {
                   return a.id.get() < b.id.get();

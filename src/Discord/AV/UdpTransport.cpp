@@ -42,7 +42,7 @@ void UdpTransport::startIpDiscovery(const QString &ip, int port, quint32 ssrc)
     socket = new QUdpSocket(this);
     connect(socket, &QUdpSocket::readyRead, this, &UdpTransport::onReadyRead);
 
-    if (!socket->bind(QHostAddress::AnyIPv4, 0)) {
+    if (!socket->bind(QHostAddress(QHostAddress::AnyIPv4), 0)) {
         qCWarning(LogVoice) << "Failed to bind UDP socket:" << socket->errorString();
         emit ipDiscoveryFailed("Failed to bind UDP socket: " + socket->errorString());
         return;
