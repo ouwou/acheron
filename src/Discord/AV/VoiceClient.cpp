@@ -9,6 +9,8 @@
 #include "Core/AV/IAudioBackend.hpp"
 #include "Core/Logging.hpp"
 
+#include <array>
+
 namespace Acheron {
 namespace Discord {
 namespace AV {

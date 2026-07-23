@@ -112,7 +112,7 @@ struct TypingStart : Core::JsonUtils::JsonObject
         get(obj, "guild_id", typingStart.guildId);
         get(obj, "user_id", typingStart.userId);
         get(obj, "member", typingStart.member);
-        typingStart.timestamp = QDateTime::fromSecsSinceEpoch(obj["timestamp"].toInteger());
+        typingStart.timestamp = QDateTime::fromSecsSinceEpoch(obj["timestamp"].toVariant().toLongLong());
         return typingStart;
     }
 };

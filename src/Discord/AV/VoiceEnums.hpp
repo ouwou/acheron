@@ -4,6 +4,8 @@
 #include <QString>
 #include <QStringList>
 
+#include "qt_flags.hpp"
+
 namespace Acheron {
 namespace Discord {
 namespace AV {
@@ -75,8 +77,7 @@ enum class SpeakingFlag {
     SOUNDSHARE = 1 << 1,
     PRIORITY = 1 << 2,
 };
-Q_DECLARE_FLAGS(SpeakingFlags, SpeakingFlag)
-Q_DECLARE_OPERATORS_FOR_FLAGS(SpeakingFlags)
+ACHERON_DECLARE_FLAGS(SpeakingFlags, SpeakingFlag)
 
 enum class EncryptionMode {
     AEAD_AES256_GCM_RTPSIZE,

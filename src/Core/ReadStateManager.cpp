@@ -477,7 +477,11 @@ std::optional<Discord::ReadStateEntry> ReadStateManager::getReadStateEntry(Snowf
 
 int ReadStateManager::daysSinceDiscordEpoch()
 {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     static const QDateTime epoch = QDateTime(QDate(2015, 1, 1), QTime(0, 0), QTimeZone::UTC);
+#else
+    static const QDateTime epoch = QDateTime(QDate(2015, 1, 1), QTime(0, 0), Qt::UTC);
+#endif
     return epoch.daysTo(QDateTime::currentDateTimeUtc()) + 1;
 }
 

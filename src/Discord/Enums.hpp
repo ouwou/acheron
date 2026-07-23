@@ -5,6 +5,8 @@
 #include <QDebug>
 #include <QHash>
 
+#include "qt_flags.hpp"
+
 namespace Acheron {
 namespace Discord {
 
@@ -106,8 +108,7 @@ enum class Capability : quint32 {
     UNK19 = 1 << 19,
     UNK20 = 1 << 20,
 };
-Q_DECLARE_FLAGS(Capabilities, Capability);
-Q_DECLARE_OPERATORS_FOR_FLAGS(Capabilities);
+ACHERON_DECLARE_FLAGS(Capabilities, Capability)
 
 // clang-format off
 constexpr static auto CURRENT_CAPABILITIES = Capability::LAZY_USER_NOTES |
@@ -270,8 +271,7 @@ enum class ChannelFlag {
     IS_MODERATOR_REPORT_CHANNEL = 1 << 19,
     IS_SPOILER_CHANNEL = 1 << 21,
 };
-Q_DECLARE_FLAGS(ChannelFlags, ChannelFlag);
-Q_DECLARE_OPERATORS_FOR_FLAGS(ChannelFlags);
+ACHERON_DECLARE_FLAGS(ChannelFlags, ChannelFlag)
 
 // user
 enum class PremiumType {
@@ -381,8 +381,7 @@ enum class MessageFlag {
     IS_COMPONENTS_V2 = 1 << 15,
     SENT_BY_SOCIAL_LAYER_INTEGRATION = 1 << 16,
 };
-Q_DECLARE_FLAGS(MessageFlags, MessageFlag);
-Q_DECLARE_OPERATORS_FOR_FLAGS(MessageFlags);
+ACHERON_DECLARE_FLAGS(MessageFlags, MessageFlag)
 
 enum class Permission : quint64 {
     CREATE_INSTANT_INVITE = 1ULL << 0,
@@ -439,8 +438,7 @@ enum class Permission : quint64 {
     PIN_MESSAGES = 1ULL << 51,
     BYPASS_SLOWMODE = 1ULL << 52,
 };
-Q_DECLARE_FLAGS(Permissions, Permission);
-Q_DECLARE_OPERATORS_FOR_FLAGS(Permissions);
+ACHERON_DECLARE_FLAGS(Permissions, Permission)
 
 constexpr Permissions ALL_PERMISSIONS = Permissions::fromInt(0xFFFFFFFFFFFFFFFFULL);
 constexpr Permissions NO_PERMISSIONS = Permissions::fromInt(0ULL);
@@ -450,8 +448,7 @@ enum class ReadStateFlag {
     IS_THREAD = 1 << 1,
     IS_MENTION_LOW_IMPORTANCE = 1 << 2,
 };
-Q_DECLARE_FLAGS(ReadStateFlags, ReadStateFlag);
-Q_DECLARE_OPERATORS_FOR_FLAGS(ReadStateFlags);
+ACHERON_DECLARE_FLAGS(ReadStateFlags, ReadStateFlag)
 
 enum class AttachmentFlag {
     IS_CLIP = 1 << 0,
@@ -463,16 +460,14 @@ enum class AttachmentFlag {
     CONTAINS_GORE_CONTENT = 1 << 6,
     CONTAINS_SELF_HARM_CONTENT = 1 << 7,
 };
-Q_DECLARE_FLAGS(AttachmentFlags, AttachmentFlag);
-Q_DECLARE_OPERATORS_FOR_FLAGS(AttachmentFlags);
+ACHERON_DECLARE_FLAGS(AttachmentFlags, AttachmentFlag)
 
 enum class VoiceFlag {
     CLIPS_ENABLED = 1 << 0,
     ALLOW_VOICE_RECORDINGS = 1 << 1,
     ALLOW_ANY_VIEWER_CLIPS = 1 << 2,
 };
-Q_DECLARE_FLAGS(VoiceFlags, VoiceFlag);
-Q_DECLARE_OPERATORS_FOR_FLAGS(VoiceFlags);
+ACHERON_DECLARE_FLAGS(VoiceFlags, VoiceFlag)
 
 } // namespace Discord
 } // namespace Acheron

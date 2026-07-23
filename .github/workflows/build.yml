@@ -95,6 +95,111 @@ jobs:
           name: acheron-windows-${{ matrix.build_type }}
           path: acheron-windows-${{ matrix.build_type }}
 
+  build-windows-qt5:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Qt 5.15.2 (Win7 SP1 floor). qtsvg + qtimageformats ship in the default Qt5
+      # archive set, so no explicit modules are needed. Building 5.15.2 with the
+      # runner's current MSVC toolset relies on the src/qt5_compat.h shim that
+      # CMakeLists force-includes (MSVC + Qt5 only).
+      - name: Install Qt (5.15.2)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v6
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install curl-impersonate
+        shell: pwsh
+        run: |
+          $url = "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-win32.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
+          New-Item -ItemType Directory -Path curl-impersonate -Force
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Fetch OpenSSL 1.1 (Qt5 runtime TLS)
+        shell: pwsh
+        run: |
+          # Qt 5.15.2's QNetworkAccessManager loads OpenSSL 1.1 at runtime for HTTPS
+          # (avatars/attachments/emoji). The Qt repo only ships OpenSSL 3 now, which the
+          # official 5.15.2 binaries can't use, so pull the 1.1.1 x64 DLLs from FireDaemon.
+          Invoke-WebRequest -Uri "https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-1.1.1w.zip" -OutFile openssl.zip
+          if ((Get-FileHash openssl.zip -Algorithm SHA256).Hash -ne '1870B15BF6749E65FFBBADF52CDFF3EE0E9F02943550BF4395574BB432AF3EB8') {
+              throw "OpenSSL zip checksum mismatch"
+          }
+          Expand-Archive openssl.zip -DestinationPath openssl11 -Force
+          New-Item -ItemType Directory -Path openssl-bin -Force | Out-Null
+          Get-ChildItem -Path openssl11 -Recurse -Include 'libssl-1_1-x64.dll','libcrypto-1_1-x64.dll' |
+            ForEach-Object { Copy-Item $_.FullName openssl-bin -Force }
+          if (-not (Test-Path openssl-bin/libssl-1_1-x64.dll)) { throw "OpenSSL 1.1 x64 DLLs not found in archive" }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=MinSizeRel `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$curlDir" `
+            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config MinSizeRel --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C MinSizeRel --output-on-failure
+
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          $exe = "${{ github.workspace }}/build/MinSizeRel/acheron.exe"
+          windeployqt --no-translations --no-opengl-sw $exe
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $out = "acheron-windows-qt5-MinSizeRel"
+          $binDir = "build/MinSizeRel"
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          New-Item -ItemType Directory -Path $out -Force
+
+          # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
+          Copy-Item "$binDir/*" $out -Recurse -Force
+
+          # Copy curl-impersonate DLLs
+          Copy-Item "$curlDir/bin/*.dll" $out -Force
+
+          # Bundle OpenSSL 1.1 (fetched from FireDaemon above) next to the exe: Qt5's
+          # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
+          Copy-Item "openssl-bin/*.dll" $out -Force
+
+          # Remove test executables from artifact
+          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: acheron-windows-qt5-MinSizeRel
+          path: acheron-windows-qt5-MinSizeRel
+
   build-linux:
     runs-on: ubuntu-latest
 

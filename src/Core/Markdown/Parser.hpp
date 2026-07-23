@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QRegularExpression>
+#include <QSet>
 #include <QVariantMap>
 
 namespace Acheron {

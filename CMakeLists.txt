@@ -284,10 +284,19 @@ if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
     target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
 
+    if(QT_VERSION_MAJOR LESS 6)
+        target_compile_options(${PROJECT_NAME} PRIVATE
+            "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+    endif()
+
     if(BUILD_TESTS)
         target_link_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
         target_compile_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
         target_compile_options(TestMarkdown PRIVATE /utf-8)
+        if(QT_VERSION_MAJOR LESS 6)
+            target_compile_options(TestMarkdown PRIVATE
+                "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+        endif()
     endif()
 endif()
 

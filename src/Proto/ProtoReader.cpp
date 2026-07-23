@@ -12,7 +12,7 @@ bool ProtoReader::readByte(uint8_t &byte)
     if (pos >= static_cast<size_t>(data.size()))
         return false;
 
-    byte = static_cast<uint8_t>(data[pos++]);
+    byte = static_cast<uint8_t>(data[static_cast<int>(pos++)]);
     return true;
 }
 

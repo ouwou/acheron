@@ -58,7 +58,7 @@ ContinuationIndentWidth: 8
 NamespaceIndentation: None
 
 # Allow indentation for preprocessing directives (if/ifdef/endif). https://reviews.llvm.org/rL312125
-IndentPPDirectives: AfterHash
+IndentPPDirectives: None
 # We only indent with 2 spaces for preprocessor directives
 PPIndentWidth: 2
 

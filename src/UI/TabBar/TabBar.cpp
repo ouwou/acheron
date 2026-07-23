@@ -66,7 +66,7 @@ void TabBar::updateCurrentTab(const TabEntry &entry)
     constexpr static int MaxHistory = 50;
     if (tab.history.size() > MaxHistory) {
         int excess = tab.history.size() - MaxHistory;
-        tab.history.remove(0, excess);
+        tab.history.erase(tab.history.begin(), tab.history.begin() + excess);
         tab.historyIndex -= excess;
     }
 

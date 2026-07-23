@@ -4,6 +4,8 @@
 #include <QJsonParseError>
 #include <QJsonObject>
 
+#include <array>
+
 #include "Core/Logging.hpp"
 
 namespace Acheron {
