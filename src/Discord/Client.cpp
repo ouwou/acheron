@@ -62,6 +62,7 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayThreadMembersUpdate, this, &Client::threadMembersUpdated);
     connect(gateway, &Gateway::gatewayForumUnreads, this, &Client::forumUnreads);
     connect(gateway, &Gateway::gatewayGuildCreate, this, &Client::onGatewayGuildCreate);
+    connect(gateway, &Gateway::gatewayGuildDelete, this, &Client::onGatewayGuildDelete);
     connect(gateway, &Gateway::gatewayGuildMembersChunk, this, &Client::guildMembersChunk);
     connect(gateway, &Gateway::gatewayGuildMemberUpdate, this, &Client::guildMemberUpdated);
     connect(gateway, &Gateway::gatewayGuildRoleCreate, this, &Client::onGatewayGuildRoleCreate);
@@ -479,6 +480,14 @@ void Client::onGatewayGuildCreate(const GatewayGuild &guild)
     emit guildCreated(guild);
 }
 
+void Client::onGatewayGuildDelete(const GuildDelete &event)
+{
+    if (event.userRemoved() && event.id.hasValue())
+        removeGuildMappings(event.id.get());
+
+    emit guildDeleted(event);
+}
+
 void Client::indexGuildMappings(const GatewayGuild &guild)
 {
     if (!guild.properties.hasValue())
@@ -494,6 +503,17 @@ void Client::indexGuildMappings(const GatewayGuild &guild)
     guildPremiumTiers.insert(guildId, guild.properties->premiumTier.hasValue()
                                               ? guild.properties->premiumTier.get()
                                               : PremiumTier::NONE);
+}
+
+void Client::removeGuildMappings(Snowflake guildId)
+{
+    for (auto it = channelToGuild.begin(); it != channelToGuild.end();) {
+        if (it.value() == guildId)
+            it = channelToGuild.erase(it);
+        else
+            ++it;
+    }
+    guildPremiumTiers.remove(guildId);
 }
 
 void Client::onGatewayChannelUpdate(const ChannelUpdate &event)
@@ -861,6 +881,20 @@ void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QStr
         if (!response.success)
             qCWarning(LogDiscord) << "Failed to remove reaction on message" << messageId
                                   << "in channel" << channelId << ":" << response.error;
+    });
+}
+
+void Client::leaveGuild(Snowflake guildId)
+{
+    QString endpoint = "/users/@me/guilds/" + QString::number(guildId);
+    httpClient->delete_(endpoint, QJsonObject{}, [this, guildId](const HttpResponse &response) {
+        if (!response.success) {
+            QString err = QStringLiteral("status=%1 error=%2")
+                                  .arg(response.statusCode)
+                                  .arg(response.error);
+            qCWarning(LogDiscord) << "Failed to leave guild" << guildId << err;
+            emit guildLeaveFailed(guildId, err);
+        }
     });
 }
 

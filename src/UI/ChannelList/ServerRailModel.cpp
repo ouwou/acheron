@@ -129,6 +129,10 @@ QVariant ServerRailModel::data(const QModelIndex &index, int role) const
                                          : QVariant();
     case FolderChildIconsRole:
         return e.kind == Kind::Folder ? QVariant(e.folderIcons) : QVariant();
+    case OwnerIdRole:
+        if (e.kind == Kind::Server && e.srcIndex.isValid())
+            return e.srcIndex.data(ChannelTreeModel::OwnerIdRole);
+        return {};
     case Qt::DecorationRole:
         return decorationFor(e);
     default:

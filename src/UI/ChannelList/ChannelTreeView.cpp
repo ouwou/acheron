@@ -189,6 +189,20 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
         menu.addSeparator();
     }
 
+    if (nodeType == ChannelNode::Type::Server) {
+        Core::Snowflake ownerId(sourceIndex.data(ChannelTreeModel::OwnerIdRole).toULongLong());
+        Core::Snowflake accountId = findAccountIdForIndex(sourceIndex);
+
+        menu.addSeparator();
+        QAction *leaveAction = menu.addAction(tr("Leave"));
+        leaveAction->setEnabled(ownerId != accountId);
+        connect(leaveAction, &QAction::triggered, this, [this, sourceIndex]() {
+            Core::Snowflake accountId = findAccountIdForIndex(sourceIndex);
+            Core::Snowflake guildId(sourceIndex.data(ChannelTreeModel::IdRole).toULongLong());
+            emit leaveGuildRequested(accountId, guildId);
+        });
+    }
+
     QAction *markReadAction = menu.addAction(tr("Mark As Read"));
     markReadAction->setEnabled(isUnread || mentionCount > 0);
 

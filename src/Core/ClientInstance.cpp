@@ -178,6 +178,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
             });
 
     connect(client, &Discord::Client::guildCreated, this, &ClientInstance::onGuildCreated);
+    connect(client, &Discord::Client::guildDeleted, this, &ClientInstance::onGuildDeleted);
     connect(client, &Discord::Client::channelCreated, this, &ClientInstance::onChannelCreated);
     connect(client, &Discord::Client::channelUpdated, this, &ClientInstance::onChannelUpdated);
     connect(client, &Discord::Client::channelDeleted, this, &ClientInstance::onChannelDeleted);
@@ -348,6 +349,41 @@ void ClientInstance::onGuildCreated(const Discord::GatewayGuild &guild)
     initGuildReadState(guild);
 
     emit guildCreated(guild);
+}
+
+void ClientInstance::onGuildDeleted(const Discord::GuildDelete &event)
+{
+    if (!event.id.hasValue() || !event.userRemoved())
+        return;
+
+    Snowflake guildId = event.id.get();
+
+    qCInfo(LogCore) << "Removed from guild:" << guildId;
+
+    QList<Discord::Channel> channels = channelRepo.getChannelsForGuild(guildId);
+
+    if (!runInCacheTransaction("guild deletion", [&](QSqlDatabase &db) {
+            for (const auto &channel : channels)
+                channelRepo.deleteChannel(channel.id.get(), db);
+            roleRepo.deleteRolesForGuild(guildId, db);
+            memberRepo.deleteMembersForGuild(guildId, db);
+            guildRepo.deleteGuild(guildId, db);
+        }))
+        return;
+
+    for (const auto &channel : channels) {
+        Snowflake channelId = channel.id.get();
+        permissionManager->invalidateChannelCache(channelId);
+        forumParentCache.remove(channelId);
+    }
+
+    readStateManager->removeGuild(guildId);
+    userManager->removeGuildMembers(guildId);
+    memberListManager->clearGuild(guildId);
+    permissionManager->invalidateUserGuildCache(account.id, guildId);
+    rolesCacheByGuild.remove(guildId);
+
+    emit guildRemoved(guildId);
 }
 
 void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)

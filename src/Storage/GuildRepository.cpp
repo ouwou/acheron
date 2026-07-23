@@ -30,6 +30,14 @@ void GuildRepository::saveGuild(const Discord::Guild &guild, QSqlDatabase &db)
     execLogged(q, "GuildRepository: Save");
 }
 
+void GuildRepository::deleteGuild(Core::Snowflake guildId, QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM guilds WHERE id = :id");
+    q.bindValue(":id", static_cast<qint64>(guildId));
+    execLogged(q, "GuildRepository: Delete");
+}
+
 std::optional<Discord::Guild> GuildRepository::getGuild(Core::Snowflake guildId)
 {
     auto db = getDb();

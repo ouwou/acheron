@@ -67,6 +67,7 @@ signals:
     void gatewayThreadMembersUpdate(const ThreadMembersUpdate &data);
     void gatewayForumUnreads(const ForumUnreads &data);
     void gatewayGuildCreate(const GatewayGuild &data);
+    void gatewayGuildDelete(const GuildDelete &data);
     void gatewayGuildMembersChunk(const GuildMembersChunk &data);
     void gatewayGuildMemberUpdate(const GuildMemberUpdate &data);
     void gatewayGuildRoleCreate(const GuildRoleCreate &data);
@@ -111,6 +112,7 @@ private:
     void handleThreadMembersUpdate(const Inbound &data);
     void handleForumUnreads(const Inbound &data);
     void handleGuildCreate(const Inbound &data);
+    void handleGuildDelete(const Inbound &data);
     void handleGuildMembersChunk(const Inbound &data);
     void handleGuildMemberUpdate(const Inbound &data);
     void handleGuildRoleCreate(const Inbound &data);

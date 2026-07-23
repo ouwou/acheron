@@ -47,6 +47,7 @@ public:
         FolderChildIconsRole,
         FolderColorRole,
         InFolderGroupRole, // true for expanded folder and its child guilds for painting purposes
+        OwnerIdRole,
     };
 
     ServerRailModel(Core::Session *session, ChannelTreeModel *source, QObject *parent = nullptr);

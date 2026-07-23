@@ -48,6 +48,7 @@ public:
         FolderColorRole = Qt::UserRole + 13,
         CountsForGuildUnreadRole = Qt::UserRole + 14,
         ThreadJoinedRole = Qt::UserRole + 15,
+        OwnerIdRole = Qt::UserRole + 16,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
@@ -67,6 +68,7 @@ public:
 
     ChannelNode *nodeFromIndex(const QModelIndex &index) const;
     void addGuild(const Discord::GatewayGuild &guild, Snowflake accountId);
+    void removeGuild(Snowflake accountId, Snowflake guildId);
     void addChannel(const Discord::ChannelCreate &event, Snowflake accountId);
     void updateChannel(const Discord::ChannelUpdate &update, Snowflake accountId);
     void deleteChannel(const Discord::ChannelDelete &event, Snowflake accountId);

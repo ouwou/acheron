@@ -206,6 +206,9 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::GUILD_CREATE:
         handleGuildCreate(data);
         break;
+    case GatewayEvent::GUILD_DELETE:
+        handleGuildDelete(data);
+        break;
     case GatewayEvent::GUILD_MEMBERS_CHUNK:
         handleGuildMembersChunk(data);
         break;
@@ -448,6 +451,13 @@ void Gateway::handleGuildRoleDelete(const Inbound &data)
     GuildRoleDelete event = data.getData<GuildRoleDelete>();
 
     emit gatewayGuildRoleDelete(event);
+}
+
+void Gateway::handleGuildDelete(const Inbound &data)
+{
+    GuildDelete event = data.getData<GuildDelete>();
+
+    emit gatewayGuildDelete(event);
 }
 
 void Gateway::handleMessageAck(const Inbound &data)

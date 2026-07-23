@@ -133,5 +133,14 @@ void RoleRepository::deleteRole(Core::Snowflake guildId, Core::Snowflake roleId,
     execLogged(q, "RoleRepository: Delete role");
 }
 
+void RoleRepository::deleteRolesForGuild(Core::Snowflake guildId, QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM roles WHERE guild_id = :guild_id");
+    q.bindValue(":guild_id", static_cast<qint64>(guildId));
+
+    execLogged(q, "RoleRepository: Delete roles for guild");
+}
+
 } // namespace Storage
 } // namespace Acheron

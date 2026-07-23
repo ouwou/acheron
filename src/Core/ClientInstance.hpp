@@ -87,6 +87,7 @@ signals:
 
     void ready(const Discord::Ready &ready);
     void guildCreated(const Discord::GatewayGuild &guild);
+    void guildRemoved(Snowflake guildId);
     void channelCreated(const Discord::ChannelCreate &event);
     void channelUpdated(const Discord::ChannelUpdate &update);
     void channelDeleted(const Discord::ChannelDelete &event);
@@ -109,6 +110,7 @@ signals:
 
 private slots:
     void onGuildCreated(const Discord::GatewayGuild &guild);
+    void onGuildDeleted(const Discord::GuildDelete &event);
     void onChannelCreated(const Discord::ChannelCreate &event);
     void onChannelUpdated(const Discord::ChannelUpdate &event);
     void onChannelDeleted(const Discord::ChannelDelete &event);

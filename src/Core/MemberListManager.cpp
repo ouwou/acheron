@@ -151,6 +151,14 @@ void MemberListManager::clear()
     emit listReset();
 }
 
+void MemberListManager::clearGuild(Snowflake guildId)
+{
+    guildStates.remove(guildId);
+
+    if (activeGuildId == guildId)
+        clear();
+}
+
 void MemberListManager::handleRoleCreated(Snowflake guildId, const Discord::Role &role)
 {
     auto it = guildStates.find(guildId);

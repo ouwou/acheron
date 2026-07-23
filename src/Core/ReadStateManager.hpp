@@ -37,6 +37,7 @@ public:
 
     void setGuildReadInfo(Snowflake guildId, const QDateTime &joinedAt, Discord::MessageNotificationLevel defaultMessageNotifications);
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
+    void removeGuild(Snowflake guildId);
 
     [[nodiscard]] ChannelReadState computeChannelReadState(Snowflake channelId, Snowflake guildId,
                                                            Snowflake parentId,

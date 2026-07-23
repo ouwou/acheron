@@ -125,6 +125,8 @@ public:
 
     void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
 
+    void leaveGuild(Snowflake guildId);
+
     void debugForceReconnect();
 
     void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
@@ -160,6 +162,7 @@ signals:
     void threadMembersUpdated(const ThreadMembersUpdate &event);
     void forumUnreads(const ForumUnreads &event);
     void guildCreated(const GatewayGuild &guild);
+    void guildDeleted(const GuildDelete &event);
     void guildMembersChunk(const GuildMembersChunk &chunk);
     void guildMemberUpdated(const GuildMemberUpdate &event);
     void guildRoleCreated(const GuildRoleCreate &event);
@@ -180,6 +183,7 @@ signals:
     void relationshipRemoved(const RelationshipPartial &event);
     void userNoteUpdated(const UserNoteUpdate &event);
     void messageSendFailed(const QString &nonce, const QString &error);
+    void guildLeaveFailed(Core::Snowflake guildId, const QString &error);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
 
     void reconnecting(int attempt, int maxAttempts);
@@ -203,12 +207,14 @@ private slots:
     void onGatewayThreadDelete(const ThreadDelete &event);
     void onGatewayThreadListSync(const ThreadListSync &event);
     void onGatewayGuildCreate(const GatewayGuild &guild);
+    void onGatewayGuildDelete(const GuildDelete &event);
     void onGatewayGuildRoleCreate(const GuildRoleCreate &event);
     void onGatewayGuildRoleUpdate(const GuildRoleUpdate &event);
     void onGatewayGuildRoleDelete(const GuildRoleDelete &event);
 
 private:
     void indexGuildMappings(const GatewayGuild &guild);
+    void removeGuildMappings(Snowflake guildId);
 
     struct UploadState
     {

@@ -345,6 +345,22 @@ struct GuildRoleDelete : Core::JsonUtils::JsonObject
     }
 };
 
+struct GuildDelete : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> id;
+    Field<bool, true> unavailable;
+
+    [[nodiscard]] bool userRemoved() const { return !(unavailable.hasValue() && unavailable.get()); }
+
+    static GuildDelete fromJson(const QJsonObject &obj)
+    {
+        GuildDelete event;
+        get(obj, "id", event.id);
+        get(obj, "unavailable", event.unavailable);
+        return event;
+    }
+};
+
 struct MessageAck : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> channelId;

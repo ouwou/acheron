@@ -101,6 +101,14 @@ void UserManager::saveMembers(Snowflake guildId, const QList<Discord::Member> &m
     memberRepo.saveMembers(guildId, members);
 }
 
+void UserManager::removeGuildMembers(Snowflake guildId)
+{
+    const QList<MemberKey> keys = memberCache.keys();
+    for (const MemberKey &key : keys)
+        if (key.guildId == guildId)
+            memberCache.remove(key);
+}
+
 void UserManager::saveMemberWithUser(Snowflake guildId, const Discord::Member &member)
 {
     if (member.user.hasValue()) {

@@ -15,6 +15,15 @@ MemberRepository::MemberRepository(Core::Snowflake accountId)
 {
 }
 
+void MemberRepository::deleteMembersForGuild(Core::Snowflake guildId, QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM members WHERE guild_id = :guild_id");
+    q.bindValue(":guild_id", static_cast<qint64>(guildId));
+
+    execLogged(q, "MemberRepository: Delete members for guild");
+}
+
 QString MemberRepository::rolesToJson(const QList<Core::Snowflake> &roles)
 {
     QJsonArray arr;
