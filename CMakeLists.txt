@@ -52,7 +52,7 @@ if(ENABLE_VOICE)
     endif()
 endif()
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Svg Network Sql Test LinguistTools)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Widgets Svg Network Sql Test LinguistTools Multimedia MultimediaWidgets)
 find_package(Qt${QT_VERSION_MAJOR}
     COMPONENTS
         Core
@@ -64,6 +64,8 @@ find_package(Qt${QT_VERSION_MAJOR}
         Concurrent
         Test
         LinguistTools
+        Multimedia
+        MultimediaWidgets
 )
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS ZlibPrivate QUIET)
 qt_standard_project_setup(I18N_TRANSLATED_LANGUAGES en)
@@ -174,6 +176,7 @@ set(PROJECT_SOURCES
     src/UI/ConnectionBanner.cpp
     src/UI/ElidedLabel.cpp
     src/UI/ImageViewer.cpp
+    src/UI/VideoPlayer.cpp
     src/UI/Accounts/AccountsWindow.cpp
     src/UI/Settings/SettingsWindow.cpp
     src/UI/Settings/GeneralPage.cpp
@@ -312,6 +315,8 @@ target_link_libraries(${PROJECT_NAME}
         Qt::Network
         Qt::Sql
         Qt::Concurrent
+        Qt::Multimedia
+        Qt::MultimediaWidgets
         CURL::libcurl
     PRIVATE
         qt${QT_VERSION_MAJOR}keychain

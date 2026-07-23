@@ -354,6 +354,40 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 painter->setPen(Qt::white);
                 painter->drawText(imgLayout.rect, Qt::AlignCenter, tr("SPOILER"));
             }
+
+            if (att.isVideo && !showBlurred) {
+                QRect playRect = imgLayout.rect;
+                int playSize = std::min(playRect.width(), playRect.height()) / 3;
+                QRect circleRect = QRect(playRect.center().x() - playSize,
+                                         playRect.center().y() - playSize,
+                                         playSize * 2, playSize * 2);
+                painter->setBrush(QColor(0, 0, 0, 180));
+                painter->setPen(Qt::NoPen);
+                painter->drawEllipse(circleRect);
+                painter->setPen(Qt::white);
+                painter->setBrush(Qt::white);
+                QPolygon triangle;
+                int triOffset = playSize / 2;
+                triangle << QPoint(circleRect.center().x() - triOffset, circleRect.top() + triOffset)
+                         << QPoint(circleRect.center().x() - triOffset, circleRect.bottom() - triOffset)
+                         << QPoint(circleRect.center().x() + triOffset, circleRect.center().y());
+                painter->drawPolygon(triangle);
+
+                if (!imgLayout.downloadRect.isNull()) {
+                    painter->setBrush(QColor(0, 0, 0, 160));
+                    painter->setPen(Qt::NoPen);
+                    painter->drawEllipse(imgLayout.downloadRect);
+                    painter->setPen(Qt::white);
+                    painter->setBrush(Qt::white);
+                    int arrowSize = imgLayout.downloadRect.width() / 3;
+                    QPoint center = imgLayout.downloadRect.center();
+                    QPolygon arrow;
+                    arrow << QPoint(center.x(), center.y() - arrowSize / 2)
+                          << QPoint(center.x() + arrowSize / 2, center.y() + arrowSize / 2)
+                          << QPoint(center.x() - arrowSize / 2, center.y() + arrowSize / 2);
+                    painter->drawPolygon(arrow);
+                }
+            }
         } else {
             painter->fillRect(imgLayout.rect, QColor(60, 60, 60));
             painter->setPen(option.palette.text().color());

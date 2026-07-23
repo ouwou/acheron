@@ -24,6 +24,7 @@ struct AttachmentData
     QPixmap pixmap;
     bool isLoading;
     bool isImage;
+    bool isVideo;
     QString filename;
     qint64 fileSizeBytes;
     bool isSpoiler;

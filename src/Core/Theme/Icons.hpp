@@ -21,6 +21,7 @@ inline constexpr auto IdCard = "id-card";
 inline constexpr auto Lock = "lock";
 inline constexpr auto MessageCircle = "message-circle";
 inline constexpr auto Pencil = "pencil";
+inline constexpr auto Play = "play";
 inline constexpr auto Spool = "spool";
 inline constexpr auto X = "x";
 } // namespace Name

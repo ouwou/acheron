@@ -96,6 +96,10 @@ constexpr int reactionTopMargin() noexcept
 {
     return 4;
 }
+constexpr int videoDownloadBtnSize() noexcept
+{
+    return 24;
+}
 
 struct AttachmentGridCell
 {
@@ -156,6 +160,7 @@ struct ReactionLayout
 struct AttachmentLayout
 {
     QRect rect;
+    QRect downloadRect;
     bool isImage;
     int index;
 };
@@ -167,6 +172,8 @@ struct HitRegion
         UsernameHeader,
         ReplyBar,
         AttachmentImage,
+        AttachmentVideo,
+        AttachmentVideoDownload,
         AttachmentFile,
         EmbedThumbnail,
         EmbedAuthor,
