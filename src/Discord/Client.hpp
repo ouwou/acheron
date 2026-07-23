@@ -162,6 +162,7 @@ signals:
     void threadMembersUpdated(const ThreadMembersUpdate &event);
     void forumUnreads(const ForumUnreads &event);
     void guildCreated(const GatewayGuild &guild);
+    void guildDeleted(const GuildDelete &event);
     void guildMembersChunk(const GuildMembersChunk &chunk);
     void guildMemberUpdated(const GuildMemberUpdate &event);
     void guildRoleCreated(const GuildRoleCreate &event);
@@ -206,12 +207,14 @@ private slots:
     void onGatewayThreadDelete(const ThreadDelete &event);
     void onGatewayThreadListSync(const ThreadListSync &event);
     void onGatewayGuildCreate(const GatewayGuild &guild);
+    void onGatewayGuildDelete(const GuildDelete &event);
     void onGatewayGuildRoleCreate(const GuildRoleCreate &event);
     void onGatewayGuildRoleUpdate(const GuildRoleUpdate &event);
     void onGatewayGuildRoleDelete(const GuildRoleDelete &event);
 
 private:
     void indexGuildMappings(const GatewayGuild &guild);
+    void removeGuildMappings(Snowflake guildId);
 
     struct UploadState
     {

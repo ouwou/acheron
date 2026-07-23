@@ -63,6 +63,7 @@ public:
 
     void setActiveChannel(Snowflake guildId, Snowflake channelId);
     void clear();
+    void clearGuild(Snowflake guildId);
 
     void handleMemberListUpdate(const Discord::GuildMemberListUpdate &update);
 

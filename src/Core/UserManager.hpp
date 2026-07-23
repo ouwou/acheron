@@ -47,6 +47,7 @@ public:
     void saveUsers(const QList<Discord::User> &users);
     void saveMember(Snowflake guildId, Snowflake userId, const Discord::Member &member);
     void saveMembers(Snowflake guildId, const QList<Discord::Member> &members);
+    void removeGuildMembers(Snowflake guildId);
 
     void saveMemberWithUser(Snowflake guildId, const Discord::Member &member);
 

@@ -264,6 +264,26 @@ void ReadStateManager::registerChannelGuild(Snowflake channelId, Snowflake guild
     channelGuildMap.insert(channelId, guildId);
 }
 
+void ReadStateManager::removeGuild(Snowflake guildId)
+{
+    const QList<Snowflake> channels = channelGuildMap.keys(guildId);
+    for (Snowflake channelId : channels) {
+        channelReadStates.remove(channelId);
+        channelLastMessageIds.remove(channelId);
+        ackIdAtSelect.remove(channelId);
+        channelOverrideCache.remove(channelId);
+        channelGuildMap.remove(channelId);
+        if (activeChannelId == channelId) {
+            activeChannelId = Snowflake();
+            activeChannelAckPending = false;
+        }
+    }
+
+    guildInfo.remove(guildId);
+    guildSettingsMap.remove(guildId);
+    guildOverrideChannels.remove(guildId);
+}
+
 int ReadStateManager::getMentionCount(Snowflake channelId) const
 {
     auto it = channelReadStates.constFind(channelId);

@@ -18,6 +18,7 @@ public:
     GuildRepository(Core::Snowflake accountId);
 
     void saveGuild(const Discord::Guild &guild, QSqlDatabase &db);
+    void deleteGuild(Core::Snowflake guildId, QSqlDatabase &db);
     std::optional<Discord::Guild> getGuild(Core::Snowflake guildId);
 
 private:
