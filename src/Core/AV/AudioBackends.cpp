@@ -84,10 +84,24 @@ bool initAudioContext(ma_context *context, const ma_context_config *config)
     if (resolveBackend(name, backend)) {
         if (ma_context_init(&backend, 1, config, context) == MA_SUCCESS)
             return true;
-        qCWarning(LogVoice) << "Audio backend" << name << "failed to initialize, falling back to the default";
+        qCWarning(LogMiniaudio) << "Audio backend" << name << "failed to initialize, falling back to the default";
     }
 
     return ma_context_init(nullptr, 0, config, context) == MA_SUCCESS;
+}
+
+bool initAudioDevice(const ma_device_config *config, ma_device *device)
+{
+    const QString name = configuredAudioBackend();
+
+    ma_backend backend;
+    if (resolveBackend(name, backend)) {
+        if (ma_device_init_ex(&backend, 1, nullptr, config, device) == MA_SUCCESS)
+            return true;
+        qCWarning(LogMiniaudio) << "Audio backend" << name << "failed to initialize, falling back to the default";
+    }
+
+    return ma_device_init_ex(nullptr, 0, nullptr, config, device) == MA_SUCCESS;
 }
 
 } // namespace AV

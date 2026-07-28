@@ -13,9 +13,10 @@ Q_LOGGING_CATEGORY(LogUI, "acheron.ui");
 Q_LOGGING_CATEGORY(LogProto, "acheron.proto");
 #ifndef ACHERON_NO_VOICE
 Q_LOGGING_CATEGORY(LogDave, "acheron.dave");
-Q_LOGGING_CATEGORY(LogMiniaudio, "acheron.miniaudio");
 #endif
+Q_LOGGING_CATEGORY(LogMiniaudio, "acheron.miniaudio");
 Q_LOGGING_CATEGORY(LogVoice, "acheron.voice");
+Q_LOGGING_CATEGORY(LogVideo, "acheron.video");
 
 namespace Acheron {
 namespace Core {

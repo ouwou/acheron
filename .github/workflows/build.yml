@@ -8,6 +8,9 @@ on:
 
 env:
   CURL_IMPERSONATE_VERSION: v1.4.4
+  FFMPEG_RELEASE_TAG: autobuild-2026-07-26-13-28
+  FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-31-g8c9502e9b0-win64-lgpl-shared-8.1
+  FFMPEG_WINDOWS_SHA256: a98e7f04caebb3bfc132813add84001c0e58d4098b91efcb06b92ee4b8242bdb
 
 jobs:
   build-windows:
@@ -49,14 +52,31 @@ jobs:
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
 
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_WINDOWS_BUILD }}.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+
+          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne "${{ env.FFMPEG_WINDOWS_SHA256 }}") {
+            throw "ffmpeg archive hash mismatch: expected ${{ env.FFMPEG_WINDOWS_SHA256 }}, got $actual"
+          }
+
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+
+          $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
+          Move-Item -Path $inner.FullName -Destination ffmpeg
+
       - name: Configure
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
+          $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir;$ffmpegDir" `
             -DCURL_DIR="$curlDir/lib/cmake/CURL" `
             -DBUILD_TESTS=ON
 
@@ -106,7 +126,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev
+          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -217,7 +238,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: brew install curl autoconf automake libtool
+        run: brew install curl autoconf automake libtool ffmpeg
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

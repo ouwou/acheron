@@ -156,7 +156,6 @@ struct ReactionLayout
 struct AttachmentLayout
 {
     QRect rect;
-    bool isImage;
     int index;
 };
 
@@ -167,6 +166,7 @@ struct HitRegion
         UsernameHeader,
         ReplyBar,
         AttachmentImage,
+        AttachmentVideo,
         AttachmentFile,
         EmbedThumbnail,
         EmbedAuthor,
@@ -243,6 +243,8 @@ struct LayoutContext
     const ChatModel *model = nullptr;
     Core::Snowflake messageId;
 };
+
+bool embedIsBareVideo(const EmbedData &embed);
 
 MessageLayout calculateMessageLayout(const LayoutContext &ctx);
 

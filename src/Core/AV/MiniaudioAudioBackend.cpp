@@ -1,4 +1,3 @@
-#define MINIAUDIO_IMPLEMENTATION
 #include "Core/AV/Miniaudio.hpp"
 
 #include "MiniaudioAudioBackend.hpp"
@@ -205,8 +204,9 @@ bool MiniaudioAudioBackend::startCapture()
     if (!selectedInputId.isEmpty() && DeserializeDeviceId(selectedInputId, deviceId))
         config.capture.pDeviceID = &deviceId;
 
-    if (ma_device_init(&ma->context, &config, &ma->captureDevice) != MA_SUCCESS) {
-        qCWarning(LogVoice) << "Failed to init miniaudio capture device";
+    ma_result initResult = ma_device_init(&ma->context, &config, &ma->captureDevice);
+    if (initResult != MA_SUCCESS) {
+        qCWarning(LogVoice) << "Failed to init miniaudio capture device:" << ma_result_description(initResult);
         return false;
     }
 
@@ -259,8 +259,9 @@ bool MiniaudioAudioBackend::startPlayback()
     if (!selectedOutputId.isEmpty() && DeserializeDeviceId(selectedOutputId, deviceId))
         config.playback.pDeviceID = &deviceId;
 
-    if (ma_device_init(&ma->context, &config, &ma->playbackDevice) != MA_SUCCESS) {
-        qCWarning(LogVoice) << "Failed to init miniaudio playback device";
+    ma_result initResult = ma_device_init(&ma->context, &config, &ma->playbackDevice);
+    if (initResult != MA_SUCCESS) {
+        qCWarning(LogVoice) << "Failed to init miniaudio playback device:" << ma_result_description(initResult);
         return false;
     }
 
