@@ -2,8 +2,8 @@
 
 #ifdef ACHERON_HAVE_FFMPEG
 
-#  include "Core/AV/AudioBackends.hpp"
-#  include "Core/AV/Miniaudio.hpp"
+#  include "Core/Audio/AudioBackends.hpp"
+#  include "Core/Audio/Miniaudio.hpp"
 
 #  include "Core/Logging.hpp"
 
@@ -68,7 +68,7 @@ bool AudioOutput::start()
         config.pUserData = this;
         config.wasapi.noAutoConvertSRC = MA_TRUE;
 
-        if (!AV::initAudioDevice(&config, &state->device)) {
+        if (!Audio::initAudioDevice(&config, &state->device)) {
             qCWarning(LogVideo) << "failed to init the video playback device";
             return false;
         }

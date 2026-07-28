@@ -244,28 +244,28 @@ if(ENABLE_VOICE)
     list(APPEND PROJECT_SOURCES
         src/UI/VoiceStatusBar.cpp
         src/UI/VoiceWindow.cpp
-        src/Discord/AV/VoiceGateway.cpp
-        src/Discord/AV/UdpTransport.cpp
-        src/Discord/AV/VoiceClient.cpp
-        src/Discord/AV/RtpPacket.cpp
-        src/Discord/AV/VoiceEncryption.cpp
-        src/Discord/AV/DaveSession.cpp
-        src/Core/AV/VoiceManager.cpp
-        src/Core/AV/AudioPipeline.cpp
-        src/Core/AV/IAudioBackend.cpp
-        src/Core/AV/MiniaudioAudioBackend.cpp
-        src/Core/AV/OpusEncoder.cpp
-        src/Core/AV/OpusDecoder.cpp
-        src/Core/AV/JitterBuffer.cpp
-        src/Core/AV/AudioMixer.cpp
-        src/Core/AV/NoiseSuppressor.cpp
+        src/Discord/Voice/VoiceGateway.cpp
+        src/Discord/Voice/UdpTransport.cpp
+        src/Discord/Voice/VoiceClient.cpp
+        src/Discord/Voice/RtpPacket.cpp
+        src/Discord/Voice/VoiceEncryption.cpp
+        src/Discord/Voice/DaveSession.cpp
+        src/Core/Audio/VoiceManager.cpp
+        src/Core/Audio/AudioPipeline.cpp
+        src/Core/Audio/IAudioBackend.cpp
+        src/Core/Audio/MiniaudioAudioBackend.cpp
+        src/Core/Audio/OpusEncoder.cpp
+        src/Core/Audio/OpusDecoder.cpp
+        src/Core/Audio/JitterBuffer.cpp
+        src/Core/Audio/AudioMixer.cpp
+        src/Core/Audio/NoiseSuppressor.cpp
     )
 endif()
 
 if(ENABLE_VOICE OR TARGET ffmpeg)
     list(APPEND PROJECT_SOURCES
-        src/Core/AV/MiniaudioImpl.cpp
-        src/Core/AV/AudioBackends.cpp
+        src/Core/Audio/MiniaudioImpl.cpp
+        src/Core/Audio/AudioBackends.cpp
         src/UI/Settings/AudioPage.cpp
     )
 endif()

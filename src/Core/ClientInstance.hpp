@@ -22,7 +22,7 @@ namespace Acheron {
 namespace Core {
 
 #ifndef ACHERON_NO_VOICE
-namespace AV {
+namespace Audio {
 class VoiceManager;
 }
 #endif
@@ -51,7 +51,7 @@ public:
     [[nodiscard]] MemberListManager *memberList() const;
     [[nodiscard]] RelationshipManager *relationships() const;
 #ifndef ACHERON_NO_VOICE
-    [[nodiscard]] AV::VoiceManager *voice() const;
+    [[nodiscard]] Audio::VoiceManager *voice() const;
 #endif
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
@@ -155,7 +155,7 @@ private:
     MemberListManager *memberListManager;
     RelationshipManager *relationshipManager;
 #ifndef ACHERON_NO_VOICE
-    AV::VoiceManager *voiceManager;
+    Audio::VoiceManager *voiceManager;
 #endif
 
     Storage::RoleRepository roleRepo;

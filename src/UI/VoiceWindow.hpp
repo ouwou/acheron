@@ -22,7 +22,7 @@
 namespace Acheron {
 namespace Core {
 class ImageManager;
-namespace AV {
+namespace Audio {
 class VoiceManager;
 }
 } // namespace Core
@@ -123,7 +123,7 @@ public:
 
     explicit VoiceWindow(QWidget *parent = nullptr);
 
-    void setVoiceManager(Core::AV::VoiceManager *manager);
+    void setVoiceManager(Core::Audio::VoiceManager *manager);
     void setNameResolver(NameResolver resolver);
     void setAvatarResolver(AvatarResolver resolver);
     void setImageManager(Core::ImageManager *manager);
@@ -152,7 +152,7 @@ private:
     void showVerificationCode(Core::Snowflake userId);
     void showPrivacyCode();
 
-    Core::AV::VoiceManager *voiceManager = nullptr;
+    Core::Audio::VoiceManager *voiceManager = nullptr;
     Core::ImageManager *imageManager = nullptr;
     QMetaObject::Connection imageFetchedConn;
     NameResolver nameResolver;

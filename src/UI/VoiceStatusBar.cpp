@@ -1,7 +1,7 @@
 #include "VoiceStatusBar.hpp"
 #include "VoiceWindow.hpp"
 
-#include "Core/AV/VoiceManager.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 
 #include <QHBoxLayout>
 #include <QMouseEvent>
@@ -74,7 +74,7 @@ void VoiceStatusBar::setupUi()
     layout->addWidget(disconnectBtn);
 }
 
-void VoiceStatusBar::setVoiceManager(Core::AV::VoiceManager *manager)
+void VoiceStatusBar::setVoiceManager(Core::Audio::VoiceManager *manager)
 {
     if (voiceManager == manager)
         return;
@@ -89,7 +89,7 @@ void VoiceStatusBar::setVoiceManager(Core::AV::VoiceManager *manager)
         return;
     }
 
-    connect(voiceManager, &Core::AV::VoiceManager::voiceStateChanged,
+    connect(voiceManager, &Core::Audio::VoiceManager::voiceStateChanged,
             this, &VoiceStatusBar::updateConnectionState);
 
     configureVoiceWindow();
@@ -129,7 +129,7 @@ void VoiceStatusBar::setChannelName(const QString &name)
 
 void VoiceStatusBar::updateConnectionState()
 {
-    using State = Discord::AV::VoiceClient::State;
+    using State = Discord::Voice::VoiceClient::State;
 
     State state = State::Disconnected;
     if (voiceManager)

@@ -1,6 +1,6 @@
 #include "VoiceWindow.hpp"
 
-#include "Core/AV/VoiceManager.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 #include "Core/ImageManager.hpp"
 
 #include <QContextMenuEvent>
@@ -653,7 +653,7 @@ void VoiceWindow::installResetOnDoubleClick(QWidget *widget, const QVariant &def
     widget->setToolTip(tr("Double-click to reset to default"));
 }
 
-void VoiceWindow::setVoiceManager(Core::AV::VoiceManager *manager)
+void VoiceWindow::setVoiceManager(Core::Audio::VoiceManager *manager)
 {
     if (voiceManager == manager)
         return;
@@ -664,15 +664,15 @@ void VoiceWindow::setVoiceManager(Core::AV::VoiceManager *manager)
     if (!voiceManager)
         return;
 
-    connect(voiceManager, &Core::AV::VoiceManager::audioLevelChanged, volumeMeter, &VolumeMeter::setLevel);
-    connect(voiceManager, &Core::AV::VoiceManager::devicesChanged, this, &VoiceWindow::refreshDevices);
-    connect(voiceManager, &Core::AV::VoiceManager::participantJoined, this, &VoiceWindow::onParticipantJoined);
-    connect(voiceManager, &Core::AV::VoiceManager::participantLeft, this, &VoiceWindow::onParticipantLeft);
-    connect(voiceManager, &Core::AV::VoiceManager::participantUpdated, this, &VoiceWindow::onParticipantUpdated);
-    connect(voiceManager, &Core::AV::VoiceManager::participantSpeakingChanged, this, &VoiceWindow::onParticipantSpeakingChanged);
-    connect(voiceManager, &Core::AV::VoiceManager::userAudioLevelChanged, this, &VoiceWindow::onUserAudioLevelChanged);
-    connect(voiceManager, &Core::AV::VoiceManager::participantsCleared, this, &VoiceWindow::onParticipantsCleared);
-    connect(voiceManager, &Core::AV::VoiceManager::privacyCodeChanged,
+    connect(voiceManager, &Core::Audio::VoiceManager::audioLevelChanged, volumeMeter, &VolumeMeter::setLevel);
+    connect(voiceManager, &Core::Audio::VoiceManager::devicesChanged, this, &VoiceWindow::refreshDevices);
+    connect(voiceManager, &Core::Audio::VoiceManager::participantJoined, this, &VoiceWindow::onParticipantJoined);
+    connect(voiceManager, &Core::Audio::VoiceManager::participantLeft, this, &VoiceWindow::onParticipantLeft);
+    connect(voiceManager, &Core::Audio::VoiceManager::participantUpdated, this, &VoiceWindow::onParticipantUpdated);
+    connect(voiceManager, &Core::Audio::VoiceManager::participantSpeakingChanged, this, &VoiceWindow::onParticipantSpeakingChanged);
+    connect(voiceManager, &Core::Audio::VoiceManager::userAudioLevelChanged, this, &VoiceWindow::onUserAudioLevelChanged);
+    connect(voiceManager, &Core::Audio::VoiceManager::participantsCleared, this, &VoiceWindow::onParticipantsCleared);
+    connect(voiceManager, &Core::Audio::VoiceManager::privacyCodeChanged,
             this, [this](const QString &code) {
                 bool active = !code.isEmpty();
                 privacyCodeBtn->setVisible(active);
@@ -730,7 +730,7 @@ void VoiceWindow::refreshDevices()
     if (!voiceManager)
         return;
 
-    auto populateCombo = [](QComboBox *combo, const QList<Core::AV::AudioDeviceInfo> &devices,
+    auto populateCombo = [](QComboBox *combo, const QList<Core::Audio::AudioDeviceInfo> &devices,
                             const QByteArray &currentId) {
         combo->blockSignals(true);
         combo->clear();
