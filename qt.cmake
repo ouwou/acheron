@@ -14,3 +14,9 @@ if(QT_VERSION VERSION_LESS 6.0)
         endif()
     endmacro()
 endif()
+
+if(QT_VERSION VERSION_LESS 6.2)
+    # later?
+    macro(qt_add_translations)
+    endmacro()
+endif()

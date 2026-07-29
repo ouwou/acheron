@@ -9,7 +9,7 @@
 #include "Core/JsonUtils.hpp"
 
 #ifdef compress // really bruh
-#  undef compress
+#undef compress
 #endif
 
 namespace Acheron {

@@ -411,14 +411,14 @@ void VoiceWindow::setupUi()
             voiceManager->setVadThreshold(static_cast<float>(value));
     });
 
-    connect(inputDeviceCombo, &QComboBox::activated, this, [this](int index) {
+    connect(inputDeviceCombo, qOverload<int>(&QComboBox::activated), this, [this](int index) {
         if (!voiceManager)
             return;
         QByteArray deviceId = inputDeviceCombo->itemData(index).toByteArray();
         voiceManager->setInputDevice(deviceId);
     });
 
-    connect(outputDeviceCombo, &QComboBox::activated, this, [this](int index) {
+    connect(outputDeviceCombo, qOverload<int>(&QComboBox::activated), this, [this](int index) {
         if (!voiceManager)
             return;
         QByteArray deviceId = outputDeviceCombo->itemData(index).toByteArray();
@@ -518,7 +518,7 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
         adjustSize();
     });
 
-    connect(applicationCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+    connect(applicationCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
         int value = applicationCombo->itemData(index).toInt();
         QSettings().setValue("voice/codec/application", value);
         if (voiceManager)
@@ -539,7 +539,7 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
             voiceManager->setOpusComplexity(value);
     });
 
-    connect(signalTypeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+    connect(signalTypeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
         int value = signalTypeCombo->itemData(index).toInt();
         QSettings().setValue("voice/codec/signal_type", value);
         if (voiceManager)

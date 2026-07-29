@@ -1,7 +1,7 @@
 #include "ClientInstance.hpp"
 #include "ReadStateManager.hpp"
 #ifndef ACHERON_NO_VOICE
-#  include "Core/Audio/VoiceManager.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 #endif
 
 #include <algorithm>

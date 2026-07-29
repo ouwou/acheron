@@ -13,7 +13,7 @@
 #include <Storage/UserRepository.hpp>
 
 #ifndef ACHERON_NO_VOICE
-#  include <Core/Audio/VoiceManager.hpp>
+#include <Core/Audio/VoiceManager.hpp>
 #endif
 
 namespace Acheron {

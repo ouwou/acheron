@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
@@ -8,6 +9,10 @@
 #include <type_traits>
 
 #include "Snowflake.hpp"
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#include "qt_flags.hpp"
+#endif
 
 namespace Acheron {
 namespace Core {
@@ -22,6 +27,12 @@ template <typename T>
 struct is_qflags<QFlags<T>> : std::true_type
 {
 };
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+template <typename T>
+struct is_qflags<::Acheron::Compat::Flags<T>> : std::true_type
+{
+};
+#endif
 } // namespace detail
 
 template <typename T>
@@ -145,6 +156,9 @@ protected:
                 return value;
             }
         }
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+        friend QDebug operator<<(QDebug dbg, const Field &f) { return dbg << f.value; }
+#endif
 
         void undefine()
         {

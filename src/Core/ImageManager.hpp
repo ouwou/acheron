@@ -10,6 +10,8 @@
 #include <QSet>
 #include <qlabel.h>
 
+#include <type_traits>
+
 class QNetworkAccessManager;
 
 namespace Acheron {
@@ -21,6 +23,11 @@ enum class PinGroup {
     ChatView,
 };
 
+inline size_t qHash(PinGroup key, size_t seed = 0) noexcept
+{
+    return ::qHash(static_cast<std::underlying_type_t<PinGroup>>(key), seed);
+}
+
 struct ImageRequestKey
 {
     QUrl url;
@@ -31,6 +38,11 @@ struct ImageRequestKey
         return url == other.url && size == other.size;
     }
 };
+
+inline size_t qHash(const ImageRequestKey &key, size_t seed = 0)
+{
+    return qHashMulti(seed, key.url, key.size);
+}
 
 class ImageManager : public QObject
 {
@@ -74,14 +86,3 @@ private:
 
 } // namespace Core
 } // namespace Acheron
-
-namespace std {
-template <>
-struct hash<Acheron::Core::ImageRequestKey>
-{
-    size_t operator()(const Acheron::Core::ImageRequestKey &key, size_t seed = 0) const
-    {
-        return qHashMulti(seed, key.url, key.size);
-    }
-};
-} // namespace std

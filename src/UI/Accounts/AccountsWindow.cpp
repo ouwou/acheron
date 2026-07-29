@@ -15,7 +15,7 @@ namespace UI {
 using namespace Acheron::Core;
 
 AccountsWindow::AccountsWindow(Session *session, AccountsModel *sharedModel, QWidget *parent)
-    : QWidget(parent), session(session)
+    : QWidget(parent, Qt::Window), session(session)
 {
     setWindowTitle(tr("Manage Accounts"));
     resize(700, 450);

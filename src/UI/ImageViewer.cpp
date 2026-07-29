@@ -188,7 +188,11 @@ void ImageViewer::mouseReleaseEvent(QMouseEvent *event)
 
 void ImageViewer::wheelEvent(QWheelEvent *event)
 {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QPointF mousePos = event->position();
+#else
+    QPointF mousePos = event->posF();
+#endif
     QPointF beforeZoom = widgetToImage(mousePos);
 
     qreal factor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;

@@ -3,9 +3,9 @@
 #include <QEventLoop>
 
 #if __has_include(<qtkeychain/keychain.h>)
-#  include <qtkeychain/keychain.h>
+#include <qtkeychain/keychain.h>
 #else
-#  include <qt6keychain/keychain.h>
+#include <qt6keychain/keychain.h>
 #endif
 
 #include "Logging.hpp"

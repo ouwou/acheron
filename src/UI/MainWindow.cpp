@@ -43,8 +43,8 @@
 #include "Core/Session.hpp"
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
-#  include "Core/Audio/VoiceManager.hpp"
-#  include "VoiceStatusBar.hpp"
+#include "Core/Audio/VoiceManager.hpp"
+#include "VoiceStatusBar.hpp"
 #endif
 
 using namespace Acheron::Core;
@@ -2000,7 +2000,7 @@ void MainWindow::setupMenu()
 void MainWindow::openAccountsWindow()
 {
     if (!accountsWindow) {
-        accountsWindow = new AccountsWindow(session, accountsModel);
+        accountsWindow = new AccountsWindow(session, accountsModel, this);
     }
 
     accountsWindow->show();
@@ -2011,7 +2011,7 @@ void MainWindow::openAccountsWindow()
 void MainWindow::openSettingsWindow()
 {
     if (!settingsWindow) {
-        settingsWindow = new SettingsWindow();
+        settingsWindow = new SettingsWindow(this);
         connect(settingsWindow, &SettingsWindow::channelListModeChanged, this, [this](bool classic) {
             setChannelListMode(classic ? ChannelListMode::Classic : ChannelListMode::Tree);
         });

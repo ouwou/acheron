@@ -3,6 +3,10 @@
 
 #include "Core/Logging.hpp"
 
+#ifdef Q_OS_WIN
+#include <objbase.h>
+#endif
+
 namespace Acheron {
 namespace Core {
 namespace Audio {
@@ -442,6 +446,14 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 
     voiceThread = new QThread(this);
     voiceThread->setObjectName("VoiceThread");
+
+#ifdef Q_OS_WIN
+    // workaround for ma_context_init and ma_device_init being called on different threads
+    // ma_context_init does the CoInitializeEx
+    // will be fixed in miniaudio 0.12
+    connect(voiceThread, &QThread::started, this, [] { CoInitializeEx(nullptr, COINIT_MULTITHREADED); }, Qt::DirectConnection);
+    connect(voiceThread, &QThread::finished, this, [] { CoUninitialize(); }, Qt::DirectConnection);
+#endif
 
     Snowflake serverId = guildId.isValid() ? guildId : channelId;
     voiceClient = new Discord::Voice::VoiceClient(endpoint, token, serverId, channelId, accountId, voiceSessionId);

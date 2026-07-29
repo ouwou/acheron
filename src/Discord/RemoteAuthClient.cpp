@@ -11,13 +11,13 @@
 #include <QTimer>
 
 #ifdef _WIN32
-#  undef X509_NAME
-#  undef X509_EXTENSIONS
-#  undef X509_CERT_PAIR
-#  undef PKCS7_ISSUER_AND_SERIAL
-#  undef PKCS7_SIGNER_INFO
-#  undef OCSP_REQUEST
-#  undef OCSP_RESPONSE
+#undef X509_NAME
+#undef X509_EXTENSIONS
+#undef X509_CERT_PAIR
+#undef PKCS7_ISSUER_AND_SERIAL
+#undef PKCS7_SIGNER_INFO
+#undef OCSP_REQUEST
+#undef OCSP_RESPONSE
 #endif
 #include <openssl/crypto.h>
 #include <openssl/evp.h>

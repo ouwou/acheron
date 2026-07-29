@@ -11,7 +11,7 @@ namespace Acheron {
 namespace UI {
 
 SettingsWindow::SettingsWindow(QWidget *parent)
-    : QWidget(parent)
+    : QWidget(parent, Qt::Window)
 {
     setWindowTitle(tr("Settings"));
     resize(550, 400);

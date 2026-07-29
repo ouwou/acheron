@@ -86,11 +86,23 @@ public:
         return renderFor(size, mode, 1.0);
     }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QPixmap scaledPixmap(const QSize &size, QIcon::Mode mode, QIcon::State state, qreal scale) override
     {
         Q_UNUSED(state);
         return renderFor(size, mode, scale);
     }
+#else
+    void virtual_hook(int id, void *data) override
+    {
+        if (id == QIconEngine::ScaledPixmapHook) {
+            auto *arg = static_cast<QIconEngine::ScaledPixmapArgument *>(data);
+            arg->pixmap = renderFor(arg->size, arg->mode, arg->scale);
+        } else {
+            QIconEngine::virtual_hook(id, data);
+        }
+    }
+#endif
 
     QIconEngine *clone() const override { return new LucideIconEngine(*this); }
 

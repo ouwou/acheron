@@ -6,10 +6,10 @@
 
 // #define MEMBERLIST_DEBUG
 #ifdef MEMBERLIST_DEBUG
-#  include "Logging.hpp"
-#  define ML_LOG qCDebug(LogCore)
+#include "Logging.hpp"
+#define ML_LOG qCDebug(LogCore)
 #else
-#  define ML_LOG QT_NO_QDEBUG_MACRO()
+#define ML_LOG QT_NO_QDEBUG_MACRO()
 #endif
 
 #include "Storage/ChannelRepository.hpp"

@@ -2,7 +2,7 @@
 #include "IAudioBackend.hpp"
 
 #ifdef ACHERON_HAVE_RNNOISE
-#  include <rnnoise.h>
+#include <rnnoise.h>
 #endif
 
 #include <algorithm>
