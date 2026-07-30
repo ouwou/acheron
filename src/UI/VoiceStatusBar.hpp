@@ -10,12 +10,12 @@
 #include <functional>
 
 #include "Core/Snowflake.hpp"
-#include "Discord/AV/VoiceClient.hpp"
+#include "Discord/Voice/VoiceClient.hpp"
 
 namespace Acheron {
 namespace Core {
 class ImageManager;
-namespace AV {
+namespace Audio {
 class VoiceManager;
 }
 } // namespace Core
@@ -32,7 +32,7 @@ public:
 
     explicit VoiceStatusBar(QWidget *parent = nullptr);
 
-    void setVoiceManager(Core::AV::VoiceManager *manager);
+    void setVoiceManager(Core::Audio::VoiceManager *manager);
     void setNameResolver(NameResolver resolver);
     void setAvatarResolver(AvatarResolver resolver);
     void setImageManager(Core::ImageManager *manager);
@@ -52,7 +52,7 @@ private:
     void showVoiceWindow();
     void configureVoiceWindow();
 
-    Core::AV::VoiceManager *voiceManager = nullptr;
+    Core::Audio::VoiceManager *voiceManager = nullptr;
     Core::ImageManager *imageManager = nullptr;
     NameResolver nameResolver;
     AvatarResolver avatarResolver;

@@ -24,11 +24,18 @@ struct AttachmentData
     QPixmap pixmap;
     bool isLoading;
     bool isImage;
+    bool isVideo = false;
+    bool isAudio = false;
+    bool isVoiceMessage = false;
+    qint64 durationMs = 0;
+    QString contentType;
     QString filename;
     qint64 fileSizeBytes;
     bool isSpoiler;
     qint64 uploadSent = -1;
     qint64 uploadTotal = -1;
+
+    [[nodiscard]] bool isMedia() const { return isImage || isVideo; }
 };
 
 struct EmbedFieldData
@@ -125,6 +132,9 @@ struct EmbedData
     QPixmap videoThumbnail;
     QSize videoThumbnailSize;
 
+    QUrl videoUrl;
+    bool videoPlayable = false;
+
     QString providerName;
     QString providerUrl;
 
@@ -217,6 +227,8 @@ public:
     [[nodiscard]] Snowflake getActiveChannelId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
 
+    void setVideoNativeSize(Snowflake attachmentId, const QSize &size);
+
     QTextDocument *getCachedDocument(const DocCacheKey &key) const;
     void cacheDocument(const DocCacheKey &key, QTextDocument *doc) const;
     void invalidateDocCache();
@@ -269,6 +281,7 @@ private:
     mutable QHash<QUrl, QPixmap> localPixmapCache; // file previews
     mutable QHash<Snowflake, QPixmap> previewPixmapCache; // pasted bitmap previews by attachment id
     mutable QSet<Snowflake> revealedSpoilers;
+    QHash<Snowflake, QSize> videoNativeSizes;
     mutable bool suppressImageFetch = false;
 
     friend class ChatDelegate;

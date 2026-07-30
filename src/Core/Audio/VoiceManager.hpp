@@ -1,0 +1,182 @@
+#pragma once
+
+#include <QObject>
+#include <QThread>
+#include <QHash>
+#include <QList>
+#include <QSet>
+
+#include <functional>
+#include <memory>
+#include <optional>
+#include <vector>
+
+#include <opus.h>
+
+#include "Core/Snowflake.hpp"
+#include "Core/Audio/IAudioBackend.hpp"
+#include "Discord/Events.hpp"
+#include "Discord/Voice/VoiceClient.hpp"
+
+namespace Acheron {
+namespace Core {
+namespace Audio {
+
+class AudioPipeline;
+
+struct VoiceParticipant
+{
+    Snowflake userId;
+    bool selfMute = false;
+    bool selfDeaf = false;
+    bool serverMute = false;
+    bool serverDeaf = false;
+    bool suppress = false;
+    bool speaking = false;
+};
+
+class VoiceManager : public QObject
+{
+    Q_OBJECT
+public:
+    explicit VoiceManager(Snowflake accountId, QObject *parent = nullptr);
+    ~VoiceManager() override;
+
+    void handleVoiceStateUpdate(const Discord::VoiceState &state);
+    void handleVoiceServerUpdate(const Discord::VoiceServerUpdate &event);
+
+    void disconnect();
+
+    [[nodiscard]] bool isConnected() const;
+    [[nodiscard]] Discord::Voice::VoiceClient::State clientState() const;
+    [[nodiscard]] Snowflake currentChannelId() const { return channelId; }
+    [[nodiscard]] Snowflake currentGuildId() const { return guildId; }
+
+    void setInputGain(float gain);
+    void setOutputVolume(float volume);
+    void setUserVolume(Snowflake userId, float volume);
+    void setVadThreshold(float threshold);
+
+    void setOpusApplication(int application);
+    void setOpusBitrate(int bitrate);
+    void setOpusComplexity(int complexity);
+    void setOpusSignalType(int signalType);
+    void setOpusFec(bool enabled);
+    void setOpusPacketLossPercent(int percent);
+
+    void setNoiseSuppressionEnabled(bool enabled);
+    void setUseRnnoiseVad(bool enabled);
+
+    [[nodiscard]] int opusApplication() const { return cachedOpusApplication; }
+    [[nodiscard]] int opusBitrate() const { return cachedOpusBitrate; }
+    [[nodiscard]] int opusComplexity() const { return cachedOpusComplexity; }
+    [[nodiscard]] int opusSignalType() const { return cachedOpusSignalType; }
+    [[nodiscard]] bool opusFec() const { return cachedOpusFec; }
+    [[nodiscard]] int opusPacketLossPercent() const { return cachedOpusPacketLossPercent; }
+    [[nodiscard]] bool noiseSuppression() const { return cachedNoiseSuppression; }
+    [[nodiscard]] bool rnnoiseVad() const { return cachedUseRnnoiseVad; }
+
+    [[nodiscard]] QList<AudioDeviceInfo> availableInputDevices() const;
+    [[nodiscard]] QList<AudioDeviceInfo> availableOutputDevices() const;
+    [[nodiscard]] QByteArray currentInputDevice() const { return currentInputDeviceId; }
+    [[nodiscard]] QByteArray currentOutputDevice() const { return currentOutputDeviceId; }
+    void setInputDevice(const QByteArray &deviceId);
+    void setOutputDevice(const QByteArray &deviceId);
+
+    [[nodiscard]] QList<VoiceParticipant> currentParticipants() const;
+    [[nodiscard]] const VoiceParticipant *participant(Snowflake userId) const;
+    [[nodiscard]] int channelVoiceUserCount(Snowflake channelId) const;
+    [[nodiscard]] QList<Snowflake> channelVoiceUsers(Snowflake channelId) const;
+    [[nodiscard]] std::optional<Discord::VoiceState> voiceStateForUser(Snowflake userId) const;
+
+    void setUserMuted(Snowflake userId, bool muted);
+    [[nodiscard]] bool isUserMuted(Snowflake userId) const;
+
+    [[nodiscard]] bool isDaveEnabled() const;
+    [[nodiscard]] const QString &privacyCode() const { return cachedPrivacyCode; }
+    void requestVerificationCode(Snowflake targetUserId, std::function<void(const QString &)> callback);
+
+signals:
+    void voiceConnected();
+    void voiceDisconnected();
+    void voiceStateChanged();
+    void audioLevelChanged(float rms);
+    void speakingChanged(bool speaking);
+    void devicesChanged();
+
+    void participantJoined(Snowflake userId);
+    void participantLeft(Snowflake userId);
+    void participantUpdated(Snowflake userId);
+    void participantSpeakingChanged(Snowflake userId, bool speaking);
+    void channelVoiceMemberChanged(Snowflake channelId, Snowflake userId, bool joined);
+    void participantVoiceStateChanged(Snowflake channelId, Snowflake userId);
+    void participantsCleared();
+    void userAudioLevelChanged(Snowflake userId, float rms);
+    void privacyCodeChanged(const QString &code);
+
+private slots:
+    void onVoiceClientConnected();
+    void onVoiceClientDisconnected();
+    void onVoiceClientStateChanged(Discord::Voice::VoiceClient::State state);
+    void onDevicesChanged(const QList<AudioDeviceInfo> &inputs, const QList<AudioDeviceInfo> &outputs);
+
+private:
+    void connectToVoiceServer(const QString &endpoint, const QString &token);
+    void stopVoiceThread();
+    void populateParticipantsFromCache();
+
+private:
+    Snowflake accountId;
+
+    QString voiceSessionId;
+    Snowflake guildId;
+    Snowflake channelId;
+    bool selfMute = false;
+    bool selfDeaf = false;
+
+    // pending data: VOICE_SERVER_UPDATE may arrive before VOICE_STATE_UPDATE
+    // both are needed to connect
+    struct PendingConnection
+    {
+        QString token;
+        QString endpoint;
+        Snowflake guildId;
+        bool hasServerUpdate = false;
+        bool hasStateUpdate = false;
+    };
+    PendingConnection pending;
+
+    QByteArray currentInputDeviceId;
+    QByteArray currentOutputDeviceId;
+
+    int cachedOpusApplication = OPUS_APPLICATION_VOIP;
+    int cachedOpusBitrate = 64000;
+    int cachedOpusComplexity = 5;
+    int cachedOpusSignalType = OPUS_SIGNAL_VOICE;
+    bool cachedOpusFec = true;
+    int cachedOpusPacketLossPercent = 0;
+    bool cachedNoiseSuppression = true;
+#ifdef ACHERON_HAVE_RNNOISE
+    bool cachedUseRnnoiseVad = true;
+#else
+    bool cachedUseRnnoiseVad = false;
+#endif
+    QList<AudioDeviceInfo> cachedInputDevices;
+    QList<AudioDeviceInfo> cachedOutputDevices;
+
+    QHash<Snowflake, VoiceParticipant> participants;
+    QSet<Snowflake> mutedUsers;
+    QHash<Snowflake, Discord::VoiceState> knownVoiceStates;
+    QString cachedPrivacyCode;
+
+    QThread *voiceThread = nullptr;
+    Discord::Voice::VoiceClient *voiceClient = nullptr;
+    AudioPipeline *audioPipeline = nullptr;
+    unsigned int voiceGeneration = 0;
+
+    std::unique_ptr<IAudioBackend> audioBackend;
+};
+
+} // namespace Audio
+} // namespace Core
+} // namespace Acheron

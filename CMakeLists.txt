@@ -22,6 +22,7 @@ option(BUILD_TESTS "Build test targets" ON)
 option(ENABLE_VOICE "Build with voice/audio support" ON)
 option(ENABLE_RNNOISE "Build with RNNoise noise suppression (requires ENABLE_VOICE)" ON)
 option(ENABLE_RNNOISE_RTCD "Use RNNoise x86 runtime SIMD dispatch (SSE4.1/AVX2)" ON)
+option(ENABLE_FFMPEG "Build with ffmpeg/libav video playback support" ON)
 if(BUILD_TESTS)
     enable_testing()
 endif()
@@ -141,6 +142,8 @@ endif()
 # find or build rnnoise
 include(rnnoise.cmake)
 
+include(ffmpeg.cmake)
+
 set(PROJECT_SOURCES
     resources.qrc
     src/main.cpp
@@ -167,6 +170,9 @@ set(PROJECT_SOURCES
     src/Core/Theme/Generator.cpp
     src/Core/Theme/Stylesheet.cpp
     src/Core/Theme/Fonts.cpp
+    src/Core/Media/Player.cpp
+    src/Core/Media/AudioOutput.cpp
+    src/Core/Media/PlayerPool.cpp
     src/UI/MainWindow.cpp
     src/UI/BrowserCaptchaResolver.cpp
     src/UI/TypingIndicator.cpp
@@ -174,6 +180,7 @@ set(PROJECT_SOURCES
     src/UI/ConnectionBanner.cpp
     src/UI/ElidedLabel.cpp
     src/UI/ImageViewer.cpp
+    src/UI/VideoFullscreenWindow.cpp
     src/UI/Accounts/AccountsWindow.cpp
     src/UI/Settings/SettingsWindow.cpp
     src/UI/Settings/GeneralPage.cpp
@@ -191,6 +198,8 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatDelegate.cpp
     src/UI/Chat/ChatView.cpp
     src/UI/Chat/ChatLayout.cpp
+    src/UI/Chat/InlineVideoController.cpp
+    src/UI/Chat/VideoControls.cpp
     src/UI/Forum/ForumPostModel.cpp
     src/UI/Forum/ForumPostDelegate.cpp
     src/UI/Forum/ForumBrowser.cpp
@@ -235,22 +244,28 @@ if(ENABLE_VOICE)
     list(APPEND PROJECT_SOURCES
         src/UI/VoiceStatusBar.cpp
         src/UI/VoiceWindow.cpp
-        src/Discord/AV/VoiceGateway.cpp
-        src/Discord/AV/UdpTransport.cpp
-        src/Discord/AV/VoiceClient.cpp
-        src/Discord/AV/RtpPacket.cpp
-        src/Discord/AV/VoiceEncryption.cpp
-        src/Discord/AV/DaveSession.cpp
-        src/Core/AV/VoiceManager.cpp
-        src/Core/AV/AudioPipeline.cpp
-        src/Core/AV/IAudioBackend.cpp
-        src/Core/AV/MiniaudioAudioBackend.cpp
-        src/Core/AV/AudioBackends.cpp
-        src/Core/AV/OpusEncoder.cpp
-        src/Core/AV/OpusDecoder.cpp
-        src/Core/AV/JitterBuffer.cpp
-        src/Core/AV/AudioMixer.cpp
-        src/Core/AV/NoiseSuppressor.cpp
+        src/Discord/Voice/VoiceGateway.cpp
+        src/Discord/Voice/UdpTransport.cpp
+        src/Discord/Voice/VoiceClient.cpp
+        src/Discord/Voice/RtpPacket.cpp
+        src/Discord/Voice/VoiceEncryption.cpp
+        src/Discord/Voice/DaveSession.cpp
+        src/Core/Audio/VoiceManager.cpp
+        src/Core/Audio/AudioPipeline.cpp
+        src/Core/Audio/IAudioBackend.cpp
+        src/Core/Audio/MiniaudioAudioBackend.cpp
+        src/Core/Audio/OpusEncoder.cpp
+        src/Core/Audio/OpusDecoder.cpp
+        src/Core/Audio/JitterBuffer.cpp
+        src/Core/Audio/AudioMixer.cpp
+        src/Core/Audio/NoiseSuppressor.cpp
+    )
+endif()
+
+if(ENABLE_VOICE OR TARGET ffmpeg)
+    list(APPEND PROJECT_SOURCES
+        src/Core/Audio/MiniaudioImpl.cpp
+        src/Core/Audio/AudioBackends.cpp
         src/UI/Settings/AudioPage.cpp
     )
 endif()
@@ -335,12 +350,18 @@ if(ENABLE_VOICE)
         libdave
     )
 
-    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_MINIAUDIO)
     if(ENABLE_RNNOISE)
         target_link_libraries(${PROJECT_NAME} PRIVATE rnnoise)
         target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_RNNOISE)
     endif()
+endif()
+if(ENABLE_VOICE OR TARGET ffmpeg)
+    target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_MINIAUDIO)
+endif()
+if(TARGET ffmpeg)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_FFMPEG)
 endif()
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)
@@ -386,6 +407,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/TwemojiCOLRv0.ttf")
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/fonts/TwemojiCOLRv0.ttf"
         COMMENT "Copying TwemojiCOLRv0.ttf to build directory"
     )
+endif()
+
+if(FFMPEG_RUNTIME_DIR)
+    file(GLOB FFMPEG_RUNTIME_DLLS "${FFMPEG_RUNTIME_DIR}/*.dll")
+    if(FFMPEG_RUNTIME_DLLS)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${FFMPEG_RUNTIME_DLLS}
+                "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying ffmpeg runtime libraries to build directory"
+        )
+    endif()
 endif()
 
 include(GNUInstallDirs)

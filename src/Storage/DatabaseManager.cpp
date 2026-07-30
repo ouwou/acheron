@@ -229,6 +229,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
             "proxy_url" TEXT NOT NULL,
             "width" INTEGER,
             "height" INTEGER,
+            "duration_secs" REAL,
             PRIMARY KEY("id")
         );
     )");

@@ -15,13 +15,21 @@ namespace Icons {
 namespace Name {
 inline constexpr auto AtSign = "at-sign";
 inline constexpr auto Eye = "eye";
+inline constexpr auto FileAudio = "file-audio";
 inline constexpr auto FileText = "file-text";
 inline constexpr auto Handshake = "handshake";
 inline constexpr auto IdCard = "id-card";
 inline constexpr auto Lock = "lock";
+inline constexpr auto Maximize = "maximize";
 inline constexpr auto MessageCircle = "message-circle";
+inline constexpr auto Mic = "mic";
+inline constexpr auto Minimize = "minimize";
+inline constexpr auto Pause = "pause";
 inline constexpr auto Pencil = "pencil";
+inline constexpr auto Play = "play";
 inline constexpr auto Spool = "spool";
+inline constexpr auto VolumeOff = "volume-x";
+inline constexpr auto VolumeOn = "volume-2";
 inline constexpr auto X = "x";
 } // namespace Name
 

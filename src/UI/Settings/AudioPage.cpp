@@ -1,6 +1,6 @@
 #include "AudioPage.hpp"
 
-#include "Core/AV/AudioBackends.hpp"
+#include "Core/Audio/AudioBackends.hpp"
 
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -21,10 +21,10 @@ AudioPage::AudioPage(QWidget *parent)
 
     backendCombo = new QComboBox(this);
     backendCombo->addItem(tr("Automatic"), QString());
-    for (const QString &name : Core::AV::supportedAudioBackends())
+    for (const QString &name : Core::Audio::supportedAudioBackends())
         backendCombo->addItem(name, name);
 
-    const int current = backendCombo->findData(Core::AV::configuredAudioBackend());
+    const int current = backendCombo->findData(Core::Audio::configuredAudioBackend());
     backendCombo->setCurrentIndex(current >= 0 ? current : 0);
 
     row->addWidget(backendCombo);
@@ -41,7 +41,7 @@ AudioPage::AudioPage(QWidget *parent)
     layout->addStretch(1);
 
     connect(backendCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
-        Core::AV::setConfiguredAudioBackend(backendCombo->itemData(index).toString());
+        Core::Audio::setConfiguredAudioBackend(backendCombo->itemData(index).toString());
     });
 }
 

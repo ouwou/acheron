@@ -60,6 +60,12 @@ constexpr int fileAttachmentHeight() noexcept
 {
     return 48;
 }
+constexpr int voiceMessageWidth() noexcept
+{
+    return 300;
+}
+int attachmentBoxHeight(const AttachmentData &att);
+QRect audioBarRect(const QRect &attachmentBox, bool voiceMessage);
 constexpr int maxAttachmentWidth() noexcept
 {
     return 400;
@@ -156,7 +162,6 @@ struct ReactionLayout
 struct AttachmentLayout
 {
     QRect rect;
-    bool isImage;
     int index;
 };
 
@@ -167,6 +172,8 @@ struct HitRegion
         UsernameHeader,
         ReplyBar,
         AttachmentImage,
+        AttachmentVideo,
+        AttachmentAudio,
         AttachmentFile,
         EmbedThumbnail,
         EmbedAuthor,
@@ -243,6 +250,8 @@ struct LayoutContext
     const ChatModel *model = nullptr;
     Core::Snowflake messageId;
 };
+
+bool embedIsBareVideo(const EmbedData &embed);
 
 MessageLayout calculateMessageLayout(const LayoutContext &ctx);
 

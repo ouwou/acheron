@@ -8,6 +8,9 @@ on:
 
 env:
   CURL_IMPERSONATE_VERSION: v1.4.4
+  FFMPEG_RELEASE_TAG: autobuild-2026-07-26-13-28
+  FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-31-g8c9502e9b0-win64-lgpl-shared-8.1
+  FFMPEG_WINDOWS_SHA256: a98e7f04caebb3bfc132813add84001c0e58d4098b91efcb06b92ee4b8242bdb
 
 jobs:
   build-windows:
@@ -49,14 +52,31 @@ jobs:
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
 
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_WINDOWS_BUILD }}.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+
+          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne "${{ env.FFMPEG_WINDOWS_SHA256 }}") {
+            throw "ffmpeg archive hash mismatch: expected ${{ env.FFMPEG_WINDOWS_SHA256 }}, got $actual"
+          }
+
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+
+          $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
+          Move-Item -Path $inner.FullName -Destination ffmpeg
+
       - name: Configure
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
+          $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir;$ffmpegDir" `
             -DCURL_DIR="$curlDir/lib/cmake/CURL" `
             -DBUILD_TESTS=ON
 
@@ -94,6 +114,90 @@ jobs:
         with:
           name: acheron-windows-${{ matrix.build_type }}
           path: acheron-windows-${{ matrix.build_type }}
+
+  build-windows-minimal:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          modules: qtimageformats
+          cache: true
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install curl-impersonate
+        shell: pwsh
+        run: |
+          $url = "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-win32.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
+          New-Item -ItemType Directory -Path curl-impersonate -Force
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
+            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DBUILD_TESTS=ON `
+            -DENABLE_VOICE=OFF `
+            -DENABLE_RNNOISE=OFF `
+            -DENABLE_FFMPEG=OFF
+
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          $exe = "${{ github.workspace }}/build/RelWithDebInfo/acheron.exe"
+          windeployqt --no-translations --no-opengl-sw $exe
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $out = "acheron-windows-minimal"
+          $binDir = "build/RelWithDebInfo"
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          New-Item -ItemType Directory -Path $out -Force
+
+          # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
+          Copy-Item "$binDir/*" $out -Recurse -Force
+
+          # Copy curl-impersonate DLLs
+          Copy-Item "$curlDir/bin/*.dll" $out -Force
+
+          # Remove test executables from artifact
+          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acheron-windows-minimal
+          path: acheron-windows-minimal
 
   build-windows-qt5:
     runs-on: windows-latest
@@ -134,6 +238,25 @@ jobs:
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
 
+      # ENABLE_FFMPEG defaults on and fails configure when ffmpeg is missing, so the
+      # Qt5 job installs it too. That also keeps the video player covered under Qt5
+      # rather than leaving it compiled only by the Qt6 jobs.
+      - name: Install ffmpeg
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_WINDOWS_BUILD }}.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+
+          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne "${{ env.FFMPEG_WINDOWS_SHA256 }}") {
+            throw "ffmpeg archive hash mismatch: expected ${{ env.FFMPEG_WINDOWS_SHA256 }}, got $actual"
+          }
+
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+
+          $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
+          Move-Item -Path $inner.FullName -Destination ffmpeg
+
       - name: Fetch OpenSSL 1.1 (Qt5 runtime TLS)
         shell: pwsh
         run: |
@@ -154,10 +277,11 @@ jobs:
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
+          $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=MinSizeRel `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$curlDir" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$curlDir;$ffmpegDir" `
             -DCURL_DIR="$curlDir/lib/cmake/CURL" `
             -DBUILD_TESTS=ON
 
@@ -211,7 +335,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev
+          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -322,7 +447,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: brew install curl autoconf automake libtool
+        run: brew install curl autoconf automake libtool ffmpeg
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
