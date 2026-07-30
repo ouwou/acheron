@@ -1,5 +1,7 @@
 #include "ChatLayout.hpp"
 
+#include "UI/Chat/VideoControls.hpp"
+
 #include "Core/Theme/Fonts.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
@@ -497,13 +499,31 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
     return layout;
 }
 
+int attachmentBoxHeight(const AttachmentData &att)
+{
+    if (att.isAudio)
+        return att.isVoiceMessage ? VideoControls::barHeight()
+                                  : fileAttachmentHeight() + VideoControls::barHeight();
+    return fileAttachmentHeight();
+}
+
+QRect audioBarRect(const QRect &attachmentBox, bool voiceMessage)
+{
+    if (voiceMessage)
+        return attachmentBox;
+    return QRect(attachmentBox.left(),
+                 attachmentBox.bottom() - VideoControls::barHeight() + 1,
+                 attachmentBox.width(),
+                 VideoControls::barHeight());
+}
+
 int calculateAttachmentsHeight(const QList<AttachmentData> &attachments, int textWidth)
 {
     if (attachments.isEmpty())
         return 0;
 
     int imageCount = 0;
-    int fileCount = 0;
+    int filesHeight = 0;
     QSize firstImageSize;
 
     for (const auto &att : attachments) {
@@ -512,7 +532,7 @@ int calculateAttachmentsHeight(const QList<AttachmentData> &attachments, int tex
                 firstImageSize = att.displaySize;
             imageCount++;
         } else {
-            fileCount++;
+            filesHeight += attachmentBoxHeight(att) + padding();
         }
     }
 
@@ -525,7 +545,7 @@ int calculateAttachmentsHeight(const QList<AttachmentData> &attachments, int tex
         totalHeight += grid.totalHeight + padding();
     }
 
-    totalHeight += fileCount * (fileAttachmentHeight() + padding());
+    totalHeight += filesHeight;
 
     return totalHeight;
 }
@@ -680,12 +700,17 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
 
         for (int i = 0; i < ctx.attachments.size(); ++i) {
             if (!ctx.attachments[i].isMedia()) {
+                const auto &att = ctx.attachments[i];
+                const int boxHeight = attachmentBoxHeight(att);
+                const int boxWidth = att.isVoiceMessage ? std::min(fileWidth, voiceMessageWidth())
+                                                        : fileWidth;
+
                 AttachmentLayout attLayout;
                 attLayout.index = i;
-                attLayout.rect = QRect(textLeft, currentFileTop, fileWidth, fileAttachmentHeight());
+                attLayout.rect = QRect(textLeft, currentFileTop, boxWidth, boxHeight);
                 layout.fileLayouts.append(attLayout);
-                currentFileTop += fileAttachmentHeight() + padding();
-                layout.attachmentsTotalHeight += fileAttachmentHeight() + padding();
+                currentFileTop += boxHeight + padding();
+                layout.attachmentsTotalHeight += boxHeight + padding();
                 fileIndex++;
             }
         }
@@ -814,8 +839,23 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
                                    -1,
                                    {} });
     }
-    for (const auto &al : layout.fileLayouts)
-        layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, al.rect, al.index, -1, {} });
+    for (const auto &al : layout.fileLayouts) {
+        const bool isAudio = al.index >= 0 && al.index < ctx.attachments.size() && ctx.attachments[al.index].isAudio;
+        if (!isAudio) {
+            layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, al.rect, al.index, -1, {} });
+            continue;
+        }
+
+        const QRect barRect = audioBarRect(al.rect, ctx.attachments[al.index].isVoiceMessage);
+        if (barRect.top() > al.rect.top()) {
+            const QRect headerRect(al.rect.left(),
+                                   al.rect.top(),
+                                   al.rect.width(),
+                                   barRect.top() - al.rect.top());
+            layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, headerRect, al.index, -1, {} });
+        }
+        layout.hitRegions.append({ HitRegion::Kind::AttachmentAudio, barRect, al.index, -1, {} });
+    }
 
     for (const auto &rl : layout.reactionLayouts)
         layout.hitRegions.append({ HitRegion::Kind::Reaction, rl.pillRect, rl.reactionIndex, -1, {} });

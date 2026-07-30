@@ -1,15 +1,16 @@
-#include "Core/Video/PlayerPool.hpp"
+#include "Core/Media/PlayerPool.hpp"
 
 #include "Core/Logging.hpp"
-#include "Core/Video/Player.hpp"
 
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
 
-QString attachmentKey(quint64 attachmentId)
+QString attachmentKey(quint64 attachmentId, MediaKind kind)
 {
-    return QStringLiteral("att:%1").arg(attachmentId);
+    return QStringLiteral("%1:%2")
+            .arg(kind == MediaKind::Audio ? QLatin1String("audio") : QLatin1String("video"))
+            .arg(attachmentId);
 }
 
 QString embedKey(quint64 messageId, int embedIndex)
@@ -47,6 +48,7 @@ Player *PlayerPool::acquire(const QString &key, const QUrl &url)
     order.append(key);
 
     connect(player, &Player::frameReady, this, [this, key] { emit frameReady(key); });
+    connect(player, &Player::positionChanged, this, [this, key](qint64) { emit playerPositionChanged(key); });
     connect(player, &Player::stateChanged, this, [this, key] { emit playerStateChanged(key); });
     connect(player, &Player::errorOccurred, this, [key](const QString &message) {
         qCWarning(LogVideo) << "player" << key << "failed:" << message;
@@ -130,6 +132,6 @@ void PlayerPool::enforceLimit()
     }
 }
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron

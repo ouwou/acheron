@@ -4,7 +4,7 @@
 #include "GeneralPage.hpp"
 
 #ifdef ACHERON_HAVE_MINIAUDIO
-#  include "AudioPage.hpp"
+#include "AudioPage.hpp"
 #endif
 
 namespace Acheron {

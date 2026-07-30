@@ -11,7 +11,7 @@ struct ma_device;
 
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
 
 struct AudioOutputState;
 
@@ -60,6 +60,6 @@ private:
     std::atomic<qint64> basePts{ 0 };
 };
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron

@@ -250,7 +250,8 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         break;
     }
 
-    case Kind::AttachmentVideo: {
+    case Kind::AttachmentVideo:
+    case Kind::AttachmentAudio: {
         if (region->index < 0 || region->index >= resolved.ctx.attachments.size())
             break;
         const AttachmentData &att = resolved.ctx.attachments[region->index];

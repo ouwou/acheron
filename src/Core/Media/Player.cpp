@@ -1,43 +1,45 @@
-#include "Core/Video/Player.hpp"
+#include "Core/Media/Player.hpp"
 
 #include "Core/Logging.hpp"
 
 #include <QFileInfo>
 
+#include <initializer_list>
+
 #ifdef ACHERON_HAVE_FFMPEG
 
-#  include "Core/Video/AudioOutput.hpp"
-#  include "Discord/CurlUtils.hpp"
+#include "Core/Media/AudioOutput.hpp"
+#include "Discord/CurlUtils.hpp"
 
-#  include <QElapsedTimer>
-#  include <QTimer>
+#include <QElapsedTimer>
+#include <QTimer>
 
 extern "C" {
-#  include <libavcodec/avcodec.h>
-#  include <libavformat/avformat.h>
-#  include <libavutil/channel_layout.h>
-#  include <libavutil/imgutils.h>
-#  include <libavutil/opt.h>
-#  include <libswresample/swresample.h>
-#  include <libswscale/swscale.h>
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/opt.h>
+#include <libswresample/swresample.h>
+#include <libswscale/swscale.h>
 }
 
-#  if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(57, 28, 100)
-#    error "ffmpeg 5.1 or newer is required for video support"
-#  endif
+#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(57, 28, 100)
+#error "ffmpeg 5.1 or newer is required for video support"
+#endif
 
-#  include <chrono>
-#  include <condition_variable>
-#  include <deque>
-#  include <mutex>
-#  include <thread>
-#  include <vector>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 #endif // ACHERON_HAVE_FFMPEG
 
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
 
 bool isSupported()
 {
@@ -48,13 +50,23 @@ bool isSupported()
 #endif
 }
 
-static bool hasPlayableSuffix(const QUrl &url)
+static bool listContains(const QString &value, std::initializer_list<const char *> list)
 {
-    const QString suffix = QFileInfo(url.path()).suffix().toLower();
-    return suffix == "mp4" ||
-           suffix == "webm" ||
-           suffix == "mov" ||
-           suffix == "m4v";
+    for (const char *item : list) {
+        if (value == QLatin1String(item))
+            return true;
+    }
+    return false;
+}
+
+static QString normalizedContentType(const QString &contentType)
+{
+    return contentType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
+}
+
+static bool hasSuffixIn(const QUrl &url, std::initializer_list<const char *> suffixes)
+{
+    return listContains(QFileInfo(url.path()).suffix().toLower(), suffixes);
 }
 
 bool canPlay(const QString &contentType, const QUrl &url)
@@ -62,15 +74,21 @@ bool canPlay(const QString &contentType, const QUrl &url)
     if (!isSupported())
         return false;
 
-    if (!contentType.isEmpty()) {
-        const QString type = contentType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
-        return type == "video/mp4" ||
-               type == "video/webm" ||
-               type == "video/quicktime" ||
-               type == "video/x-m4v";
-    }
+    if (listContains(normalizedContentType(contentType), { "video/mp4", "video/webm", "video/quicktime", "video/x-m4v" }))
+        return true;
 
-    return hasPlayableSuffix(url);
+    return hasSuffixIn(url, { "mp4", "webm", "mov", "m4v" });
+}
+
+bool canPlayAudio(const QString &contentType, const QUrl &url)
+{
+    if (!isSupported())
+        return false;
+
+    if (normalizedContentType(contentType).startsWith(QLatin1String("audio/")))
+        return true;
+
+    return hasSuffixIn(url, { "mp3", "ogg", "oga", "opus", "wav", "flac", "m4a", "aac" });
 }
 
 #ifdef ACHERON_HAVE_FFMPEG
@@ -86,6 +104,8 @@ constexpr size_t MaxBufferedBytes = 8 * 1024 * 1024;
 
 constexpr qint64 MinPresentDelayMs = 1;
 constexpr qint64 MaxPresentDelayMs = 40;
+
+constexpr int AudioOnlyPresentDelayMs = 100;
 
 QSize effectiveTarget(const QSize &native, const QSize &want)
 {
@@ -1249,6 +1269,11 @@ void Player::Impl::scheduleNextPresent(qint64 clock)
     if (!presentTimer || state != Player::State::Playing)
         return;
 
+    if (!videoAvailable) {
+        presentTimer->start(AudioOnlyPresentDelayMs);
+        return;
+    }
+
     qint64 delay = 16;
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -1298,6 +1323,6 @@ void Player::Impl::present()
 
 #endif // ACHERON_HAVE_FFMPEG
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron

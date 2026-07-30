@@ -3,12 +3,14 @@
         <file>resources/placeholder.png</file>
         <file>resources/icons/lucide/at-sign.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
+        <file>resources/icons/lucide/file-audio.svg</file>
         <file>resources/icons/lucide/file-text.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/maximize.svg</file>
         <file>resources/icons/lucide/message-circle.svg</file>
+        <file>resources/icons/lucide/mic.svg</file>
         <file>resources/icons/lucide/minimize.svg</file>
         <file>resources/icons/lucide/pause.svg</file>
         <file>resources/icons/lucide/pencil.svg</file>

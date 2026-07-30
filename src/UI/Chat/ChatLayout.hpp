@@ -60,6 +60,12 @@ constexpr int fileAttachmentHeight() noexcept
 {
     return 48;
 }
+constexpr int voiceMessageWidth() noexcept
+{
+    return 300;
+}
+int attachmentBoxHeight(const AttachmentData &att);
+QRect audioBarRect(const QRect &attachmentBox, bool voiceMessage);
 constexpr int maxAttachmentWidth() noexcept
 {
     return 400;
@@ -167,6 +173,7 @@ struct HitRegion
         ReplyBar,
         AttachmentImage,
         AttachmentVideo,
+        AttachmentAudio,
         AttachmentFile,
         EmbedThumbnail,
         EmbedAuthor,

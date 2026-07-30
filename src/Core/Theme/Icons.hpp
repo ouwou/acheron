@@ -15,12 +15,14 @@ namespace Icons {
 namespace Name {
 inline constexpr auto AtSign = "at-sign";
 inline constexpr auto Eye = "eye";
+inline constexpr auto FileAudio = "file-audio";
 inline constexpr auto FileText = "file-text";
 inline constexpr auto Handshake = "handshake";
 inline constexpr auto IdCard = "id-card";
 inline constexpr auto Lock = "lock";
 inline constexpr auto Maximize = "maximize";
 inline constexpr auto MessageCircle = "message-circle";
+inline constexpr auto Mic = "mic";
 inline constexpr auto Minimize = "minimize";
 inline constexpr auto Pause = "pause";
 inline constexpr auto Pencil = "pencil";

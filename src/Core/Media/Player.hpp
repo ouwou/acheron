@@ -10,11 +10,18 @@
 
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
+
+enum class MediaKind {
+    Video,
+    Audio,
+};
 
 bool isSupported();
 
 bool canPlay(const QString &contentType, const QUrl &url = QUrl());
+
+bool canPlayAudio(const QString &contentType, const QUrl &url = QUrl());
 
 class Player : public QObject
 {
@@ -64,7 +71,7 @@ signals:
     void frameReady();
     void positionChanged(qint64 positionMs);
     void durationChanged(qint64 durationMs);
-    void stateChanged(Acheron::Core::Video::Player::State state);
+    void stateChanged(Acheron::Core::Media::Player::State state);
     void errorOccurred(const QString &message);
 
 private:
@@ -72,6 +79,6 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron

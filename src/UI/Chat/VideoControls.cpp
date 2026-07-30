@@ -2,8 +2,9 @@
 
 #include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
-#include "Core/Video/Player.hpp"
+#include "Core/Media/Player.hpp"
 
+#include <QFont>
 #include <QFontMetrics>
 #include <QLinearGradient>
 #include <QPaintDevice>
@@ -30,6 +31,9 @@ constexpr int SeekGrabSlack = 7;
 
 constexpr int ScrimAlpha = 190;
 constexpr int BadgeAlpha = 180;
+
+constexpr int AudioBaseAlpha = 170;
+constexpr int AudioBaseCornerRadius = 4;
 
 QColor trackBackground()
 {
@@ -63,7 +67,7 @@ void drawGlyph(QPainter *painter, const QRect &rect, const QString &name)
 
 } // namespace
 
-State stateFor(const Core::Video::Player *player, bool volumeExpanded, bool fullscreen)
+State stateFor(const Core::Media::Player *player, bool volumeExpanded, bool fullscreen)
 {
     State state;
     state.fullscreen = fullscreen;
@@ -81,7 +85,7 @@ State stateFor(const Core::Video::Player *player, bool volumeExpanded, bool full
     return state;
 }
 
-bool beginDrag(Core::Video::Player *player, const Layout &layout, const State &state, const QPoint &pos, Drag &drag, const QString &key)
+bool beginDrag(Core::Media::Player *player, const Layout &layout, const State &state, const QPoint &pos, Drag &drag, const QString &key)
 {
     if (!player)
         return false;
@@ -96,7 +100,7 @@ bool beginDrag(Core::Video::Player *player, const Layout &layout, const State &s
 
     case Hit::VolumeSlider:
         player->setMuted(false);
-        player->setVolume(volumeForSliderY(layout, pos.y()));
+        player->setVolume(volumeForSliderPos(layout, pos));
         drag.kind = Drag::Kind::Volume;
         break;
 
@@ -108,7 +112,7 @@ bool beginDrag(Core::Video::Player *player, const Layout &layout, const State &s
     return true;
 }
 
-void applyDrag(Core::Video::Player *player, const Layout &layout, const QPoint &pos, const Drag &drag)
+void applyDrag(Core::Media::Player *player, const Layout &layout, const QPoint &pos, const Drag &drag)
 {
     if (!player || !drag.active())
         return;
@@ -117,11 +121,11 @@ void applyDrag(Core::Video::Player *player, const Layout &layout, const QPoint &
         if (player->isSeekable())
             player->seek(positionForSeekX(layout, pos.x(), player->duration()));
     } else {
-        player->setVolume(volumeForSliderY(layout, pos.y()));
+        player->setVolume(volumeForSliderPos(layout, pos));
     }
 }
 
-ReleaseResult handleRelease(Core::Video::Player *player, const Layout &layout, const State &state,
+ReleaseResult handleRelease(Core::Media::Player *player, const Layout &layout, const State &state,
                             const QPoint &pos)
 {
     if (!player)
@@ -170,15 +174,47 @@ Layout calculate(const QRect &videoRect, const State &state)
 
     const int rowTop = layout.seek.bottom() + Gap;
     layout.play = QRect(left, rowTop, ButtonSize, ButtonSize);
-    layout.fullscreen = QRect(right - ButtonSize + 1, rowTop, ButtonSize, ButtonSize);
 
-    const bool roomForVolume = layout.fullscreen.left() - Gap - ButtonSize > layout.play.right() + Gap;
-    if (roomForVolume)
-        layout.volume = QRect(layout.fullscreen.left() - Gap - ButtonSize, rowTop, ButtonSize, ButtonSize);
+    int trailingLeft;
+    if (state.audioOnly) {
+        trailingLeft = right + 1 + Gap;
+    } else {
+        layout.fullscreen = QRect(right - ButtonSize + 1, rowTop, ButtonSize, ButtonSize);
+        trailingLeft = layout.fullscreen.left();
+    }
 
-    const int trailingLeft = layout.volume.isNull() ? layout.fullscreen.left() : layout.volume.left();
+    const bool roomForVolume = trailingLeft - Gap - ButtonSize > layout.play.right() + Gap;
+    if (roomForVolume) {
+        layout.volume = QRect(trailingLeft - Gap - ButtonSize, rowTop, ButtonSize, ButtonSize);
+        trailingLeft = layout.volume.left();
+    }
 
-    if (state.volumeExpanded && !layout.volume.isNull()) {
+    if (state.audioOnly && state.volumeExpanded && !layout.volume.isNull()) {
+        const int trackLeft = layout.volume.left() - Gap - VolumeTrackLength;
+
+        if (trackLeft > layout.play.right() + Gap) {
+            layout.volumeSlider = QRect(trackLeft,
+                                        rowTop + (ButtonSize - TrackHeight) / 2,
+                                        VolumeTrackLength,
+                                        TrackHeight);
+
+            const int filled = static_cast<int>(VolumeTrackLength * qBound(0.0f, state.volume, 1.0f));
+            layout.volumeFilled = QRect(trackLeft, layout.volumeSlider.top(), filled, TrackHeight);
+
+            layout.volumeHandle = QRect(trackLeft + filled - HandleRadius,
+                                        layout.volumeSlider.center().y() - HandleRadius,
+                                        HandleRadius * 2,
+                                        HandleRadius * 2);
+            trailingLeft = trackLeft;
+        }
+    }
+
+    if (state.voiceMessage && trailingLeft - Gap - ButtonSize > layout.play.right() + Gap) {
+        layout.voiceBadge = QRect(trailingLeft - Gap - ButtonSize, rowTop, ButtonSize, ButtonSize);
+        trailingLeft = layout.voiceBadge.left();
+    }
+
+    if (!state.audioOnly && state.volumeExpanded && !layout.volume.isNull()) {
         const int popupHeight = VolumeTrackLength + VolumePopupPadding * 2;
         const int popupBottom = layout.volume.top() - Gap;
         const int popupTop = popupBottom - popupHeight + 1;
@@ -235,8 +271,10 @@ Hit hitTest(const Layout &layout, const QPoint &pos, const State &state)
         return Hit::None;
 
     if (state.volumeExpanded && !layout.volumeSlider.isNull()) {
-        const QRect volumeGrab = layout.volumeSlider.adjusted(-SeekGrabSlack, -SeekGrabSlack,
-                                                              SeekGrabSlack, SeekGrabSlack);
+        const QRect volumeGrab = sliderIsHorizontal(layout)
+                                         ? layout.volumeSlider.adjusted(0, -SeekGrabSlack, 0, SeekGrabSlack)
+                                         : layout.volumeSlider.adjusted(-SeekGrabSlack, -SeekGrabSlack,
+                                                                        SeekGrabSlack, SeekGrabSlack);
         if (volumeGrab.contains(pos))
             return Hit::VolumeSlider;
 
@@ -269,11 +307,16 @@ void paint(QPainter *painter, const Layout &layout, const State &state)
 
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setFont(QFont());
 
-    QLinearGradient scrim(layout.bar.topLeft(), layout.bar.bottomLeft());
-    scrim.setColorAt(0.0, QColor(0, 0, 0, 0));
-    scrim.setColorAt(1.0, QColor(0, 0, 0, ScrimAlpha));
-    painter->fillRect(layout.bar, scrim);
+    if (state.audioOnly) {
+        paintAudioBase(painter, layout.bar);
+    } else {
+        QLinearGradient scrim(layout.bar.topLeft(), layout.bar.bottomLeft());
+        scrim.setColorAt(0.0, QColor(0, 0, 0, 0));
+        scrim.setColorAt(1.0, QColor(0, 0, 0, ScrimAlpha));
+        painter->fillRect(layout.bar, scrim);
+    }
 
     if (!layout.seek.isNull()) {
         painter->setPen(Qt::NoPen);
@@ -323,7 +366,7 @@ void paint(QPainter *painter, const Layout &layout, const State &state)
         painter->setBrush(trackBackground());
         painter->drawRoundedRect(layout.volumeSlider, TrackHeight / 2.0, TrackHeight / 2.0);
 
-        if (!layout.volumeFilled.isNull() && layout.volumeFilled.height() > 0) {
+        if (!layout.volumeFilled.isEmpty()) {
             painter->setBrush(accent());
             painter->drawRoundedRect(layout.volumeFilled, TrackHeight / 2.0, TrackHeight / 2.0);
         }
@@ -332,6 +375,12 @@ void paint(QPainter *painter, const Layout &layout, const State &state)
             painter->setBrush(Qt::white);
             painter->drawEllipse(layout.volumeHandle);
         }
+    }
+
+    if (!layout.voiceBadge.isNull()) {
+        painter->setOpacity(0.6);
+        drawGlyph(painter, layout.voiceBadge, Core::Theme::Icons::Name::Mic);
+        painter->setOpacity(1.0);
     }
 
     if (!layout.volume.isNull()) {
@@ -349,6 +398,16 @@ void paint(QPainter *painter, const Layout &layout, const State &state)
                                    : Core::Theme::Icons::Name::Maximize);
     }
 
+    painter->restore();
+}
+
+void paintAudioBase(QPainter *painter, const QRect &barRect)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(QColor(0, 0, 0, AudioBaseAlpha));
+    painter->drawRoundedRect(barRect, AudioBaseCornerRadius, AudioBaseCornerRadius);
     painter->restore();
 }
 
@@ -396,6 +455,9 @@ QRect volumeHoverZone(const Layout &layout)
     if (!layout.volumePopup.isNull())
         zone = zone.united(layout.volumePopup);
 
+    if (!layout.volumeSlider.isNull())
+        zone = zone.united(layout.volumeSlider);
+
     return zone;
 }
 
@@ -442,15 +504,22 @@ qint64 positionForSeekX(const Layout &layout, int x, qint64 durationMs)
     return static_cast<qint64>(fraction * durationMs);
 }
 
-float volumeForSliderY(const Layout &layout, int y)
+bool sliderIsHorizontal(const Layout &layout)
 {
-    if (layout.volumeSlider.height() <= 0)
+    return layout.volumeSlider.width() > layout.volumeSlider.height();
+}
+
+float volumeForSliderPos(const Layout &layout, const QPoint &pos)
+{
+    const QRect &track = layout.volumeSlider;
+    if (track.isEmpty())
         return 0.0f;
 
-    const double fraction = qBound(0.0,
-                                   static_cast<double>(layout.volumeSlider.bottom() - y) / layout.volumeSlider.height(),
-                                   1.0);
-    return static_cast<float>(fraction);
+    const double fraction = sliderIsHorizontal(layout)
+                                    ? static_cast<double>(pos.x() - track.left()) / track.width()
+                                    : static_cast<double>(track.bottom() - pos.y()) / track.height();
+
+    return static_cast<float>(qBound(0.0, fraction, 1.0));
 }
 
 } // namespace VideoControls

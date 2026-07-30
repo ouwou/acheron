@@ -2,11 +2,13 @@
 
 #include <QImageReader>
 
+#include <cmath>
+
 #include "Core/Markdown/Parser.hpp"
 #include "Core/MessageManager.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Manager.hpp"
-#include "Core/Video/Player.hpp"
+#include "Core/Media/Player.hpp"
 #include "Discord/Enums.hpp"
 
 namespace Acheron {
@@ -364,7 +366,18 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             data.originalUrl = QUrl(*att.url);
             data.isImage = att.isImage();
             data.contentType = att.contentType.hasValue() ? *att.contentType : QString();
-            data.isVideo = !data.isImage && Core::Video::canPlay(data.contentType, data.originalUrl);
+            data.isVideo = !data.isImage && Core::Media::canPlay(data.contentType, data.originalUrl);
+            data.isVoiceMessage = !msg.isPendingOutbound &&
+                                  Core::Media::isSupported() && !data.isImage && !data.isVideo &&
+                                  msg.flags.hasValue() &&
+                                  msg.flags->testFlag(Discord::MessageFlag::IS_VOICE_MESSAGE) &&
+                                  (data.contentType.isEmpty() || data.contentType.startsWith(QLatin1String("audio/")));
+            data.isAudio = data.isVoiceMessage ||
+                           (!msg.isPendingOutbound && !data.isImage && !data.isVideo &&
+                            Core::Media::canPlayAudio(data.contentType, data.originalUrl));
+
+            if (att.durationSecs.hasValue() && std::isfinite(*att.durationSecs) && *att.durationSecs > 0.0)
+                data.durationMs = static_cast<qint64>(qMin(*att.durationSecs, 86400.0) * 1000.0);
             data.filename = att.filename.hasValue() ? *att.filename : "unknown";
             data.fileSizeBytes = att.size.hasValue() ? *att.size : 0;
             data.isSpoiler = att.isSpoiler();
@@ -568,7 +581,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     const QString videoType = embed.video->contentType.hasValue()
                                                       ? *embed.video->contentType
                                                       : QString();
-                    if (!mediaUrl.isEmpty() && Core::Video::canPlay(videoType, mediaUrl)) {
+                    if (!mediaUrl.isEmpty() && Core::Media::canPlay(videoType, mediaUrl)) {
                         data.videoUrl = mediaUrl;
                         data.videoPlayable = true;
                         hasAnything = true;

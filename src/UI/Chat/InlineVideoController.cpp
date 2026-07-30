@@ -1,7 +1,6 @@
 #include "UI/Chat/InlineVideoController.hpp"
 
-#include "Core/Video/Player.hpp"
-#include "Core/Video/PlayerPool.hpp"
+#include "Core/Media/PlayerPool.hpp"
 #include "UI/Chat/ChatModel.hpp"
 #include "UI/Chat/ChatView.hpp"
 #include "UI/VideoFullscreenWindow.hpp"
@@ -9,14 +8,39 @@
 namespace Acheron {
 namespace UI {
 
+using Core::Media::MediaKind;
+
+namespace {
+constexpr qint64 AudioRepaintBucketMs = 250;
+} // namespace
+
 InlineVideoController::InlineVideoController(ChatView *chatView)
     : QObject(chatView), view(chatView)
 {
-    pool = new Core::Video::PlayerPool(this);
+    pool = new Core::Media::PlayerPool(this);
 
-    connect(pool, &Core::Video::PlayerPool::frameReady, this, &InlineVideoController::refreshRow);
-    connect(pool, &Core::Video::PlayerPool::playerStateChanged, this, &InlineVideoController::onPlayerStateChanged);
-    connect(pool, &Core::Video::PlayerPool::playerReleased, this, &InlineVideoController::onPlayerReleased);
+    connect(pool, &Core::Media::PlayerPool::frameReady, this, &InlineVideoController::refreshRow);
+    connect(pool, &Core::Media::PlayerPool::playerPositionChanged, this, &InlineVideoController::onPlayerPositionChanged);
+    connect(pool, &Core::Media::PlayerPool::playerStateChanged, this, &InlineVideoController::onPlayerStateChanged);
+    connect(pool, &Core::Media::PlayerPool::playerReleased, this, &InlineVideoController::onPlayerReleased);
+}
+
+void InlineVideoController::onPlayerPositionChanged(const QString &key)
+{
+    auto it = rows.find(key);
+    if (it == rows.end() || it->kind != MediaKind::Audio)
+        return;
+
+    const auto *player = pool->find(key);
+    if (!player)
+        return;
+
+    const qint64 bucket = player->position() / AudioRepaintBucketMs;
+    if (bucket == it->paintedPositionBucket)
+        return;
+
+    it->paintedPositionBucket = bucket;
+    refreshRow(key);
 }
 
 InlineVideoController::~InlineVideoController() = default;
@@ -57,24 +81,28 @@ InlineVideoController::Target InlineVideoController::targetFor(const ChatLayout:
     using Kind = ChatLayout::HitRegion::Kind;
     Target target;
 
-    if (!Core::Video::isSupported())
+    if (!Core::Media::isSupported())
         return target;
 
-    if (region.kind == Kind::AttachmentVideo) {
+    if (region.kind == Kind::AttachmentVideo || region.kind == Kind::AttachmentAudio) {
         if (region.index < 0 || region.index >= resolved.ctx.attachments.size())
             return target;
 
+        const bool audio = region.kind == Kind::AttachmentAudio;
         const AttachmentData &att = resolved.ctx.attachments[region.index];
-        if (!att.isVideo)
+        if (audio ? !att.isAudio : !att.isVideo)
             return target;
 
         if (att.isSpoiler && resolved.ctx.model && !resolved.ctx.model->isSpoilerRevealed(att.id))
             return target;
 
-        target.key = Core::Video::attachmentKey(att.id);
+        target.kind = audio ? MediaKind::Audio : MediaKind::Video;
+        target.key = Core::Media::attachmentKey(att.id, target.kind);
         target.url = att.originalUrl.isEmpty() ? att.proxyUrl : att.originalUrl;
         target.rect = region.rect;
         target.attachmentId = att.id;
+        target.voiceMessage = att.isVoiceMessage;
+        target.durationMs = att.durationMs;
         return target;
     }
 
@@ -86,7 +114,7 @@ InlineVideoController::Target InlineVideoController::targetFor(const ChatLayout:
         if (!embed.videoPlayable)
             return target;
 
-        target.key = Core::Video::embedKey(resolved.ctx.messageId, region.index);
+        target.key = Core::Media::embedKey(resolved.ctx.messageId, region.index);
         target.url = embed.videoUrl;
         target.rect = region.rect;
     }
@@ -94,7 +122,7 @@ InlineVideoController::Target InlineVideoController::targetFor(const ChatLayout:
     return target;
 }
 
-Core::Video::Player *InlineVideoController::playerFor(const QString &key) const
+Core::Media::Player *InlineVideoController::playerFor(const QString &key) const
 {
     return pool->find(key);
 }
@@ -125,14 +153,48 @@ void InlineVideoController::rememberRow(const Target &target, const QModelIndex 
     row.rect = target.rect.translated(-view->visualRect(index).topLeft());
     row.rectUnresolvable = false;
     row.attachmentId = target.attachmentId;
+    row.kind = target.kind;
+    row.voiceMessage = target.voiceMessage;
+    row.durationMs = target.durationMs;
 }
 
-VideoControls::State InlineVideoController::controlState(const Core::Video::Player *player, const QString &key) const
+VideoControls::State InlineVideoController::controlState(const Core::Media::Player *player, const QString &key,
+                                                         bool expanded) const
 {
-    return VideoControls::stateFor(player, volumeExpanded && hoveredKey == key);
+    auto state = VideoControls::stateFor(player, expanded);
+
+    auto it = rows.constFind(key);
+    if (it != rows.constEnd()) {
+        state.audioOnly = it->kind == MediaKind::Audio;
+        state.voiceMessage = it->voiceMessage;
+        if (state.durationMs == 0)
+            state.durationMs = it->durationMs;
+    }
+
+    return state;
 }
 
-Core::Video::Player *InlineVideoController::ensurePlayer(const Target &target, const QModelIndex &index)
+VideoControls::State InlineVideoController::controlState(const Core::Media::Player *player, const QString &key) const
+{
+    return controlState(player, key, volumeExpanded && hoveredKey == key);
+}
+
+VideoControls::State InlineVideoController::audioBarState(const QString &key, bool voiceMessage, qint64 fallbackDurationMs) const
+{
+    const auto *player = pool->find(key);
+
+    if (player && player->state() == Core::Media::Player::State::Error)
+        player = nullptr;
+
+    auto state = controlState(player, key);
+    state.audioOnly = true;
+    state.voiceMessage = voiceMessage;
+    if (state.durationMs == 0)
+        state.durationMs = fallbackDurationMs;
+    return state;
+}
+
+Core::Media::Player *InlineVideoController::ensurePlayer(const Target &target, const QModelIndex &index)
 {
     if (!target.isValid())
         return nullptr;
@@ -178,7 +240,7 @@ void InlineVideoController::release(const Target &target, const QModelIndex &ind
     player->setTargetSize(decodeSize(target.rect));
     rememberRow(target, index);
 
-    if (player->state() == Core::Video::Player::State::Error) {
+    if (player->state() == Core::Media::Player::State::Error) {
         player->open(target.url);
         player->play();
         refreshRow(target.key);
@@ -196,7 +258,7 @@ void InlineVideoController::release(const Target &target, const QModelIndex &ind
 
 void InlineVideoController::updateDrag(const QPoint &pos)
 {
-    Core::Video::Player *player = pool->find(drag.key);
+    Core::Media::Player *player = pool->find(drag.key);
     if (!player) {
         drag.end();
         return;
@@ -222,7 +284,7 @@ void InlineVideoController::updateDrag(const QPoint &pos)
         rememberRow(refreshed, index);
     }
 
-    const auto state = VideoControls::stateFor(player, true);
+    const auto state = controlState(player, drag.key, true);
     const auto layout = VideoControls::calculate(rect, state);
 
     VideoControls::applyDrag(player, layout, pos, drag);
@@ -237,7 +299,7 @@ void InlineVideoController::updateHover(const Target &target, const QPoint &pos)
     bool expanded = false;
     if (target.isValid()) {
         if (auto *player = pool->find(target.key)) {
-            const auto state = VideoControls::stateFor(player, volumeExpanded);
+            const auto state = controlState(player, target.key);
             const auto layout = VideoControls::calculate(target.rect, state);
             const QRect zone = VideoControls::volumeHoverZone(layout);
             expanded = !zone.isNull() && zone.contains(pos);

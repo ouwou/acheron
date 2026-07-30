@@ -1,6 +1,6 @@
 #include "UI/VideoFullscreenWindow.hpp"
 
-#include "Core/Video/Player.hpp"
+#include "Core/Media/Player.hpp"
 
 #include <QCursor>
 #include <QGuiApplication>
@@ -48,7 +48,7 @@ VideoFullscreenWindow::~VideoFullscreenWindow()
     detach();
 }
 
-void VideoFullscreenWindow::showPlayer(Core::Video::Player *newPlayer, const QString &newKey,
+void VideoFullscreenWindow::showPlayer(Core::Media::Player *newPlayer, const QString &newKey,
                                        const QSize &newInlineSize)
 {
     if (!newPlayer)
@@ -62,9 +62,9 @@ void VideoFullscreenWindow::showPlayer(Core::Video::Player *newPlayer, const QSt
     volumeExpanded = false;
     drag.end();
 
-    connect(player, &Core::Video::Player::frameReady, this, QOverload<>::of(&QWidget::update));
-    connect(player, &Core::Video::Player::positionChanged, this, [this](qint64) { update(); });
-    connect(player, &Core::Video::Player::stateChanged, this, [this](Core::Video::Player::State) { update(); });
+    connect(player, &Core::Media::Player::frameReady, this, QOverload<>::of(&QWidget::update));
+    connect(player, &Core::Media::Player::positionChanged, this, [this](qint64) { update(); });
+    connect(player, &Core::Media::Player::stateChanged, this, [this](Core::Media::Player::State) { update(); });
 
     if (QScreen *screen = QGuiApplication::screenAt(QCursor::pos()))
         setGeometry(screen->geometry());
@@ -154,7 +154,7 @@ void VideoFullscreenWindow::paintEvent(QPaintEvent *event)
 
     const VideoControls::State state = controlState();
 
-    if (!state.playing && player->state() != Core::Video::Player::State::Opening)
+    if (!state.playing && player->state() != Core::Media::Player::State::Opening)
         VideoControls::paintPlayBadge(&painter, rect());
 
     if (controlsVisible)

@@ -40,8 +40,8 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     QSqlQuery qAtt(db);
     qAtt.prepare(R"(
         INSERT OR REPLACE INTO attachments
-        (id, message_id, filename, content_type, size, url, proxy_url, width, height)
-        VALUES (:id, :message_id, :filename, :content_type, :size, :url, :proxy_url, :width, :height)
+        (id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs)
+        VALUES (:id, :message_id, :filename, :content_type, :size, :url, :proxy_url, :width, :height, :duration_secs)
     )");
 
     // Collect referenced messages to save as their own rows
@@ -83,6 +83,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
                 qAtt.bindValue(":proxy_url", att.proxyUrl);
                 bindOptional(qAtt, ":width", att.width);
                 bindOptional(qAtt, ":height", att.height);
+                bindOptional(qAtt, ":duration_secs", att.durationSecs);
 
                 execLogged(qAtt, "MessageRepository: Save attachment");
             }
@@ -384,11 +385,6 @@ void MessageRepository::loadAttachmentsForMessages(QList<Discord::Message> &mess
     }
 
     QSqlQuery q(db);
-    q.prepare(R"(
-        SELECT id, message_id, filename, content_type, size, url, proxy_url, width, height
-        FROM attachments
-        WHERE message_id IN (SELECT id FROM messages WHERE id IN (%1))
-    )");
 
     QStringList placeholders;
     for (const auto &msg : messages) {
@@ -396,7 +392,7 @@ void MessageRepository::loadAttachmentsForMessages(QList<Discord::Message> &mess
     }
 
     QString query = QString(R"(
-        SELECT id, message_id, filename, content_type, size, url, proxy_url, width, height
+        SELECT id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs
         FROM attachments
         WHERE message_id IN (%1)
     )")
@@ -424,6 +420,8 @@ void MessageRepository::loadAttachmentsForMessages(QList<Discord::Message> &mess
             att.width = q.value(7).toInt();
         if (!q.value(8).isNull())
             att.height = q.value(8).toInt();
+        if (!q.value(9).isNull())
+            att.durationSecs = q.value(9).toDouble();
 
         if (!messages[idx].attachments.hasValue())
             messages[idx].attachments = QList<Discord::Attachment>();

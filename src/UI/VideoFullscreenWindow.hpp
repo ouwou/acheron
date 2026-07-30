@@ -12,9 +12,9 @@ class QTimer;
 namespace Acheron {
 
 namespace Core {
-namespace Video {
+namespace Media {
 class Player;
-} // namespace Video
+} // namespace Media
 } // namespace Core
 
 namespace UI {
@@ -26,7 +26,7 @@ public:
     explicit VideoFullscreenWindow(QWidget *parent = nullptr);
     ~VideoFullscreenWindow() override;
 
-    void showPlayer(Core::Video::Player *player, const QString &key, const QSize &inlineSize);
+    void showPlayer(Core::Media::Player *player, const QString &key, const QSize &inlineSize);
 
     [[nodiscard]] QString mediaKey() const { return key; }
 
@@ -49,7 +49,7 @@ private:
     void detach();
     void revealControls();
 
-    QPointer<Core::Video::Player> player;
+    QPointer<Core::Media::Player> player;
     QString key;
     QSize inlineSize;
 

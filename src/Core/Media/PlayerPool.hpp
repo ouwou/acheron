@@ -5,13 +5,13 @@
 #include <QStringList>
 #include <QUrl>
 
+#include "Core/Media/Player.hpp"
+
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
 
-class Player;
-
-QString attachmentKey(quint64 attachmentId);
+QString attachmentKey(quint64 attachmentId, MediaKind kind);
 QString embedKey(quint64 messageId, int embedIndex);
 
 class PlayerPool : public QObject
@@ -35,6 +35,7 @@ public:
 
 signals:
     void frameReady(const QString &key);
+    void playerPositionChanged(const QString &key);
     void playerStateChanged(const QString &key);
     void playerReleased(const QString &key);
 
@@ -47,6 +48,6 @@ private:
     QString pinnedKey;
 };
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron

@@ -1,17 +1,17 @@
-#include "Core/Video/AudioOutput.hpp"
+#include "Core/Media/AudioOutput.hpp"
 
 #ifdef ACHERON_HAVE_FFMPEG
 
-#  include "Core/Audio/AudioBackends.hpp"
-#  include "Core/Audio/Miniaudio.hpp"
+#include "Core/Audio/AudioBackends.hpp"
+#include "Core/Audio/Miniaudio.hpp"
 
-#  include "Core/Logging.hpp"
+#include "Core/Logging.hpp"
 
-#  include <cstring>
+#include <cstring>
 
 namespace Acheron {
 namespace Core {
-namespace Video {
+namespace Media {
 
 static constexpr ma_uint32 RingBufferFrames = AudioOutput::SampleRate;
 
@@ -208,7 +208,7 @@ void AudioOutput::renderFrames(void *output, uint32_t frameCount)
         framesPlayed.fetch_add(filled, std::memory_order_relaxed);
 }
 
-} // namespace Video
+} // namespace Media
 } // namespace Core
 } // namespace Acheron
 

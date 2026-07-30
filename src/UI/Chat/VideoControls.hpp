@@ -9,9 +9,9 @@ class QPainter;
 namespace Acheron {
 
 namespace Core {
-namespace Video {
+namespace Media {
 class Player;
-} // namespace Video
+} // namespace Media
 } // namespace Core
 
 namespace UI {
@@ -28,6 +28,8 @@ struct State
     qint64 bufferedMs = 0;
     bool volumeExpanded = false;
     bool fullscreen = false;
+    bool audioOnly = false;
+    bool voiceMessage = false;
 };
 
 struct Layout
@@ -46,6 +48,7 @@ struct Layout
     QRect volumeFilled;
     QRect volumeHandle;
     QRect fullscreen;
+    QRect voiceBadge;
 };
 
 enum class Hit {
@@ -58,7 +61,7 @@ enum class Hit {
     Fullscreen,
 };
 
-State stateFor(const Core::Video::Player *player, bool volumeExpanded, bool fullscreen = false);
+State stateFor(const Core::Media::Player *player, bool volumeExpanded, bool fullscreen = false);
 
 struct Drag
 {
@@ -87,9 +90,9 @@ enum class ReleaseResult {
     ToggleFullscreen,
 };
 
-bool beginDrag(Core::Video::Player *player, const Layout &layout, const State &state, const QPoint &pos, Drag &drag, const QString &key = QString());
-void applyDrag(Core::Video::Player *player, const Layout &layout, const QPoint &pos, const Drag &drag);
-ReleaseResult handleRelease(Core::Video::Player *player, const Layout &layout, const State &state, const QPoint &pos);
+bool beginDrag(Core::Media::Player *player, const Layout &layout, const State &state, const QPoint &pos, Drag &drag, const QString &key = QString());
+void applyDrag(Core::Media::Player *player, const Layout &layout, const QPoint &pos, const Drag &drag);
+ReleaseResult handleRelease(Core::Media::Player *player, const Layout &layout, const State &state, const QPoint &pos);
 
 int barHeight();
 
@@ -98,6 +101,8 @@ Layout calculate(const QRect &videoRect, const State &state);
 Hit hitTest(const Layout &layout, const QPoint &pos, const State &state);
 
 void paint(QPainter *painter, const Layout &layout, const State &state);
+
+void paintAudioBase(QPainter *painter, const QRect &barRect);
 
 void paintPlayBadge(QPainter *painter, const QRect &videoRect);
 
@@ -109,7 +114,9 @@ QString formatTime(qint64 ms);
 
 qint64 positionForSeekX(const Layout &layout, int x, qint64 durationMs);
 
-float volumeForSliderY(const Layout &layout, int y);
+bool sliderIsHorizontal(const Layout &layout);
+
+float volumeForSliderPos(const Layout &layout, const QPoint &pos);
 
 } // namespace VideoControls
 } // namespace UI

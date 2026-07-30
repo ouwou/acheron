@@ -8,6 +8,7 @@
 #include <QString>
 #include <QUrl>
 
+#include "Core/Media/Player.hpp"
 #include "Core/Snowflake.hpp"
 #include "UI/Chat/ChatLayout.hpp"
 #include "UI/Chat/VideoControls.hpp"
@@ -15,10 +16,9 @@
 namespace Acheron {
 
 namespace Core {
-namespace Video {
-class Player;
+namespace Media {
 class PlayerPool;
-} // namespace Video
+} // namespace Media
 } // namespace Core
 
 namespace UI {
@@ -39,6 +39,9 @@ public:
         QUrl url;
         QRect rect;
         Core::Snowflake attachmentId;
+        Core::Media::MediaKind kind = Core::Media::MediaKind::Video;
+        bool voiceMessage = false;
+        qint64 durationMs = 0;
 
         [[nodiscard]] bool isValid() const { return !url.isEmpty(); }
     };
@@ -62,24 +65,31 @@ public:
     void setPaintDamage(const QRect &damage) { damageRect = damage; }
     [[nodiscard]] QRect paintDamage() const { return damageRect; }
     [[nodiscard]] QString fastPathKey(const QModelIndex &index, QRect *rectOut) const;
-    [[nodiscard]] Core::Video::Player *playerFor(const QString &key) const;
-    [[nodiscard]] VideoControls::State controlState(const Core::Video::Player *player, const QString &key) const;
+    [[nodiscard]] Core::Media::Player *playerFor(const QString &key) const;
+    [[nodiscard]] VideoControls::State controlState(const Core::Media::Player *player, const QString &key) const;
+    [[nodiscard]] VideoControls::State audioBarState(const QString &key, bool voiceMessage, qint64 fallbackDurationMs) const;
     [[nodiscard]] bool isHovered(const QString &key) const { return hoveredKey == key; }
 
 private:
     struct Row
     {
         QPersistentModelIndex index;
-        // video rect relative to row visual rect
+        // media rect relative to row visual rect
         QRect rect;
         bool rectUnresolvable = false;
         Core::Snowflake attachmentId;
+        Core::Media::MediaKind kind = Core::Media::MediaKind::Video;
+        bool voiceMessage = false;
+        qint64 durationMs = 0;
+        qint64 paintedPositionBucket = -1;
     };
 
+    [[nodiscard]] VideoControls::State controlState(const Core::Media::Player *player, const QString &key, bool expanded) const;
     [[nodiscard]] QSize decodeSize(const QRect &rect) const;
     [[nodiscard]] QRect rectForKey(const QModelIndex &index, const QString &key) const;
     void rememberRow(const Target &target, const QModelIndex &index);
-    Core::Video::Player *ensurePlayer(const Target &target, const QModelIndex &index);
+    Core::Media::Player *ensurePlayer(const Target &target, const QModelIndex &index);
+    void onPlayerPositionChanged(const QString &key);
     void refreshRow(const QString &key);
     void setHovered(const QString &key);
     void invalidateRows(int firstRow, int lastRow);
@@ -90,7 +100,7 @@ private:
     void openFullscreen(const Target &target);
 
     ChatView *view = nullptr;
-    Core::Video::PlayerPool *pool = nullptr;
+    Core::Media::PlayerPool *pool = nullptr;
     VideoFullscreenWindow *fullscreen = nullptr;
     QPointer<QAbstractItemModel> boundModel;
 
