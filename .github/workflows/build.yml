@@ -410,6 +410,14 @@ jobs:
         run: |
           DESTDIR="$PWD/AppDir" cmake --install build
 
+          # linuxdeploy-plugin-qt deploys every sqldriver it finds, and
+          # libqsqlmimer.so needs libmimerapi.so, which no runner has -- the
+          # plugin treats that as fatal. Storage only ever opens QSQLITE
+          # (DatabaseManager.cpp), so drop the rest; that also avoids dragging
+          # in libpq/ldap/sasl/gnutls via the Postgres driver.
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -name '*.so' \
+            ! -name 'libqsqlite.so' -delete
+
           # certs/ and fonts/ are resolved relative to applicationDirPath()
           # (CurlUtils.cpp, main.cpp), so they go next to the binary in
           # usr/bin, not under usr/share

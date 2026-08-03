@@ -116,7 +116,11 @@ void applyCommonOptions(CURL *curl)
     if (!certPath.isEmpty())
         curl_easy_setopt(curl, CURLOPT_CAINFO, certPath.toUtf8().constData());
 #ifdef IS_CURL_IMPERSONATE
-    curl_easy_impersonate(curl, getImpersonateTarget().toUtf8().constData(), 1);
+    // Via setopt rather than curl_easy_impersonate() directly: the prebuilt
+    // arm64-macos archive defines that symbol private extern, so it does not
+    // link from outside the library. CURLOPT_IMPERSONATE reaches the same code
+    // (its setopt handler calls curl_easy_impersonate with default headers on).
+    curl_easy_setopt(curl, CURLOPT_IMPERSONATE, getImpersonateTarget().toUtf8().constData());
 #endif
     curl_easy_setopt(curl, CURLOPT_USERAGENT, getUserAgent().toUtf8().constData());
 }
