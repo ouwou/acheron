@@ -34,7 +34,14 @@ curl -fsSL -o "$work/curl.patch" \
 	"https://raw.githubusercontent.com/lexiforest/curl-impersonate/${impersonate_tag}/patches/curl.patch"
 
 # Only the include/ hunks are wanted; the rest patch lib/ sources we don't build.
-filterdiff --include='*include/curl/*' "$work/curl.patch" >"$work/headers.patch"
+#
+# curlver.h is excluded as well: its hunk is authored against curl's git tree,
+# where LIBCURL_VERSION is "8.15.0-DEV", but release tarballs carry the final
+# "8.15.0", so the context never matches. It only rewrites the version string
+# to "-IMPERSONATE", which nothing here depends on -- FindCURL just reports the
+# plain upstream version instead.
+filterdiff --include='*include/curl/*' --exclude='*include/curl/curlver.h' \
+	"$work/curl.patch" >"$work/headers.patch"
 patch -d "$work/curl-${curl_version}" -p1 <"$work/headers.patch"
 
 # Fail loudly rather than handing back headers that would silently disable
