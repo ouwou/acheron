@@ -369,6 +369,13 @@ jobs:
             curl-impersonate/libcurl-impersonate.a \
             curl-impersonate/libcurl-impersonate-local.a
           sudo cp curl-impersonate/libcurl-impersonate-local.a /usr/local/lib/libcurl-impersonate.a
+          # Ubuntu 22.04's curl headers (7.81) predate the WebSocket API
+          # (curl_ws_*, 7.86+). Fetch the headers matching the curl version
+          # curl-impersonate v1.4.4 is built from; public headers need no
+          # configure step.
+          curl -L -o curl-src.tar.gz https://curl.se/download/curl-8.15.0.tar.gz
+          tar -xzf curl-src.tar.gz curl-8.15.0/include
+          sudo cp -r curl-8.15.0/include/curl /usr/local/include/curl
 
       - name: Configure
         run: >
@@ -378,6 +385,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
+          -DCURL_INCLUDE_DIR=/usr/local/include
           -DBUILD_TESTS=ON
 
       - name: Build
