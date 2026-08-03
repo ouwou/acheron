@@ -84,7 +84,7 @@ jobs:
           # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
           Copy-Item "$binDir/*" $out -Recurse -Force
 
-          # Copy curl-impersonate DLL (v2 ships it under lib/, not bin/)
+          # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
           # Remove test executables from artifact
@@ -186,7 +186,7 @@ jobs:
           # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
           Copy-Item "$binDir/*" $out -Recurse -Force
 
-          # Copy curl-impersonate DLL (v2 ships it under lib/, not bin/)
+          # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
           # Bundle OpenSSL 1.1 (fetched from FireDaemon above) next to the exe: Qt5's
@@ -239,9 +239,6 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          # v2 ships headers and a shared library, so there is no static
-          # BoringSSL to collide with vcpkg OpenSSL (used by libdave) and no
-          # symbol localization to do: the .so needs nothing but libc/pthread/dl.
 
       - name: Configure
         run: >
@@ -290,10 +287,6 @@ jobs:
             [ -f "$f" ] && cp "$f" "$out/lib/"
           done
 
-          # curl-impersonate: shared now, so it has to ship. Copy just the
-          # SONAME the binary records in DT_NEEDED -- upload-artifact resolves
-          # symlinks, so shipping the whole .so* set would upload three
-          # identical 30M copies instead of one.
           cp curl-impersonate/libcurl-impersonate.so.4.8.0 "$out/lib/libcurl-impersonate.so.4"
 
           # Wrapper script
@@ -347,10 +340,6 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.arm64-macos.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          # v2 ships headers and dylibs, so the static BoringSSL/vcpkg-OpenSSL
-          # symbol clash is gone along with the ld -r localization it needed.
-          # The dylib's install name is already @rpath/libcurl-impersonate.4.dylib,
-          # so macdeployqt can relocate it into Contents/Frameworks as-is.
 
       - name: Configure
         run: >

@@ -366,9 +366,6 @@ if(HAS_CURL_IMPERSONATE)
 elseif(ALLOW_PLAIN_CURL)
     message(WARNING "curl_easy_impersonate not found, building against plain libcurl")
 else()
-    # Linking libcurl-impersonate is not enough: pointing CURL_INCLUDE_DIR at
-    # distro curl headers instead leaves IS_CURL_IMPERSONATE undefined, and the
-    # client then never impersonates anything.
     message(FATAL_ERROR
         "curl_easy_impersonate not found in the curl headers at:\n"
         "  ${_curl_incs}\n"
