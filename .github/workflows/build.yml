@@ -8,6 +8,9 @@ on:
 
 env:
   CURL_IMPERSONATE_VERSION: v1.4.4
+  # Upstream curl release that the above is built from (Makefile.in CURL_VERSION).
+  # Must be kept in step with CURL_IMPERSONATE_VERSION.
+  CURL_BASE_VERSION: 8.15.0
 
 jobs:
   build-windows:
@@ -211,7 +214,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev
+          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev patchutils
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -247,6 +250,14 @@ jobs:
             curl-impersonate/libcurl-impersonate.a \
             curl-impersonate/libcurl-impersonate-local.a
           sudo cp curl-impersonate/libcurl-impersonate-local.a /usr/local/lib/libcurl-impersonate.a
+          # The tarball ships no headers; without these the build links the
+          # impersonate archive but compiles against distro curl headers, so
+          # curl_easy_impersonate is never declared and IS_CURL_IMPERSONATE
+          # stays off.
+          bash .github/ci/fetch_curl_impersonate_headers.sh \
+            "${{ env.CURL_BASE_VERSION }}" \
+            "${{ env.CURL_IMPERSONATE_VERSION }}" \
+            "${{ github.workspace }}/curl-headers"
 
       - name: Configure
         run: >
@@ -255,6 +266,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
+          -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-headers
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -331,7 +343,8 @@ jobs:
           # requirement of the xcb platform plugin since Qt 6.5.
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0
+            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
+            patchutils
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -369,13 +382,12 @@ jobs:
             curl-impersonate/libcurl-impersonate.a \
             curl-impersonate/libcurl-impersonate-local.a
           sudo cp curl-impersonate/libcurl-impersonate-local.a /usr/local/lib/libcurl-impersonate.a
-          # Ubuntu 22.04's curl headers (7.81) predate the WebSocket API
-          # (curl_ws_*, 7.86+). Fetch the headers matching the curl version
-          # curl-impersonate v1.4.4 is built from; public headers need no
-          # configure step.
-          curl -L -o curl-src.tar.gz https://curl.se/download/curl-8.15.0.tar.gz
-          tar -xzf curl-src.tar.gz curl-8.15.0/include
-          sudo cp -r curl-8.15.0/include/curl /usr/local/include/curl
+          # The tarball ships no headers; reconstruct the patched ones so
+          # curl_easy_impersonate is declared (and, on 22.04, curl_ws_*).
+          bash .github/ci/fetch_curl_impersonate_headers.sh \
+            "${{ env.CURL_BASE_VERSION }}" \
+            "${{ env.CURL_IMPERSONATE_VERSION }}" \
+            "${{ github.workspace }}/curl-headers"
 
       - name: Configure
         run: >
@@ -385,7 +397,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
-          -DCURL_INCLUDE_DIR=/usr/local/include
+          -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-headers
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -445,7 +457,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: brew install curl autoconf automake libtool
+        run: brew install curl autoconf automake libtool patchutils
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -485,6 +497,13 @@ jobs:
             -o curl-impersonate/curl-impersonate-local.o curl-impersonate/curl-impersonate-all.o
           # Re-pack into a static archive
           ar rcs curl-impersonate/libcurl-impersonate-local.a curl-impersonate/curl-impersonate-local.o
+          # The tarball ships no headers; brew's curl headers don't declare
+          # curl_easy_impersonate, so building against them links the
+          # impersonate archive with IS_CURL_IMPERSONATE off.
+          bash .github/ci/fetch_curl_impersonate_headers.sh \
+            "${{ env.CURL_BASE_VERSION }}" \
+            "${{ env.CURL_IMPERSONATE_VERSION }}" \
+            "${{ github.workspace }}/curl-headers"
 
       - name: Configure
         run: >
@@ -492,7 +511,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DVCPKG_TARGET_TRIPLET=arm64-osx
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
-          -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
+          -DCURL_INCLUDE_DIR="${{ github.workspace }}/curl-headers"
           -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a"
           -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz"
           -DBUILD_TESTS=ON
