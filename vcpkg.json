@@ -9,7 +9,12 @@
     "mlspp",
     "libsodium",
     "opus",
-    "nayuki-qr-code-generator"
+    "nayuki-qr-code-generator",
+    {
+      "comment": "Qt5 has no Qt::ZlibPrivate, so the QtZlibCompat path needs a system zlib. Qt6 builds never look for it. curl-impersonate v1 happened to bundle one; v2 links zlib into its DLL and ships no headers.",
+      "name": "zlib",
+      "platform": "windows"
+    }
   ],
   "builtin-baseline": "16c71a39e5a0fc0bdb3fad03beef8f38ee00ee3b",
   "vcpkg-configuration": {
