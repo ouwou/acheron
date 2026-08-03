@@ -290,10 +290,11 @@ jobs:
             [ -f "$f" ] && cp "$f" "$out/lib/"
           done
 
-          # curl-impersonate: shared now, so it has to ship. The binary's
-          # DT_NEEDED records the SONAME (libcurl-impersonate.so.4), so copy the
-          # whole set with -a to keep the symlinks pointing at the real file.
-          cp -a curl-impersonate/libcurl-impersonate.so* "$out/lib/"
+          # curl-impersonate: shared now, so it has to ship. Copy just the
+          # SONAME the binary records in DT_NEEDED -- upload-artifact resolves
+          # symlinks, so shipping the whole .so* set would upload three
+          # identical 30M copies instead of one.
+          cp curl-impersonate/libcurl-impersonate.so.4.8.0 "$out/lib/libcurl-impersonate.so.4"
 
           # Wrapper script
           cat > "$out/acheron.sh" <<'SCRIPT'
