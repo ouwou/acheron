@@ -239,6 +239,12 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+          KEEP_FLAGS=$(nm --defined-only -g curl-impersonate/libcurl-impersonate.a \
+            | awk '{print $NF}' | grep '^curl_' | sort -u \
+            | sed 's/^/--keep-global-symbol=/' | tr '\n' ' ')
+          objcopy $KEEP_FLAGS \
+            curl-impersonate/libcurl-impersonate.a \
+            curl-impersonate/libcurl-impersonate-local.a
 
       - name: Configure
         run: >
@@ -247,7 +253,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
-          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate.so
+          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -287,7 +293,6 @@ jobs:
             [ -f "$f" ] && cp "$f" "$out/lib/"
           done
 
-          cp curl-impersonate/libcurl-impersonate.so.4.8.0 "$out/lib/libcurl-impersonate.so.4"
 
           # Wrapper script
           cat > "$out/acheron.sh" <<'SCRIPT'
@@ -351,6 +356,12 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+          KEEP_FLAGS=$(nm --defined-only -g curl-impersonate/libcurl-impersonate.a \
+            | awk '{print $NF}' | grep '^curl_' | sort -u \
+            | sed 's/^/--keep-global-symbol=/' | tr '\n' ' ')
+          objcopy $KEEP_FLAGS \
+            curl-impersonate/libcurl-impersonate.a \
+            curl-impersonate/libcurl-impersonate-local.a
 
       - name: Configure
         run: >
@@ -360,7 +371,7 @@ jobs:
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
-          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate.so
+          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -387,14 +398,6 @@ jobs:
           [ -d build/certs ] && cp -r build/certs AppDir/usr/bin/certs
           [ -d build/fonts ] && cp -r build/fonts AppDir/usr/bin/fonts
 
-          # curl-impersonate is linked from the extracted tarball, which is not
-          # on any library search path, so linuxdeploy cannot resolve the
-          # binary's DT_NEEDED for it. Stage it under the SONAME the binary
-          # records; linuxdeploy then treats it as already-deployed and patches
-          # the rpath to match.
-          mkdir -p AppDir/usr/lib
-          cp curl-impersonate/libcurl-impersonate.so.4.8.0 \
-            AppDir/usr/lib/libcurl-impersonate.so.4
 
       - name: Get linuxdeploy
         run: |
@@ -415,9 +418,6 @@ jobs:
         run: |
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
           export LDAI_RUNTIME_FILE="$PWD/runtime-x86_64"
-          # So linuxdeploy's dependency resolver can also find curl-impersonate
-          # at its original location, not just the staged copy in the AppDir
-          export LD_LIBRARY_PATH="$PWD/curl-impersonate:$LD_LIBRARY_PATH"
           # Icon: the .desktop file declares Icon=io.github.ouwou.acheron but no
           # icon is installed by CMake; supply the repo SVG under that name
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
