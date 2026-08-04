@@ -366,13 +366,10 @@ if(HAS_CURL_IMPERSONATE)
 elseif(ALLOW_PLAIN_CURL)
     message(WARNING "curl_easy_impersonate not found, building against plain libcurl")
 else()
-    # Linking libcurl-impersonate is not enough: its release tarballs ship no
-    # headers on Linux/macOS, so a build can silently pick up distro curl
-    # headers, leave IS_CURL_IMPERSONATE undefined, and never impersonate.
     message(FATAL_ERROR
         "curl_easy_impersonate not found in the curl headers at:\n"
         "  ${_curl_incs}\n"
-        "Point CURL_INCLUDE_DIR at curl-impersonate's patched headers, or pass "
+        "Point CURL_INCLUDE_DIR at curl-impersonate's headers, or pass "
         "-DALLOW_PLAIN_CURL=ON to build against plain libcurl anyway.")
 endif()
 
