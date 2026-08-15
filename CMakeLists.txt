@@ -280,7 +280,7 @@ if(BUILD_TESTS)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
 endif()
 
-qt_add_translations(${PROJECT_NAME})
+qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${PROJECT_NAME})
 
 if (MSVC)
     target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
