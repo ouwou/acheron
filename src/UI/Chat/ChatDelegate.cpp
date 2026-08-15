@@ -65,33 +65,6 @@ static void drawUploadProgress(QPainter *painter, const QRect &barRect, qint64 s
     painter->restore();
 }
 
-static ChatLayout::LayoutContext buildLayoutContext(const QStyleOptionViewItem &option,
-                                                    const QModelIndex &index)
-{
-    ChatLayout::LayoutContext ctx;
-    ctx.font = option.font;
-    ctx.rowWidth = option.rect.width();
-    ctx.rowTop = option.rect.top();
-    ctx.showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
-    ctx.hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
-    ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
-    ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
-    ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
-    ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
-    ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
-    ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
-    ctx.model = qobject_cast<const ChatModel *>(index.model());
-    ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
-
-    QDateTime editedTime = index.data(ChatModel::EditedTimestampRole).toDateTime();
-    if (editedTime.isValid()) {
-        QColor editedColor = option.palette.text().color().darker(200);
-        ctx.htmlContent += QString(R"(<span style="color: %1"> (edited)</span>)").arg(editedColor.name());
-    }
-
-    return ctx;
-}
-
 static QPixmap cachedBlur(const QPixmap &source)
 {
     const QString key = QStringLiteral("spoiler-blur:%1").arg(source.cacheKey());
@@ -278,7 +251,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         }
     }
 
-    ChatLayout::LayoutContext ctx = buildLayoutContext(option, index);
+    ChatLayout::LayoutContext ctx = ChatLayout::buildContext(index, option.font, option.rect, option.palette);
     ChatLayout::MessageLayout layout = ChatLayout::calculateMessageLayout(ctx);
     const QList<VideoItem> videos = videoItems(ctx, layout, chatModel);
 
@@ -974,7 +947,7 @@ QSize ChatDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelInd
     if (chatModel)
         chatModel->suppressImageFetch = true;
 
-    ChatLayout::LayoutContext ctx = buildLayoutContext(option, index);
+    ChatLayout::LayoutContext ctx = ChatLayout::buildContext(index, option.font, option.rect, option.palette);
 
     if (chatModel)
         chatModel->suppressImageFetch = false;

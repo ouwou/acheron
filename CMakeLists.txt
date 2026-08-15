@@ -23,6 +23,7 @@ option(ENABLE_VOICE "Build with voice/audio support" ON)
 option(ENABLE_RNNOISE "Build with RNNoise noise suppression (requires ENABLE_VOICE)" ON)
 option(ENABLE_RNNOISE_RTCD "Use RNNoise x86 runtime SIMD dispatch (SSE4.1/AVX2)" ON)
 option(ENABLE_FFMPEG "Build with ffmpeg/libav video playback support" ON)
+option(ALLOW_PLAIN_CURL "Permit building against plain libcurl without curl-impersonate" OFF)
 if(BUILD_TESTS)
     enable_testing()
 endif()
@@ -294,7 +295,7 @@ if(BUILD_TESTS)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
 endif()
 
-qt_add_translations(${PROJECT_NAME})
+qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${PROJECT_NAME})
 
 if (MSVC)
     target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
@@ -383,8 +384,14 @@ unset(CMAKE_REQUIRED_INCLUDES)
 
 if(HAS_CURL_IMPERSONATE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE IS_CURL_IMPERSONATE)
+elseif(ALLOW_PLAIN_CURL)
+    message(WARNING "curl_easy_impersonate not found, building against plain libcurl")
 else()
-    message(WARNING "curl_easy_impersonate not found, libcurl-impersonate is highly recommended")
+    message(FATAL_ERROR
+        "curl_easy_impersonate not found in the curl headers at:\n"
+        "  ${_curl_incs}\n"
+        "Point CURL_INCLUDE_DIR at curl-impersonate's headers, or pass "
+        "-DALLOW_PLAIN_CURL=ON to build against plain libcurl anyway.")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certs/cacert.pem")

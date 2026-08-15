@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 env:
-  CURL_IMPERSONATE_VERSION: v1.4.4
+  CURL_IMPERSONATE_VERSION: v2.0.0
   FFMPEG_RELEASE_TAG: autobuild-2026-07-26-13-28
   FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-31-g8c9502e9b0-win64-lgpl-shared-8.1
   FFMPEG_WINDOWS_SHA256: a98e7f04caebb3bfc132813add84001c0e58d4098b91efcb06b92ee4b8242bdb
@@ -76,8 +76,9 @@ jobs:
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir;$ffmpegDir" `
-            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$ffmpegDir" `
+            -DCURL_INCLUDE_DIR="$curlDir/include" `
+            -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON
 
       - name: Build
@@ -103,8 +104,8 @@ jobs:
           # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
           Copy-Item "$binDir/*" $out -Recurse -Force
 
-          # Copy curl-impersonate DLLs
-          Copy-Item "$curlDir/bin/*.dll" $out -Force
+          # Copy curl-impersonate DLL
+          Copy-Item "$curlDir/lib/*.dll" $out -Force
 
           # Remove test executables from artifact
           Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
@@ -157,8 +158,9 @@ jobs:
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$curlDir" `
-            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
+            -DCURL_INCLUDE_DIR="$curlDir/include" `
+            -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON `
             -DENABLE_VOICE=OFF `
             -DENABLE_RNNOISE=OFF `
@@ -187,8 +189,8 @@ jobs:
           # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
           Copy-Item "$binDir/*" $out -Recurse -Force
 
-          # Copy curl-impersonate DLLs
-          Copy-Item "$curlDir/bin/*.dll" $out -Force
+          # Copy curl-impersonate DLL
+          Copy-Item "$curlDir/lib/*.dll" $out -Force
 
           # Remove test executables from artifact
           Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
@@ -281,8 +283,9 @@ jobs:
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=MinSizeRel `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$curlDir;$ffmpegDir" `
-            -DCURL_DIR="$curlDir/lib/cmake/CURL" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
+            -DCURL_INCLUDE_DIR="$curlDir/include" `
+            -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON
 
       - name: Build
@@ -308,8 +311,8 @@ jobs:
           # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
           Copy-Item "$binDir/*" $out -Recurse -Force
 
-          # Copy curl-impersonate DLLs
-          Copy-Item "$curlDir/bin/*.dll" $out -Force
+          # Copy curl-impersonate DLL
+          Copy-Item "$curlDir/lib/*.dll" $out -Force
 
           # Bundle OpenSSL 1.1 (fetched from FireDaemon above) next to the exe: Qt5's
           # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
@@ -362,16 +365,12 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          # Localize BoringSSL symbols in the static archive so they don't
-          # conflict with vcpkg OpenSSL (used by libdave). Keep only curl_*
-          # symbols as global; everything else (BoringSSL/OpenSSL) becomes local.
           KEEP_FLAGS=$(nm --defined-only -g curl-impersonate/libcurl-impersonate.a \
             | awk '{print $NF}' | grep '^curl_' | sort -u \
             | sed 's/^/--keep-global-symbol=/' | tr '\n' ' ')
           objcopy $KEEP_FLAGS \
             curl-impersonate/libcurl-impersonate.a \
             curl-impersonate/libcurl-impersonate-local.a
-          sudo cp curl-impersonate/libcurl-impersonate-local.a /usr/local/lib/libcurl-impersonate.a
 
       - name: Configure
         run: >
@@ -379,7 +378,8 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
-          -DCURL_LIBRARY=/usr/local/lib/libcurl-impersonate.a
+          -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
+          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
 
       - name: Build
@@ -419,8 +419,6 @@ jobs:
             [ -f "$f" ] && cp "$f" "$out/lib/"
           done
 
-          # curl-impersonate (static-linked, but copy .so if we built one)
-          [ -f curl-impersonate/libcurl-impersonate.so ] && cp curl-impersonate/libcurl-impersonate.so "$out/lib/"
 
           # Wrapper script
           cat > "$out/acheron.sh" <<'SCRIPT'
@@ -437,6 +435,128 @@ jobs:
         with:
           name: acheron-linux
           path: acheron-linux
+
+  build-appimage:
+    # ubuntu-22.04, not -latest: the AppImage bundles Qt but not glibc, so the
+    # builder's glibc (2.35 here) is the floor. Covers Debian 12+/Ubuntu 22.04+.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          # The xcb/xkb set must be installed on the builder for
+          # linuxdeploy-plugin-qt to bundle it; libxcb-cursor0 is a hard
+          # requirement of the xcb platform plugin since Qt 6.5.
+          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.2'
+          modules: qtimageformats
+          cache: true
+
+      - name: Bootstrap vcpkg
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          # Keyed separately from build-linux: its cache is built on
+          # ubuntu-latest and restoring it here would raise the glibc floor.
+          key: vcpkg-x64-linux-jammy-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install curl-impersonate
+        run: |
+          curl -L -o libcurl-impersonate.tar.gz \
+            "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-linux-gnu.tar.gz"
+          mkdir -p curl-impersonate
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+          KEEP_FLAGS=$(nm --defined-only -g curl-impersonate/libcurl-impersonate.a \
+            | awk '{print $NF}' | grep '^curl_' | sort -u \
+            | sed 's/^/--keep-global-symbol=/' | tr '\n' ' ')
+          objcopy $KEEP_FLAGS \
+            curl-impersonate/libcurl-impersonate.a \
+            curl-impersonate/libcurl-impersonate-local.a
+
+      - name: Configure
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_INSTALL_PREFIX=/usr
+          -DVCPKG_TARGET_TRIPLET=x64-linux
+          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
+          -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
+          -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build AppDir
+        run: |
+          DESTDIR="$PWD/AppDir" cmake --install build
+
+          # linuxdeploy-plugin-qt deploys every sqldriver it finds, and
+          # libqsqlmimer.so needs libmimerapi.so, which no runner has -- the
+          # plugin treats that as fatal. Storage only ever opens QSQLITE
+          # (DatabaseManager.cpp), so drop the rest; that also avoids dragging
+          # in libpq/ldap/sasl/gnutls via the Postgres driver.
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -name '*.so' \
+            ! -name 'libqsqlite.so' -delete
+
+          # certs/ and fonts/ are resolved relative to applicationDirPath()
+          # (CurlUtils.cpp, main.cpp), so they go next to the binary in
+          # usr/bin, not under usr/share
+          [ -d build/certs ] && cp -r build/certs AppDir/usr/bin/certs
+          [ -d build/fonts ] && cp -r build/fonts AppDir/usr/bin/fonts
+
+
+      - name: Get linuxdeploy
+        run: |
+          curl -L -O https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -O https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          # FUSE3-capable runtime: the default embedded runtime dlopens
+          # libfuse.so.2, which Debian 13 & friends no longer ship
+          curl -L -o runtime-x86_64 \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Build AppImage
+        env:
+          # linuxdeploy is itself an AppImage and the runner has no FUSE2
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          # Wayland client plugins aren't in DT_NEEDED, request them explicitly
+          EXTRA_QT_PLUGINS: wayland-decoration-client;wayland-graphics-integration-client;wayland-shell-integration
+        run: |
+          export QMAKE="$QT_ROOT_DIR/bin/qmake"
+          export LDAI_RUNTIME_FILE="$PWD/runtime-x86_64"
+          # Icon: the .desktop file declares Icon=io.github.ouwou.acheron but no
+          # icon is installed by CMake; supply the repo SVG under that name
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            --plugin qt \
+            --icon-file acheron.svg --icon-filename io.github.ouwou.acheron \
+            --output appimage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acheron-appimage
+          path: Acheron*.AppImage
 
   build-macos:
     runs-on: macos-latest
@@ -473,20 +593,6 @@ jobs:
             "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.arm64-macos.tar.gz"
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-          # Localize BoringSSL symbols in the static archive so they don't
-          # conflict with vcpkg OpenSSL (used by libdave). Merge all objects
-          # into one relocatable file, hiding everything except curl_* symbols.
-          # The Xcode 26 linker requires -platform_version on relocatable links.
-          SDK_VER=$(xcrun --sdk macosx --show-sdk-version)
-          ld -r -arch arm64 -platform_version macos 13.0 "$SDK_VER" -all_load -o curl-impersonate/curl-impersonate-all.o curl-impersonate/libcurl-impersonate.a
-          # Extract curl_* globals; mark everything else as private_extern
-          nm -g -U curl-impersonate/curl-impersonate-all.o \
-            | awk '{print $NF}' | grep '^_curl_' | sort -u \
-            > curl-impersonate/exported_symbols.txt
-          ld -r -arch arm64 -platform_version macos 13.0 "$SDK_VER" -exported_symbols_list curl-impersonate/exported_symbols.txt \
-            -o curl-impersonate/curl-impersonate-local.o curl-impersonate/curl-impersonate-all.o
-          # Re-pack into a static archive
-          ar rcs curl-impersonate/libcurl-impersonate-local.a curl-impersonate/curl-impersonate-local.o
 
       - name: Configure
         run: >
@@ -494,9 +600,9 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DVCPKG_TARGET_TRIPLET=arm64-osx
           -DCMAKE_PREFIX_PATH="$Qt6_DIR"
-          -DCURL_INCLUDE_DIR="$(brew --prefix curl)/include"
-          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a"
-          -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz"
+          -DCURL_INCLUDE_DIR="${{ github.workspace }}/curl-impersonate/include"
+          -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
+          -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz -Wl,-rpath,@executable_path/../Frameworks -Wl,-rpath,${{ github.workspace }}/curl-impersonate"
           -DBUILD_TESTS=ON
 
       - name: Build

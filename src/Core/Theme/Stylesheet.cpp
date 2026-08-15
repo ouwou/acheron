@@ -1,5 +1,6 @@
 #include "Core/Theme/Stylesheet.hpp"
 
+#include "Core/Theme/Fonts.hpp"
 #include "Core/Theme/Manager.hpp"
 #include "Core/Theme/Tokens.hpp"
 
@@ -20,76 +21,28 @@ QString buildStyleSheet()
 {
     const Manager &m = Manager::instance();
 
-    const QColor windowBg = m.color(Token::WindowBg);
     const QColor baseBg = m.color(Token::BaseBg);
-    const QColor altBg = m.color(Token::AlternateBaseBg);
     const QColor tooltipBg = m.color(Token::TooltipBg);
-    const QColor windowText = m.color(Token::WindowText);
     const QColor tooltipText = m.color(Token::TooltipText);
     const QColor divider = m.color(Token::Divider);
     const QColor highlight = m.color(Token::Highlight);
-    const QColor highlightText = m.color(Token::HighlightedText);
-
-    const QColor accentMuted = highlight.darker(120);
 
     QString qss;
 
-    /* qss += QStringLiteral("QWidget {"
-                          "  background-color: %1;"
-                          "  color: %2;"
-                          "  selection-background-color: %3;"
-                          "  selection-color: %4;"
-                          "}")
-                   .arg(hex(windowBg), hex(windowText), hex(highlight), hex(highlightText));
-
-    qss += QStringLiteral("QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox,"
-                          " QComboBox {"
-                          "  background-color: %1;"
-                          "  border: 1px solid %2;"
-                          "  border-radius: 4px;"
-                          "  padding: 5px;"
-                          "}"
-                          "QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,"
-                          " QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {"
-                          "  border-color: %3;"
-                          "}")
-                   .arg(hex(baseBg), hex(divider), hex(highlight));
-
-    qss += QStringLiteral("QComboBox::drop-down { border: none; width: 20px; }"
-                          "QComboBox QAbstractItemView {"
-                          "  background-color: %1;"
-                          "  border: 1px solid %2;"
-                          "  selection-background-color: %3;"
-                          "}")
-                   .arg(hex(altBg), hex(divider), hex(highlight));
-
-    qss += QStringLiteral("QCheckBox::indicator, QRadioButton::indicator {"
-                          "  width: 14px;"
-                          "  height: 14px;"
-                          "  border: 1px solid %1;"
-                          "  background-color: %2;"
-                          "}"
-                          "QCheckBox::indicator:checked, QRadioButton::indicator:checked {"
-                          "  background-color: %3; border-color: %3;"
-                          "}")
-                   .arg(hex(divider), hex(baseBg), hex(highlight));
-
-    qss += QStringLiteral("QScrollBar:vertical, QScrollBar:horizontal {"
-                          "  background-color: %1; border: none; margin: 0px;"
-                          "}"
-                          "QScrollBar::handle { background-color: %2; border-radius: 4px; }"
-                          "QScrollBar::handle:hover { background-color: %3; }"
-                          "QScrollBar::add-line, QScrollBar::sub-line { height: 0px; width: 0px; }")
-                   .arg(hex(windowBg), hex(divider), hex(accentMuted));
+    constexpr qreal tooltipFontScale = 0.9;
+    QString tooltipFontSize;
+    const qreal uiPointSize = m.font(FontRole::Ui).pointSizeF();
+    if (uiPointSize > 0)
+        tooltipFontSize = QStringLiteral("  font-size: %1pt;").arg(uiPointSize * tooltipFontScale);
 
     qss += QStringLiteral("QToolTip {"
                           "  background-color: %1;"
                           "  color: %2;"
                           "  border: 1px solid %3;"
-                          "  padding: 4px;"
+                          "  padding: 2px 6px;"
+                          "%4"
                           "}")
-                   .arg(hex(tooltipBg), hex(tooltipText), hex(accentMuted));
-                   */
+                   .arg(hex(tooltipBg), hex(tooltipText), hex(divider), tooltipFontSize);
 
     qss += "#MemberList QScrollBar::handle:vertical { min-height: 40px; }";
 

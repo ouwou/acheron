@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QLocale>
 #include <QString>
 
 namespace Acheron {
@@ -23,6 +24,13 @@ static QString relativeTime(const QDateTime &dt)
     if (secs < 2592000)
         return QString::number(secs / 86400) + QStringLiteral("d ago");
     return dt.toLocalTime().toString(QStringLiteral("MMM d"));
+}
+
+static QString absoluteTime(const QDateTime &dt)
+{
+    if (!dt.isValid())
+        return {};
+    return QLocale::system().toString(dt.toLocalTime(), QLocale::ShortFormat);
 }
 
 } // namespace TimeUtils

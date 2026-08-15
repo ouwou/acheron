@@ -108,6 +108,7 @@ void Manager::apply()
 void Manager::applyFonts()
 {
     qApp->setFont(font(FontRole::Ui));
+    qApp->setStyleSheet(buildStyleSheet());
     emit metricsChanged();
 }
 

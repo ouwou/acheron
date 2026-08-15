@@ -3,9 +3,11 @@
 #include <QMenu>
 #include <QTextDocument>
 #include <QTextCursor>
+#include <QToolTip>
 
 #include <algorithm>
 
+#include "Core/TimeUtils.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
 #include "UI/ImageViewer.hpp"
@@ -381,6 +383,28 @@ void ChatView::leaveEvent(QEvent *event)
 
     viewport()->unsetCursor();
     QListView::leaveEvent(event);
+}
+
+bool ChatView::viewportEvent(QEvent *event)
+{
+    if (event->type() == QEvent::ToolTip) {
+        auto *helpEvent = static_cast<QHelpEvent *>(event);
+        QModelIndex idx = indexAt(helpEvent->pos());
+
+        QDateTime editedTime = idx.data(ChatModel::EditedTimestampRole).toDateTime();
+        if (editedTime.isValid()) {
+            ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
+            auto markerRect = ChatLayout::editedMarkerRectAt(resolved, helpEvent->pos());
+            if (markerRect) {
+                QToolTip::showText(helpEvent->globalPos(),
+                                   tr("Edited %1").arg(Core::TimeUtils::absoluteTime(editedTime)),
+                                   viewport(), *markerRect);
+                return true;
+            }
+        }
+    }
+
+    return QListView::viewportEvent(event);
 }
 
 void ChatView::onHistoryRequestFinished()

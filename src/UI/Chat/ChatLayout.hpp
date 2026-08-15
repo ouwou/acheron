@@ -2,6 +2,7 @@
 
 #include <QRect>
 #include <QPoint>
+#include <QPalette>
 #include <QTextDocument>
 #include <QAbstractItemView>
 #include <QModelIndex>
@@ -261,6 +262,8 @@ struct ResolvedLayout
     LayoutContext ctx;
 };
 
+LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QRect &rowRect,
+                           const QPalette &palette);
 ResolvedLayout resolveLayout(const QAbstractItemView *view, const QModelIndex &index);
 EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int maxWidth, int left,
                                  int top, const ChatModel *model = nullptr,
@@ -280,6 +283,7 @@ std::optional<HitRegion> hitTest(const ResolvedLayout &resolved, const QPoint &m
 
 int hitTestCharIndex(const ResolvedLayout &resolved, const QPoint &viewportPos);
 QString getLinkAt(const ResolvedLayout &resolved, const QPoint &mousePos);
+std::optional<QRect> editedMarkerRectAt(const ResolvedLayout &resolved, const QPoint &mousePos);
 int hitTestCharIndex(const QAbstractItemView *view, const QModelIndex &index, const QPoint &viewportPos);
 
 QString formatFileSize(qint64 bytes);

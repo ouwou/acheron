@@ -7,6 +7,7 @@
 #include "Core/Theme/Manager.hpp"
 #include "Core/Theme/Tokens.hpp"
 
+#include <QCoreApplication>
 #include <QPainter>
 #include <QGraphicsBlurEffect>
 #include <QGraphicsScene>
@@ -47,6 +48,17 @@ QString richTextStyleSheet()
                    .arg(mentionText.name(QColor::HexRgb))
                    .arg(mentionBgRgba) +
            code;
+}
+
+static QString editedMarkerText()
+{
+    return QCoreApplication::translate("Acheron::UI::ChatLayout", "(edited)");
+}
+
+static QString editedMarkerHtml(const QPalette &palette)
+{
+    return QStringLiteral(R"(<span style="color: %1"> %2</span>)")
+            .arg(palette.text().color().darker(200).name(), editedMarkerText().toHtmlEscaped());
 }
 
 void setupDocument(QTextDocument &doc, const QString &htmlContent, const QFont &font, int textWidth)
@@ -1008,16 +1020,11 @@ std::optional<HitRegion> hitTest(const ResolvedLayout &resolved, const QPoint &m
     return std::nullopt;
 }
 
-ResolvedLayout resolveLayout(const QAbstractItemView *view, const QModelIndex &index)
+LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QRect &rowRect,
+                           const QPalette &palette)
 {
-    ResolvedLayout result;
-    if (!view || !index.isValid())
-        return result;
-
-    QRect rowRect = view->visualRect(index);
-
-    LayoutContext &ctx = result.ctx;
-    ctx.font = view->font();
+    LayoutContext ctx;
+    ctx.font = font;
     ctx.rowWidth = rowRect.width();
     ctx.rowTop = rowRect.top();
     ctx.showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
@@ -1031,28 +1038,49 @@ ResolvedLayout resolveLayout(const QAbstractItemView *view, const QModelIndex &i
     ctx.model = qobject_cast<const ChatModel *>(index.model());
     ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
 
-    result.layout = calculateMessageLayout(ctx);
+    if (index.data(ChatModel::EditedTimestampRole).toDateTime().isValid())
+        ctx.htmlContent += editedMarkerHtml(palette);
+
+    return ctx;
+}
+
+ResolvedLayout resolveLayout(const QAbstractItemView *view, const QModelIndex &index)
+{
+    ResolvedLayout result;
+    if (!view || !index.isValid())
+        return result;
+
+    result.ctx = buildContext(index, view->font(), view->visualRect(index), view->palette());
+    result.layout = calculateMessageLayout(result.ctx);
     return result;
+}
+
+static QTextDocument *bodyDocument(const ResolvedLayout &resolved, QTextDocument &fallback)
+{
+    const auto &ctx = resolved.ctx;
+    const int textWidth = resolved.layout.textRect.width();
+
+    if (ctx.htmlContent.isEmpty() || !ctx.model)
+        return nullptr;
+
+    QTextDocument *doc = ctx.model->getCachedDocument(bodyDocKey(ctx.messageId));
+    if (!doc) {
+        setupDocument(fallback, ctx.htmlContent, ctx.font, textWidth);
+        return &fallback;
+    }
+    if (int(doc->textWidth()) != textWidth)
+        doc->setTextWidth(textWidth);
+    return doc;
 }
 
 int hitTestCharIndex(const ResolvedLayout &resolved, const QPoint &viewportPos)
 {
-    const auto &layout = resolved.layout;
-    const auto &ctx = resolved.ctx;
-
-    if (ctx.htmlContent.isEmpty() || !ctx.model)
+    QTextDocument localDoc;
+    QTextDocument *doc = bodyDocument(resolved, localDoc);
+    if (!doc)
         return -1;
 
-    QTextDocument *doc = ctx.model->getCachedDocument(bodyDocKey(ctx.messageId));
-    QTextDocument localDoc;
-    if (!doc) {
-        setupDocument(localDoc, ctx.htmlContent, ctx.font, layout.textRect.width());
-        doc = &localDoc;
-    } else if (int(doc->textWidth()) != layout.textRect.width()) {
-        doc->setTextWidth(layout.textRect.width());
-    }
-
-    QPointF local = viewportPos - layout.textRect.topLeft();
+    QPointF local = viewportPos - resolved.layout.textRect.topLeft();
 
     if (local.y() < 0 || local.y() > doc->size().height())
         return -1;
@@ -1095,26 +1123,37 @@ QRectF charRectInDocument(const QTextDocument &doc, int charIndex)
 
 QString getLinkAt(const ResolvedLayout &resolved, const QPoint &mousePos)
 {
-    const auto &layout = resolved.layout;
-    const auto &ctx = resolved.ctx;
-
-    if (ctx.htmlContent.isEmpty() || !ctx.model)
+    if (!resolved.layout.textRect.contains(mousePos))
         return {};
 
-    if (!layout.textRect.contains(mousePos))
-        return {};
-
-    QTextDocument *doc = ctx.model->getCachedDocument(bodyDocKey(ctx.messageId));
     QTextDocument localDoc;
-    if (!doc) {
-        setupDocument(localDoc, ctx.htmlContent, ctx.font, layout.textRect.width());
-        doc = &localDoc;
-    } else if (int(doc->textWidth()) != layout.textRect.width()) {
-        doc->setTextWidth(layout.textRect.width());
-    }
+    QTextDocument *doc = bodyDocument(resolved, localDoc);
+    if (!doc)
+        return {};
 
-    QPointF localPos = mousePos - layout.textRect.topLeft();
+    QPointF localPos = mousePos - resolved.layout.textRect.topLeft();
     return doc->documentLayout()->anchorAt(localPos);
+}
+
+std::optional<QRect> editedMarkerRectAt(const ResolvedLayout &resolved, const QPoint &mousePos)
+{
+    QTextDocument localDoc;
+    QTextDocument *doc = bodyDocument(resolved, localDoc);
+    if (!doc)
+        return std::nullopt;
+
+    const int end = doc->characterCount() - 1;
+    const int start = end - int(editedMarkerText().size());
+    if (start < 0)
+        return std::nullopt;
+
+    QPointF local = mousePos - resolved.layout.textRect.topLeft();
+    const int charPos = doc->documentLayout()->hitTest(local, Qt::ExactHit);
+    if (charPos < start || charPos >= end)
+        return std::nullopt;
+
+    QRectF rect = charRectInDocument(*doc, start) | charRectInDocument(*doc, end - 1);
+    return rect.toAlignedRect().translated(resolved.layout.textRect.topLeft());
 }
 
 QPixmap createBlurredPixmap(const QPixmap &source, int blurRadius)

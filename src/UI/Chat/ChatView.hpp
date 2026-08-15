@@ -64,6 +64,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    bool viewportEvent(QEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
     void clearSelection();
     void leaveEvent(QEvent *event) override;
