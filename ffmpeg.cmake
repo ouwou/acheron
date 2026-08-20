@@ -13,6 +13,13 @@ endif()
 
 set(FFMPEG_RUNTIME_DIR "" CACHE INTERNAL "Directory holding ffmpeg shared libraries, if any")
 
+# ffmpeg 5.1, where AVChannelLayout replaced the old channel-layout fields Player.cpp
+# would otherwise need. Both routes below have to check it: neither the presence of a
+# .pc file nor of a header says anything about the version, and a distro that ships an
+# older ffmpeg (Ubuntu 22.04 is one) would otherwise be accepted here and only fail
+# much later on Player.cpp's #error.
+set(FFMPEG_MIN_AVUTIL_VERSION 57.28.100)
+
 # Deliberately no find_package(FFMPEG). Upstream ffmpeg ships pkg-config files,
 # not a CMake config package, so find_package can only ever match some third
 # party's Find module. Qt6 bundles one, and it reports bare library names like
@@ -24,7 +31,7 @@ set(FFMPEG_RUNTIME_DIR "" CACHE INTERNAL "Directory holding ffmpeg shared librar
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND AND NOT MSVC)
     pkg_check_modules(FFMPEG_PC QUIET IMPORTED_TARGET
-        libavcodec libavformat libavutil libswscale libswresample)
+        libavcodec libavformat libavutil>=${FFMPEG_MIN_AVUTIL_VERSION} libswscale libswresample)
     if(TARGET PkgConfig::FFMPEG_PC)
         add_library(ffmpeg INTERFACE)
         target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG_PC)
@@ -49,6 +56,18 @@ find_path(FFMPEG_INCLUDE_DIR
     PATH_SUFFIXES include
 )
 
+# pkg-config applies the version constraint itself; here it has to be read out of the
+# headers, which is also the only thing these packages version at all.
+set(_ffmpeg_avutil_version "")
+if(EXISTS "${FFMPEG_INCLUDE_DIR}/libavutil/version.h")
+    foreach(_ffmpeg_part MAJOR MINOR MICRO)
+        file(STRINGS "${FFMPEG_INCLUDE_DIR}/libavutil/version.h" _ffmpeg_line
+            REGEX "^#define +LIBAVUTIL_VERSION_${_ffmpeg_part} ")
+        string(REGEX MATCH "[0-9]+" _ffmpeg_${_ffmpeg_part} "${_ffmpeg_line}")
+    endforeach()
+    set(_ffmpeg_avutil_version "${_ffmpeg_MAJOR}.${_ffmpeg_MINOR}.${_ffmpeg_MICRO}")
+endif()
+
 set(_ffmpeg_libraries "")
 set(_ffmpeg_missing "")
 foreach(_ffmpeg_component avcodec avformat avutil swscale swresample)
@@ -66,7 +85,8 @@ foreach(_ffmpeg_component avcodec avformat avutil swscale swresample)
     endif()
 endforeach()
 
-if(FFMPEG_INCLUDE_DIR AND NOT _ffmpeg_missing)
+if(FFMPEG_INCLUDE_DIR AND NOT _ffmpeg_missing
+        AND NOT _ffmpeg_avutil_version VERSION_LESS FFMPEG_MIN_AVUTIL_VERSION)
     add_library(ffmpeg INTERFACE)
     target_include_directories(ffmpeg INTERFACE "${FFMPEG_INCLUDE_DIR}")
     target_link_libraries(ffmpeg INTERFACE ${_ffmpeg_libraries})
@@ -88,6 +108,14 @@ if(NOT FFMPEG_INCLUDE_DIR)
         "point CMAKE_PREFIX_PATH at a prebuilt ffmpeg prefix (an LGPL shared build is enough), or "
         "install the libavcodec/libavformat/libavutil/libswscale/libswresample development "
         "packages. Configure with -DENABLE_FFMPEG=OFF to build without video support.")
+endif()
+
+if(_ffmpeg_avutil_version VERSION_LESS FFMPEG_MIN_AVUTIL_VERSION)
+    message(FATAL_ERROR
+        "the ffmpeg at ${FFMPEG_INCLUDE_DIR} is libavutil ${_ffmpeg_avutil_version}, but video "
+        "playback needs ${FFMPEG_MIN_AVUTIL_VERSION} or newer (ffmpeg 5.1). Point "
+        "CMAKE_PREFIX_PATH at a newer prefix (an LGPL shared build is enough), or configure "
+        "with -DENABLE_FFMPEG=OFF to build without video support.")
 endif()
 
 message(FATAL_ERROR

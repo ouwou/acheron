@@ -8,9 +8,16 @@ on:
 
 env:
   CURL_IMPERSONATE_VERSION: v2.0.0
-  FFMPEG_RELEASE_TAG: autobuild-2026-07-26-13-28
-  FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-31-g8c9502e9b0-win64-lgpl-shared-8.1
-  FFMPEG_WINDOWS_SHA256: a98e7f04caebb3bfc132813add84001c0e58d4098b91efcb06b92ee4b8242bdb
+  # BtbN keeps only the last couple of weeks of daily autobuilds plus one build per
+  # month, so pin a month-end tag: a daily one gets deleted out from under us and
+  # every ffmpeg download starts 404ing.
+  FFMPEG_RELEASE_TAG: autobuild-2026-07-31-14-10
+  FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1
+  FFMPEG_WINDOWS_SHA256: c222a490dde4e7059f45495deef6bfb98dbcacc2b43df5b607546252037aa95c
+  # Ubuntu 22.04's ffmpeg is 4.4, older than the 5.1 the player needs, so the
+  # AppImage builds against this prebuilt prefix and bundles it.
+  FFMPEG_LINUX_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-shared-8.1
+  FFMPEG_LINUX_SHA256: c882a80f06617149198a98a07a0880a7e881953ae9f9cb931f5be09a4f93caae
 
 jobs:
   build-windows:
@@ -452,8 +459,9 @@ jobs:
           # The xcb/xkb set must be installed on the builder for
           # linuxdeploy-plugin-qt to bundle it; libxcb-cursor0 is a hard
           # requirement of the xcb platform plugin since Qt 6.5.
+          # No libav*-dev here, unlike build-linux: jammy only has ffmpeg 4.4 and
+          # ffmpeg.cmake would reject it, so the prebuilt prefix below is used instead.
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0
 
@@ -490,13 +498,21 @@ jobs:
             curl-impersonate/libcurl-impersonate.a \
             curl-impersonate/libcurl-impersonate-local.a
 
+      - name: Install ffmpeg
+        run: |
+          curl -L -o ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_LINUX_BUILD }}.tar.xz"
+          echo "${{ env.FFMPEG_LINUX_SHA256 }}  ffmpeg.tar.xz" | sha256sum -c -
+          mkdir -p ffmpeg
+          tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
+
       - name: Configure
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_INSTALL_PREFIX=/usr
           -DVCPKG_TARGET_TRIPLET=x64-linux
-          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCMAKE_PREFIX_PATH="$Qt6_DIR;${{ github.workspace }}/ffmpeg"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
@@ -545,12 +561,28 @@ jobs:
         run: |
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
           export LDAI_RUNTIME_FILE="$PWD/runtime-x86_64"
+          # cmake --install drops the build-tree rpath, so the installed binary names
+          # libavcodec.so.62 & co with nowhere to find them. linuxdeploy honours
+          # LD_LIBRARY_PATH when resolving DT_NEEDED, and copies what it resolves into
+          # AppDir/usr/lib like any other dependency.
+          export LD_LIBRARY_PATH="$PWD/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           # Icon: the .desktop file declares Icon=io.github.ouwou.acheron but no
           # icon is installed by CMake; supply the repo SVG under that name
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             --plugin qt \
             --icon-file acheron.svg --icon-filename io.github.ouwou.acheron \
             --output appimage
+
+      # Nothing in CI runs the packaged binary, so a linuxdeploy that quietly failed to
+      # pick ffmpeg up would ship an AppImage that dies on the first video instead of
+      # failing the build.
+      - name: Check ffmpeg was bundled
+        run: |
+          for lib in libavcodec libavformat libavutil libswscale libswresample; do
+            # -s follows symlinks, so a link left dangling by the copy fails here too
+            [ -s "$(ls AppDir/usr/lib/$lib.so.* 2>/dev/null | head -1)" ] \
+              || { echo "$lib was not bundled into AppDir/usr/lib"; exit 1; }
+          done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
