@@ -85,16 +85,16 @@ void VideoFullscreenWindow::detach()
 
     disconnect(player, nullptr, this, nullptr);
 
-    if (inlineSize.isValid() && !inlineSize.isEmpty())
+    if (!inlineSize.isEmpty())
         player->setTargetSize(inlineSize);
 
     player = nullptr;
     key.clear();
 }
 
-VideoControls::State VideoFullscreenWindow::controlState() const
+VideoControls::Session VideoFullscreenWindow::session() const
 {
-    return VideoControls::stateFor(player, volumeExpanded, true);
+    return VideoControls::sessionFor(player, rect(), VideoControls::MediaInfo(), volumeExpanded, true);
 }
 
 void VideoFullscreenWindow::revealControls()
@@ -115,50 +115,23 @@ void VideoFullscreenWindow::paintEvent(QPaintEvent *event)
 
     QPainter painter(this);
 
-    const QImage frame = player ? player->currentFrame() : QImage();
-    if (frame.isNull()) {
-        painter.fillRect(rect(), Qt::black);
-    } else {
-        const QRect target = VideoControls::fitRect(frame.size(), rect());
-        if (target.top() > 0)
-            painter.fillRect(QRect(0,
-                                   0,
-                                   width(),
-                                   target.top()),
-                             Qt::black);
-        if (target.bottom() + 1 < height())
-            painter.fillRect(QRect(0,
-                                   target.bottom() + 1,
-                                   width(),
-                                   height() - target.bottom() - 1),
-                             Qt::black);
-        if (target.left() > 0)
-            painter.fillRect(QRect(0,
-                                   target.top(),
-                                   target.left(),
-                                   target.height()),
-                             Qt::black);
-        if (target.right() + 1 < width())
-            painter.fillRect(QRect(target.right() + 1,
-                                   target.top(),
-                                   width() - target.right() - 1,
-                                   target.height()),
-                             Qt::black);
+    painter.fillRect(rect(), Qt::black);
 
+    const QImage frame = player ? player->currentFrame() : QImage();
+    if (!frame.isNull()) {
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        painter.drawImage(target, frame);
+        painter.drawImage(VideoControls::fitRect(frame.size(), rect()), frame);
     }
 
     if (!player)
         return;
 
-    const VideoControls::State state = controlState();
+    const VideoControls::Session current = session();
 
-    if (!state.playing && player->state() != Core::Media::Player::State::Opening)
-        VideoControls::paintPlayBadge(&painter, rect());
+    VideoControls::paintPlaybackStatus(&painter, rect(), current.state);
 
     if (controlsVisible)
-        VideoControls::paint(&painter, VideoControls::calculate(rect(), state), state);
+        VideoControls::paint(&painter, current.layout, current.state);
 }
 
 void VideoFullscreenWindow::mousePressEvent(QMouseEvent *event)
@@ -170,10 +143,9 @@ void VideoFullscreenWindow::mousePressEvent(QMouseEvent *event)
 
     revealControls();
 
-    const VideoControls::State state = controlState();
-    const VideoControls::Layout layout = VideoControls::calculate(rect(), state);
+    const VideoControls::Session current = session();
 
-    if (VideoControls::beginDrag(player, layout, state, event->pos(), drag))
+    if (VideoControls::beginDrag(player, current.layout, current.state, event->pos(), drag))
         update();
 }
 
@@ -184,19 +156,15 @@ void VideoFullscreenWindow::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    if (drag.active()) {
-        const auto state = controlState();
-        const auto layout = VideoControls::calculate(rect(), state);
+    const auto current = session();
 
-        VideoControls::applyDrag(player, layout, event->pos(), drag);
+    if (drag.active()) {
+        VideoControls::applyDrag(player, current.layout, event->pos(), drag);
         update();
         return;
     }
 
-    const auto state = controlState();
-    const auto layout = VideoControls::calculate(rect(), state);
-    const QRect zone = VideoControls::volumeHoverZone(layout);
-    const bool inZone = !zone.isNull() && zone.contains(event->pos());
+    const bool inZone = VideoControls::volumeHoverZone(current.layout).contains(event->pos());
     if (inZone != volumeExpanded) {
         volumeExpanded = inZone;
         update();
@@ -218,10 +186,10 @@ void VideoFullscreenWindow::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
-    const auto state = controlState();
-    const auto layout = VideoControls::calculate(rect(), state);
+    const auto current = session();
 
-    if (VideoControls::handleRelease(player, layout, state, event->pos()) == VideoControls::ReleaseResult::ToggleFullscreen) {
+    if (VideoControls::handleRelease(player, current.layout, current.state, event->pos()) ==
+        VideoControls::ReleaseResult::ToggleFullscreen) {
         close();
         return;
     }

@@ -5,16 +5,16 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <mutex>
-
-struct ma_device;
+#include <vector>
 
 namespace Acheron {
 namespace Core {
 namespace Media {
 
 struct AudioOutputState;
+class MediaAudioDevice;
 
+// write belongs to producer thread. this uses shared MediaAudioDevice
 class AudioOutput
 {
 public:
@@ -46,12 +46,12 @@ public:
     [[nodiscard]] qint64 clockMs() const;
 
 private:
-    void renderFrames(void *output, uint32_t frameCount);
+    void mixInto(float *output, uint32_t frameCount, std::vector<float> &scratch);
+    void resetLocked(qint64 basePtsMs);
 
-    friend void OnVideoPlayback(ma_device *, void *, const void *, uint32_t);
+    friend class MediaAudioDevice;
 
     std::unique_ptr<AudioOutputState> state;
-    mutable std::mutex controlMutex;
 
     std::atomic<float> outputVolume{ 1.0f };
     std::atomic<bool> muted{ false };

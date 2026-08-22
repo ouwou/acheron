@@ -28,6 +28,7 @@ inline constexpr auto Pause = "pause";
 inline constexpr auto Pencil = "pencil";
 inline constexpr auto Play = "play";
 inline constexpr auto Spool = "spool";
+inline constexpr auto TriangleAlert = "triangle-alert";
 inline constexpr auto VolumeOff = "volume-x";
 inline constexpr auto VolumeOn = "volume-2";
 inline constexpr auto X = "x";

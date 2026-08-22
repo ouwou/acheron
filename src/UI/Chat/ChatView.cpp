@@ -9,6 +9,7 @@
 
 #include "Core/TimeUtils.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
+#include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
 #include "UI/ImageViewer.hpp"
 
@@ -94,8 +95,7 @@ void ChatView::mousePressEvent(QMouseEvent *event)
         auto resolved = ChatLayout::resolveLayout(this, idx);
         auto region = ChatLayout::hitTest(resolved, pos);
 
-        const auto target = region ? video->targetFor(resolved, *region)
-                                   : InlineVideoController::Target();
+        const auto target = region ? MediaTargets::forRegion(resolved, *region) : MediaTarget();
         if (target.isValid()) {
             clearSelection();
             video->press(target, pos);
@@ -167,9 +167,7 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
 
     auto region = ChatLayout::hitTest(resolved, pos);
 
-    video->updateHover(region ? video->targetFor(resolved, *region)
-                              : InlineVideoController::Target(),
-                       pos);
+    video->updateHover(region ? MediaTargets::forRegion(resolved, *region) : MediaTarget(), pos);
 
     Qt::CursorShape shape = Qt::ArrowCursor;
     int charPos = -1;
@@ -254,21 +252,17 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
 
     case Kind::AttachmentVideo:
     case Kind::AttachmentAudio: {
-        if (region->index < 0 || region->index >= resolved.ctx.attachments.size())
+        const auto target = MediaTargets::forRegion(resolved, *region);
+        if (!target.isValid())
             break;
-        const AttachmentData &att = resolved.ctx.attachments[region->index];
 
-        if (att.isSpoiler) {
-            auto *chatModel = qobject_cast<ChatModel *>(model());
-            if (chatModel && !chatModel->isSpoilerRevealed(att.id)) {
-                chatModel->revealSpoiler(att.id);
-                break;
-            }
+        if (target.spoilered) {
+            if (auto *chatModel = qobject_cast<ChatModel *>(model()))
+                chatModel->revealSpoiler(target.attachmentId);
+            break;
         }
 
-        const auto target = video->targetFor(resolved, *region);
-        if (target.isValid())
-            video->release(target, idx, pos);
+        video->release(target, idx, pos);
         break;
     }
 
@@ -321,7 +315,7 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     }
 
     case Kind::EmbedVideoThumbnail: {
-        const auto target = video->targetFor(resolved, *region);
+        const auto target = MediaTargets::forRegion(resolved, *region);
         if (target.isValid())
             video->release(target, idx, pos);
         else

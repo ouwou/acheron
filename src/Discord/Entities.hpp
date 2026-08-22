@@ -516,7 +516,7 @@ struct Attachment : Core::JsonUtils::JsonObject
     Field<QString> proxyUrl;
     Field<int, true> width;
     Field<int, true> height;
-    Field<double, true> durationSecs; // audio
+    Field<double, true> durationSecs;
     Field<AttachmentFlags, true> flags;
 
     // local preview of pasted bitmaps

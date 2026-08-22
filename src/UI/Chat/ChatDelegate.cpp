@@ -9,9 +9,10 @@
 #include "Core/Media/Player.hpp"
 #include "Core/Media/PlayerPool.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
+#include "UI/Chat/MediaTarget.hpp"
 #include "UI/Chat/VideoControls.hpp"
 
-#include <QPixmapCache>
+#include <QCache>
 
 #include <algorithm>
 
@@ -67,12 +68,17 @@ static void drawUploadProgress(QPainter *painter, const QRect &barRect, qint64 s
 
 static QPixmap cachedBlur(const QPixmap &source)
 {
-    const QString key = QStringLiteral("spoiler-blur:%1").arg(source.cacheKey());
-    QPixmap blurred;
-    if (!QPixmapCache::find(key, &blurred)) {
-        blurred = ChatLayout::createBlurredPixmap(source, 60);
-        QPixmapCache::insert(key, blurred);
-    }
+    static constexpr int MaxBlurCacheKb = 16 * 1024;
+    static QCache<qint64, QPixmap> cache(MaxBlurCacheKb);
+
+    const qint64 key = source.cacheKey();
+    if (const QPixmap *cached = cache.object(key))
+        return *cached;
+
+    const QPixmap blurred = ChatLayout::createBlurredPixmap(source, 60);
+    const int costKb = qMax(1, static_cast<int>(blurred.width()) * blurred.height() * blurred.depth() / 8 / 1024);
+    cache.insert(key, new QPixmap(blurred), costKb);
+
     return blurred;
 }
 
@@ -88,142 +94,62 @@ static void paintSpoilerOverlay(QPainter *painter, const QRect &rect, const QFon
     painter->drawText(rect, Qt::AlignCenter, ChatDelegate::tr("SPOILER"));
 }
 
-struct VideoItem
+static void paintMediaTarget(QPainter *painter,
+                             const QStyleOptionViewItem &option,
+                             const MediaTarget &target,
+                             const InlineVideoController *video)
 {
-    QRect rect;
-    QString key;
-    QPixmap poster;
-    bool blurred = false;
-
-    qint64 uploadSent = -1;
-    qint64 uploadTotal = -1;
-};
-
-static QList<VideoItem> videoItems(const ChatLayout::LayoutContext &ctx,
-                                   const ChatLayout::MessageLayout &layout,
-                                   const ChatModel *chatModel)
-{
-    QList<VideoItem> items;
-
-    for (const auto &imgLayout : layout.imageLayouts) {
-        if (imgLayout.index < 0 || imgLayout.index >= ctx.attachments.size())
-            continue;
-
-        const AttachmentData &att = ctx.attachments[imgLayout.index];
-        if (!att.isVideo)
-            continue;
-
-        VideoItem item;
-        item.rect = imgLayout.rect;
-        item.key = Core::Media::attachmentKey(att.id, Core::Media::MediaKind::Video);
-        item.poster = att.pixmap;
-        item.blurred = att.isSpoiler && chatModel && !chatModel->isSpoilerRevealed(att.id);
-        item.uploadSent = att.uploadSent;
-        item.uploadTotal = att.uploadTotal;
-        items.append(item);
-    }
-
-    const int embedCount = qMin(ctx.embeds.size(), layout.embedLayouts.size());
-    for (int embedIdx = 0; embedIdx < embedCount; ++embedIdx) {
-        const EmbedData &embed = ctx.embeds[embedIdx];
-        const QRect rect = layout.embedLayouts[embedIdx].imagesRect;
-
-        if (!embed.videoPlayable || !embed.images.isEmpty() || !embed.thumbnail.isNull() ||
-            rect.isNull())
-            continue;
-
-        VideoItem item;
-        item.rect = rect;
-        item.key = Core::Media::embedKey(ctx.messageId, embedIdx);
-        item.poster = embed.videoThumbnail;
-        items.append(item);
-    }
-
-    return items;
-}
-
-static const VideoItem *findVideoItem(const QList<VideoItem> &items, const QString &key)
-{
-    for (const VideoItem &item : items) {
-        if (item.key == key)
-            return &item;
-    }
-    return nullptr;
-}
-
-static void paintVideoItem(QPainter *painter,
-                           const QStyleOptionViewItem &option,
-                           const VideoItem &item,
-                           const InlineVideoController *video)
-{
-    if (item.rect.isEmpty())
+    if (target.rect.isEmpty())
         return;
 
     painter->save();
     painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
-    painter->fillRect(item.rect, Qt::black);
 
-    if (item.blurred) {
-        if (!item.poster.isNull())
-            ChatLayout::drawCroppedPixmap(painter, item.rect, cachedBlur(item.poster));
-        paintSpoilerOverlay(painter, item.rect, option.font);
+    if (target.spoilered) {
+        if (target.isAudio()) {
+            VideoControls::paintAudioBase(painter, target.rect);
+        } else {
+            painter->fillRect(target.rect, Qt::black);
+            if (!target.poster.isNull())
+                ChatLayout::drawCroppedPixmap(painter, target.rect, cachedBlur(target.poster));
+        }
+        paintSpoilerOverlay(painter, target.rect, option.font);
         painter->restore();
         return;
     }
 
-    Core::Media::Player *player = video ? video->playerFor(item.key) : nullptr;
-    const QImage frame = player ? player->currentFrame() : QImage();
+    Core::Media::Player *player = video ? video->playerFor(target.key) : nullptr;
 
-    if (!frame.isNull())
-        painter->drawImage(VideoControls::fitRect(frame.size(), item.rect), frame);
-    else if (!item.poster.isNull())
-        ChatLayout::drawCroppedPixmap(painter, item.rect, item.poster);
+    if (!target.isAudio()) {
+        painter->fillRect(target.rect, Qt::black);
 
-    const auto state = player ? player->state() : Core::Media::Player::State::Idle;
-    const bool playing = state == Core::Media::Player::State::Playing;
-    const bool errored = state == Core::Media::Player::State::Error;
-
-    if (!playing && state != Core::Media::Player::State::Opening)
-        VideoControls::paintPlayBadge(painter, item.rect);
-
-    if (player && !errored) {
-        const auto controls = video->controlState(player, item.key);
-
-        if (video->isHovered(item.key) || !playing)
-            VideoControls::paint(painter, VideoControls::calculate(item.rect, controls), controls);
+        const QImage frame = player ? player->currentFrame() : QImage();
+        if (!frame.isNull())
+            painter->drawImage(VideoControls::fitRect(frame.size(), target.rect), frame);
+        else if (!target.poster.isNull())
+            ChatLayout::drawCroppedPixmap(painter, target.rect, target.poster);
     }
 
-    if (item.uploadSent >= 0) {
-        const QRect barRect(item.rect.left() + 8,
-                            item.rect.bottom() - 13,
-                            item.rect.width() - 16,
+    const auto session = VideoControls::sessionFor(player,
+                                                   target.rect,
+                                                   target.info(),
+                                                   video && video->volumeExpandedFor(target.key));
+
+    VideoControls::paintPlaybackStatus(painter, target.rect, session.state);
+
+    const bool hovered = video && video->isHovered(target.key);
+    if (target.isAudio() || hovered || !session.state.playing)
+        VideoControls::paint(painter, session.layout, session.state);
+
+    if (target.uploadSent >= 0) {
+        const QRect barRect(target.rect.left() + 8,
+                            target.rect.bottom() - 13,
+                            target.rect.width() - 16,
                             6);
-        drawUploadProgress(painter, barRect, item.uploadSent, item.uploadTotal, option.palette);
+        drawUploadProgress(painter, barRect, target.uploadSent, target.uploadTotal, option.palette);
     }
 
     painter->restore();
-}
-
-static void paintAudioBar(QPainter *painter, const QRect &barRect, const AttachmentData &att,
-                          const InlineVideoController *video, bool spoilered, const QFont &font)
-{
-    if (spoilered) {
-        VideoControls::paintAudioBase(painter, barRect);
-        paintSpoilerOverlay(painter, barRect, font);
-        return;
-    }
-
-    VideoControls::State state;
-    if (video) {
-        state = video->audioBarState(Core::Media::attachmentKey(att.id, Core::Media::MediaKind::Audio),
-                                     att.isVoiceMessage, att.durationMs);
-    } else {
-        state.audioOnly = true;
-        state.voiceMessage = att.isVoiceMessage;
-        state.durationMs = att.durationMs;
-    }
-
-    VideoControls::paint(painter, VideoControls::calculate(barRect, state), state);
 }
 
 void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -239,32 +165,15 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const InlineVideoController *video = chatView ? chatView->videoController() : nullptr;
 
     if (video) {
-        VideoItem item;
-        item.key = video->fastPathKey(index, &item.rect);
-        if (!item.key.isEmpty()) {
-            auto *player = video->playerFor(item.key);
-            if (player && !player->currentFrame().isNull()) {
-                paintVideoItem(painter, option, item, video);
-                painter->restore();
-                return;
-            }
+        if (const auto surface = video->surfaceCoveringDamage(index); surface && !surface->isAudio()) {
+            paintMediaTarget(painter, option, *surface, video);
+            painter->restore();
+            return;
         }
     }
 
     ChatLayout::LayoutContext ctx = ChatLayout::buildContext(index, option.font, option.rect, option.palette);
     ChatLayout::MessageLayout layout = ChatLayout::calculateMessageLayout(ctx);
-    const QList<VideoItem> videos = videoItems(ctx, layout, chatModel);
-
-    if (video && !video->paintDamage().isNull()) {
-        for (const VideoItem &item : videos) {
-            if (!item.rect.contains(video->paintDamage()))
-                continue;
-
-            paintVideoItem(painter, option, item, video);
-            painter->restore();
-            return;
-        }
-    }
 
     const QString username = index.data(ChatModel::UsernameRole).toString();
     const QPixmap avatar = qvariant_cast<QPixmap>(index.data(ChatModel::AvatarRole));
@@ -502,8 +411,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             showBlurred = false;
 
         if (att.isVideo) {
-            if (const VideoItem *item = findVideoItem(videos, Core::Media::attachmentKey(att.id, Core::Media::MediaKind::Video)))
-                paintVideoItem(painter, option, *item, video);
+            if (auto target = MediaTargets::forAttachment(att, imgLayout.rect, chatModel))
+                paintMediaTarget(painter, option, *target, video);
             continue;
         }
 
@@ -542,10 +451,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         const auto &att = attachments[fileLayout.index];
         QRect fileRect = fileLayout.rect;
 
-        const bool spoilered = att.isSpoiler && chatModel && !chatModel->isSpoilerRevealed(att.id);
-
         if (att.isVoiceMessage) {
-            paintAudioBar(painter, ChatLayout::audioBarRect(fileRect, true), att, video, spoilered, option.font);
+            if (auto target = MediaTargets::forAttachment(att, ChatLayout::audioBarRect(fileRect, true), chatModel))
+                paintMediaTarget(painter, option, *target, video);
             continue;
         }
 
@@ -594,8 +502,10 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->drawText(textAreaRect.left(),
                           textAreaRect.top() + filenameFm.height() + sizeFm.ascent(), sizeText);
 
-        if (att.isAudio)
-            paintAudioBar(painter, ChatLayout::audioBarRect(fileRect, false), att, video, spoilered, option.font);
+        if (att.isAudio) {
+            if (auto target = MediaTargets::forAttachment(att, ChatLayout::audioBarRect(fileRect, false), chatModel))
+                paintMediaTarget(painter, option, *target, video);
+        }
 
         if (uploading) {
             QRect barRect(fileRect.left() + 2, fileRect.bottom() - 5, fileRect.width() - 4, 4);
@@ -641,8 +551,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         }
 
         if (ChatLayout::embedIsBareVideo(embed)) {
-            if (const VideoItem *item = findVideoItem(videos, Core::Media::embedKey(ctx.messageId, embedIdx)))
-                paintVideoItem(painter, option, *item, video);
+            if (auto target = MediaTargets::forEmbed(embed, ctx.messageId, embedIdx, embedLayout.imagesRect))
+                paintMediaTarget(painter, option, *target, video);
             continue;
         }
 
@@ -827,8 +737,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                     painter->drawText(imgLayout.rect, Qt::AlignCenter, "Loading...");
                 }
             }
-        } else if (const VideoItem *item = findVideoItem(videos, Core::Media::embedKey(ctx.messageId, embedIdx))) {
-            paintVideoItem(painter, option, *item, video);
+        } else if (auto target = MediaTargets::forEmbed(embed, ctx.messageId, embedIdx, embedLayout.imagesRect)) {
+            paintMediaTarget(painter, option, *target, video);
         } else if (!embed.videoThumbnail.isNull() && embed.thumbnail.isNull() &&
                    !embedLayout.imagesRect.isNull()) {
             QPixmap scaledVideo = embed.videoThumbnail.scaled(embedLayout.imagesRect.size(),

@@ -18,6 +18,20 @@ namespace UI {
 
 namespace VideoControls {
 
+enum class Status {
+    Idle,
+    Opening,
+    Ready,
+    Failed,
+};
+
+struct MediaInfo
+{
+    bool audioOnly = false;
+    bool voiceMessage = false;
+    qint64 fallbackDurationMs = 0;
+};
+
 struct State
 {
     bool playing = false;
@@ -30,6 +44,7 @@ struct State
     bool fullscreen = false;
     bool audioOnly = false;
     bool voiceMessage = false;
+    Status status = Status::Idle;
 };
 
 struct Layout
@@ -60,8 +75,6 @@ enum class Hit {
     VolumeSlider,
     Fullscreen,
 };
-
-State stateFor(const Core::Media::Player *player, bool volumeExpanded, bool fullscreen = false);
 
 struct Drag
 {
@@ -98,25 +111,27 @@ int barHeight();
 
 Layout calculate(const QRect &videoRect, const State &state);
 
+struct Session
+{
+    State state;
+    Layout layout;
+};
+
+Session sessionFor(const Core::Media::Player *player, const QRect &rect, const MediaInfo &info, bool volumeExpanded, bool fullscreen = false);
+
 Hit hitTest(const Layout &layout, const QPoint &pos, const State &state);
 
 void paint(QPainter *painter, const Layout &layout, const State &state);
 
 void paintAudioBase(QPainter *painter, const QRect &barRect);
 
+void paintPlaybackStatus(QPainter *painter, const QRect &videoRect, const State &state);
+
 void paintPlayBadge(QPainter *painter, const QRect &videoRect);
 
 QRect volumeHoverZone(const Layout &layout);
 
 QRect fitRect(const QSize &content, const QRect &bounds);
-
-QString formatTime(qint64 ms);
-
-qint64 positionForSeekX(const Layout &layout, int x, qint64 durationMs);
-
-bool sliderIsHorizontal(const Layout &layout);
-
-float volumeForSliderPos(const Layout &layout, const QPoint &pos);
 
 } // namespace VideoControls
 } // namespace UI

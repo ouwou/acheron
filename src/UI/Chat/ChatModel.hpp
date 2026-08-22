@@ -282,6 +282,20 @@ private:
     mutable QHash<Snowflake, QPixmap> previewPixmapCache; // pasted bitmap previews by attachment id
     mutable QSet<Snowflake> revealedSpoilers;
     QHash<Snowflake, QSize> videoNativeSizes;
+
+    struct MediaFlags
+    {
+        bool isImage = false;
+        bool isVideo = false;
+        bool isAudio = false;
+        bool isVoiceMessage = false;
+        qint64 durationMs = 0;
+        QString contentType;
+    };
+
+    [[nodiscard]] MediaFlags mediaFlagsFor(const Discord::Attachment &attachment, const Discord::Message &message) const;
+
+    mutable QHash<Snowflake, MediaFlags> mediaFlagsCache;
     mutable bool suppressImageFetch = false;
 
     friend class ChatDelegate;

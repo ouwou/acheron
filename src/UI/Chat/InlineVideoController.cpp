@@ -25,10 +25,12 @@ InlineVideoController::InlineVideoController(ChatView *chatView)
     connect(pool, &Core::Media::PlayerPool::playerReleased, this, &InlineVideoController::onPlayerReleased);
 }
 
+InlineVideoController::~InlineVideoController() = default;
+
 void InlineVideoController::onPlayerPositionChanged(const QString &key)
 {
     auto it = rows.find(key);
-    if (it == rows.end() || it->kind != MediaKind::Audio)
+    if (it == rows.end() || it->target.kind != MediaKind::Audio)
         return;
 
     const auto *player = pool->find(key);
@@ -42,8 +44,6 @@ void InlineVideoController::onPlayerPositionChanged(const QString &key)
     it->paintedPositionBucket = bucket;
     refreshRow(key);
 }
-
-InlineVideoController::~InlineVideoController() = default;
 
 void InlineVideoController::attachModel(QAbstractItemModel *model)
 {
@@ -76,55 +76,17 @@ void InlineVideoController::reset()
     volumeExpanded = false;
 }
 
-InlineVideoController::Target InlineVideoController::targetFor(const ChatLayout::ResolvedLayout &resolved, const ChatLayout::HitRegion &region) const
-{
-    using Kind = ChatLayout::HitRegion::Kind;
-    Target target;
-
-    if (!Core::Media::isSupported())
-        return target;
-
-    if (region.kind == Kind::AttachmentVideo || region.kind == Kind::AttachmentAudio) {
-        if (region.index < 0 || region.index >= resolved.ctx.attachments.size())
-            return target;
-
-        const bool audio = region.kind == Kind::AttachmentAudio;
-        const AttachmentData &att = resolved.ctx.attachments[region.index];
-        if (audio ? !att.isAudio : !att.isVideo)
-            return target;
-
-        if (att.isSpoiler && resolved.ctx.model && !resolved.ctx.model->isSpoilerRevealed(att.id))
-            return target;
-
-        target.kind = audio ? MediaKind::Audio : MediaKind::Video;
-        target.key = Core::Media::attachmentKey(att.id, target.kind);
-        target.url = att.originalUrl.isEmpty() ? att.proxyUrl : att.originalUrl;
-        target.rect = region.rect;
-        target.attachmentId = att.id;
-        target.voiceMessage = att.isVoiceMessage;
-        target.durationMs = att.durationMs;
-        return target;
-    }
-
-    if (region.kind == Kind::EmbedVideoThumbnail) {
-        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
-            return target;
-
-        const EmbedData &embed = resolved.ctx.embeds[region.index];
-        if (!embed.videoPlayable)
-            return target;
-
-        target.key = Core::Media::embedKey(resolved.ctx.messageId, region.index);
-        target.url = embed.videoUrl;
-        target.rect = region.rect;
-    }
-
-    return target;
-}
-
 Core::Media::Player *InlineVideoController::playerFor(const QString &key) const
 {
     return pool->find(key);
+}
+
+VideoControls::Session InlineVideoController::sessionFor(const MediaTarget &target, bool forceExpanded) const
+{
+    return VideoControls::sessionFor(pool->find(target.key),
+                                     target.rect,
+                                     target.info(),
+                                     forceExpanded || volumeExpandedFor(target.key));
 }
 
 QSize InlineVideoController::decodeSize(const QRect &rect) const
@@ -132,128 +94,113 @@ QSize InlineVideoController::decodeSize(const QRect &rect) const
     return rect.size() * view->viewport()->devicePixelRatioF();
 }
 
-QRect InlineVideoController::rectForKey(const QModelIndex &index, const QString &key) const
+std::optional<MediaTarget> InlineVideoController::targetForKey(const QModelIndex &index, const QString &key) const
 {
     auto resolved = ChatLayout::resolveLayout(view, index);
     for (const auto &hit : resolved.layout.hitRegions) {
-        const Target candidate = targetFor(resolved, hit);
+        MediaTarget candidate = MediaTargets::forRegion(resolved, hit);
         if (candidate.isValid() && candidate.key == key)
-            return candidate.rect;
+            return candidate;
     }
-    return QRect();
+    return std::nullopt;
 }
 
-void InlineVideoController::rememberRow(const Target &target, const QModelIndex &index)
+std::optional<MediaTarget> InlineVideoController::resolvedTarget(Row &row, const QString &key)
+{
+    if (!row.index.isValid())
+        return std::nullopt;
+
+    const QPoint rowOrigin = view->visualRect(row.index).topLeft();
+
+    if (row.target.rect.isNull() && !row.rectUnresolvable) {
+        if (auto fresh = targetForKey(row.index, key)) {
+            row.target = *fresh;
+            row.target.rect.translate(-rowOrigin);
+        } else {
+            row.rectUnresolvable = true;
+        }
+    }
+
+    if (row.target.rect.isNull())
+        return std::nullopt;
+
+    MediaTarget target = row.target;
+    target.rect.translate(rowOrigin);
+    return target;
+}
+
+std::optional<MediaTarget> InlineVideoController::resolvedTarget(const QString &key)
+{
+    auto it = rows.find(key);
+    if (it == rows.end())
+        return std::nullopt;
+    return resolvedTarget(*it, key);
+}
+
+void InlineVideoController::rememberRow(const MediaTarget &target, const QModelIndex &index)
 {
     if (!index.isValid())
         return;
 
     Row &row = rows[target.key];
     row.index = QPersistentModelIndex(index);
-    row.rect = target.rect.translated(-view->visualRect(index).topLeft());
+    row.target = target;
+    row.target.rect = target.rect.translated(-view->visualRect(index).topLeft());
     row.rectUnresolvable = false;
-    row.attachmentId = target.attachmentId;
-    row.kind = target.kind;
-    row.voiceMessage = target.voiceMessage;
-    row.durationMs = target.durationMs;
 }
 
-VideoControls::State InlineVideoController::controlState(const Core::Media::Player *player, const QString &key,
-                                                         bool expanded) const
+void InlineVideoController::press(const MediaTarget &target, const QPoint &pos)
 {
-    auto state = VideoControls::stateFor(player, expanded);
+    auto *player = pool->find(target.key);
+    if (!player || target.spoilered)
+        return;
 
-    auto it = rows.constFind(key);
-    if (it != rows.constEnd()) {
-        state.audioOnly = it->kind == MediaKind::Audio;
-        state.voiceMessage = it->voiceMessage;
-        if (state.durationMs == 0)
-            state.durationMs = it->durationMs;
-    }
+    const auto session = sessionFor(target);
 
-    return state;
+    if (VideoControls::beginDrag(player, session.layout, session.state, pos, drag, target.key))
+        refreshRow(target.key);
 }
 
-VideoControls::State InlineVideoController::controlState(const Core::Media::Player *player, const QString &key) const
+void InlineVideoController::release(const MediaTarget &target, const QModelIndex &index, const QPoint &pos)
 {
-    return controlState(player, key, volumeExpanded && hoveredKey == key);
-}
+    if (!target.isValid() || target.spoilered)
+        return;
 
-VideoControls::State InlineVideoController::audioBarState(const QString &key, bool voiceMessage, qint64 fallbackDurationMs) const
-{
-    const auto *player = pool->find(key);
-
-    if (player && player->state() == Core::Media::Player::State::Error)
-        player = nullptr;
-
-    auto state = controlState(player, key);
-    state.audioOnly = true;
-    state.voiceMessage = voiceMessage;
-    if (state.durationMs == 0)
-        state.durationMs = fallbackDurationMs;
-    return state;
-}
-
-Core::Media::Player *InlineVideoController::ensurePlayer(const Target &target, const QModelIndex &index)
-{
-    if (!target.isValid())
-        return nullptr;
-
-    const bool existed = pool->find(target.key) != nullptr;
-    auto *player = pool->acquire(target.key, target.url);
+    auto *player = pool->find(target.key);
+    const bool starting = !player;
+    if (starting)
+        player = pool->acquire(target.key, target.url);
+    else
+        pool->touch(target.key);
     if (!player)
-        return nullptr;
+        return;
 
     rememberRow(target, index);
     player->setTargetSize(decodeSize(target.rect));
 
-    if (!existed)
+    if (starting)
         player->play();
-
-    return player;
-}
-
-void InlineVideoController::press(const Target &target, const QPoint &pos)
-{
-    auto *player = pool->find(target.key);
-    if (!player)
-        return;
-
-    const auto state = controlState(player, target.key);
-    const auto layout = VideoControls::calculate(target.rect, state);
-
-    if (VideoControls::beginDrag(player, layout, state, pos, drag, target.key))
-        refreshRow(target.key);
-}
-
-void InlineVideoController::release(const Target &target, const QModelIndex &index, const QPoint &pos)
-{
-    auto *player = pool->find(target.key);
-
-    if (!player) {
-        ensurePlayer(target, index);
-        refreshRow(target.key);
-        return;
-    }
-
-    pool->touch(target.key);
-    player->setTargetSize(decodeSize(target.rect));
-    rememberRow(target, index);
-
-    if (player->state() == Core::Media::Player::State::Error) {
-        player->open(target.url);
-        player->play();
-        refreshRow(target.key);
-        return;
-    }
-
-    const auto state = controlState(player, target.key);
-    const auto layout = VideoControls::calculate(target.rect, state);
-
-    if (VideoControls::handleRelease(player, layout, state, pos) == VideoControls::ReleaseResult::ToggleFullscreen)
-        openFullscreen(target);
+    else
+        handleRelease(player, target, pos);
 
     refreshRow(target.key);
+}
+
+void InlineVideoController::handleRelease(Core::Media::Player *player, const MediaTarget &target, const QPoint &pos)
+{
+    const auto session = sessionFor(target);
+
+    if (session.state.status == VideoControls::Status::Failed) {
+        if (VideoControls::hitTest(session.layout, pos, session.state) != VideoControls::Hit::None) {
+            player->open(target.url);
+            player->play();
+        }
+        return;
+    }
+
+    if (VideoControls::handleRelease(player, session.layout, session.state, pos) ==
+        VideoControls::ReleaseResult::ToggleFullscreen)
+        openFullscreen(target);
 }
 
 void InlineVideoController::updateDrag(const QPoint &pos)
@@ -264,53 +211,28 @@ void InlineVideoController::updateDrag(const QPoint &pos)
         return;
     }
 
-    auto it = rows.constFind(drag.key);
-    if (it == rows.constEnd() || !it.value().index.isValid())
+    const auto target = resolvedTarget(drag.key);
+    if (!target)
         return;
 
-    const QModelIndex index = it.value().index;
-    QRect rect = it.value().rect;
-    if (!rect.isNull()) {
-        rect.translate(view->visualRect(index).topLeft());
-    } else {
-        rect = rectForKey(index, drag.key);
-        if (rect.isNull())
-            return;
-
-        Target refreshed;
-        refreshed.key = drag.key;
-        refreshed.rect = rect;
-        refreshed.attachmentId = it.value().attachmentId;
-        rememberRow(refreshed, index);
-    }
-
-    const auto state = controlState(player, drag.key, true);
-    const auto layout = VideoControls::calculate(rect, state);
-
-    VideoControls::applyDrag(player, layout, pos, drag);
+    const auto session = sessionFor(*target, true);
+    VideoControls::applyDrag(player, session.layout, pos, drag);
 
     refreshRow(drag.key);
 }
 
-void InlineVideoController::updateHover(const Target &target, const QPoint &pos)
+void InlineVideoController::updateHover(const MediaTarget &target, const QPoint &pos)
 {
     setHovered(target.isValid() ? target.key : QString());
 
-    bool expanded = false;
-    if (target.isValid()) {
-        if (auto *player = pool->find(target.key)) {
-            const auto state = controlState(player, target.key);
-            const auto layout = VideoControls::calculate(target.rect, state);
-            const QRect zone = VideoControls::volumeHoverZone(layout);
-            expanded = !zone.isNull() && zone.contains(pos);
-        }
-    }
+    const bool expanded = target.isValid() && pool->find(target.key) &&
+                          VideoControls::volumeHoverZone(sessionFor(target).layout).contains(pos);
 
     if (expanded == volumeExpanded)
         return;
 
     volumeExpanded = expanded;
-    refreshRow(target.isValid() ? target.key : hoveredKey);
+    refreshRow(hoveredKey);
 }
 
 void InlineVideoController::refreshHoverAt(const QPoint &viewportPos)
@@ -322,7 +244,7 @@ void InlineVideoController::refreshHoverAt(const QPoint &viewportPos)
     auto resolved = ChatLayout::resolveLayout(view, index);
     const auto region = ChatLayout::hitTest(resolved, viewportPos);
 
-    updateHover(region ? targetFor(resolved, *region) : Target(), viewportPos);
+    updateHover(region ? MediaTargets::forRegion(resolved, *region) : MediaTarget(), viewportPos);
 }
 
 void InlineVideoController::setHovered(const QString &key)
@@ -344,7 +266,6 @@ void InlineVideoController::setHovered(const QString &key)
 void InlineVideoController::refreshRow(const QString &key)
 {
     auto it = rows.find(key);
-
     if (it == rows.end())
         return;
 
@@ -353,46 +274,36 @@ void InlineVideoController::refreshRow(const QString &key)
         return;
     }
 
-    const QModelIndex index = it->index;
-    const QRect row = view->visualRect(index);
-
-    if (it->rect.isNull() && !it->rectUnresolvable) {
-        const QRect rect = rectForKey(index, key);
-        if (rect.isNull())
-            it->rectUnresolvable = true;
-        else
-            it->rect = rect.translated(-row.topLeft());
-    }
-
-    if (it->rect.isNull())
-        view->viewport()->update(row);
+    if (const auto target = resolvedTarget(*it, key))
+        view->viewport()->update(target->rect);
     else
-        view->viewport()->update(it->rect.translated(row.topLeft()));
+        view->viewport()->update(view->visualRect(it->index));
 }
 
-QString InlineVideoController::fastPathKey(const QModelIndex &index, QRect *rectOut) const
+std::optional<MediaTarget> InlineVideoController::surfaceCoveringDamage(const QModelIndex &index) const
 {
     if (damageRect.isNull())
-        return QString();
+        return std::nullopt;
 
-    for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
-        if (it->rect.isNull() || it->index != index)
+    const QPoint rowOrigin = view->visualRect(index).topLeft();
+
+    for (const Row &row : rows) {
+        if (row.index != index || row.target.rect.isNull())
             continue;
 
-        const QRect rect = it->rect.translated(view->visualRect(index).topLeft());
-        if (rect.contains(damageRect)) {
-            *rectOut = rect;
-            return it.key();
-        }
+        MediaTarget target = row.target;
+        target.rect.translate(rowOrigin);
+        if (target.rect.contains(damageRect))
+            return target;
     }
 
-    return QString();
+    return std::nullopt;
 }
 
 void InlineVideoController::invalidateRects()
 {
     for (Row &row : rows) {
-        row.rect = QRect();
+        row.target.rect = QRect();
         row.rectUnresolvable = false;
     }
 }
@@ -407,7 +318,7 @@ void InlineVideoController::invalidateRows(int firstRow, int lastRow)
         if (rowIndex < firstRow || rowIndex > lastRow)
             continue;
 
-        row.rect = QRect();
+        row.target.rect = QRect();
         row.rectUnresolvable = false;
     }
 }
@@ -429,7 +340,7 @@ void InlineVideoController::dropRemovedRows()
 void InlineVideoController::adoptNativeSize(const QString &key)
 {
     auto it = rows.constFind(key);
-    if (it == rows.constEnd() || !it.value().attachmentId.isValid())
+    if (it == rows.constEnd() || !it.value().target.attachmentId.isValid())
         return;
 
     const auto *player = pool->find(key);
@@ -437,7 +348,7 @@ void InlineVideoController::adoptNativeSize(const QString &key)
         return;
 
     if (auto *model = qobject_cast<ChatModel *>(view->model()))
-        model->setVideoNativeSize(it.value().attachmentId, player->nativeSize());
+        model->setVideoNativeSize(it.value().target.attachmentId, player->nativeSize());
 }
 
 void InlineVideoController::onPlayerStateChanged(const QString &key)
@@ -461,7 +372,7 @@ void InlineVideoController::onPlayerReleased(const QString &key)
     rows.remove(key);
 }
 
-void InlineVideoController::openFullscreen(const Target &target)
+void InlineVideoController::openFullscreen(const MediaTarget &target)
 {
     auto *player = pool->find(target.key);
     if (!player)

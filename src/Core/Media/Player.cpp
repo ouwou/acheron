@@ -3,31 +3,21 @@
 #include "Core/Logging.hpp"
 
 #include <QFileInfo>
+#include <QSettings>
 
 #include <initializer_list>
+#include <utility>
 
 #ifdef ACHERON_HAVE_FFMPEG
 
 #include "Core/Media/AudioOutput.hpp"
-#include "Discord/CurlUtils.hpp"
+#include "Core/Media/MediaDecoder.hpp"
+#include "Core/Media/PacketQueue.hpp"
 
 #include <QElapsedTimer>
 #include <QTimer>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/imgutils.h>
-#include <libavutil/opt.h>
-#include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
-}
-
-#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(57, 28, 100)
-#error "ffmpeg 5.1 or newer is required for video support"
-#endif
-
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -41,16 +31,12 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-bool isSupported()
-{
-#ifdef ACHERON_HAVE_FFMPEG
-    return true;
-#else
-    return false;
-#endif
-}
+namespace {
 
-static bool listContains(const QString &value, std::initializer_list<const char *> list)
+constexpr auto VolumeKey = "media/volume";
+constexpr auto MutedKey = "media/muted";
+
+bool listContains(const QString &value, std::initializer_list<const char *> list)
 {
     for (const char *item : list) {
         if (value == QLatin1String(item))
@@ -59,14 +45,25 @@ static bool listContains(const QString &value, std::initializer_list<const char 
     return false;
 }
 
-static QString normalizedContentType(const QString &contentType)
+QString normalizedContentType(const QString &contentType)
 {
     return contentType.section(QLatin1Char(';'), 0, 0).trimmed().toLower();
 }
 
-static bool hasSuffixIn(const QUrl &url, std::initializer_list<const char *> suffixes)
+bool hasSuffixIn(const QUrl &url, std::initializer_list<const char *> suffixes)
 {
     return listContains(QFileInfo(url.path()).suffix().toLower(), suffixes);
+}
+
+} // namespace
+
+bool isSupported()
+{
+#ifdef ACHERON_HAVE_FFMPEG
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool canPlay(const QString &contentType, const QUrl &url)
@@ -91,16 +88,58 @@ bool canPlayAudio(const QString &contentType, const QUrl &url)
     return hasSuffixIn(url, { "mp3", "ogg", "oga", "opus", "wav", "flac", "m4a", "aac" });
 }
 
+float storedVolume()
+{
+    const QVariant stored = QSettings().value(VolumeKey);
+    return stored.isValid() ? qBound(0.0f, stored.toFloat(), 1.0f) : 1.0f;
+}
+
+void setStoredVolume(float volume)
+{
+    QSettings().setValue(VolumeKey, qBound(0.0f, volume, 1.0f));
+}
+
+bool storedMuted()
+{
+    return QSettings().value(MutedKey, false).toBool();
+}
+
+void setStoredMuted(bool muted)
+{
+    QSettings().setValue(MutedKey, muted);
+}
+
+struct OwnerThreadState
+{
+    Player *owner = nullptr;
+
+    Player::State state = Player::State::Idle;
+    qint64 durationMs = 0;
+    qint64 positionMs = 0;
+    QSize native;
+    bool audioAvailable = false;
+    bool videoAvailable = false;
+    bool seekable = false;
+    QImage frame;
+
+    float userVolume = storedVolume();
+    bool userMuted = storedMuted();
+
+    void setState(Player::State next)
+    {
+        if (state == next)
+            return;
+        state = next;
+        emit owner->stateChanged(next);
+    }
+};
+
 #ifdef ACHERON_HAVE_FFMPEG
 
 namespace {
 
 constexpr int MaxQueuedFrames = 4;
 constexpr int AudioChunkFrames = 2048;
-
-constexpr int MaxDecoderThreads = 2;
-
-constexpr size_t MaxBufferedBytes = 8 * 1024 * 1024;
 
 constexpr qint64 MinPresentDelayMs = 1;
 constexpr qint64 MaxPresentDelayMs = 40;
@@ -109,9 +148,9 @@ constexpr int AudioOnlyPresentDelayMs = 100;
 
 QSize effectiveTarget(const QSize &native, const QSize &want)
 {
-    if (!native.isValid() || native.isEmpty())
+    if (native.isEmpty())
         return native;
-    if (!want.isValid() || want.isEmpty())
+    if (want.isEmpty())
         return native;
 
     QSize scaled = native;
@@ -122,106 +161,93 @@ QSize effectiveTarget(const QSize &native, const QSize &want)
     return scaled.isEmpty() ? native : scaled;
 }
 
-QString averrorString(int code)
-{
-    char buf[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(code, buf, sizeof(buf));
-    return QString::fromUtf8(buf);
-}
-
 } // namespace
 
-#endif // ACHERON_HAVE_FFMPEG
-
-struct Player::Impl
+struct Player::Impl : OwnerThreadState
 {
-    Player *owner = nullptr;
+    explicit Impl(Player *player)
+    {
+        owner = player;
+        presentTimer.setSingleShot(true);
+        presentTimer.setTimerType(Qt::PreciseTimer);
+        QObject::connect(&presentTimer, &QTimer::timeout, player, [this] { present(); });
+    }
 
-    Player::State state = Player::State::Idle;
-    QString error;
-    QUrl source;
-    qint64 durationMs = 0;
-    qint64 positionMs = 0;
-    QSize native;
-    bool audioAvailable = false;
-    bool videoAvailable = false;
-    bool seekable = false;
-    bool audioClockStalled = false;
-    QImage frame;
-
-#ifdef ACHERON_HAVE_FFMPEG
     struct DecodedFrame
     {
         QImage image;
         qint64 ptsMs = 0;
     };
 
-    std::unique_ptr<AudioOutput> audio;
-    QTimer *presentTimer = nullptr;
-
+    // owner thread
+    QTimer presentTimer;
     QElapsedTimer wallTimer;
     qint64 wallBaseMs = 0;
     bool seeking = false;
-
+    bool audioClockStalled = false;
+    bool autoPlayOnReady = false;
+    // deleting this cancels whatever the worker threads have already posted
+    QObject *sessionContext = nullptr;
     std::thread worker;
     std::thread demuxer;
+
+    // decode thread
+    MediaDecoder decoder;
+    std::vector<float> audioScratch;
+    std::vector<float> audioPending;
+    size_t audioPendingOffset = 0;
+
+    // shared, guarded by mutex, waited on through cv
+    std::mutex mutex;
+    std::condition_variable cv;
+    PacketQueue packets;
+    std::deque<DecodedFrame> frames;
+    QSize targetSize;
+
+    // shared, lock free
     std::atomic<bool> running{ false };
     std::atomic<bool> paused{ true };
     std::atomic<bool> reachedEnd{ false };
     std::atomic<bool> audioSinkBroken{ false };
     std::atomic<bool> primed{ false };
     std::atomic<qint64> pendingSeek{ -1 };
-
     std::atomic<qint64> seekTargetMs{ -1 };
     std::atomic<bool> awaitingSeekFrame{ false };
-
     std::atomic<qint64> demuxedMs{ 0 };
-
-    bool autoPlayOnReady = false;
-
-    QObject *sessionContext = nullptr;
-
-    std::mutex mutex;
-    std::condition_variable cv;
-    std::deque<DecodedFrame> frames;
-    QSize targetSize;
-
-    AVFormatContext *fmtCtx = nullptr;
-    AVCodecContext *videoCtx = nullptr;
-    AVCodecContext *audioCtx = nullptr;
-    SwsContext *swsCtx = nullptr;
-    SwrContext *swrCtx = nullptr;
-    int videoStream = -1;
-    int audioStream = -1;
-    QSize swsTarget;
-
-    struct QueuedPacket
-    {
-        AVPacket *packet = nullptr;
-        qint64 flushToMs = -1;
-    };
-    std::deque<QueuedPacket> packetQueue;
-    size_t packetQueueBytes = 0;
     std::atomic<bool> demuxEof{ false };
     std::atomic<bool> flushPending{ false };
-    std::vector<float> audioScratch;
-    std::vector<float> audioPending;
-    size_t audioPendingOffset = 0;
 
-    static int interruptCallback(void *opaque);
+    AudioOutput audio;
+
+    void open(const QUrl &url);
+    void close();
+    void play();
+    void pause();
+    void seek(qint64 positionMs);
+    void setVolume(float volume);
+    void setMuted(bool muted);
+    void setTargetSize(const QSize &size);
+    [[nodiscard]] qint64 bufferedPosition() const { return demuxedMs.load(std::memory_order_relaxed); }
 
     void startWorker(const QString &input);
     void stopWorker();
+    void present();
+    void scheduleNextPresent(qint64 clock);
+    [[nodiscard]] qint64 clockMs() const;
+    void fail(const QString &message);
+
+    // decode/demux threads
+    static int interruptThunk(void *opaque);
     void decodeLoop(QString input);
     void demuxLoop();
-    bool openInput(const QString &input);
-    void teardownInput();
+    bool openSource(const QString &input);
     void demuxSeek(qint64 targetMs);
     void applyFlush(qint64 targetMs);
     void drainAtEnd(AVFrame *avFrame);
     void decodePacket(AVPacket *pkt, AVFrame *avFrame);
-    void clearPacketQueueLocked();
-    [[nodiscard]] qint64 framePtsMs(const AVFrame *avFrame, int streamIndex) const;
+    bool pushVideoFrame(AVFrame *avFrame);
+    void pushAudioFrame(AVFrame *avFrame);
+    void drainPendingAudio();
 
     [[nodiscard]] bool beforeSeekTarget(qint64 ptsMs) const
     {
@@ -246,9 +272,31 @@ struct Player::Impl
 
     [[nodiscard]] bool audioPendingEmpty() const { return audioPendingOffset >= audioPending.size(); }
 
+    [[nodiscard]] qint64 audioDrainWaitMs() const
+    {
+        const qint64 buffered = qint64(audio.bufferedFrames()) * 1000 / AudioOutput::SampleRate;
+        return qBound(qint64(5), buffered / 2, qint64(250));
+    }
+
+    [[nodiscard]] bool audioSinkDrained() const
+    {
+        if (!audioSinkUsable())
+            return true;
+        if (!audioPendingEmpty())
+            return false;
+        return audio.bufferedFrames() == 0 ||
+               (!audio.isRunning() && !paused.load(std::memory_order_relaxed));
+    }
+
     [[nodiscard]] bool audioSinkUsable() const
     {
-        return audioStream >= 0 && !audioSinkBroken.load(std::memory_order_relaxed);
+        return decoder.hasAudio() && !audioSinkBroken.load(std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] bool decodable() const
+    {
+        return (!paused.load(std::memory_order_relaxed) && !reachedEnd.load(std::memory_order_relaxed)) ||
+               !primed.load(std::memory_order_relaxed);
     }
 
     void clearPendingAudio()
@@ -257,146 +305,58 @@ struct Player::Impl
         audioPendingOffset = 0;
     }
 
-    bool pushVideoFrame(AVFrame *avFrame);
-    void pushAudioFrame(AVFrame *avFrame);
-    void drainPendingAudio();
-    void present();
-    void scheduleNextPresent(qint64 clock);
-    [[nodiscard]] qint64 clockMs() const;
-
-    void setState(Player::State next);
-    void fail(const QString &message);
-
     template <typename F>
     void postToOwner(F &&fn)
     {
         QMetaObject::invokeMethod(sessionContext, std::forward<F>(fn));
     }
-#endif // ACHERON_HAVE_FFMPEG
 };
 
-Player::Player(QObject *parent) : QObject(parent), d(std::make_unique<Impl>())
-{
-    d->owner = this;
+#else // ACHERON_HAVE_FFMPEG
 
-#ifdef ACHERON_HAVE_FFMPEG
-    d->presentTimer = new QTimer(this);
-    d->presentTimer->setSingleShot(true);
-    d->presentTimer->setTimerType(Qt::PreciseTimer);
-    connect(d->presentTimer, &QTimer::timeout, this, [this] { d->present(); });
-#endif
-}
+struct Player::Impl : OwnerThreadState
+{
+    explicit Impl(Player *player) { owner = player; }
+
+    void open(const QUrl &) {}
+    void close() {}
+    void play() {}
+    void pause() {}
+    void seek(qint64) {}
+    void setVolume(float value) { userVolume = qBound(0.0f, value, 1.0f); }
+    void setMuted(bool value) { userMuted = value; }
+    void setTargetSize(const QSize &) {}
+    [[nodiscard]] qint64 bufferedPosition() const { return 0; }
+};
+
+#endif // ACHERON_HAVE_FFMPEG
+
+Player::Player(QObject *parent) : QObject(parent), d(std::make_unique<Impl>(this)) {}
 
 Player::~Player()
 {
-    d->state = State::Idle;
-    close();
+    d->state = State::Idle; // no stateChanged() out of a destructor
+    d->close();
 }
 
 void Player::open(const QUrl &url)
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    close();
-
-    d->source = url;
-    d->setState(State::Opening);
-
-    d->startWorker(url.isLocalFile() ? url.toLocalFile() : url.toString());
-#else
-    Q_UNUSED(url);
-#endif
+    d->open(url);
 }
 
 void Player::close()
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    d->stopWorker();
-
-    delete d->sessionContext;
-    d->sessionContext = nullptr;
-
-    if (d->presentTimer)
-        d->presentTimer->stop();
-    if (d->audio)
-        d->audio->stop();
-
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        d->frames.clear();
-    }
-
-    d->positionMs = 0;
-    d->durationMs = 0;
-    d->demuxedMs.store(0, std::memory_order_relaxed);
-    d->frame = QImage();
-    d->audioAvailable = false;
-    d->videoAvailable = false;
-    d->seeking = false;
-    d->audioClockStalled = false;
-    d->autoPlayOnReady = false;
-
-    d->setState(State::Idle);
-#endif
+    d->close();
 }
 
 void Player::play()
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    if (d->state == State::Opening) {
-        d->autoPlayOnReady = true;
-        return;
-    }
-
-    if (d->state != State::Paused && d->state != State::Ended)
-        return;
-
-    if (d->state == State::Ended) {
-        if (d->audio)
-            d->audio->reset(0);
-        seek(0);
-    }
-
-    if (d->audio && d->audioAvailable) {
-        const bool started = d->audio->start();
-        d->audioSinkBroken.store(!started, std::memory_order_relaxed);
-        if (!started)
-            d->audioClockStalled = true;
-    }
-
-    d->wallBaseMs = d->positionMs;
-    d->wallTimer.restart();
-
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        d->paused.store(false, std::memory_order_relaxed);
-    }
-    d->cv.notify_all();
-
-    d->setState(State::Playing);
-    d->scheduleNextPresent(d->positionMs);
-#endif
+    d->play();
 }
 
 void Player::pause()
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    if (d->state != State::Playing)
-        return;
-
-    d->wallBaseMs = d->clockMs();
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        d->paused.store(true, std::memory_order_relaxed);
-    }
-    d->cv.notify_all();
-
-    if (d->audio)
-        d->audio->stop();
-    if (d->presentTimer)
-        d->presentTimer->stop();
-
-    d->setState(State::Paused);
-#endif
+    d->pause();
 }
 
 void Player::togglePlayPause()
@@ -409,84 +369,32 @@ void Player::togglePlayPause()
 
 void Player::seek(qint64 positionMs)
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    if (!d->running.load(std::memory_order_relaxed))
-        return;
-
-    if (d->state == State::Opening)
-        return;
-
-    const qint64 upper = d->durationMs > 0 ? d->durationMs : positionMs;
-    const qint64 target = qBound(qint64(0), positionMs, upper);
-
-    d->seeking = true;
-    d->positionMs = target;
-    d->wallBaseMs = target;
-    d->wallTimer.restart();
-    d->audioClockStalled = false;
-    d->reachedEnd.store(false, std::memory_order_relaxed);
-
-    {
-        std::lock_guard<std::mutex> lock(d->mutex);
-        d->pendingSeek.store(target, std::memory_order_relaxed);
-    }
-    d->cv.notify_all();
-
-    emit positionChanged(target);
-
-    if (d->state == State::Ended)
-        d->setState(State::Paused);
-#else
-    Q_UNUSED(positionMs);
-#endif
+    d->seek(positionMs);
 }
 
 void Player::setVolume(float volume)
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    if (d->audio)
-        d->audio->setVolume(volume);
-#else
-    Q_UNUSED(volume);
-#endif
+    d->setVolume(volume);
 }
 
 float Player::volume() const
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    return d->audio ? d->audio->volume() : 0.0f;
-#else
-    return 0.0f;
-#endif
+    return d->userVolume;
 }
 
 void Player::setMuted(bool muted)
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    if (d->audio)
-        d->audio->setMuted(muted);
-#else
-    Q_UNUSED(muted);
-#endif
+    d->setMuted(muted);
 }
 
 bool Player::isMuted() const
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    return d->audio && d->audio->isMuted();
-#else
-    return true;
-#endif
+    return d->userMuted;
 }
 
 void Player::setTargetSize(const QSize &size)
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    std::lock_guard<std::mutex> lock(d->mutex);
-    d->targetSize = size;
-#else
-    Q_UNUSED(size);
-#endif
+    d->setTargetSize(size);
 }
 
 QImage Player::currentFrame() const
@@ -506,21 +414,12 @@ qint64 Player::duration() const
 
 qint64 Player::bufferedPosition() const
 {
-#ifdef ACHERON_HAVE_FFMPEG
-    return d->demuxedMs.load(std::memory_order_relaxed);
-#else
-    return 0;
-#endif
+    return d->bufferedPosition();
 }
 
 QSize Player::nativeSize() const
 {
     return d->native;
-}
-
-bool Player::hasAudio() const
-{
-    return d->audioAvailable;
 }
 
 bool Player::hasVideo() const
@@ -533,11 +432,6 @@ Player::State Player::state() const
     return d->state;
 }
 
-QString Player::errorString() const
-{
-    return d->error;
-}
-
 bool Player::isSeekable() const
 {
     return d->seekable;
@@ -545,17 +439,153 @@ bool Player::isSeekable() const
 
 #ifdef ACHERON_HAVE_FFMPEG
 
-void Player::Impl::setState(Player::State next)
+void Player::Impl::open(const QUrl &url)
 {
-    if (state == next)
+    close();
+
+    setState(Player::State::Opening);
+
+    startWorker(url.isLocalFile() ? url.toLocalFile() : url.toString());
+}
+
+void Player::Impl::close()
+{
+    stopWorker();
+
+    delete sessionContext;
+    sessionContext = nullptr;
+
+    presentTimer.stop();
+    audio.stop();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        frames.clear();
+    }
+
+    positionMs = 0;
+    durationMs = 0;
+    demuxedMs.store(0, std::memory_order_relaxed);
+    frame = QImage();
+    audioAvailable = false;
+    videoAvailable = false;
+    seeking = false;
+    audioClockStalled = false;
+    autoPlayOnReady = false;
+
+    setState(Player::State::Idle);
+}
+
+void Player::Impl::play()
+{
+    if (state == Player::State::Opening) {
+        autoPlayOnReady = true;
         return;
-    state = next;
-    emit owner->stateChanged(next);
+    }
+
+    if (state != Player::State::Paused && state != Player::State::Ended)
+        return;
+
+    if (state == Player::State::Ended)
+        seek(0);
+
+    if (audioAvailable) {
+        const bool started = audio.start();
+        audioSinkBroken.store(!started, std::memory_order_relaxed);
+        if (!started)
+            audioClockStalled = true;
+    }
+
+    wallBaseMs = positionMs;
+    wallTimer.restart();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        paused.store(false, std::memory_order_relaxed);
+    }
+    cv.notify_all();
+
+    setState(Player::State::Playing);
+    scheduleNextPresent(positionMs);
+}
+
+void Player::Impl::pause()
+{
+    if (state != Player::State::Playing)
+        return;
+
+    wallBaseMs = clockMs();
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        paused.store(true, std::memory_order_relaxed);
+    }
+    cv.notify_all();
+
+    audio.stop();
+    presentTimer.stop();
+
+    setState(Player::State::Paused);
+}
+
+void Player::Impl::seek(qint64 requestedMs)
+{
+    if (!running.load(std::memory_order_relaxed))
+        return;
+
+    if (state == Player::State::Opening)
+        return;
+
+    const qint64 upper = durationMs > 0 ? durationMs : requestedMs;
+    const qint64 target = qBound(qint64(0), requestedMs, upper);
+
+    seeking = true;
+    positionMs = target;
+    wallBaseMs = target;
+    wallTimer.restart();
+    audioClockStalled = false;
+    reachedEnd.store(false, std::memory_order_relaxed);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pendingSeek.store(target, std::memory_order_relaxed);
+    }
+    cv.notify_all();
+
+    emit owner->positionChanged(target);
+
+    if (state == Player::State::Ended)
+        setState(Player::State::Paused);
+}
+
+void Player::Impl::setVolume(float value)
+{
+    const float bounded = qBound(0.0f, value, 1.0f);
+    if (qFuzzyCompare(bounded + 1.0f, userVolume + 1.0f))
+        return;
+
+    userVolume = bounded;
+    setStoredVolume(bounded);
+    audio.setVolume(bounded);
+}
+
+void Player::Impl::setMuted(bool value)
+{
+    if (userMuted == value)
+        return;
+
+    userMuted = value;
+    setStoredMuted(value);
+    audio.setMuted(value);
+}
+
+void Player::Impl::setTargetSize(const QSize &size)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    targetSize = size;
 }
 
 void Player::Impl::fail(const QString &message)
 {
-    error = message;
     qCWarning(LogVideo) << "playback failed:" << message;
     setState(Player::State::Error);
     emit owner->errorOccurred(message);
@@ -565,8 +595,8 @@ void Player::Impl::startWorker(const QString &input)
 {
     stopWorker();
 
-    if (!audio)
-        audio = std::make_unique<AudioOutput>();
+    audio.setVolume(userVolume);
+    audio.setMuted(userMuted);
 
     delete sessionContext;
     sessionContext = new QObject(owner);
@@ -580,6 +610,7 @@ void Player::Impl::startWorker(const QString &input)
     demuxEof.store(false, std::memory_order_relaxed);
     flushPending.store(false, std::memory_order_relaxed);
     audioSinkBroken.store(false, std::memory_order_relaxed);
+    primed.store(false, std::memory_order_relaxed);
 
     worker = std::thread(&Player::Impl::decodeLoop, this, input);
 }
@@ -597,183 +628,46 @@ void Player::Impl::stopWorker()
     }
 }
 
-int Player::Impl::interruptCallback(void *opaque)
+int Player::Impl::interruptThunk(void *opaque)
 {
     auto *impl = static_cast<Player::Impl *>(opaque);
     return impl && impl->demuxInterrupted() ? 1 : 0;
 }
 
-bool Player::Impl::openInput(const QString &input)
+bool Player::Impl::openSource(const QString &input)
 {
-    fmtCtx = avformat_alloc_context();
-    if (!fmtCtx)
-        return false;
+    decoder.setInterrupt(&Player::Impl::interruptThunk, this);
 
-    fmtCtx->interrupt_callback.callback = &Player::Impl::interruptCallback;
-    fmtCtx->interrupt_callback.opaque = this;
-
-    AVDictionary *options = nullptr;
-    const QByteArray userAgent = Discord::CurlUtils::getUserAgent().toUtf8();
-    av_dict_set(&options, "user_agent", userAgent.constData(), 0);
-    av_dict_set(&options, "reconnect", "1", 0);
-    av_dict_set(&options, "reconnect_streamed", "1", 0);
-    av_dict_set(&options, "reconnect_delay_max", "5", 0);
-    av_dict_set(&options, "rw_timeout", "15000000", 0);
-
-    const QByteArray inputUtf8 = input.toUtf8();
-    int ret = avformat_open_input(&fmtCtx, inputUtf8.constData(), nullptr, &options);
-    av_dict_free(&options);
-
-    if (ret < 0) {
-        postToOwner([this, ret] { fail(averrorString(ret)); });
+    QString openError;
+    if (!decoder.open(input, &openError)) {
+        postToOwner([this, openError] { fail(openError); });
         return false;
     }
 
-    if ((ret = avformat_find_stream_info(fmtCtx, nullptr)) < 0) {
-        postToOwner([this, ret] { fail(averrorString(ret)); });
-        return false;
-    }
-
-    videoStream = av_find_best_stream(fmtCtx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-    audioStream = av_find_best_stream(fmtCtx, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-
-    auto openCodec = [this](int streamIndex, AVCodecContext **out) -> bool {
-        if (streamIndex < 0)
-            return false;
-
-        AVStream *stream = fmtCtx->streams[streamIndex];
-        const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
-        if (!codec)
-            return false;
-
-        AVCodecContext *ctx = avcodec_alloc_context3(codec);
-        if (!ctx)
-            return false;
-
-        if (avcodec_parameters_to_context(ctx, stream->codecpar) < 0) {
-            avcodec_free_context(&ctx);
-            return false;
-        }
-
-        const int cores = static_cast<int>(std::thread::hardware_concurrency());
-        ctx->thread_count = qBound(1, cores > 0 ? cores : 2, MaxDecoderThreads);
-        if (codec->capabilities & AV_CODEC_CAP_FRAME_THREADS)
-            ctx->thread_type = FF_THREAD_FRAME;
-        else if (codec->capabilities & AV_CODEC_CAP_SLICE_THREADS)
-            ctx->thread_type = FF_THREAD_SLICE;
-
-        if (avcodec_open2(ctx, codec, nullptr) < 0) {
-            avcodec_free_context(&ctx);
-            return false;
-        }
-
-        *out = ctx;
-        return true;
-    };
-
-    if (!openCodec(videoStream, &videoCtx))
-        videoStream = -1;
-    if (!openCodec(audioStream, &audioCtx))
-        audioStream = -1;
-
-    if (videoStream < 0 && audioStream < 0) {
-        postToOwner([this] { fail(Player::tr("no playable stream found")); });
-        return false;
-    }
-
-    if (videoStream < 0)
+    const MediaDecoder::Info info = decoder.info();
+    if (!info.hasVideo)
         primed.store(true, std::memory_order_relaxed);
 
-    if (audioCtx) {
-        AVChannelLayout outLayout;
-        av_channel_layout_default(&outLayout, AudioOutput::Channels);
-
-        ret = swr_alloc_set_opts2(&swrCtx,
-                                  &outLayout,
-                                  AV_SAMPLE_FMT_FLT,
-                                  AudioOutput::SampleRate,
-                                  &audioCtx->ch_layout,
-                                  audioCtx->sample_fmt,
-                                  audioCtx->sample_rate,
-                                  0,
-                                  nullptr);
-        av_channel_layout_uninit(&outLayout);
-
-        if (ret < 0 || swr_init(swrCtx) < 0) {
-            swr_free(&swrCtx);
-            avcodec_free_context(&audioCtx);
-            audioStream = -1;
-        }
-    }
-
-    const QSize nativeSize = videoCtx ? QSize(videoCtx->width, videoCtx->height) : QSize();
-    const qint64 duration = fmtCtx->duration != AV_NOPTS_VALUE
-                                    ? fmtCtx->duration * 1000 / AV_TIME_BASE
-                                    : 0;
-    const bool canSeek = duration > 0 && (!fmtCtx->pb || fmtCtx->pb->seekable != 0);
-    const bool haveAudio = audioStream >= 0;
-    const bool haveVideo = videoStream >= 0;
-
-    postToOwner([this, nativeSize, duration, canSeek, haveAudio, haveVideo] {
-        native = nativeSize;
-        durationMs = duration;
-        seekable = canSeek;
-        audioAvailable = haveAudio;
-        videoAvailable = haveVideo;
-        emit owner->durationChanged(duration);
+    postToOwner([this, info] {
+        native = info.native;
+        durationMs = info.durationMs;
+        seekable = info.seekable;
+        audioAvailable = info.hasAudio;
+        videoAvailable = info.hasVideo;
+        emit owner->durationChanged(info.durationMs);
     });
 
     return true;
 }
 
-void Player::Impl::teardownInput()
-{
-    if (swsCtx) {
-        sws_freeContext(swsCtx);
-        swsCtx = nullptr;
-    }
-    if (swrCtx)
-        swr_free(&swrCtx);
-    if (videoCtx)
-        avcodec_free_context(&videoCtx);
-    if (audioCtx)
-        avcodec_free_context(&audioCtx);
-    if (fmtCtx)
-        avformat_close_input(&fmtCtx);
-
-    videoStream = -1;
-    audioStream = -1;
-    swsTarget = QSize();
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        clearPacketQueueLocked();
-    }
-    clearPendingAudio();
-}
-
-void Player::Impl::clearPacketQueueLocked()
-{
-    for (QueuedPacket &queued : packetQueue) {
-        if (queued.packet)
-            av_packet_free(&queued.packet);
-    }
-    packetQueue.clear();
-    packetQueueBytes = 0;
-}
-
 void Player::Impl::decodePacket(AVPacket *pkt, AVFrame *avFrame)
 {
-    AVCodecContext *ctx = nullptr;
-    if (pkt->stream_index == videoStream)
-        ctx = videoCtx;
-    else if (pkt->stream_index == audioStream)
-        ctx = audioCtx;
-
-    if (!ctx || avcodec_send_packet(ctx, pkt) < 0)
+    const MediaDecoder::Stream stream = decoder.streamOf(pkt);
+    if (stream == MediaDecoder::Stream::None || !decoder.sendPacket(stream, pkt))
         return;
 
-    while (avcodec_receive_frame(ctx, avFrame) >= 0) {
-        if (ctx == videoCtx)
+    while (decoder.receiveFrame(stream, avFrame) >= 0) {
+        if (stream == MediaDecoder::Stream::Video)
             pushVideoFrame(avFrame);
         else
             pushAudioFrame(avFrame);
@@ -783,18 +677,17 @@ void Player::Impl::decodePacket(AVPacket *pkt, AVFrame *avFrame)
 
 void Player::Impl::demuxSeek(qint64 targetMs)
 {
-    const int64_t ts = targetMs * AV_TIME_BASE / 1000;
-    const int ret = av_seek_frame(fmtCtx, -1, ts, AVSEEK_FLAG_BACKWARD);
-    if (ret < 0)
-        qCWarning(LogVideo) << "seek failed:" << averrorString(ret);
+    QString seekError;
+    if (!decoder.seek(targetMs, &seekError))
+        qCWarning(LogVideo) << "seek failed:" << seekError;
 
     demuxEof.store(false, std::memory_order_relaxed);
     demuxedMs.store(targetMs, std::memory_order_relaxed);
 
     {
         std::lock_guard<std::mutex> lock(mutex);
-        clearPacketQueueLocked();
-        packetQueue.push_back({ nullptr, targetMs });
+        packets.clearLocked();
+        packets.pushFlushLocked(targetMs);
         flushPending.store(true, std::memory_order_relaxed);
     }
     cv.notify_all();
@@ -802,10 +695,7 @@ void Player::Impl::demuxSeek(qint64 targetMs)
 
 void Player::Impl::applyFlush(qint64 targetMs)
 {
-    if (videoCtx)
-        avcodec_flush_buffers(videoCtx);
-    if (audioCtx)
-        avcodec_flush_buffers(audioCtx);
+    decoder.flush();
 
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -813,13 +703,12 @@ void Player::Impl::applyFlush(qint64 targetMs)
     }
     clearPendingAudio();
 
-    if (audio)
-        audio->reset(targetMs);
+    audio.reset(targetMs);
 
     reachedEnd.store(false, std::memory_order_relaxed);
     seekTargetMs.store(targetMs, std::memory_order_relaxed);
 
-    if (videoStream >= 0) {
+    if (decoder.hasVideo()) {
         awaitingSeekFrame.store(true, std::memory_order_relaxed);
         primed.store(false, std::memory_order_relaxed);
         return;
@@ -848,18 +737,16 @@ void Player::Impl::demuxLoop()
 
         {
             std::unique_lock<std::mutex> lock(mutex);
-            if (packetQueueBytes >= MaxBufferedBytes ||
-                demuxEof.load(std::memory_order_relaxed)) {
+            if (packets.fullLocked() || demuxEof.load(std::memory_order_relaxed)) {
                 cv.wait(lock, [this] {
                     return demuxInterrupted() ||
-                           (!demuxEof.load(std::memory_order_relaxed) &&
-                            packetQueueBytes < MaxBufferedBytes);
+                           (!demuxEof.load(std::memory_order_relaxed) && !packets.fullLocked());
                 });
                 continue;
             }
         }
 
-        const int ret = av_read_frame(fmtCtx, packet);
+        const int ret = decoder.readPacket(packet);
         if (ret < 0) {
             if (demuxInterrupted())
                 continue;
@@ -871,27 +758,24 @@ void Player::Impl::demuxLoop()
             }
 
             if (ret != AVERROR_EOF)
-                qCWarning(LogVideo) << "read failed:" << averrorString(ret);
+                qCWarning(LogVideo) << "read failed:" << MediaDecoder::errorString(ret);
 
-            if (fmtCtx->duration != AV_NOPTS_VALUE)
-                demuxedMs.store(fmtCtx->duration * 1000 / AV_TIME_BASE, std::memory_order_relaxed);
+            const qint64 total = decoder.containerDurationMs();
+            if (total > 0)
+                demuxedMs.store(total, std::memory_order_relaxed);
             demuxEof.store(true, std::memory_order_relaxed);
             cv.notify_all();
             continue;
         }
 
-        if (packet->stream_index != videoStream && packet->stream_index != audioStream) {
+        if (decoder.streamOf(packet) == MediaDecoder::Stream::None) {
             av_packet_unref(packet);
             continue;
         }
 
-        const int64_t ts = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
-        if (ts != AV_NOPTS_VALUE) {
-            const AVStream *stream = fmtCtx->streams[packet->stream_index];
-            const qint64 tsMs = static_cast<qint64>(ts * av_q2d(stream->time_base) * 1000.0);
-            if (tsMs > demuxedMs.load(std::memory_order_relaxed))
-                demuxedMs.store(tsMs, std::memory_order_relaxed);
-        }
+        const qint64 tsMs = decoder.packetTimestampMs(packet);
+        if (tsMs >= 0 && tsMs > demuxedMs.load(std::memory_order_relaxed))
+            demuxedMs.store(tsMs, std::memory_order_relaxed);
 
         AVPacket *stored = av_packet_alloc();
         av_packet_move_ref(stored, packet);
@@ -899,9 +783,8 @@ void Player::Impl::demuxLoop()
         bool wasEmpty;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            wasEmpty = packetQueue.empty();
-            packetQueueBytes += static_cast<size_t>(stored->size);
-            packetQueue.push_back({ stored, -1 });
+            wasEmpty = packets.emptyLocked();
+            packets.pushLocked(stored);
         }
 
         if (wasEmpty)
@@ -911,23 +794,9 @@ void Player::Impl::demuxLoop()
     av_packet_free(&packet);
 }
 
-qint64 Player::Impl::framePtsMs(const AVFrame *avFrame, int streamIndex) const
-{
-    if (!fmtCtx || streamIndex < 0)
-        return 0;
-
-    const int64_t pts = avFrame->best_effort_timestamp != AV_NOPTS_VALUE
-                                ? avFrame->best_effort_timestamp
-                                : avFrame->pts;
-    if (pts == AV_NOPTS_VALUE)
-        return 0;
-
-    return static_cast<qint64>(pts * av_q2d(fmtCtx->streams[streamIndex]->time_base) * 1000.0);
-}
-
 bool Player::Impl::pushVideoFrame(AVFrame *avFrame)
 {
-    const qint64 ptsMs = framePtsMs(avFrame, videoStream);
+    const qint64 ptsMs = decoder.frameTimestampMs(avFrame, MediaDecoder::Stream::Video);
 
     if (beforeSeekTarget(ptsMs))
         return false;
@@ -938,30 +807,9 @@ bool Player::Impl::pushVideoFrame(AVFrame *avFrame)
         want = targetSize;
     }
 
-    const QSize source(avFrame->width, avFrame->height);
-    const QSize target = effectiveTarget(source, want);
-    if (!target.isValid() || target.isEmpty())
+    const QImage image = decoder.scaleToImage(avFrame, effectiveTarget(QSize(avFrame->width, avFrame->height), want));
+    if (image.isNull())
         return false;
-
-    if (!swsCtx || swsTarget != target) {
-        if (swsCtx)
-            sws_freeContext(swsCtx);
-
-        swsCtx = sws_getContext(avFrame->width, avFrame->height,
-                                static_cast<AVPixelFormat>(avFrame->format),
-                                target.width(), target.height(),
-                                AV_PIX_FMT_RGB32,
-                                SWS_BILINEAR,
-                                nullptr, nullptr, nullptr);
-        if (!swsCtx)
-            return false;
-        swsTarget = target;
-    }
-
-    QImage image(target.width(), target.height(), QImage::Format_RGB32);
-    uint8_t *dstData[4] = { image.bits(), nullptr, nullptr, nullptr };
-    int dstStride[4] = { static_cast<int>(image.bytesPerLine()), 0, 0, 0 };
-    sws_scale(swsCtx, avFrame->data, avFrame->linesize, 0, avFrame->height, dstData, dstStride);
 
     bool wasEmpty;
     {
@@ -985,7 +833,7 @@ bool Player::Impl::pushVideoFrame(AVFrame *avFrame)
         }
 
         if (state == Player::State::Playing) {
-            if (presentTimer && !presentTimer->isActive())
+            if (!presentTimer.isActive())
                 present();
             return;
         }
@@ -1006,37 +854,21 @@ bool Player::Impl::pushVideoFrame(AVFrame *avFrame)
 
 void Player::Impl::pushAudioFrame(AVFrame *avFrame)
 {
-    if (!swrCtx || !audio || audioSinkBroken.load(std::memory_order_relaxed))
+    if (!audioSinkUsable())
         return;
 
-    if (beforeSeekTarget(framePtsMs(avFrame, audioStream)))
+    if (beforeSeekTarget(decoder.frameTimestampMs(avFrame, MediaDecoder::Stream::Audio)))
         return;
 
-    const int maxOut = static_cast<int>(av_rescale_rnd(swr_get_delay(swrCtx, audioCtx->sample_rate) + avFrame->nb_samples,
-                                                       AudioOutput::SampleRate,
-                                                       audioCtx->sample_rate,
-                                                       AV_ROUND_UP));
-
-    audioScratch.resize(static_cast<size_t>(maxOut) * AudioOutput::Channels);
-
-    uint8_t *out = reinterpret_cast<uint8_t *>(audioScratch.data());
-    const int converted = swr_convert(swrCtx,
-                                      &out,
-                                      maxOut,
-                                      const_cast<const uint8_t **>(avFrame->data),
-                                      avFrame->nb_samples);
-    if (converted <= 0)
+    if (decoder.appendResampledFrames(avFrame, audioPending, audioScratch) <= 0)
         return;
 
-    audioPending.insert(audioPending.end(),
-                        audioScratch.begin(),
-                        audioScratch.begin() + static_cast<size_t>(converted) * AudioOutput::Channels);
     drainPendingAudio();
 }
 
 void Player::Impl::drainPendingAudio()
 {
-    if (audioPendingEmpty() || !audio)
+    if (audioPendingEmpty())
         return;
 
     if (audioSinkBroken.load(std::memory_order_relaxed)) {
@@ -1046,7 +878,7 @@ void Player::Impl::drainPendingAudio()
 
     const size_t available = audioPending.size() - audioPendingOffset;
     const int pendingFrames = static_cast<int>(available / AudioOutput::Channels);
-    const int written = audio->write(audioPending.data() + audioPendingOffset, pendingFrames);
+    const int written = audio.write(audioPending.data() + audioPendingOffset, pendingFrames);
     if (written <= 0)
         return;
 
@@ -1057,8 +889,8 @@ void Player::Impl::drainPendingAudio()
 
 void Player::Impl::decodeLoop(QString input)
 {
-    if (!openInput(input)) {
-        teardownInput();
+    if (!openSource(input)) {
+        decoder.close();
         return;
     }
 
@@ -1068,7 +900,7 @@ void Player::Impl::decodeLoop(QString input)
         setState(Player::State::Paused);
         if (autoPlayOnReady) {
             autoPlayOnReady = false;
-            owner->play();
+            play();
         }
     });
 
@@ -1079,32 +911,25 @@ void Player::Impl::decodeLoop(QString input)
     while (running.load(std::memory_order_relaxed)) {
         drainPendingAudio();
 
-        const bool decodable = (!paused.load(std::memory_order_relaxed) &&
-                                !reachedEnd.load(std::memory_order_relaxed)) ||
-                               !primed.load(std::memory_order_relaxed);
-
         AVPacket *next = nullptr;
         qint64 flushTarget = -1;
         bool starved = false;
         bool queueWasFull = false;
         {
             std::lock_guard<std::mutex> lock(mutex);
-            if (packetQueue.empty()) {
+            if (packets.emptyLocked()) {
                 starved = true;
-            } else if (!packetQueue.front().packet) {
-                flushTarget = packetQueue.front().flushToMs;
-                packetQueue.pop_front();
+            } else if (packets.frontIsFlushLocked()) {
+                flushTarget = packets.takeFlushLocked();
                 flushPending.store(false, std::memory_order_relaxed);
-            } else if (decodable) {
-                const bool videoRoom = videoStream >= 0 && frames.size() < MaxQueuedFrames;
+            } else if (decodable()) {
+                const bool videoRoom = decoder.hasVideo() && frames.size() < MaxQueuedFrames;
                 const bool audioRoom = audioSinkUsable() &&
-                                       audio->writableFrames() >= AudioChunkFrames &&
+                                       audio.writableFrames() >= AudioChunkFrames &&
                                        audioPendingEmpty();
                 if (videoRoom || audioRoom) {
-                    queueWasFull = packetQueueBytes >= MaxBufferedBytes;
-                    next = packetQueue.front().packet;
-                    packetQueue.pop_front();
-                    packetQueueBytes -= static_cast<size_t>(next->size);
+                    queueWasFull = packets.fullLocked();
+                    next = packets.takePacketLocked();
                 }
             }
         }
@@ -1132,28 +957,22 @@ void Player::Impl::decodeLoop(QString input)
         }
 
         std::unique_lock<std::mutex> lock(mutex);
-        if (decodable && !packetQueue.empty() && audioSinkUsable()) {
-            const qint64 waitMs = qBound(qint64(5),
-                                         qint64(audio->bufferedFrames()) * 1000 / AudioOutput::SampleRate / 2,
-                                         qint64(250));
-            cv.wait_for(lock, std::chrono::milliseconds(waitMs));
+        if (decodable() && !packets.emptyLocked() && audioSinkUsable()) {
+            cv.wait_for(lock, std::chrono::milliseconds(audioDrainWaitMs()));
         } else {
             cv.wait(lock, [this] {
                 if (!running.load(std::memory_order_relaxed))
                     return true;
 
-                if (packetQueue.empty())
+                if (packets.emptyLocked())
                     return demuxEof.load(std::memory_order_relaxed) &&
                            !reachedEnd.load(std::memory_order_relaxed) &&
                            !seekInFlight();
 
-                if (!packetQueue.front().packet)
+                if (packets.frontIsFlushLocked())
                     return true;
 
-                const bool mayDecode = (!paused.load(std::memory_order_relaxed) &&
-                                        !reachedEnd.load(std::memory_order_relaxed)) ||
-                                       !primed.load(std::memory_order_relaxed);
-                return mayDecode && (videoStream < 0 || frames.size() < MaxQueuedFrames);
+                return decodable() && (!decoder.hasVideo() || frames.size() < MaxQueuedFrames);
             });
         }
     }
@@ -1165,12 +984,12 @@ void Player::Impl::decodeLoop(QString input)
         demuxer.join();
     }
 
-    teardownInput();
+    decoder.close();
 }
 
 void Player::Impl::drainAtEnd(AVFrame *avFrame)
 {
-    if (videoCtx && avcodec_send_packet(videoCtx, nullptr) >= 0) {
+    if (decoder.drain(MediaDecoder::Stream::Video)) {
         while (!interrupted()) {
             {
                 std::unique_lock<std::mutex> lock(mutex);
@@ -1178,7 +997,7 @@ void Player::Impl::drainAtEnd(AVFrame *avFrame)
                     return interrupted() || frames.size() < MaxQueuedFrames;
                 });
             }
-            if (interrupted() || avcodec_receive_frame(videoCtx, avFrame) < 0)
+            if (interrupted() || decoder.receiveFrame(MediaDecoder::Stream::Video, avFrame) < 0)
                 break;
 
             pushVideoFrame(avFrame);
@@ -1186,8 +1005,8 @@ void Player::Impl::drainAtEnd(AVFrame *avFrame)
         }
     }
 
-    if (audioCtx && avcodec_send_packet(audioCtx, nullptr) >= 0) {
-        while (!interrupted() && avcodec_receive_frame(audioCtx, avFrame) >= 0) {
+    if (decoder.drain(MediaDecoder::Stream::Audio)) {
+        while (!interrupted() && decoder.receiveFrame(MediaDecoder::Stream::Audio, avFrame) >= 0) {
             pushAudioFrame(avFrame);
             av_frame_unref(avFrame);
         }
@@ -1203,21 +1022,14 @@ void Player::Impl::drainAtEnd(AVFrame *avFrame)
             videoDrained = frames.empty();
         }
 
-        bool audioDrained = !audioSinkUsable();
-        if (!audioDrained && audioPendingEmpty()) {
-            const int buffered = audio ? audio->bufferedFrames() : 0;
-
-            audioDrained = buffered == 0 ||
-                           (audio && !audio->isRunning() &&
-                            !paused.load(std::memory_order_relaxed));
-        }
+        const bool audioDrained = audioSinkDrained();
 
         if (audioDrained && !clockHandedOver && audioSinkUsable()) {
             clockHandedOver = true;
             postToOwner([this] {
                 audioClockStalled = true;
                 if (state == Player::State::Playing) {
-                    wallBaseMs = audio ? audio->clockMs() : positionMs;
+                    wallBaseMs = audio.clockMs();
                     wallTimer.restart();
                 }
             });
@@ -1247,18 +1059,16 @@ void Player::Impl::drainAtEnd(AVFrame *avFrame)
             positionMs = durationMs;
             emit owner->positionChanged(positionMs);
             setState(Player::State::Ended);
-            if (presentTimer)
-                presentTimer->stop();
-            if (audio)
-                audio->stop();
+            presentTimer.stop();
+            audio.stop();
         }
     });
 }
 
 qint64 Player::Impl::clockMs() const
 {
-    if (audio && audioAvailable && !audioClockStalled)
-        return audio->clockMs();
+    if (audioAvailable && !audioClockStalled)
+        return audio.clockMs();
     if (paused.load(std::memory_order_relaxed))
         return wallBaseMs;
     return wallBaseMs + wallTimer.elapsed();
@@ -1266,11 +1076,11 @@ qint64 Player::Impl::clockMs() const
 
 void Player::Impl::scheduleNextPresent(qint64 clock)
 {
-    if (!presentTimer || state != Player::State::Playing)
+    if (state != Player::State::Playing)
         return;
 
     if (!videoAvailable) {
-        presentTimer->start(AudioOnlyPresentDelayMs);
+        presentTimer.start(AudioOnlyPresentDelayMs);
         return;
     }
 
@@ -1281,7 +1091,7 @@ void Player::Impl::scheduleNextPresent(qint64 clock)
             delay = frames.front().ptsMs - clock;
     }
 
-    presentTimer->start(static_cast<int>(qBound(MinPresentDelayMs, delay, MaxPresentDelayMs)));
+    presentTimer.start(static_cast<int>(qBound(MinPresentDelayMs, delay, MaxPresentDelayMs)));
 }
 
 void Player::Impl::present()

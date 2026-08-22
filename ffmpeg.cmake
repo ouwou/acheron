@@ -1,11 +1,6 @@
-# Optional ffmpeg/libav discovery for video playback.
-#
-# Normalizes whatever is available into a single INTERFACE target named `ffmpeg`,
-# the same way rnnoise.cmake does. ENABLE_FFMPEG is a statement of intent: if it is
-# on and ffmpeg cannot be found, configuration fails rather than quietly producing
-# a client with no video support. -DENABLE_FFMPEG=OFF is the way to opt out, and
-# then the target is never defined, ACHERON_HAVE_FFMPEG stays undefined, and video
-# attachments keep their existing open-in-browser behaviour.
+# Optional ffmpeg/libav discovery, normalized into a single INTERFACE target named
+# `ffmpeg` the same way rnnoise.cmake does. ENABLE_FFMPEG is a statement of intent:
+# with it on, a missing ffmpeg fails configure rather than silently dropping video.
 
 if(NOT ENABLE_FFMPEG)
     return()
@@ -13,11 +8,9 @@ endif()
 
 set(FFMPEG_RUNTIME_DIR "" CACHE INTERNAL "Directory holding ffmpeg shared libraries, if any")
 
-# ffmpeg 5.1, where AVChannelLayout replaced the old channel-layout fields Player.cpp
-# would otherwise need. Both routes below have to check it: neither the presence of a
-# .pc file nor of a header says anything about the version, and a distro that ships an
-# older ffmpeg (Ubuntu 22.04 is one) would otherwise be accepted here and only fail
-# much later on Player.cpp's #error.
+# ffmpeg 5.1, where AVChannelLayout replaced the channel-layout fields MediaDecoder
+# needs. Both routes below check it, or a distro on an older ffmpeg (Ubuntu 22.04 is
+# one) is accepted here and only fails much later on MediaDecoder's #error.
 set(FFMPEG_MIN_AVUTIL_VERSION 57.28.100)
 
 # Deliberately no find_package(FFMPEG). Upstream ffmpeg ships pkg-config files,
@@ -44,10 +37,8 @@ endif()
 #    Windows route and the one the CI uses; such packages ship neither a CMake
 #    config nor .pc files.
 #
-#    find_path and find_library cache a NOTFOUND result just as eagerly as a hit,
-#    so a lookup that failed once would stay failed even after CMAKE_PREFIX_PATH is
-#    corrected. Clearing the misses first makes "fix the path, reconfigure" work
-#    without having to blow away the whole build directory.
+#    find_path and find_library cache a NOTFOUND as eagerly as a hit, so clearing
+#    the misses is what makes "fix the path, reconfigure" work.
 if(NOT FFMPEG_INCLUDE_DIR)
     unset(FFMPEG_INCLUDE_DIR CACHE)
 endif()
@@ -56,8 +47,7 @@ find_path(FFMPEG_INCLUDE_DIR
     PATH_SUFFIXES include
 )
 
-# pkg-config applies the version constraint itself; here it has to be read out of the
-# headers, which is also the only thing these packages version at all.
+# pkg-config applied the version constraint itself; here it comes out of the headers.
 set(_ffmpeg_avutil_version "")
 if(EXISTS "${FFMPEG_INCLUDE_DIR}/libavutil/version.h")
     foreach(_ffmpeg_part MAJOR MINOR MICRO)
@@ -92,8 +82,7 @@ if(FFMPEG_INCLUDE_DIR AND NOT _ffmpeg_missing
     target_link_libraries(ffmpeg INTERFACE ${_ffmpeg_libraries})
     message(STATUS "Using ffmpeg from ${FFMPEG_INCLUDE_DIR}")
 
-    # shared prebuilds keep their DLLs in <prefix>/bin; remember it so the main
-    # CMakeLists can stage them next to the executable
+    # shared prebuilds keep their DLLs in <prefix>/bin, staged next to the exe later
     get_filename_component(_ffmpeg_prefix "${FFMPEG_INCLUDE_DIR}" DIRECTORY)
     if(WIN32 AND IS_DIRECTORY "${_ffmpeg_prefix}/bin")
         set(FFMPEG_RUNTIME_DIR "${_ffmpeg_prefix}/bin" CACHE INTERNAL

@@ -7,7 +7,9 @@
 
 #include "Core/Logging.hpp"
 
+#include <algorithm>
 #include <cstring>
+#include <mutex>
 
 namespace Acheron {
 namespace Core {
@@ -17,19 +19,135 @@ static constexpr ma_uint32 RingBufferFrames = AudioOutput::SampleRate;
 
 struct AudioOutputState
 {
-    ma_device device = {};
     ma_pcm_rb rb = {};
-    bool deviceInit = false;
     std::atomic<bool> rbInit{ false };
 };
 
-void OnVideoPlayback(ma_device *device, void *output, const void *input, uint32_t frameCount)
+class MediaAudioDevice
 {
-    Q_UNUSED(input);
-    auto *self = static_cast<AudioOutput *>(device->pUserData);
-    if (self)
-        self->renderFrames(output, frameCount);
-}
+public:
+    static MediaAudioDevice &instance()
+    {
+        static MediaAudioDevice device;
+        return device;
+    }
+
+    bool add(AudioOutput *stream)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mixMutex);
+            if (std::find(streams.begin(), streams.end(), stream) == streams.end())
+                streams.push_back(stream);
+        }
+
+        if (ensureRunning())
+            return true;
+
+        remove(stream);
+        return false;
+    }
+
+    void remove(AudioOutput *stream)
+    {
+        bool idle;
+        {
+            // holding this means no callback is midway through reading the stream
+            std::lock_guard<std::mutex> lock(mixMutex);
+            streams.erase(std::remove(streams.begin(), streams.end(), stream), streams.end());
+            idle = streams.empty();
+        }
+
+        if (!idle)
+            return;
+
+        std::lock_guard<std::mutex> lock(deviceMutex);
+        if (deviceRunning) {
+            ma_device_stop(&device);
+            deviceRunning = false;
+        }
+    }
+
+    void resetStream(AudioOutput *stream, qint64 basePtsMs)
+    {
+        std::lock_guard<std::mutex> lock(mixMutex);
+        stream->resetLocked(basePtsMs);
+    }
+
+    void mix(void *output, uint32_t frameCount)
+    {
+        auto *out = static_cast<float *>(output);
+        const size_t samples = static_cast<size_t>(frameCount) * AudioOutput::Channels;
+        std::memset(out, 0, samples * sizeof(float));
+
+        {
+            std::lock_guard<std::mutex> lock(mixMutex);
+            for (AudioOutput *stream : streams)
+                stream->mixInto(out, frameCount, scratch);
+        }
+
+        for (size_t i = 0; i < samples; ++i)
+            out[i] = qBound(-1.0f, out[i], 1.0f);
+    }
+
+private:
+    MediaAudioDevice() = default;
+
+    ~MediaAudioDevice()
+    {
+        std::lock_guard<std::mutex> lock(deviceMutex);
+        if (deviceInit)
+            ma_device_uninit(&device);
+    }
+
+    bool ensureRunning()
+    {
+        // no touch mixMutex and deviceMutex simultaneously
+        std::lock_guard<std::mutex> lock(deviceMutex);
+
+        if (!deviceInit) {
+            ma_device_config config = ma_device_config_init(ma_device_type_playback);
+            config.playback.format = ma_format_f32;
+            config.playback.channels = AudioOutput::Channels;
+            config.sampleRate = AudioOutput::SampleRate;
+            config.dataCallback = &MediaAudioDevice::onPlayback;
+            config.pUserData = this;
+            config.wasapi.noAutoConvertSRC = MA_TRUE;
+
+            if (!Audio::initAudioDevice(&config, &device)) {
+                qCWarning(LogVideo) << "failed to init the media playback device";
+                return false;
+            }
+            deviceInit = true;
+        }
+
+        if (deviceRunning)
+            return true;
+
+        if (ma_device_start(&device) != MA_SUCCESS) {
+            qCWarning(LogVideo) << "failed to start the media playback device";
+            return false;
+        }
+
+        deviceRunning = true;
+        return true;
+    }
+
+    static void onPlayback(ma_device *device, void *output, const void *input, uint32_t frameCount)
+    {
+        Q_UNUSED(input);
+        if (auto *self = static_cast<MediaAudioDevice *>(device->pUserData))
+            self->mix(output, frameCount);
+    }
+
+    std::mutex mixMutex;
+    std::vector<AudioOutput *> streams;
+    std::vector<float> scratch;
+
+    std::mutex deviceMutex;
+    ma_device device = {};
+    bool deviceInit = false;
+    bool deviceRunning = false;
+};
 
 AudioOutput::AudioOutput() : state(std::make_unique<AudioOutputState>()) {}
 
@@ -37,16 +155,12 @@ AudioOutput::~AudioOutput()
 {
     stop();
 
-    if (state->deviceInit)
-        ma_device_uninit(&state->device);
     if (state->rbInit.load(std::memory_order_relaxed))
         ma_pcm_rb_uninit(&state->rb);
 }
 
 bool AudioOutput::start()
 {
-    std::lock_guard<std::mutex> lock(controlMutex);
-
     if (running.load(std::memory_order_relaxed))
         return true;
 
@@ -59,26 +173,8 @@ bool AudioOutput::start()
         state->rbInit.store(true, std::memory_order_release);
     }
 
-    if (!state->deviceInit) {
-        ma_device_config config = ma_device_config_init(ma_device_type_playback);
-        config.playback.format = ma_format_f32;
-        config.playback.channels = Channels;
-        config.sampleRate = SampleRate;
-        config.dataCallback = OnVideoPlayback;
-        config.pUserData = this;
-        config.wasapi.noAutoConvertSRC = MA_TRUE;
-
-        if (!Audio::initAudioDevice(&config, &state->device)) {
-            qCWarning(LogVideo) << "failed to init the video playback device";
-            return false;
-        }
-        state->deviceInit = true;
-    }
-
-    if (ma_device_start(&state->device) != MA_SUCCESS) {
-        qCWarning(LogVideo) << "failed to start the video playback device";
+    if (!MediaAudioDevice::instance().add(this))
         return false;
-    }
 
     running.store(true, std::memory_order_relaxed);
     return true;
@@ -86,13 +182,11 @@ bool AudioOutput::start()
 
 void AudioOutput::stop()
 {
-    std::lock_guard<std::mutex> lock(controlMutex);
-
     if (!running.load(std::memory_order_relaxed))
         return;
 
-    ma_device_stop(&state->device);
     running.store(false, std::memory_order_relaxed);
+    MediaAudioDevice::instance().remove(this);
 }
 
 int AudioOutput::writableFrames() const
@@ -132,26 +226,16 @@ int AudioOutput::write(const float *interleaved, int frameCount)
 
 void AudioOutput::reset(qint64 basePtsMs)
 {
-    std::lock_guard<std::mutex> lock(controlMutex);
+    MediaAudioDevice::instance().resetStream(this, basePtsMs);
+}
 
-    if (!state->rbInit.load(std::memory_order_acquire)) {
-        framesPlayed.store(0, std::memory_order_relaxed);
-        basePts.store(basePtsMs, std::memory_order_relaxed);
-        return;
-    }
+void AudioOutput::resetLocked(qint64 basePtsMs)
+{
+    if (state->rbInit.load(std::memory_order_acquire))
+        ma_pcm_rb_reset(&state->rb);
 
-    const bool wasRunning = running.load(std::memory_order_relaxed);
-    if (wasRunning)
-        ma_device_stop(&state->device);
-
-    ma_pcm_rb_reset(&state->rb);
     framesPlayed.store(0, std::memory_order_relaxed);
     basePts.store(basePtsMs, std::memory_order_relaxed);
-
-    if (wasRunning && ma_device_start(&state->device) != MA_SUCCESS) {
-        qCWarning(LogVideo) << "failed to restart the playback device after a seek";
-        running.store(false, std::memory_order_relaxed);
-    }
 }
 
 void AudioOutput::setVolume(float volume)
@@ -170,9 +254,15 @@ qint64 AudioOutput::clockMs() const
     return basePts.load(std::memory_order_relaxed) + (played * 1000) / SampleRate;
 }
 
-void AudioOutput::renderFrames(void *output, uint32_t frameCount)
+void AudioOutput::mixInto(float *output, uint32_t frameCount, std::vector<float> &scratch)
 {
-    auto *out = static_cast<float *>(output);
+    if (!state->rbInit.load(std::memory_order_acquire))
+        return;
+
+    const size_t wanted = static_cast<size_t>(frameCount) * Channels;
+    if (scratch.size() < wanted)
+        scratch.resize(wanted);
+
     ma_uint32 remaining = frameCount;
     ma_uint32 filled = 0;
 
@@ -182,7 +272,7 @@ void AudioOutput::renderFrames(void *output, uint32_t frameCount)
         if (ma_pcm_rb_acquire_read(&state->rb, &toRead, &readPtr) != MA_SUCCESS || toRead == 0)
             break;
 
-        std::memcpy(out + static_cast<size_t>(filled) * Channels,
+        std::memcpy(scratch.data() + static_cast<size_t>(filled) * Channels,
                     readPtr,
                     static_cast<size_t>(toRead) * Channels * sizeof(float));
         ma_pcm_rb_commit_read(&state->rb, toRead);
@@ -190,22 +280,17 @@ void AudioOutput::renderFrames(void *output, uint32_t frameCount)
         remaining -= toRead;
     }
 
+    if (filled == 0)
+        return;
+
     const float gain = muted.load(std::memory_order_relaxed)
                                ? 0.0f
                                : outputVolume.load(std::memory_order_relaxed);
-    if (gain != 1.0f) {
-        const size_t samples = static_cast<size_t>(filled) * Channels;
-        for (size_t i = 0; i < samples; ++i)
-            out[i] *= gain;
-    }
+    const size_t samples = static_cast<size_t>(filled) * Channels;
+    for (size_t i = 0; i < samples; ++i)
+        output[i] += scratch[i] * gain;
 
-    if (remaining > 0)
-        std::memset(out + static_cast<size_t>(filled) * Channels,
-                    0,
-                    static_cast<size_t>(remaining) * Channels * sizeof(float));
-
-    if (filled > 0)
-        framesPlayed.fetch_add(filled, std::memory_order_relaxed);
+    framesPlayed.fetch_add(filled, std::memory_order_relaxed);
 }
 
 } // namespace Media

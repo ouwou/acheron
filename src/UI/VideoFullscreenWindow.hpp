@@ -45,7 +45,7 @@ protected:
 
 private:
     [[nodiscard]] QSize decodeSize() const { return size() * devicePixelRatioF(); }
-    [[nodiscard]] VideoControls::State controlState() const;
+    [[nodiscard]] VideoControls::Session session() const;
     void detach();
     void revealControls();
 

@@ -172,6 +172,7 @@ set(PROJECT_SOURCES
     src/Core/Theme/Stylesheet.cpp
     src/Core/Theme/Fonts.cpp
     src/Core/Media/Player.cpp
+    src/Core/Media/MediaDecoder.cpp
     src/Core/Media/AudioOutput.cpp
     src/Core/Media/PlayerPool.cpp
     src/UI/MainWindow.cpp
@@ -200,6 +201,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatView.cpp
     src/UI/Chat/ChatLayout.cpp
     src/UI/Chat/InlineVideoController.cpp
+    src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
     src/UI/Forum/ForumPostModel.cpp
     src/UI/Forum/ForumPostDelegate.cpp

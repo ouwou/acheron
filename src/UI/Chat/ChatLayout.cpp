@@ -198,11 +198,21 @@ AttachmentGridLayout calculateAttachmentGrid(int count, int maxWidth)
     return layout;
 }
 
+bool embedHasPlayableVideo(const EmbedData &embed)
+{
+    return embed.videoPlayable && embed.thumbnail.isNull() && embed.images.isEmpty();
+}
+
+bool embedHasVideoArea(const EmbedData &embed)
+{
+    return embed.thumbnail.isNull() &&
+           embed.images.isEmpty() &&
+           (embed.videoPlayable || !embed.videoThumbnail.isNull());
+}
+
 bool embedIsBareVideo(const EmbedData &embed)
 {
-    return embed.videoPlayable &&
-           embed.thumbnail.isNull() &&
-           embed.images.isEmpty() &&
+    return embedHasPlayableVideo(embed) &&
            embed.title.isEmpty() &&
            embed.description.isEmpty() &&
            embed.authorName.isEmpty() &&
@@ -478,7 +488,7 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
             }
             currentY += grid.totalHeight;
         }
-    } else if ((!embed.videoThumbnail.isNull() || embed.videoPlayable) && embed.thumbnail.isNull()) {
+    } else if (embedHasVideoArea(embed)) {
         int imagesTop = contentTop + currentY;
         const QSize actualSize = embedVideoDisplaySize(embed);
         layout.imagesRect = QRect(contentLeft, imagesTop, actualSize.width(), actualSize.height());
@@ -822,10 +832,7 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
             layout.hitRegions.append({ HitRegion::Kind::EmbedImage, imgLayout.rect, ei, imgLayout.imageIndex, embed.images[imgLayout.imageIndex].url.toString() });
         }
 
-        if (embed.images.isEmpty() &&
-            embed.thumbnail.isNull() &&
-            (!embed.videoThumbnail.isNull() || embed.videoPlayable) &&
-            !el.imagesRect.isNull())
+        if (embedHasVideoArea(embed) && !el.imagesRect.isNull())
             layout.hitRegions.append({ HitRegion::Kind::EmbedVideoThumbnail, el.imagesRect, ei, -1, embed.url });
 
         if (!embed.description.isEmpty() && !el.descriptionRect.isNull())
@@ -843,27 +850,21 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
     }
 
     for (const auto &al : layout.imageLayouts) {
-        const bool isVideo = al.index >= 0 && al.index < ctx.attachments.size() && ctx.attachments[al.index].isVideo;
-        layout.hitRegions.append({ isVideo ? HitRegion::Kind::AttachmentVideo
-                                           : HitRegion::Kind::AttachmentImage,
-                                   al.rect,
-                                   al.index,
-                                   -1,
-                                   {} });
+        const auto kind = ctx.attachments[al.index].isVideo ? HitRegion::Kind::AttachmentVideo
+                                                           : HitRegion::Kind::AttachmentImage;
+        layout.hitRegions.append({ kind, al.rect, al.index, -1, {} });
     }
     for (const auto &al : layout.fileLayouts) {
-        const bool isAudio = al.index >= 0 && al.index < ctx.attachments.size() && ctx.attachments[al.index].isAudio;
-        if (!isAudio) {
+        const AttachmentData &att = ctx.attachments[al.index];
+        if (!att.isAudio) {
             layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, al.rect, al.index, -1, {} });
             continue;
         }
 
-        const QRect barRect = audioBarRect(al.rect, ctx.attachments[al.index].isVoiceMessage);
+        const QRect barRect = audioBarRect(al.rect, att.isVoiceMessage);
         if (barRect.top() > al.rect.top()) {
-            const QRect headerRect(al.rect.left(),
-                                   al.rect.top(),
-                                   al.rect.width(),
-                                   barRect.top() - al.rect.top());
+            QRect headerRect = al.rect;
+            headerRect.setBottom(barRect.top() - 1);
             layout.hitRegions.append({ HitRegion::Kind::AttachmentFile, headerRect, al.index, -1, {} });
         }
         layout.hitRegions.append({ HitRegion::Kind::AttachmentAudio, barRect, al.index, -1, {} });

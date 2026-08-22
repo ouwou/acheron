@@ -364,20 +364,13 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             data.id = att.id;
             data.proxyUrl = QUrl(*att.proxyUrl);
             data.originalUrl = QUrl(*att.url);
-            data.isImage = att.isImage();
-            data.contentType = att.contentType.hasValue() ? *att.contentType : QString();
-            data.isVideo = !data.isImage && Core::Media::canPlay(data.contentType, data.originalUrl);
-            data.isVoiceMessage = !msg.isPendingOutbound &&
-                                  Core::Media::isSupported() && !data.isImage && !data.isVideo &&
-                                  msg.flags.hasValue() &&
-                                  msg.flags->testFlag(Discord::MessageFlag::IS_VOICE_MESSAGE) &&
-                                  (data.contentType.isEmpty() || data.contentType.startsWith(QLatin1String("audio/")));
-            data.isAudio = data.isVoiceMessage ||
-                           (!msg.isPendingOutbound && !data.isImage && !data.isVideo &&
-                            Core::Media::canPlayAudio(data.contentType, data.originalUrl));
-
-            if (att.durationSecs.hasValue() && std::isfinite(*att.durationSecs) && *att.durationSecs > 0.0)
-                data.durationMs = static_cast<qint64>(qMin(*att.durationSecs, 86400.0) * 1000.0);
+            const MediaFlags media = mediaFlagsFor(att, msg);
+            data.isImage = media.isImage;
+            data.contentType = media.contentType;
+            data.isVideo = media.isVideo;
+            data.isVoiceMessage = media.isVoiceMessage;
+            data.isAudio = media.isAudio;
+            data.durationMs = media.durationMs;
             data.filename = att.filename.hasValue() ? *att.filename : "unknown";
             data.fileSizeBytes = att.size.hasValue() ? *att.size : 0;
             data.isSpoiler = att.isSpoiler();
@@ -810,6 +803,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         uploadProgress.clear();
         localPixmapCache.clear();
         previewPixmapCache.clear();
+        mediaFlagsCache.clear();
         messages = incomingMessages;
         endResetModel();
         break;
@@ -1036,6 +1030,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
     uploadProgress.clear();
     localPixmapCache.clear();
     previewPixmapCache.clear();
+    mediaFlagsCache.clear();
     revealedSpoilers.clear();
     endResetModel();
 }
@@ -1084,9 +1079,40 @@ bool ChatModel::isSpoilerRevealed(Snowflake attachmentId) const
     return revealedSpoilers.contains(attachmentId);
 }
 
+ChatModel::MediaFlags ChatModel::mediaFlagsFor(const Discord::Attachment &att, const Discord::Message &msg) const
+{
+    auto cached = mediaFlagsCache.constFind(*att.id);
+    if (cached != mediaFlagsCache.constEnd())
+        return *cached;
+
+    MediaFlags flags;
+    flags.isImage = att.isImage();
+    flags.contentType = att.contentType.hasValue() ? *att.contentType : QString();
+
+    const QUrl url(att.url.hasValue() ? *att.url : QString());
+    const bool voiceFlagged = msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::IS_VOICE_MESSAGE);
+
+    flags.isVideo = !flags.isImage && Core::Media::canPlay(flags.contentType, url);
+    flags.isVoiceMessage = !msg.isPendingOutbound && Core::Media::isSupported() &&
+                           !flags.isImage && !flags.isVideo && voiceFlagged &&
+                           (flags.contentType.isEmpty() ||
+                            flags.contentType.startsWith(QLatin1String("audio/")));
+    flags.isAudio = flags.isVoiceMessage ||
+                    (!msg.isPendingOutbound && !flags.isImage && !flags.isVideo &&
+                     Core::Media::canPlayAudio(flags.contentType, url));
+
+    if (att.durationSecs.hasValue() && std::isfinite(*att.durationSecs) && *att.durationSecs > 0.0)
+        flags.durationMs = static_cast<qint64>(qMin(*att.durationSecs, 86400.0) * 1000.0);
+
+    if (!msg.isPendingOutbound)
+        mediaFlagsCache.insert(*att.id, flags);
+
+    return flags;
+}
+
 void ChatModel::setVideoNativeSize(Snowflake attachmentId, const QSize &size)
 {
-    if (!size.isValid() || size.isEmpty())
+    if (size.isEmpty())
         return;
     if (videoNativeSizes.value(attachmentId) == size)
         return;

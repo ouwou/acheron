@@ -252,6 +252,8 @@ struct LayoutContext
     Core::Snowflake messageId;
 };
 
+bool embedHasVideoArea(const EmbedData &embed);
+bool embedHasPlayableVideo(const EmbedData &embed);
 bool embedIsBareVideo(const EmbedData &embed);
 
 MessageLayout calculateMessageLayout(const LayoutContext &ctx);

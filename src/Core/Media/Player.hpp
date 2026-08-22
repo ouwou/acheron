@@ -23,6 +23,11 @@ bool canPlay(const QString &contentType, const QUrl &url = QUrl());
 
 bool canPlayAudio(const QString &contentType, const QUrl &url = QUrl());
 
+float storedVolume();
+void setStoredVolume(float volume);
+bool storedMuted();
+void setStoredMuted(bool muted);
+
 class Player : public QObject
 {
     Q_OBJECT
@@ -59,10 +64,8 @@ public:
     [[nodiscard]] qint64 duration() const;
     [[nodiscard]] qint64 bufferedPosition() const;
     [[nodiscard]] QSize nativeSize() const;
-    [[nodiscard]] bool hasAudio() const;
     [[nodiscard]] bool hasVideo() const;
     [[nodiscard]] State state() const;
-    [[nodiscard]] QString errorString() const;
 
     [[nodiscard]] bool isPlaying() const { return state() == State::Playing; }
     [[nodiscard]] bool isSeekable() const;

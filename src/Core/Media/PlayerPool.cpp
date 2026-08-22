@@ -105,11 +105,7 @@ QString PlayerPool::evictionCandidate() const
         if (key == pinnedKey)
             continue;
 
-        const Player *player = find(key);
-        if (!player)
-            return key;
-
-        if (!player->isPlaying())
+        if (!find(key)->isPlaying())
             return key;
 
         if (playingFallback.isEmpty())
@@ -128,7 +124,6 @@ void PlayerPool::enforceLimit()
 
         qCDebug(LogVideo) << "evicting player" << victim << "to stay under the decoder cap";
         release(victim);
-        order.removeAll(victim);
     }
 }
 
