@@ -7,6 +7,7 @@
 #include <QRect>
 #include <QString>
 
+#include <functional>
 #include <optional>
 
 #include "Core/Media/Player.hpp"
@@ -32,6 +33,9 @@ class InlineVideoController : public QObject
 public:
     explicit InlineVideoController(ChatView *view);
     ~InlineVideoController() override;
+
+    using UrlRefresher = std::function<void(const QUrl &stale, std::function<void(const QUrl &fresh)>)>;
+    void setUrlRefresher(UrlRefresher refresher) { urlRefresher = std::move(refresher); }
 
     void press(const MediaTarget &target, const QPoint &pos);
     void release(const MediaTarget &target, const QModelIndex &index, const QPoint &pos);
@@ -82,11 +86,18 @@ private:
     void onPlayerReleased(const QString &key);
     void onPlayerStateChanged(const QString &key);
     void openFullscreen(const MediaTarget &target);
+    void startPlayback(const MediaTarget &target);
+    void retryPlayback(const MediaTarget &target);
+    void withPlayableUrl(const QUrl &url, bool force, std::function<void(const QUrl &)> play);
 
     ChatView *view = nullptr;
     Core::Media::PlayerPool *pool = nullptr;
     VideoFullscreenWindow *fullscreen = nullptr;
     QPointer<QAbstractItemModel> boundModel;
+
+    UrlRefresher urlRefresher;
+    QHash<QUrl, QUrl> refreshedUrls;
+    QHash<QUrl, QList<std::function<void(const QUrl &)>>> pendingRefreshes;
 
     QHash<QString, Row> rows;
     QRect damageRect;

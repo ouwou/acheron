@@ -7,6 +7,7 @@
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
+#include "Chat/InlineVideoController.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
 #include "Forum/NewPostDialog.hpp"
@@ -1014,6 +1015,18 @@ void MainWindow::setupUi()
                     return;
 
                 markIndexAsRead(accountNode->id, sourceIndex);
+            });
+
+    chatView->videoController()->setUrlRefresher(
+            [this](const QUrl &stale, std::function<void(const QUrl &)> done) {
+                if (!currentInstance) {
+                    done(QUrl());
+                    return;
+                }
+                currentInstance->discord()->refreshAttachmentUrls(
+                        { stale }, [stale, done](const Core::Result<QHash<QUrl, QUrl>> &result) {
+                            done(result.success() ? result.value->value(stale) : QUrl());
+                        });
             });
 
     chatView->setModel(chatModel);

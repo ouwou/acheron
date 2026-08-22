@@ -99,6 +99,9 @@ public:
     using ThreadListCallback = std::function<void(const Core::Result<ThreadListResult> &)>;
     void searchThreads(Snowflake channelId, bool archived, int offset, ThreadListCallback callback);
 
+    using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
+    void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
+
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
                      Snowflake replyToMessageId = Snowflake::Invalid,
                      const QList<Core::PendingAttachment> &attachments = {});

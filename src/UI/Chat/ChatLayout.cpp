@@ -851,7 +851,7 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
 
     for (const auto &al : layout.imageLayouts) {
         const auto kind = ctx.attachments[al.index].isVideo ? HitRegion::Kind::AttachmentVideo
-                                                           : HitRegion::Kind::AttachmentImage;
+                                                            : HitRegion::Kind::AttachmentImage;
         layout.hitRegions.append({ kind, al.rect, al.index, -1, {} });
     }
     for (const auto &al : layout.fileLayouts) {

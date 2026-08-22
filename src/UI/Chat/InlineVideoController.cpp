@@ -1,6 +1,7 @@
 #include "UI/Chat/InlineVideoController.hpp"
 
 #include "Core/Media/PlayerPool.hpp"
+#include "Discord/CdnUrls.hpp"
 #include "UI/Chat/ChatModel.hpp"
 #include "UI/Chat/ChatView.hpp"
 #include "UI/VideoFullscreenWindow.hpp"
@@ -71,6 +72,7 @@ void InlineVideoController::reset()
 {
     pool->clear();
     rows.clear();
+    pendingRefreshes.clear();
     drag.end();
     hoveredKey.clear();
     volumeExpanded = false;
@@ -166,24 +168,74 @@ void InlineVideoController::release(const MediaTarget &target, const QModelIndex
     if (!target.isValid() || target.spoilered)
         return;
 
+    rememberRow(target, index);
+
     auto *player = pool->find(target.key);
-    const bool starting = !player;
-    if (starting)
-        player = pool->acquire(target.key, target.url);
-    else
-        pool->touch(target.key);
-    if (!player)
+    if (!player) {
+        startPlayback(target);
+        return;
+    }
+
+    pool->touch(target.key);
+    player->setTargetSize(decodeSize(target.rect));
+    handleRelease(player, target, pos);
+    refreshRow(target.key);
+}
+
+void InlineVideoController::startPlayback(const MediaTarget &target)
+{
+    withPlayableUrl(target.url, false, [this, key = target.key](const QUrl &url) {
+        auto *player = pool->acquire(key, url);
+        if (!player)
+            return;
+
+        if (const auto current = resolvedTarget(key))
+            player->setTargetSize(decodeSize(current->rect));
+
+        player->play();
+        refreshRow(key);
+    });
+}
+
+void InlineVideoController::retryPlayback(const MediaTarget &target)
+{
+    withPlayableUrl(target.url, true, [this, key = target.key](const QUrl &url) {
+        auto *player = pool->find(key);
+        if (!player)
+            return;
+
+        player->open(url);
+        player->play();
+        refreshRow(key);
+    });
+}
+
+void InlineVideoController::withPlayableUrl(const QUrl &url, bool force,
+                                            std::function<void(const QUrl &)> play)
+{
+    const QUrl known = refreshedUrls.value(url, url);
+    if (!urlRefresher || !Discord::Cdn::isSigned(known) || (!force && !Discord::Cdn::hasExpired(known))) {
+        play(known);
+        return;
+    }
+
+    auto &waiting = pendingRefreshes[url];
+    waiting.append(std::move(play));
+    if (waiting.size() > 1)
         return;
 
-    rememberRow(target, index);
-    player->setTargetSize(decodeSize(target.rect));
+    QPointer<InlineVideoController> self(this);
+    urlRefresher(url, [self, url](const QUrl &fresh) {
+        if (!self)
+            return;
 
-    if (starting)
-        player->play();
-    else
-        handleRelease(player, target, pos);
+        if (!fresh.isEmpty())
+            self->refreshedUrls.insert(url, fresh);
 
-    refreshRow(target.key);
+        const auto waiting = self->pendingRefreshes.take(url);
+        for (const auto &play : waiting)
+            play(fresh.isEmpty() ? url : fresh);
+    });
 }
 
 void InlineVideoController::handleRelease(Core::Media::Player *player, const MediaTarget &target, const QPoint &pos)
@@ -191,10 +243,8 @@ void InlineVideoController::handleRelease(Core::Media::Player *player, const Med
     const auto session = sessionFor(target);
 
     if (session.state.status == VideoControls::Status::Failed) {
-        if (VideoControls::hitTest(session.layout, pos, session.state) != VideoControls::Hit::None) {
-            player->open(target.url);
-            player->play();
-        }
+        if (VideoControls::hitTest(session.layout, pos, session.state) != VideoControls::Hit::None)
+            retryPlayback(target);
         return;
     }
 
