@@ -6,7 +6,11 @@ if(NOT ENABLE_FFMPEG)
     return()
 endif()
 
-set(FFMPEG_RUNTIME_DIR "" CACHE INTERNAL "Directory holding ffmpeg shared libraries, if any")
+set(FFMPEG_RUNTIME_DLLS "" CACHE INTERNAL "ffmpeg shared libraries to stage next to the exe, if any")
+
+# The libraries MediaDecoder calls into. A shared build ships avfilter and avdevice
+# beside them; staging those too costs 33 MB of DLLs nothing here ever loads.
+set(FFMPEG_COMPONENTS avcodec avformat avutil swscale swresample)
 
 # ffmpeg 5.1, where AVChannelLayout replaced the channel-layout fields MediaDecoder
 # needs. Both routes below check it, or a distro on an older ffmpeg (Ubuntu 22.04 is
@@ -60,7 +64,7 @@ endif()
 
 set(_ffmpeg_libraries "")
 set(_ffmpeg_missing "")
-foreach(_ffmpeg_component avcodec avformat avutil swscale swresample)
+foreach(_ffmpeg_component ${FFMPEG_COMPONENTS})
     if(NOT FFMPEG_${_ffmpeg_component}_LIBRARY)
         unset(FFMPEG_${_ffmpeg_component}_LIBRARY CACHE)
     endif()
@@ -85,8 +89,13 @@ if(FFMPEG_INCLUDE_DIR AND NOT _ffmpeg_missing
     # shared prebuilds keep their DLLs in <prefix>/bin, staged next to the exe later
     get_filename_component(_ffmpeg_prefix "${FFMPEG_INCLUDE_DIR}" DIRECTORY)
     if(WIN32 AND IS_DIRECTORY "${_ffmpeg_prefix}/bin")
-        set(FFMPEG_RUNTIME_DIR "${_ffmpeg_prefix}/bin" CACHE INTERNAL
-            "Directory holding ffmpeg shared libraries, if any" FORCE)
+        set(_ffmpeg_dlls "")
+        foreach(_ffmpeg_component ${FFMPEG_COMPONENTS})
+            file(GLOB _ffmpeg_component_dlls "${_ffmpeg_prefix}/bin/${_ffmpeg_component}*.dll")
+            list(APPEND _ffmpeg_dlls ${_ffmpeg_component_dlls})
+        endforeach()
+        set(FFMPEG_RUNTIME_DLLS "${_ffmpeg_dlls}" CACHE INTERNAL
+            "ffmpeg shared libraries to stage next to the exe, if any" FORCE)
     endif()
     return()
 endif()

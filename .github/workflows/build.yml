@@ -83,7 +83,7 @@ jobs:
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR;$ffmpegDir" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
             -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON
@@ -98,7 +98,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = "${{ github.workspace }}/build/${{ matrix.build_type }}/acheron.exe"
-          windeployqt --no-translations --no-opengl-sw $exe
+          windeployqt --no-translations --no-opengl-sw --no-system-d3d-compiler $exe
 
       - name: Prepare artifact
         shell: pwsh
@@ -114,11 +114,14 @@ jobs:
           # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
-          # Drop build leftovers that nothing at runtime needs
-          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
+          # Drop build leftovers, and the plugins the app can never reach: main.cpp
+          # forces the Fusion style and Storage only ever opens QSQLITE
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
+            -Recurse -ErrorAction SilentlyContinue
+          Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: acheron-windows-${{ matrix.build_type }}
           path: acheron-windows-${{ matrix.build_type }}
@@ -165,7 +168,7 @@ jobs:
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
             -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON `
@@ -183,7 +186,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = "${{ github.workspace }}/build/RelWithDebInfo/acheron.exe"
-          windeployqt --no-translations --no-opengl-sw $exe
+          windeployqt --no-translations --no-opengl-sw --no-system-d3d-compiler $exe
 
       - name: Prepare artifact
         shell: pwsh
@@ -199,11 +202,14 @@ jobs:
           # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
-          # Drop build leftovers that nothing at runtime needs
-          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
+          # Drop build leftovers, and the plugins the app can never reach: main.cpp
+          # forces the Fusion style and Storage only ever opens QSQLITE
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
+            -Recurse -ErrorAction SilentlyContinue
+          Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: acheron-windows-minimal
           path: acheron-windows-minimal
@@ -305,7 +311,7 @@ jobs:
         shell: pwsh
         run: |
           $exe = "${{ github.workspace }}/build/MinSizeRel/acheron.exe"
-          windeployqt --no-translations --no-opengl-sw $exe
+          windeployqt --no-translations --no-opengl-sw --no-angle --no-system-d3d-compiler $exe
 
       - name: Prepare artifact
         shell: pwsh
@@ -325,8 +331,11 @@ jobs:
           # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
           Copy-Item "openssl-bin/*.dll" $out -Force
 
-          # Drop build leftovers that nothing at runtime needs
-          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
+          # Drop build leftovers, and the plugins the app can never reach: main.cpp
+          # forces the Fusion style and Storage only ever opens QSQLITE
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
+            -Recurse -ErrorAction SilentlyContinue
+          Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -384,7 +393,7 @@ jobs:
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
           -DVCPKG_TARGET_TRIPLET=x64-linux
-          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
@@ -394,54 +403,6 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
-
-      - name: Prepare artifact
-        run: |
-          out="acheron-linux"
-          mkdir -p "$out/lib" "$out/plugins"
-
-          # Binary
-          cp build/acheron "$out/"
-
-          # Copy certs/fonts if present
-          [ -d build/certs ] && cp -r build/certs "$out/"
-          [ -d build/fonts ] && cp -r build/fonts "$out/"
-
-          # Qt libraries
-          for lib in Core Gui Widgets Network Sql Concurrent DBus XcbQpa OpenGL WaylandClient WaylandEglClientHwIntegration; do
-            f="$Qt6_DIR/lib/libQt6${lib}.so.6"
-            [ -f "$f" ] && cp "$f" "$out/lib/"
-          done
-
-          # Qt plugins
-          for pdir in platforms imageformats sqldrivers wayland-shell-integration wayland-decoration-client wayland-graphics-integration-client; do
-            if [ -d "$Qt6_DIR/plugins/$pdir" ]; then
-              mkdir -p "$out/plugins/$pdir"
-              cp "$Qt6_DIR/plugins/$pdir"/*.so "$out/plugins/$pdir/" 2>/dev/null || true
-            fi
-          done
-
-          # ICU libraries (if present)
-          for f in "$Qt6_DIR"/lib/libicu*.so.*; do
-            [ -f "$f" ] && cp "$f" "$out/lib/"
-          done
-
-
-          # Wrapper script
-          cat > "$out/acheron.sh" <<'SCRIPT'
-          #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          export LD_LIBRARY_PATH="$DIR/lib:$LD_LIBRARY_PATH"
-          export QT_PLUGIN_PATH="$DIR/plugins"
-          exec "$DIR/acheron" "$@"
-          SCRIPT
-          chmod +x "$out/acheron.sh"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: acheron-linux
-          path: acheron-linux
 
   build-appimage:
     # ubuntu-22.04, not -latest: the AppImage bundles Qt but not glibc, so the
@@ -512,7 +473,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_INSTALL_PREFIX=/usr
           -DVCPKG_TARGET_TRIPLET=x64-linux
-          -DCMAKE_PREFIX_PATH="$Qt6_DIR;${{ github.workspace }}/ffmpeg"
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;${{ github.workspace }}/ffmpeg"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
@@ -527,6 +488,10 @@ jobs:
         run: |
           DESTDIR="$PWD/AppDir" cmake --install build
 
+          # The prebuilt libcurl-impersonate.a carries -g, so even a Release binary
+          # ships ~30 MB of DWARF for curl and BoringSSL
+          strip AppDir/usr/bin/acheron
+
           # linuxdeploy-plugin-qt deploys every sqldriver it finds, and
           # libqsqlmimer.so needs libmimerapi.so, which no runner has -- the
           # plugin treats that as fatal. Storage only ever opens QSQLITE
@@ -534,6 +499,10 @@ jobs:
           # in libpq/ldap/sasl/gnutls via the Postgres driver.
           find "$QT_ROOT_DIR/plugins/sqldrivers" -name '*.so' \
             ! -name 'libqsqlite.so' -delete
+
+          # Nothing installs a QTranslator, so Qt's own qtbase_*.qm are 5 MB of
+          # strings no one reads; the Windows jobs pass --no-translations for this
+          find "$QT_ROOT_DIR/translations" -name '*.qm' -delete
 
           # certs/ and fonts/ are resolved relative to applicationDirPath()
           # (CurlUtils.cpp, main.cpp), so they go next to the binary in
@@ -556,8 +525,6 @@ jobs:
         env:
           # linuxdeploy is itself an AppImage and the runner has no FUSE2
           APPIMAGE_EXTRACT_AND_RUN: 1
-          # Wayland client plugins aren't in DT_NEEDED, request them explicitly
-          EXTRA_QT_PLUGINS: wayland-decoration-client;wayland-graphics-integration-client;wayland-shell-integration
         run: |
           export QMAKE="$QT_ROOT_DIR/bin/qmake"
           export LDAI_RUNTIME_FILE="$PWD/runtime-x86_64"
@@ -585,7 +552,7 @@ jobs:
           done
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: acheron-appimage
           path: Acheron*.AppImage
@@ -631,7 +598,7 @@ jobs:
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
           -DVCPKG_TARGET_TRIPLET=arm64-osx
-          -DCMAKE_PREFIX_PATH="$Qt6_DIR"
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           -DCURL_INCLUDE_DIR="${{ github.workspace }}/curl-impersonate/include"
           -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
           -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz -Wl,-rpath,@executable_path/../Frameworks -Wl,-rpath,${{ github.workspace }}/curl-impersonate"
@@ -682,8 +649,14 @@ jobs:
           # Use macdeployqt to bundle Qt frameworks
           macdeployqt acheron-macos/Acheron.app -verbose=1
 
+          # Same rule as the Windows artifacts: Fusion is forced in main.cpp and
+          # Storage only ever opens QSQLITE
+          plugins="acheron-macos/Acheron.app/Contents/PlugIns"
+          rm -rf "$plugins/styles"
+          find "$plugins/sqldrivers" -name '*.dylib' ! -name 'libqsqlite.dylib' -delete
+
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: acheron-macos
           path: acheron-macos

@@ -418,16 +418,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/TwemojiCOLRv0.ttf")
     )
 endif()
 
-if(FFMPEG_RUNTIME_DIR)
-    file(GLOB FFMPEG_RUNTIME_DLLS "${FFMPEG_RUNTIME_DIR}/*.dll")
-    if(FFMPEG_RUNTIME_DLLS)
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${FFMPEG_RUNTIME_DLLS}
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-            COMMENT "Copying ffmpeg runtime libraries to build directory"
-        )
-    endif()
+if(FFMPEG_RUNTIME_DLLS)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${FFMPEG_RUNTIME_DLLS}
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMENT "Copying ffmpeg runtime libraries to build directory"
+    )
 endif()
 
 include(GNUInstallDirs)
