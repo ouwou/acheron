@@ -35,6 +35,8 @@ public:
     void stop();
     void hardStop();
 
+    [[nodiscard]] bool isRunning() const { return running; }
+
     void subscribeToGuild(Core::Snowflake guildId, Core::Snowflake channelId, const QList<QPair<int, int>> &ranges);
     void requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds);
     void requestForumUnreads(Core::Snowflake guildId, Core::Snowflake forumId,
@@ -48,6 +50,9 @@ signals:
     void connected();
     void disconnected(CloseCode code, const QString &reason);
     void reconnecting(int attempt, int maxAttempts);
+
+    // The network loop has exited for good; no reconnection will follow.
+    void finished();
 
     void gatewayHello();
     void gatewayReady(const Ready &data);
@@ -139,6 +144,7 @@ private:
     bool isFatalCloseCode(CloseCode code) const;
 
     void networkLoop();
+    void runConnection();
     void heartbeatLoop();
 
     // join network and heartbeat threads, destroy ingest thread
@@ -157,7 +163,7 @@ private:
     QByteArray receiveBuffer;
     IngestThread *ingest = nullptr;
 
-    bool wantToClose = false;
+    std::atomic<bool> wantToClose{ false };
     std::thread networkThread;
     std::chrono::steady_clock::time_point closeTime;
     static constexpr std::chrono::milliseconds closeTimeout = std::chrono::milliseconds(1000);

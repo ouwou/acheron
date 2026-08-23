@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QPointer>
 
 #include "Core/MemberListManager.hpp"
 #include "Core/ImageManager.hpp"
@@ -40,7 +41,7 @@ private:
     void connectManager();
     void disconnectManager();
 
-    Core::MemberListManager *manager = nullptr;
+    QPointer<Core::MemberListManager> manager;
     Core::ImageManager *imageManager;
 
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;

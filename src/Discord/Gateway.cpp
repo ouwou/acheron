@@ -24,6 +24,13 @@ static size_t write_cb(char *b, size_t size, size_t nmemb, void *userdata)
     return size * nmemb;
 }
 
+// Lets curl_easy_perform be interrupted mid-connect; without it a stop() request
+// is not seen until the handshake finishes or times out.
+static int abort_when_closing(void *userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    return static_cast<std::atomic<bool> *>(userdata)->load() ? 1 : 0;
+}
+
 Gateway::Gateway(const QString &token, const QString &gatewayUrl, ClientIdentity &identity,
                  QObject *parent)
     : QObject(parent), token(token), gatewayUrl(gatewayUrl), identity(identity), running(false)
@@ -648,6 +655,18 @@ static int curlDebug(CURL *, curl_infotype type, char *data, size_t size, void *
 
 void Gateway::networkLoop()
 {
+    runConnection();
+
+    running = false;
+    heartbeatCv.notify_all();
+    if (heartbeatThread.joinable())
+        heartbeatThread.join();
+
+    emit finished();
+}
+
+void Gateway::runConnection()
+{
     do {
         shouldReconnect = false;
 
@@ -675,10 +694,26 @@ void Gateway::networkLoop()
 
         curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abort_when_closing);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &wantToClose);
         CurlUtils::applyCommonOptions(curl);
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
+            if (wantToClose) {
+                {
+                    std::lock_guard lock(curlMutex);
+                    curl_easy_cleanup(curl);
+                    curl = nullptr;
+                }
+                running = false;
+                emit disconnected(CloseCode::CONNECTION_REQUEST_CANCELED,
+                                  "Connection cancelled");
+                return;
+            }
+
             qWarning() << "Failed to connect to gateway:" << curl_easy_strerror(res);
 
             // On connect failure during reconnect, retry with backoff
@@ -691,7 +726,9 @@ void Gateway::networkLoop()
                 int delay = 1000 + (std::rand() % 4000);
                 qCInfo(LogDiscord) << "Reconnect attempt" << reconnectAttempts
                                    << "in" << delay << "ms";
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                for (int waited = 0; waited < delay && !wantToClose; waited += 100)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
                 shouldReconnect = true;
                 continue;
             }
@@ -815,16 +852,11 @@ void Gateway::networkLoop()
             qCInfo(LogDiscord) << "Reconnecting in" << delay << "ms (attempt"
                                << reconnectAttempts << ")";
             emit reconnecting(reconnectAttempts, maxReconnectAttempts);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            for (int waited = 0; waited < delay && !wantToClose; waited += 100)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
     } while (shouldReconnect && running && reconnectAttempts < maxReconnectAttempts);
-
-    // Ensure heartbeat thread exits when the network loop is done
-    running = false;
-    heartbeatCv.notify_all();
-    if (heartbeatThread.joinable())
-        heartbeatThread.join();
 }
 
 void Gateway::heartbeatLoop()

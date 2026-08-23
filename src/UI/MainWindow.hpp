@@ -67,6 +67,7 @@ private slots:
 
 private:
     void switchActiveInstance(Core::ClientInstance *instance);
+    void detachInstance(Core::Snowflake accountId);
     void setupPermanentConnections(Core::ClientInstance *instance);
     void switchToTabEntry(const TabEntry &entry);
     void activateChannel(const TabEntry &entry);

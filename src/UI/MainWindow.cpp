@@ -143,6 +143,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
                             }
                         }
                     } else if (acc.state == Acheron::Core::ConnectionState::Disconnected) {
+                        detachInstance(acc.id);
                         bool wasShowing = channelListMode == ChannelListMode::Classic && railSelectedAccountId == acc.id;
                         channelTreeModel->removeAccount(acc.id);
                         instancesSignalsConnected.remove(acc.id);
@@ -335,6 +336,32 @@ void MainWindow::switchChatChannel(Core::Snowflake channelId, Core::Snowflake gu
     chatModel->setActiveChannel(channelId, guildId);
     typingTracker->setActiveChannel(channelId);
     messageInput->clearReplyTarget();
+}
+
+// Session destroys a ClientInstance as soon as it reports Disconnected, so every
+// pointer the UI holds into it has to be dropped while it is still alive.
+void MainWindow::detachInstance(Core::Snowflake accountId)
+{
+    if (!currentInstance || currentInstance->accountId() != accountId)
+        return;
+
+    currentInstance->forums()->setCurrentForum({});
+
+    auto *msgs = currentInstance->messages();
+    disconnect(msgs, nullptr, chatModel, nullptr);
+    disconnect(msgs, nullptr, this, nullptr);
+    disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
+    disconnect(currentInstance->permissions(), nullptr, this, nullptr);
+    disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+    disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
+    disconnect(currentInstance->forums(), nullptr, this, nullptr);
+
+    memberListModel->setManager(nullptr);
+    forumModel->setManager(nullptr);
+    typingTracker->clear();
+    typingTracker->setUserManager(nullptr);
+
+    currentInstance = nullptr;
 }
 
 void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)

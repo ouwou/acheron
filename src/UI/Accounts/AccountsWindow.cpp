@@ -367,7 +367,7 @@ void AccountsWindow::updateDetails(const AccountInfo *info)
         detailStatus->setText(tr("Connecting..."));
         detailStatus->setStyleSheet("color: orange; font-weight: bold;");
         connectButton->setEnabled(false);
-        disconnectButton->setEnabled(false);
+        disconnectButton->setEnabled(true);
         break;
     case ConnectionState::Connected:
         detailStatus->setText(tr("Connected"));

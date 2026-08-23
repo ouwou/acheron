@@ -44,6 +44,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
 
     connect(gateway, &Gateway::connected, this, &Client::onConnected);
     connect(gateway, &Gateway::disconnected, this, &Client::onDisconnected);
+    connect(gateway, &Gateway::finished, this,
+            [this] { setState(Core::ConnectionState::Disconnected); });
 
     connect(gateway, &Gateway::gatewayReady, this, &Client::onGatewayReady);
     connect(gateway, &Gateway::gatewayReadySupplemental, this, &Client::onGatewayReadySupplemental);
@@ -104,6 +106,11 @@ void Client::start()
 
 void Client::stop()
 {
+    if (!gateway->isRunning()) {
+        setState(Core::ConnectionState::Disconnected);
+        return;
+    }
+
     setState(Core::ConnectionState::Disconnecting);
     gateway->stop();
 }
