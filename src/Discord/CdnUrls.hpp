@@ -88,6 +88,9 @@ inline QUrl emoji(Core::Snowflake emojiId, int size = 48)
 
 QUrl connectionIcon(const QString &type);
 
+bool isSigned(const QUrl &url);
+bool hasExpired(const QUrl &url);
+
 } // namespace Cdn
 } // namespace Discord
 } // namespace Acheron

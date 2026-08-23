@@ -1,10 +1,47 @@
 #include "CdnUrls.hpp"
 
+#include <QDateTime>
 #include <QHash>
+#include <QUrlQuery>
 
 namespace Acheron {
 namespace Discord {
 namespace Cdn {
+
+namespace {
+
+constexpr qint64 RefreshWindowSecs = 60 * 60;
+
+bool isCdnHost(const QUrl &url)
+{
+    const QString host = url.host();
+    return host == QLatin1String("cdn.discordapp.com") || host == QLatin1String("media.discordapp.net");
+}
+
+qint64 expiryEpochSecs(const QUrl &url)
+{
+    const QString ex = QUrlQuery(url).queryItemValue(QStringLiteral("ex"));
+    if (ex.isEmpty())
+        return 0;
+
+    bool ok = false;
+    const qint64 seconds = ex.toLongLong(&ok, 16);
+    return ok ? seconds : 0;
+}
+
+} // namespace
+
+bool isSigned(const QUrl &url)
+{
+    return isCdnHost(url) && expiryEpochSecs(url) > 0;
+}
+
+bool hasExpired(const QUrl &url)
+{
+    if (!isSigned(url))
+        return false;
+    return QDateTime::currentSecsSinceEpoch() + RefreshWindowSecs >= expiryEpochSecs(url);
+}
 
 QUrl connectionIcon(const QString &type)
 {

@@ -2,10 +2,13 @@
 
 #include <QImageReader>
 
+#include <cmath>
+
 #include "Core/Markdown/Parser.hpp"
 #include "Core/MessageManager.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Manager.hpp"
+#include "Core/Media/Player.hpp"
 #include "Discord/Enums.hpp"
 
 namespace Acheron {
@@ -158,6 +161,12 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
 
                             if (embed.image.hasValue() && embed.image->proxyUrl.hasValue() &&
                                 QUrl(*embed.image->proxyUrl) == url) {
+                                found = true;
+                                break;
+                            }
+
+                            if (embed.video.hasValue() && embed.video->proxyUrl.hasValue() &&
+                                QUrl(*embed.video->proxyUrl) == url) {
                                 found = true;
                                 break;
                             }
@@ -355,7 +364,13 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             data.id = att.id;
             data.proxyUrl = QUrl(*att.proxyUrl);
             data.originalUrl = QUrl(*att.url);
-            data.isImage = att.isImage();
+            const MediaFlags media = mediaFlagsFor(att, msg);
+            data.isImage = media.isImage;
+            data.contentType = media.contentType;
+            data.isVideo = media.isVideo;
+            data.isVoiceMessage = media.isVoiceMessage;
+            data.isAudio = media.isAudio;
+            data.durationMs = media.durationMs;
             data.filename = att.filename.hasValue() ? *att.filename : "unknown";
             data.fileSizeBytes = att.size.hasValue() ? *att.size : 0;
             data.isSpoiler = att.isSpoiler();
@@ -366,10 +381,14 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 data.uploadTotal = (*progress)[attIndex].second;
             }
 
-            if (att.isImage()) {
+            if (data.isMedia()) {
                 QSize original;
                 if (att.width.hasValue() && att.height.hasValue())
                     original = QSize(*att.width, *att.height);
+                if (!original.isValid() && data.isVideo) {
+                    const QSize decoded = videoNativeSizes.value(data.id);
+                    original = decoded.isValid() ? decoded : QSize(1280, 720);
+                }
 
                 data.displaySize = Core::ImageManager::calculateDisplaySize(original);
                 if (!att.localPreview.isNull()) {
@@ -546,21 +565,50 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 }
 
                 if (embed.video.hasValue()) {
+                    QUrl mediaUrl;
+                    if (embed.video->proxyUrl.hasValue())
+                        mediaUrl = QUrl(*embed.video->proxyUrl);
+                    if (mediaUrl.isEmpty() && embed.video->url.hasValue())
+                        mediaUrl = QUrl(*embed.video->url);
+
+                    const QString videoType = embed.video->contentType.hasValue()
+                                                      ? *embed.video->contentType
+                                                      : QString();
+                    if (!mediaUrl.isEmpty() && Core::Media::canPlay(videoType, mediaUrl)) {
+                        data.videoUrl = mediaUrl;
+                        data.videoPlayable = true;
+                        hasAnything = true;
+                    }
+
+                    QUrl posterUrl;
+                    QSize posterSize;
                     if (embed.thumbnail.hasValue() && embed.thumbnail->proxyUrl.hasValue() &&
                         embed.thumbnail->proxyUrl->startsWith("https://")) {
-                        hasAnything = true;
-                        data.videoThumbnailUrl = QUrl(*embed.thumbnail->proxyUrl);
-                        QSize origSize;
+                        posterUrl = QUrl(*embed.thumbnail->proxyUrl);
                         if (embed.thumbnail->width.hasValue() && embed.thumbnail->height.hasValue())
-                            origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
-                        data.videoThumbnailSize =
-                                Core::ImageManager::calculateDisplaySize(origSize);
-                        data.videoThumbnail =
-                                suppressImageFetch
-                                        ? imageManager->getIfCached(data.videoThumbnailUrl,
-                                                                    data.videoThumbnailSize)
-                                        : imageManager->get(data.videoThumbnailUrl,
-                                                            data.videoThumbnailSize);
+                            posterSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
+                    } else if (data.videoPlayable && embed.video->proxyUrl.hasValue()) {
+                        posterUrl = QUrl(*embed.video->proxyUrl);
+                        if (embed.video->width.hasValue() && embed.video->height.hasValue())
+                            posterSize = QSize(*embed.video->width, *embed.video->height);
+                    }
+
+                    if (!posterUrl.isEmpty()) {
+                        hasAnything = true;
+                        data.videoThumbnailUrl = posterUrl;
+                        data.videoThumbnailSize = Core::ImageManager::calculateDisplaySize(posterSize);
+                        data.videoThumbnail = suppressImageFetch
+                                                      ? imageManager->getIfCached(data.videoThumbnailUrl,
+                                                                                  data.videoThumbnailSize)
+                                                      : imageManager->get(data.videoThumbnailUrl,
+                                                                          data.videoThumbnailSize);
+                    }
+
+                    if (data.videoPlayable && !data.videoThumbnailSize.isValid()) {
+                        QSize videoSize;
+                        if (embed.video->width.hasValue() && embed.video->height.hasValue())
+                            videoSize = QSize(*embed.video->width, *embed.video->height);
+                        data.videoThumbnailSize = Core::ImageManager::calculateDisplaySize(videoSize);
                     }
                 }
 
@@ -755,6 +803,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         uploadProgress.clear();
         localPixmapCache.clear();
         previewPixmapCache.clear();
+        mediaFlagsCache.clear();
         messages = incomingMessages;
         endResetModel();
         break;
@@ -981,6 +1030,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
     uploadProgress.clear();
     localPixmapCache.clear();
     previewPixmapCache.clear();
+    mediaFlagsCache.clear();
     revealedSpoilers.clear();
     endResetModel();
 }
@@ -1027,6 +1077,63 @@ void ChatModel::revealSpoiler(Snowflake attachmentId)
 bool ChatModel::isSpoilerRevealed(Snowflake attachmentId) const
 {
     return revealedSpoilers.contains(attachmentId);
+}
+
+ChatModel::MediaFlags ChatModel::mediaFlagsFor(const Discord::Attachment &att, const Discord::Message &msg) const
+{
+    auto cached = mediaFlagsCache.constFind(*att.id);
+    if (cached != mediaFlagsCache.constEnd())
+        return *cached;
+
+    MediaFlags flags;
+    flags.isImage = att.isImage();
+    flags.contentType = att.contentType.hasValue() ? *att.contentType : QString();
+
+    const QUrl url(att.url.hasValue() ? *att.url : QString());
+    const bool voiceFlagged = msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::IS_VOICE_MESSAGE);
+
+    flags.isVideo = !flags.isImage && Core::Media::canPlay(flags.contentType, url);
+    flags.isVoiceMessage = !msg.isPendingOutbound && Core::Media::isSupported() &&
+                           !flags.isImage && !flags.isVideo && voiceFlagged &&
+                           (flags.contentType.isEmpty() ||
+                            flags.contentType.startsWith(QLatin1String("audio/")));
+    flags.isAudio = flags.isVoiceMessage ||
+                    (!msg.isPendingOutbound && !flags.isImage && !flags.isVideo &&
+                     Core::Media::canPlayAudio(flags.contentType, url));
+
+    if (att.durationSecs.hasValue() && std::isfinite(*att.durationSecs) && *att.durationSecs > 0.0)
+        flags.durationMs = static_cast<qint64>(qMin(*att.durationSecs, 86400.0) * 1000.0);
+
+    if (!msg.isPendingOutbound)
+        mediaFlagsCache.insert(*att.id, flags);
+
+    return flags;
+}
+
+void ChatModel::setVideoNativeSize(Snowflake attachmentId, const QSize &size)
+{
+    if (size.isEmpty())
+        return;
+    if (videoNativeSizes.value(attachmentId) == size)
+        return;
+
+    videoNativeSizes.insert(attachmentId, size);
+
+    for (int row = 0; row < messages.size(); ++row) {
+        const auto &msg = messages[row];
+        if (!msg.attachments.hasValue())
+            continue;
+
+        for (const auto &att : *msg.attachments) {
+            if (*att.id != attachmentId)
+                continue;
+
+            sizeCache.remove(msg.id);
+            QModelIndex idx = index(row, 0);
+            emit dataChanged(idx, idx, { AttachmentsRole, CachedSizeRole });
+            return;
+        }
+    }
 }
 
 QTextDocument *ChatModel::getCachedDocument(const DocCacheKey &key) const

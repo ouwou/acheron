@@ -516,6 +516,7 @@ struct Attachment : Core::JsonUtils::JsonObject
     Field<QString> proxyUrl;
     Field<int, true> width;
     Field<int, true> height;
+    Field<double, true> durationSecs;
     Field<AttachmentFlags, true> flags;
 
     // local preview of pasted bitmaps
@@ -532,6 +533,7 @@ struct Attachment : Core::JsonUtils::JsonObject
         get(obj, "proxy_url", att.proxyUrl);
         get(obj, "width", att.width);
         get(obj, "height", att.height);
+        get(obj, "duration_secs", att.durationSecs);
         get(obj, "flags", att.flags);
         return att;
     }

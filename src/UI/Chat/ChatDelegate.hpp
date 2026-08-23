@@ -5,7 +5,7 @@
 namespace Acheron {
 namespace Core {
 class ImageManager;
-}
+} // namespace Core
 namespace UI {
 class ChatDelegate : public QStyledItemDelegate
 {

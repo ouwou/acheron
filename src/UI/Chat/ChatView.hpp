@@ -12,6 +12,7 @@ namespace Acheron {
 namespace UI {
 
 class ImageViewer;
+class InlineVideoController;
 struct ChatCursor
 {
     int row = -1;
@@ -42,6 +43,8 @@ public:
     int hoveredCharIndexAtPaint() const { return hoveredChar; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
 
+    [[nodiscard]] InlineVideoController *videoController() const { return video; }
+
     static constexpr int InlineEditMinHeight = 60;
 
     bool hasTextSelection() const;
@@ -50,6 +53,7 @@ public:
     ChatCursor selectionEnd() const;
 
     void setModel(QAbstractItemModel *model) override;
+
     void setCurrentUserId(Core::Snowflake userId);
     void setCanPinMessages(bool canPin);
     void setCanManageMessages(bool canManage);
@@ -64,6 +68,8 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void clearSelection();
     void leaveEvent(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -97,6 +103,8 @@ private:
     void startInlineEdit(const QModelIndex &index);
     void commitInlineEdit();
     void cancelInlineEdit();
+
+    InlineVideoController *video = nullptr;
 
     QTextEdit *inlineEditWidget = nullptr;
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;

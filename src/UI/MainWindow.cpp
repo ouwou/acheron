@@ -7,6 +7,7 @@
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
+#include "Chat/InlineVideoController.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
 #include "Forum/NewPostDialog.hpp"
@@ -43,7 +44,7 @@
 #include "Core/Session.hpp"
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
-#include "Core/AV/VoiceManager.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 #include "VoiceStatusBar.hpp"
 #endif
 
@@ -752,10 +753,10 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
             });
 
 #ifndef ACHERON_NO_VOICE
-    connect(instance->voice(), &Core::AV::VoiceManager::voiceStateChanged,
+    connect(instance->voice(), &Core::Audio::VoiceManager::voiceStateChanged,
             this, &MainWindow::updateVoiceStatusLabel);
 
-    connect(instance->voice(), &Core::AV::VoiceManager::channelVoiceMemberChanged,
+    connect(instance->voice(), &Core::Audio::VoiceManager::channelVoiceMemberChanged,
             this, [this, instance](Core::Snowflake channelId, Core::Snowflake userId, bool joined) {
                 int count = instance->voice()->channelVoiceUserCount(channelId);
                 channelTreeModel->updateVoiceCount(channelId, count, instance->accountId());
@@ -763,7 +764,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                                                          instance->accountId());
             });
 
-    connect(instance->voice(), &Core::AV::VoiceManager::participantVoiceStateChanged,
+    connect(instance->voice(), &Core::Audio::VoiceManager::participantVoiceStateChanged,
             this, [this, instance](Core::Snowflake channelId, Core::Snowflake userId) {
                 channelTreeModel->updateVoiceParticipantState(channelId, userId,
                                                               instance->accountId());
@@ -1014,6 +1015,18 @@ void MainWindow::setupUi()
                     return;
 
                 markIndexAsRead(accountNode->id, sourceIndex);
+            });
+
+    chatView->videoController()->setUrlRefresher(
+            [this](const QUrl &stale, std::function<void(const QUrl &)> done) {
+                if (!currentInstance) {
+                    done(QUrl());
+                    return;
+                }
+                currentInstance->discord()->refreshAttachmentUrls(
+                        { stale }, [stale, done](const Core::Result<QHash<QUrl, QUrl>> &result) {
+                            done(result.success() ? result.value->value(stale) : QUrl());
+                        });
             });
 
     chatView->setModel(chatModel);
@@ -1581,7 +1594,7 @@ void MainWindow::recordLastViewedChannel(Snowflake accountId, Snowflake guildId,
 #ifndef ACHERON_NO_VOICE
 void MainWindow::updateVoiceStatusLabel()
 {
-    using VState = Discord::AV::VoiceClient::State;
+    using VState = Discord::Voice::VoiceClient::State;
 
     // Find any account that is in voice or has an active voice client
     Core::ClientInstance *voiceInstance = nullptr;
@@ -1592,7 +1605,7 @@ void MainWindow::updateVoiceStatusLabel()
         }
     }
 
-    Core::AV::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
+    Core::Audio::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
     voiceStatusBar->setVoiceManager(vm);
 
     if (voiceInstance) {

@@ -183,6 +183,39 @@ void Client::fetchUserProfile(Snowflake userId, Snowflake guildId, ProfileCallba
     });
 }
 
+void Client::refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback)
+{
+    QJsonArray requested;
+    for (const QUrl &url : urls)
+        requested.append(url.toString());
+
+    QJsonObject payload;
+    payload["attachment_urls"] = requested;
+
+    httpClient->post("/attachments/refresh-urls",
+                     payload,
+                     [urls, callback](const HttpResponse &response) {
+                         if (!response.success) {
+                             qCWarning(LogDiscord) << "Failed to refresh attachment URLs:" << response.error;
+                             callback(Core::Result<QHash<QUrl, QUrl>>::makeError(response.error));
+                             return;
+                         }
+
+                         QHash<QUrl, QUrl> refreshed;
+                         const QJsonArray entries =
+                                 QJsonDocument::fromJson(response.body).object().value("refreshed_urls").toArray();
+
+                         // matches pos
+                         for (int i = 0; i < entries.size() && i < urls.size(); ++i) {
+                             const QString fresh = entries[i].toObject().value("refreshed").toString();
+                             if (!fresh.isEmpty())
+                                 refreshed.insert(urls[i], QUrl(fresh));
+                         }
+
+                         callback(Core::Result<QHash<QUrl, QUrl>>::makeOk(refreshed));
+                     });
+}
+
 void Client::setUserNote(Snowflake userId, const QString &note)
 {
     QString endpoint = "/users/@me/notes/" + QString::number(userId);

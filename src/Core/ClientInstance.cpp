@@ -1,7 +1,7 @@
 #include "ClientInstance.hpp"
 #include "ReadStateManager.hpp"
 #ifndef ACHERON_NO_VOICE
-#include "Core/AV/VoiceManager.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 #endif
 
 #include <algorithm>
@@ -50,7 +50,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
     relationshipManager = new RelationshipManager(this);
 #ifndef ACHERON_NO_VOICE
-    voiceManager = new AV::VoiceManager(info.id, this);
+    voiceManager = new Audio::VoiceManager(info.id, this);
 #endif
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
@@ -1053,7 +1053,7 @@ MemberListManager *ClientInstance::memberList() const
 }
 
 #ifndef ACHERON_NO_VOICE
-AV::VoiceManager *ClientInstance::voice() const
+Audio::VoiceManager *ClientInstance::voice() const
 {
     return voiceManager;
 }

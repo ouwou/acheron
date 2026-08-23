@@ -8,6 +8,8 @@
 #include <algorithm>
 
 #include "Core/TimeUtils.hpp"
+#include "UI/Chat/InlineVideoController.hpp"
+#include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
 #include "UI/ImageViewer.hpp"
 
@@ -30,6 +32,8 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     inlineEditWidget->setFrameStyle(QFrame::Box);
     inlineEditWidget->setLineWidth(2);
     inlineEditWidget->installEventFilter(this);
+
+    video = new InlineVideoController(this);
 
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             &ChatView::onScrollBarValueChanged);
@@ -54,6 +58,8 @@ void ChatView::setModel(QAbstractItemModel *model)
 {
     QListView::setModel(model);
 
+    video->attachModel(model);
+
     connect(model, &QAbstractItemModel::modelReset, this, [this]() {
         isFetchingTop = false;
         anchorIndex = QPersistentModelIndex();
@@ -67,12 +73,36 @@ void ChatView::setModel(QAbstractItemModel *model)
     connect(model, &QAbstractItemModel::dataChanged, this, &ChatView::onDataChanged);
 }
 
+void ChatView::resizeEvent(QResizeEvent *event)
+{
+    video->invalidateRects();
+
+    QListView::resizeEvent(event);
+}
+
+void ChatView::paintEvent(QPaintEvent *event)
+{
+    video->setPaintDamage(event->rect());
+    QListView::paintEvent(event);
+    video->setPaintDamage(QRect());
+}
+
 void ChatView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         QPoint pos = event->pos();
         QModelIndex idx = indexAt(pos);
-        int charPos = ChatLayout::hitTestCharIndex(this, idx, pos);
+        auto resolved = ChatLayout::resolveLayout(this, idx);
+        auto region = ChatLayout::hitTest(resolved, pos);
+
+        const auto target = region ? MediaTargets::forRegion(resolved, *region) : MediaTarget();
+        if (target.isValid()) {
+            clearSelection();
+            video->press(target, pos);
+            return;
+        }
+
+        int charPos = ChatLayout::hitTestCharIndex(resolved, pos);
 
         if (charPos >= 0) {
             selectionAnchor = { idx.row(), charPos };
@@ -88,6 +118,12 @@ void ChatView::mousePressEvent(QMouseEvent *event)
 void ChatView::mouseMoveEvent(QMouseEvent *event)
 {
     QPoint pos = event->pos();
+
+    if (video->dragging()) {
+        video->updateDrag(pos);
+        return;
+    }
+
     QModelIndex idx = indexAt(pos);
 
     bool inSelectionDrag = (event->buttons() & Qt::LeftButton) && selectionAnchor.isValid();
@@ -131,6 +167,8 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
 
     auto region = ChatLayout::hitTest(resolved, pos);
 
+    video->updateHover(region ? MediaTargets::forRegion(resolved, *region) : MediaTarget(), pos);
+
     Qt::CursorShape shape = Qt::ArrowCursor;
     int charPos = -1;
     if (region) {
@@ -164,6 +202,12 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     }
 
     QPoint pos = event->pos();
+
+    if (video->dragging()) {
+        video->endDrag();
+        return;
+    }
+
     QModelIndex idx = indexAt(pos);
     ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
     auto region = ChatLayout::hitTest(resolved, pos);
@@ -203,6 +247,22 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         QString emojiStr = r.emojiId.isValid() ? (r.emojiName + ":" + QString::number(r.emojiId))
                                                : r.emojiName;
         emit toggleReactionClicked(channelId, messageId, emojiStr, r.me, r.isBurst);
+        break;
+    }
+
+    case Kind::AttachmentVideo:
+    case Kind::AttachmentAudio: {
+        const auto target = MediaTargets::forRegion(resolved, *region);
+        if (!target.isValid())
+            break;
+
+        if (target.spoilered) {
+            if (auto *chatModel = qobject_cast<ChatModel *>(model()))
+                chatModel->revealSpoiler(target.attachmentId);
+            break;
+        }
+
+        video->release(target, idx, pos);
         break;
     }
 
@@ -254,7 +314,15 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         break;
     }
 
-    case Kind::EmbedVideoThumbnail:
+    case Kind::EmbedVideoThumbnail: {
+        const auto target = MediaTargets::forRegion(resolved, *region);
+        if (target.isValid())
+            video->release(target, idx, pos);
+        else
+            openExternalLink(region->url);
+        break;
+    }
+
     case Kind::EmbedAuthor:
     case Kind::EmbedTitle:
     case Kind::EmbedLink:
@@ -299,6 +367,9 @@ void ChatView::leaveEvent(QEvent *event)
     bool needsUpdate = (hoveredRow != -1);
     hoveredRow = -1;
     hoveredChar = -1;
+
+    if (!video->dragging())
+        video->clearHover();
 
     if (needsUpdate) {
         viewport()->update();
@@ -394,6 +465,9 @@ void ChatView::onScrollBarValueChanged(int value)
         isFetchingTop = true;
         emit historyRequested();
     }
+
+    if (underMouse())
+        video->refreshHoverAt(viewport()->mapFromGlobal(QCursor::pos()));
 }
 
 void ChatView::setCurrentUserId(Core::Snowflake userId)

@@ -3,13 +3,22 @@
         <file>resources/placeholder.png</file>
         <file>resources/icons/lucide/at-sign.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
+        <file>resources/icons/lucide/file-audio.svg</file>
         <file>resources/icons/lucide/file-text.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
+        <file>resources/icons/lucide/maximize.svg</file>
         <file>resources/icons/lucide/message-circle.svg</file>
+        <file>resources/icons/lucide/mic.svg</file>
+        <file>resources/icons/lucide/minimize.svg</file>
+        <file>resources/icons/lucide/pause.svg</file>
         <file>resources/icons/lucide/pencil.svg</file>
+        <file>resources/icons/lucide/play.svg</file>
         <file>resources/icons/lucide/spool.svg</file>
+        <file>resources/icons/lucide/triangle-alert.svg</file>
+        <file>resources/icons/lucide/volume-2.svg</file>
+        <file>resources/icons/lucide/volume-x.svg</file>
         <file>resources/icons/lucide/x.svg</file>
     </qresource>
 </RCC>
