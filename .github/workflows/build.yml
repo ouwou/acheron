@@ -114,8 +114,8 @@ jobs:
           # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
-          # Remove test executables from artifact
-          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
+          # Drop build leftovers that nothing at runtime needs
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -199,8 +199,8 @@ jobs:
           # Copy curl-impersonate DLL
           Copy-Item "$curlDir/lib/*.dll" $out -Force
 
-          # Remove test executables from artifact
-          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
+          # Drop build leftovers that nothing at runtime needs
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -325,8 +325,8 @@ jobs:
           # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
           Copy-Item "openssl-bin/*.dll" $out -Force
 
-          # Remove test executables from artifact
-          Remove-Item "$out/Test*.exe" -ErrorAction SilentlyContinue
+          # Drop build leftovers that nothing at runtime needs
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib" -ErrorAction SilentlyContinue
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
