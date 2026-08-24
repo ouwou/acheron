@@ -315,12 +315,21 @@ QImage MediaDecoder::scaleToImage(const AVFrame *frame, const QSize &target)
         swsTarget = target;
     }
 
-    QImage image(target.width(), target.height(), QImage::Format_RGB32);
-    uint8_t *dstData[4] = { image.bits(), nullptr, nullptr, nullptr };
-    int dstStride[4] = { static_cast<int>(image.bytesPerLine()), 0, 0, 0 };
+    // swscale will oob without extra room because of simd stuff
+    const int stride = target.width() * 4;
+    const int spareRows = (64 + stride - 1) / stride;
+
+    auto *storage = new QImage(target.width(), target.height() + spareRows, QImage::Format_RGB32);
+    if (storage->isNull()) {
+        delete storage;
+        return QImage();
+    }
+
+    uint8_t *dstData[4] = { storage->bits(), nullptr, nullptr, nullptr };
+    int dstStride[4] = { static_cast<int>(storage->bytesPerLine()), 0, 0, 0 };
     sws_scale(swsCtx, frame->data, frame->linesize, 0, frame->height, dstData, dstStride);
 
-    return image;
+    return QImage(storage->bits(), target.width(), target.height(), storage->bytesPerLine(), QImage::Format_RGB32, [](void *owner) { delete static_cast<QImage *>(owner); }, storage);
 }
 
 int MediaDecoder::appendResampledFrames(const AVFrame *frame, std::vector<float> &out,
