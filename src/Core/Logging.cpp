@@ -1,5 +1,6 @@
 #include "Logging.hpp"
 
+#include <QDateTime>
 #include <QDir>
 #include <QThread>
 
