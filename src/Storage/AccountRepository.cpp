@@ -6,6 +6,19 @@
 namespace Acheron {
 namespace Storage {
 
+namespace {
+Core::ProxyConfig parseProxy(const QString &stored, Core::Snowflake accountId)
+{
+    std::optional<Core::ProxyConfig> parsed = Core::ProxyConfig::parse(stored);
+    if (!parsed) {
+        qCWarning(LogDB) << "AccountRepository: Ignoring malformed proxy for account" << accountId.toString();
+        return {};
+    }
+
+    return *parsed;
+}
+} // namespace
+
 void AccountRepository::saveAccount(const Core::AccountInfo &acc)
 {
     QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
@@ -17,8 +30,8 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     QSqlQuery query(db);
     query.prepare(R"(
             INSERT OR REPLACE INTO accounts
-            (id, username, display_name, avatar, gateway_url, rest_url, cdn_url, display_order, auto_connect)
-            VALUES (:id, :username, :display_name, :avatar, :gateway_url, :rest_url, :cdn_url, :display_order, :auto_connect)
+            (id, username, display_name, avatar, gateway_url, rest_url, cdn_url, display_order, auto_connect, proxy_url)
+            VALUES (:id, :username, :display_name, :avatar, :gateway_url, :rest_url, :cdn_url, :display_order, :auto_connect, :proxy_url)
         )");
 
     query.bindValue(":id", static_cast<qint64>(acc.id));
@@ -30,6 +43,7 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
     query.bindValue(":cdn_url", acc.cdnUrl);
     query.bindValue(":display_order", acc.displayOrder);
     query.bindValue(":auto_connect", acc.autoConnect ? 1 : 0);
+    query.bindValue(":proxy_url", acc.proxy.toString());
 
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Save failed:" << query.lastError().text();
@@ -65,6 +79,7 @@ Core::AccountInfo AccountRepository::getAccount(quint64 id)
     acc.cdnUrl = query.value("cdn_url").toString();
     acc.displayOrder = query.value("display_order").toInt();
     acc.autoConnect = query.value("auto_connect").toBool();
+    acc.proxy = parseProxy(query.value("proxy_url").toString(), acc.id);
 
     return acc;
 }
@@ -92,6 +107,7 @@ QVector<Core::AccountInfo> AccountRepository::getAllAccounts()
         acc.cdnUrl = query.value("cdn_url").toString();
         acc.displayOrder = query.value("display_order").toInt();
         acc.autoConnect = query.value("auto_connect").toBool();
+        acc.proxy = parseProxy(query.value("proxy_url").toString(), acc.id);
 
         acc.state = Core::ConnectionState::Disconnected;
 
@@ -127,6 +143,19 @@ void AccountRepository::updateDisplayOrder(quint64 id, int order)
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Update display order failed:"
                          << query.lastError().text();
+}
+
+void AccountRepository::updateProxy(quint64 id, const Core::ProxyConfig &proxy)
+{
+    QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
+    QSqlQuery query(db);
+
+    query.prepare("UPDATE accounts SET proxy_url = :proxy_url WHERE id = :id");
+    query.bindValue(":proxy_url", proxy.toString());
+    query.bindValue(":id", static_cast<qint64>(id));
+
+    if (!query.exec())
+        qCWarning(LogDB) << "AccountRepository: Update proxy failed:" << query.lastError().text();
 }
 
 void AccountRepository::updateAutoConnect(quint64 id, bool autoConnect)

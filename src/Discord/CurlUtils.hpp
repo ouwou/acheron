@@ -3,8 +3,11 @@
 #include <QString>
 #include <QObject>
 
+#include "Core/ProxyConfig.hpp"
+
 #include <curl/curl.h>
 
+#include <functional>
 #include <mutex>
 
 class QNetworkAccessManager;
@@ -29,11 +32,13 @@ QString getUserAgent();
 QString getImpersonateTarget();
 UserAgentProps getUserAgentProps();
 
-void fetchBuildNumber(QNetworkAccessManager *nam);
+void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done);
 int getBuildNumber();
 
 // cacert, curl-impersonate, user-agent
 void applyCommonOptions(CURL *curl);
+
+void applyProxy(CURL *curl, const Core::ProxyConfig &proxy);
 
 void appendDiscordHeaders(curl_slist **headers, const ClientIdentity &identity, const QString &referer);
 

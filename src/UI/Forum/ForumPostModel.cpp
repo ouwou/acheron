@@ -44,6 +44,11 @@ ForumPostModel::ForumPostModel(Core::ImageManager *imageManager, QObject *parent
             });
 }
 
+void ForumPostModel::setAccount(Snowflake id)
+{
+    accountId = id;
+}
+
 void ForumPostModel::setManager(Core::ForumManager *m)
 {
     if (manager == m)
@@ -128,7 +133,7 @@ QPixmap ForumPostModel::fetchedPixmap(const QUrl &url, const QSize &size) const
 {
     if (!imageManager)
         return {};
-    QPixmap px = imageManager->get(url, size);
+    QPixmap px = imageManager->get(url, size, accountId);
     return imageManager->isCached(url, size) ? px : QPixmap();
 }
 

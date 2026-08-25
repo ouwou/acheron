@@ -15,9 +15,10 @@ class AvatarRequestTracker
 {
 public:
     QPixmap fetch(Core::ImageManager *imageManager, const QUrl &url, const QSize &size,
-                  const Target &target, Core::PinGroup pin = Core::PinGroup::None)
+                  const Target &target, Core::Snowflake accountId,
+                  Core::PinGroup pin = Core::PinGroup::None)
     {
-        QPixmap pixmap = imageManager->get(url, size, pin);
+        QPixmap pixmap = imageManager->get(url, size, accountId, pin);
         if (!imageManager->isCached(url, size))
             track(url, target);
         return pixmap;

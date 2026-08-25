@@ -8,6 +8,8 @@
 
 #include <memory>
 
+#include "Core/ProxyConfig.hpp"
+
 namespace Acheron {
 namespace Core {
 namespace Media {
@@ -19,9 +21,9 @@ enum class MediaKind {
 
 bool isSupported();
 
-bool canPlay(const QString &contentType, const QUrl &url = QUrl());
+bool canPlay(const QString &contentType, const QUrl &url);
 
-bool canPlayAudio(const QString &contentType, const QUrl &url = QUrl());
+bool canPlayAudio(const QString &contentType, const QUrl &url);
 
 float storedVolume();
 void setStoredVolume(float volume);
@@ -45,7 +47,7 @@ public:
     explicit Player(QObject *parent = nullptr);
     ~Player() override;
 
-    void open(const QUrl &url);
+    void open(const QUrl &url, const ProxyConfig &proxy);
     void close();
 
     void play();

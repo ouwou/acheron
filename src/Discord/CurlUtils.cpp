@@ -14,19 +14,46 @@
 #include <QNetworkRequest>
 #include <QNetworkReply>
 
+#include <utility>
+#include <vector>
+
 namespace Acheron {
 namespace Discord {
 namespace CurlUtils {
 
 static int cachedBuildNumber = 0;
+static bool buildNumberFetchInFlight = false;
+static std::vector<std::function<void()>> buildNumberWaiters;
 static constexpr int fallbackBuildNumber = 482285;
+static constexpr int BUILD_NUMBER_TIMEOUT_MS = 10000;
 
-void fetchBuildNumber(QNetworkAccessManager *nam)
+static void resolveBuildNumberWaiters()
 {
+    buildNumberFetchInFlight = false;
+
+    std::vector<std::function<void()>> waiters;
+    waiters.swap(buildNumberWaiters);
+    for (auto &waiter : waiters)
+        waiter();
+}
+
+void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done)
+{
+    if (cachedBuildNumber > 0) {
+        done();
+        return;
+    }
+
+    buildNumberWaiters.push_back(std::move(done));
+    if (buildNumberFetchInFlight)
+        return;
+    buildNumberFetchInFlight = true;
+
     qCInfo(LogNetwork) << "Fetching Discord build number...";
 
     QNetworkRequest request(QUrl("https://discord.com/app"));
     request.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
+    request.setTransferTimeout(BUILD_NUMBER_TIMEOUT_MS);
 
     QNetworkReply *appReply = nam->get(request);
     QObject::connect(appReply, &QNetworkReply::finished, [nam, appReply]() {
@@ -34,6 +61,7 @@ void fetchBuildNumber(QNetworkAccessManager *nam)
 
         if (appReply->error() != QNetworkReply::NoError) {
             qCWarning(LogNetwork) << "Failed to fetch Discord app page:" << appReply->errorString();
+            resolveBuildNumberWaiters();
             return;
         }
 
@@ -43,6 +71,7 @@ void fetchBuildNumber(QNetworkAccessManager *nam)
 
         if (!sentryMatch.hasMatch()) {
             qCWarning(LogNetwork) << "Failed to find sentry JS path";
+            resolveBuildNumberWaiters();
             return;
         }
 
@@ -51,27 +80,26 @@ void fetchBuildNumber(QNetworkAccessManager *nam)
 
         QNetworkRequest sentryRequest(sentryUrl);
         sentryRequest.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
+        sentryRequest.setTransferTimeout(BUILD_NUMBER_TIMEOUT_MS);
 
         QNetworkReply *sentryReply = nam->get(sentryRequest);
         QObject::connect(sentryReply, &QNetworkReply::finished, [sentryReply]() {
             sentryReply->deleteLater();
 
-            if (sentryReply->error() != QNetworkReply::NoError) {
-                qCWarning(LogNetwork) << "Failed to fetch sentry JS:" << sentryReply->errorString();
-                return;
-            }
-
             QByteArray sentryJs = sentryReply->readAll();
             QRegularExpression buildRegex("buildNumber\",\"(\\d+)");
             QRegularExpressionMatch buildMatch = buildRegex.match(sentryJs);
 
-            if (!buildMatch.hasMatch()) {
+            if (sentryReply->error() != QNetworkReply::NoError)
+                qCWarning(LogNetwork) << "Failed to fetch sentry JS:" << sentryReply->errorString();
+            else if (!buildMatch.hasMatch())
                 qCWarning(LogNetwork) << "Failed to extract build number";
-                return;
+            else {
+                cachedBuildNumber = buildMatch.captured(1).toInt();
+                qCInfo(LogNetwork) << "Discord build number:" << cachedBuildNumber;
             }
 
-            cachedBuildNumber = buildMatch.captured(1).toInt();
-            qCInfo(LogNetwork) << "Discord build number:" << cachedBuildNumber;
+            resolveBuildNumberWaiters();
         });
     });
 }
@@ -119,6 +147,27 @@ void applyCommonOptions(CURL *curl)
     curl_easy_impersonate(curl, getImpersonateTarget().toUtf8().constData(), 1);
 #endif
     curl_easy_setopt(curl, CURLOPT_USERAGENT, getUserAgent().toUtf8().constData());
+}
+
+void applyProxy(CURL *curl, const Core::ProxyConfig &proxy)
+{
+    if (!proxy.enabled())
+        return;
+
+    curl_easy_setopt(curl, CURLOPT_PROXY, proxy.toCurlUrl().toUtf8().constData());
+    // ignore $no_proxy
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
+
+    if (proxy.type == Core::ProxyConfig::Type::Https) {
+        CURLcode rc = curl_easy_setopt(curl, CURLOPT_PROXYTYPE, CURLPROXY_HTTPS);
+        if (rc != CURLE_OK)
+            qCWarning(LogNetwork) << "libcurl lacks HTTPS-proxy support:" << curl_easy_strerror(rc);
+    }
+
+    if (!proxy.username.isEmpty()) {
+        curl_easy_setopt(curl, CURLOPT_PROXYUSERNAME, proxy.username.toUtf8().constData());
+        curl_easy_setopt(curl, CURLOPT_PROXYPASSWORD, proxy.password.toUtf8().constData());
+    }
 }
 
 void appendDiscordHeaders(curl_slist **headers, const ClientIdentity &identity, const QString &referer)

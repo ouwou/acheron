@@ -13,6 +13,7 @@
 
 #include <opus.h>
 
+#include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Discord/Events.hpp"
@@ -39,7 +40,7 @@ class VoiceManager : public QObject
 {
     Q_OBJECT
 public:
-    explicit VoiceManager(Snowflake accountId, QObject *parent = nullptr);
+    explicit VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObject *parent = nullptr);
     ~VoiceManager() override;
 
     void handleVoiceStateUpdate(const Discord::VoiceState &state);
@@ -127,6 +128,7 @@ private:
 
 private:
     Snowflake accountId;
+    ProxyConfig proxy;
 
     QString voiceSessionId;
     Snowflake guildId;

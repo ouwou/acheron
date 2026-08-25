@@ -10,6 +10,7 @@
 #include <mutex>
 #include <thread>
 
+#include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "VoiceEnums.hpp"
 #include "VoiceEntities.hpp"
@@ -24,7 +25,7 @@ class VoiceGateway : public QObject
 public:
     VoiceGateway(const QString &endpoint, Core::Snowflake serverId, Core::Snowflake channelId,
                  Core::Snowflake userId, const QString &sessionId, const QString &token,
-                 QObject *parent = nullptr);
+                 const Core::ProxyConfig &proxy, QObject *parent = nullptr);
     ~VoiceGateway();
 
     void start();
@@ -92,6 +93,7 @@ private:
     Core::Snowflake userId;
     QString sessionId;
     QString token;
+    Core::ProxyConfig proxy;
 
     std::atomic<bool> running{ false };
 

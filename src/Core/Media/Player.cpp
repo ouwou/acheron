@@ -1,6 +1,7 @@
 #include "Core/Media/Player.hpp"
 
 #include "Core/Logging.hpp"
+#include "Discord/CdnUrls.hpp"
 
 #include <QFileInfo>
 #include <QSettings>
@@ -68,7 +69,7 @@ bool isSupported()
 
 bool canPlay(const QString &contentType, const QUrl &url)
 {
-    if (!isSupported())
+    if (!isSupported() || !Discord::Cdn::isDiscordMediaUrl(url))
         return false;
 
     if (listContains(normalizedContentType(contentType), { "video/mp4", "video/webm", "video/quicktime", "video/x-m4v" }))
@@ -79,7 +80,7 @@ bool canPlay(const QString &contentType, const QUrl &url)
 
 bool canPlayAudio(const QString &contentType, const QUrl &url)
 {
-    if (!isSupported())
+    if (!isSupported() || !Discord::Cdn::isDiscordMediaUrl(url))
         return false;
 
     if (normalizedContentType(contentType).startsWith(QLatin1String("audio/")))
@@ -193,6 +194,7 @@ struct Player::Impl : OwnerThreadState
 
     // decode thread
     MediaDecoder decoder;
+    ProxyConfig proxy;
     std::vector<float> audioScratch;
     std::vector<float> audioPending;
     size_t audioPendingOffset = 0;
@@ -219,7 +221,7 @@ struct Player::Impl : OwnerThreadState
 
     AudioOutput audio;
 
-    void open(const QUrl &url);
+    void open(const QUrl &url, const ProxyConfig &proxy);
     void close();
     void play();
     void pause();
@@ -318,7 +320,7 @@ struct Player::Impl : OwnerThreadState
 {
     explicit Impl(Player *player) { owner = player; }
 
-    void open(const QUrl &) {}
+    void open(const QUrl &, const ProxyConfig &) {}
     void close() {}
     void play() {}
     void pause() {}
@@ -339,9 +341,9 @@ Player::~Player()
     d->close();
 }
 
-void Player::open(const QUrl &url)
+void Player::open(const QUrl &url, const ProxyConfig &proxy)
 {
-    d->open(url);
+    d->open(url, proxy);
 }
 
 void Player::close()
@@ -439,12 +441,13 @@ bool Player::isSeekable() const
 
 #ifdef ACHERON_HAVE_FFMPEG
 
-void Player::Impl::open(const QUrl &url)
+void Player::Impl::open(const QUrl &url, const ProxyConfig &proxyConfig)
 {
     close();
 
     setState(Player::State::Opening);
 
+    proxy = proxyConfig;
     startWorker(url.isLocalFile() ? url.toLocalFile() : url.toString());
 }
 
@@ -639,7 +642,7 @@ bool Player::Impl::openSource(const QString &input)
     decoder.setInterrupt(&Player::Impl::interruptThunk, this);
 
     QString openError;
-    if (!decoder.open(input, &openError)) {
+    if (!decoder.open(input, proxy, &openError)) {
         postToOwner([this, openError] { fail(openError); });
         return false;
     }

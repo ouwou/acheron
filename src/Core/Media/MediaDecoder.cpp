@@ -4,6 +4,7 @@
 
 #include "Core/Logging.hpp"
 #include "Core/Media/AudioOutput.hpp"
+#include "Core/Media/CurlAvio.hpp"
 #include "Discord/CurlUtils.hpp"
 
 #include <QCoreApplication>
@@ -46,7 +47,14 @@ void MediaDecoder::setInterrupt(int (*callback)(void *), void *opaque)
     interruptOpaque = opaque;
 }
 
-bool MediaDecoder::open(const QString &input, QString *error)
+// just in case it tries for some reason
+int MediaDecoder::denyNestedOpen(AVFormatContext *, AVIOContext **, const char *url, int, AVDictionary **)
+{
+    qCWarning(LogVideo) << "refusing nested open of" << url << "while proxied";
+    return AVERROR(EPERM);
+}
+
+bool MediaDecoder::open(const QString &input, const ProxyConfig &proxy, QString *error)
 {
     fmtCtx = avformat_alloc_context();
     if (!fmtCtx) {
@@ -58,6 +66,20 @@ bool MediaDecoder::open(const QString &input, QString *error)
     if (interruptCallback) {
         fmtCtx->interrupt_callback.callback = interruptCallback;
         fmtCtx->interrupt_callback.opaque = interruptOpaque;
+    }
+
+    if (proxy.enabled()) {
+        if (CurlAvio::handlesScheme(input))
+            curlIo = CurlAvio::create(input, proxy, fmtCtx->interrupt_callback);
+        if (!curlIo) {
+            if (error)
+                *error = QCoreApplication::translate("Acheron::Core::Media::Player", "could not open a proxied connection");
+            return false;
+        }
+
+        fmtCtx->pb = curlIo;
+        fmtCtx->flags |= AVFMT_FLAG_CUSTOM_IO;
+        fmtCtx->io_open = &MediaDecoder::denyNestedOpen;
     }
 
     AVDictionary *options = nullptr;
@@ -175,6 +197,11 @@ void MediaDecoder::close()
         avcodec_free_context(&audioCtx);
     if (fmtCtx)
         avformat_close_input(&fmtCtx);
+
+    if (curlIo) {
+        CurlAvio::destroy(curlIo);
+        curlIo = nullptr;
+    }
 
     videoStream = -1;
     audioStream = -1;

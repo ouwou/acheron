@@ -67,6 +67,7 @@ public:
     using DisplayNameResolver = std::function<QString(Snowflake, Snowflake)>;
     using RoleColorResolver = std::function<QColor(Snowflake, Snowflake)>;
     void setManager(Core::ForumManager *manager);
+    void setAccount(Snowflake accountId);
     void setForum(Snowflake forumId, Snowflake guildId);
     void setDisplayNameResolver(DisplayNameResolver resolver);
     void setRoleColorResolver(RoleColorResolver resolver);
@@ -107,6 +108,7 @@ private:
 
     Core::ForumManager *manager = nullptr;
     Core::ImageManager *imageManager = nullptr;
+    Snowflake accountId;
     DisplayNameResolver displayNameResolver;
     RoleColorResolver roleColorResolver;
     Snowflake currentForumId;

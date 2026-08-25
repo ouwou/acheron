@@ -3,6 +3,8 @@
 #include <QDialog>
 #include <QString>
 
+#include "Core/ProxyConfig.hpp"
+
 class QLabel;
 
 namespace Acheron {
@@ -22,7 +24,7 @@ class QRLoginDialog : public QDialog
 {
     Q_OBJECT
 public:
-    explicit QRLoginDialog(Core::Session *session, QWidget *parent = nullptr);
+    explicit QRLoginDialog(Core::Session *session, const Core::ProxyConfig &proxy, QWidget *parent = nullptr);
 
     QString getToken() const { return token; }
     QString getUsername() const { return username; }
@@ -39,6 +41,7 @@ private:
     void onCanceled();
 
     Core::Session *session = nullptr;
+    Core::ProxyConfig proxy;
     Discord::RemoteAuthClient *client = nullptr;
     bool started = false;
 

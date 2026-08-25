@@ -149,6 +149,11 @@ void clearLayout(QLayout *layout)
 
 } // namespace
 
+Core::Snowflake UserProfilePopup::accountId() const
+{
+    return instance ? instance->accountId() : Core::Snowflake();
+}
+
 UserProfilePopup::UserProfilePopup(Core::ImageManager *images, Core::ClientInstance *instance,
                                    Core::Snowflake userId, Core::Snowflake guildId,
                                    QWidget *parent)
@@ -523,7 +528,7 @@ void UserProfilePopup::renderFromCachedData()
     QUrl url = owner.isValid()
                        ? Discord::Cdn::guildMemberAvatar(guildId, userId, avatarHash, 256)
                        : Discord::Cdn::userAvatar(userId, avatarHash, 256);
-    images->assign(avatarLabel, url, QSize(AvatarSize, AvatarSize));
+    images->assign(avatarLabel, url, QSize(AvatarSize, AvatarSize), accountId());
 
     discordJoinLabel->setText(tr("Joined Discord on %1").arg(formatDate(userId.toDateTime())));
 
@@ -578,7 +583,7 @@ void UserProfilePopup::renderBannerAndBio()
 
     if (!bannerHash.isEmpty()) {
         QUrl bannerUrl = Discord::Cdn::userBanner(userId, bannerHash, 1024);
-        images->assign(bannerLabel, bannerUrl, QSize(1024, 1024));
+        images->assign(bannerLabel, bannerUrl, QSize(1024, 1024), accountId());
     }
 
     QString bio;
@@ -615,8 +620,7 @@ void UserProfilePopup::renderBadges()
         icon->setFixedSize(BadgeSize, BadgeSize);
         if (b.description.hasValue())
             icon->setToolTip(b.description.get());
-        images->assign(icon, Discord::Cdn::badgeIcon(b.icon.get(), 64),
-                       QSize(BadgeSize, BadgeSize));
+        images->assign(icon, Discord::Cdn::badgeIcon(b.icon.get(), 64), QSize(BadgeSize, BadgeSize), accountId());
         badgesLayout->addWidget(icon);
     }
     badgesRow->setVisible(badgesLayout->count() > 0);
@@ -645,7 +649,7 @@ void UserProfilePopup::renderConnections()
         iconLabel->setFixedSize(16, 16);
         const QUrl iconUrl = Discord::Cdn::connectionIcon(c.type.get());
         if (iconUrl.isValid())
-            images->assign(iconLabel, iconUrl, QSize(16, 16));
+            images->assign(iconLabel, iconUrl, QSize(16, 16), accountId());
         rowLayout->addWidget(iconLabel);
 
         QUrl link = buildConnectionUrl(c.type.get(), c.id.get(), c.name.get());
@@ -708,7 +712,10 @@ void UserProfilePopup::renderMutualServers()
                                     .arg(GuildIconSize / 2));
         icon->setAlignment(Qt::AlignCenter);
         if (!iconHash.isEmpty()) {
-            images->assign(icon, Discord::Cdn::guildIcon(g.id, iconHash, 64), QSize(GuildIconSize, GuildIconSize));
+            images->assign(icon,
+                           Discord::Cdn::guildIcon(g.id, iconHash, 64),
+                           QSize(GuildIconSize, GuildIconSize),
+                           accountId());
         } else {
             icon->setText(name.left(1).toUpper());
             icon->setStyleSheet(icon->styleSheet() + QStringLiteral(" color: palette(text); font-weight: bold;"));

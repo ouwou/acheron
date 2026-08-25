@@ -15,14 +15,15 @@ namespace Voice {
 VoiceGateway::VoiceGateway(const QString &endpoint, Core::Snowflake serverId,
                            Core::Snowflake channelId, Core::Snowflake userId,
                            const QString &sessionId, const QString &token,
-                           QObject *parent)
+                           const Core::ProxyConfig &proxy, QObject *parent)
     : QObject(parent),
       endpoint(endpoint),
       serverId(serverId),
       channelId(channelId),
       userId(userId),
       sessionId(sessionId),
-      token(token)
+      token(token),
+      proxy(proxy)
 {
     connect(this, &VoiceGateway::payloadReceived, this, &VoiceGateway::onPayloadReceived);
 }
@@ -367,12 +368,8 @@ void VoiceGateway::networkLoop()
 
         curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
-#if 0
-        curl_easy_setopt(curl, CURLOPT_PROXY, "http://127.0.0.1:8888");
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-#endif
         CurlUtils::applyCommonOptions(curl);
+        CurlUtils::applyProxy(curl, proxy);
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {

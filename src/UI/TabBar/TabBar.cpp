@@ -315,7 +315,10 @@ void TabBar::paintEvent(QPaintEvent *)
                                                               iconDpr);
             p.drawPixmap(iconRect, dmIcon);
         } else if (!entry.iconUrl.isEmpty()) {
-            QPixmap icon = imageManager->get(entry.iconUrl, QSize(IconSize * 2, IconSize * 2), Core::PinGroup::ChannelList);
+            QPixmap icon = imageManager->get(entry.iconUrl,
+                                             QSize(IconSize * 2, IconSize * 2),
+                                             entry.accountId,
+                                             Core::PinGroup::ChannelList);
             if (!icon.isNull()) {
                 p.save();
                 QPainterPath clipPath;

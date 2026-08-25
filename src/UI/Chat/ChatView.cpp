@@ -230,7 +230,10 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     };
 
     auto openImage = [this](const QUrl &url, const QPixmap &pixmap) {
-        auto *viewer = new ImageViewer(window());
+        auto *chatModel = qobject_cast<ChatModel *>(model());
+        auto *viewer = new ImageViewer(imageManager,
+                                       chatModel ? chatModel->getAccountId() : Snowflake(),
+                                       window());
         viewer->showImage(url, pixmap);
     };
 

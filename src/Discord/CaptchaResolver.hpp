@@ -10,6 +10,8 @@
 #include <functional>
 #include <optional>
 
+#include "Core/ProxyConfig.hpp"
+
 namespace Acheron {
 namespace Discord {
 
@@ -52,7 +54,7 @@ public:
     virtual ~CaptchaResolver() = default;
 
     // asynchronously solve one challenge at a time. cb is invoked once
-    virtual void resolve(const CaptchaChallenge &challenge, Callback cb) = 0;
+    virtual void resolve(const CaptchaChallenge &challenge, const Core::ProxyConfig &proxy, Callback cb) = 0;
 
     // called by the consumer after a success or give-up. a follow up resolve() signals a retry instead
     virtual void notifyConcluded() {}

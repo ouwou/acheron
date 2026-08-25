@@ -27,7 +27,9 @@ public:
     explicit BrowserCaptchaResolver(QWidget *parentWindow, QObject *parent = nullptr);
     ~BrowserCaptchaResolver() override;
 
-    void resolve(const Discord::CaptchaChallenge &challenge, Discord::CaptchaResolver::Callback cb) override;
+    void resolve(const Discord::CaptchaChallenge &challenge,
+                 const Core::ProxyConfig &proxy,
+                 Discord::CaptchaResolver::Callback cb) override;
     void notifyConcluded() override;
 
 private:
@@ -40,6 +42,7 @@ private:
     struct PendingJob
     {
         Discord::CaptchaChallenge challenge;
+        Core::ProxyConfig proxy;
         Discord::CaptchaResolver::Callback cb;
     };
 
@@ -56,6 +59,7 @@ private:
 
     QByteArray buildHarnessHtml() const;
     QString harnessUrl() const;
+    [[nodiscard]] bool confirmBrowserBypassesProxy();
 
     QWidget *parentWindow = nullptr;
 
@@ -66,6 +70,7 @@ private:
     quint16 port = 0;
     QString nonce;
     Discord::CaptchaChallenge current;
+    Core::ProxyConfig currentProxy;
     Discord::CaptchaResolver::Callback currentCb;
 
     QPointer<QDialog> modal;

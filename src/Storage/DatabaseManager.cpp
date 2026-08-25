@@ -128,12 +128,16 @@ void DatabaseManager::setupPersistentTables()
             rest_url TEXT,
             cdn_url TEXT,
             display_order INTEGER DEFAULT 0,
-            auto_connect INTEGER NOT NULL DEFAULT 0
+            auto_connect INTEGER NOT NULL DEFAULT 0,
+            proxy_url TEXT
         )
     )");
 
     if (!columnExists(db, "accounts", "auto_connect"))
         query.exec("ALTER TABLE accounts ADD COLUMN auto_connect INTEGER NOT NULL DEFAULT 0");
+
+    if (!columnExists(db, "accounts", "proxy_url"))
+        query.exec("ALTER TABLE accounts ADD COLUMN proxy_url TEXT");
 }
 
 void DatabaseManager::setupCacheTables(const QString &connName)

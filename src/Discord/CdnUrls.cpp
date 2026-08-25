@@ -12,12 +12,6 @@ namespace {
 
 constexpr qint64 RefreshWindowSecs = 60 * 60;
 
-bool isCdnHost(const QUrl &url)
-{
-    const QString host = url.host();
-    return host == QLatin1String("cdn.discordapp.com") || host == QLatin1String("media.discordapp.net");
-}
-
 qint64 expiryEpochSecs(const QUrl &url)
 {
     const QString ex = QUrlQuery(url).queryItemValue(QStringLiteral("ex"));
@@ -31,9 +25,18 @@ qint64 expiryEpochSecs(const QUrl &url)
 
 } // namespace
 
+bool isDiscordMediaUrl(const QUrl &url)
+{
+    if (url.scheme() != QLatin1String("https"))
+        return false;
+
+    const QString host = url.host();
+    return host == QLatin1String("cdn.discordapp.com") || host == QLatin1String("media.discordapp.net");
+}
+
 bool isSigned(const QUrl &url)
 {
-    return isCdnHost(url) && expiryEpochSecs(url) > 0;
+    return isDiscordMediaUrl(url) && expiryEpochSecs(url) > 0;
 }
 
 bool hasExpired(const QUrl &url)

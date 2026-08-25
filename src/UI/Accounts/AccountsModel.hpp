@@ -40,6 +40,7 @@ public:
 
     void setConnectionState(int row, Core::ConnectionState state);
     void setAutoConnect(int row, bool enabled);
+    void setProxy(int row, const Core::ProxyConfig &proxy);
 
 private:
     Core::Session *session;

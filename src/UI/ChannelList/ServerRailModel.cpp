@@ -155,7 +155,7 @@ QVariant ServerRailModel::decorationFor(const RailEntry &entry) const
         QUrl url = Discord::Cdn::userAvatar(entry.accountId, entry.accountAvatarHash, size.width());
         if (url.isEmpty())
             return {};
-        QPixmap pixmap = session->getImageManager()->get(url, size, Core::PinGroup::ChannelList);
+        QPixmap pixmap = session->getImageManager()->get(url, size, entry.accountId, Core::PinGroup::ChannelList);
         if (!session->getImageManager()->isCached(url, size)) {
             pendingAccountAvatars.insert(url);
             return {};

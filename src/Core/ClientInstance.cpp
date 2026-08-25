@@ -31,7 +31,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
       channelRepo(info.id),
       memberRepo(info.id)
 {
-    client = new Discord::Client(info.token, info.gatewayUrl, info.restUrl, captchaResolver, this);
+    client = new Discord::Client(info.token, info.gatewayUrl, info.restUrl, info.proxy, captchaResolver, this);
 
     Storage::DatabaseManager::instance().openCacheDatabase(info.id);
 
@@ -50,7 +50,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
     relationshipManager = new RelationshipManager(this);
 #ifndef ACHERON_NO_VOICE
-    voiceManager = new Audio::VoiceManager(info.id, this);
+    voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
 #endif
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);

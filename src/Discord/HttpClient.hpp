@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "CaptchaResolver.hpp"
+#include "Core/ProxyConfig.hpp"
 
 namespace Acheron {
 namespace Discord {
@@ -40,7 +41,8 @@ class HttpClient : public QObject
     Q_OBJECT
 public:
     explicit HttpClient(const QString &baseUrl, const QString &token, ClientIdentity &identity,
-                        CaptchaResolver *captchaResolver = nullptr, QObject *parent = nullptr);
+                        const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver = nullptr,
+                        QObject *parent = nullptr);
     ~HttpClient() override;
 
     enum class Method {
@@ -83,6 +85,7 @@ private:
     QString baseUrl;
     QString token;
     ClientIdentity &identity;
+    Core::ProxyConfig proxy;
     CaptchaResolver *captchaResolver;
 
     std::unique_ptr<RequestWorker> worker;

@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 
 #include "CaptchaResolver.hpp"
+#include "Core/ProxyConfig.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -34,7 +35,7 @@ class RemoteAuthClient : public QObject
 {
     Q_OBJECT
 public:
-    explicit RemoteAuthClient(CaptchaResolver *captchaResolver = nullptr, QObject *parent = nullptr);
+    explicit RemoteAuthClient(const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver = nullptr, QObject *parent = nullptr);
     ~RemoteAuthClient();
 
     void start();
@@ -88,6 +89,7 @@ private:
 
     std::thread httpThread;
 
+    Core::ProxyConfig proxy;
     CaptchaResolver *captchaResolver = nullptr;
 };
 

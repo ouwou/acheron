@@ -45,10 +45,11 @@ static QString formatDisplayableCode(const std::vector<uint8_t> &data, int bytes
 VoiceClient::VoiceClient(const QString &endpoint, const QString &token,
                          Core::Snowflake serverId, Core::Snowflake channelId,
                          Core::Snowflake userId, const QString &sessionId,
-                         QObject *parent)
+                         const Core::ProxyConfig &proxy, QObject *parent)
     : QObject(parent),
       endpoint(endpoint),
       token(token),
+      proxy(proxy),
       serverId(serverId),
       channelId(channelId),
       userId(userId),
@@ -78,7 +79,7 @@ void VoiceClient::start()
 
     setState(State::Connecting);
 
-    gateway = new VoiceGateway(endpoint, serverId, channelId, userId, sessionId, token, this);
+    gateway = new VoiceGateway(endpoint, serverId, channelId, userId, sessionId, token, proxy, this);
 
     connect(gateway, &VoiceGateway::connected, this, &VoiceClient::onGatewayConnected);
     connect(gateway, &VoiceGateway::disconnected, this, &VoiceClient::onGatewayDisconnected);
@@ -234,7 +235,7 @@ void VoiceClient::onGatewayReady(const VoiceReady &data)
 
     cleanupTransport();
 
-    udpTransport = new UdpTransport(this);
+    udpTransport = new UdpTransport(proxy, this);
     connect(udpTransport, &UdpTransport::ipDiscovered, this, &VoiceClient::onIpDiscovered);
     connect(udpTransport, &UdpTransport::ipDiscoveryFailed, this, &VoiceClient::onIpDiscoveryFailed);
     connect(udpTransport, &UdpTransport::datagramReceived, this, &VoiceClient::onDatagram);

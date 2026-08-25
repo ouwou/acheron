@@ -8,6 +8,7 @@
 #include <memory>
 #include <thread>
 
+#include "Core/ProxyConfig.hpp"
 #include "Enums.hpp"
 #include "IngestThread.hpp"
 #include "Inbound.hpp"
@@ -28,7 +29,7 @@ class Gateway : public QObject
     Q_OBJECT
 public:
     explicit Gateway(const QString &token, const QString &gatewayUrl, ClientIdentity &identity,
-                     QObject *parent = nullptr);
+                     const Core::ProxyConfig &proxy, QObject *parent = nullptr);
     ~Gateway();
 
     void start();
@@ -154,6 +155,7 @@ private:
     QString token;
     QString gatewayUrl;
     ClientIdentity &identity;
+    Core::ProxyConfig proxy;
 
     std::atomic<bool> running;
 

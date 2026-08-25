@@ -17,6 +17,7 @@
 #include <QVBoxLayout>
 
 #include "Core/Logging.hpp"
+#include "UI/Dialogs/ConfirmPopup.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -114,20 +115,23 @@ BrowserCaptchaResolver::~BrowserCaptchaResolver()
         modal->deleteLater();
 }
 
-void BrowserCaptchaResolver::resolve(const Discord::CaptchaChallenge &challenge, Discord::CaptchaResolver::Callback cb)
+void BrowserCaptchaResolver::resolve(const Discord::CaptchaChallenge &challenge,
+                                     const Core::ProxyConfig &proxy,
+                                     Discord::CaptchaResolver::Callback cb)
 {
     QMetaObject::invokeMethod(
             this,
-            [this, challenge, cb]() {
+            [this, challenge, proxy, cb]() {
                 // reuse since it got rejected
                 if (state == State::Verifying) {
                     current = challenge;
+                    currentProxy = proxy;
                     currentCb = cb;
                     beginChallenge(true);
                     return;
                 }
 
-                queue.push_back({ challenge, cb });
+                queue.push_back({ challenge, proxy, cb });
                 if (state == State::Idle)
                     startNext();
             },
@@ -161,6 +165,7 @@ void BrowserCaptchaResolver::startNext()
     queue.pop_front();
 
     current = job.challenge;
+    currentProxy = job.proxy;
     currentCb = job.cb;
 
     // hcaptcha only for now
@@ -188,6 +193,9 @@ void BrowserCaptchaResolver::startNext()
     openButton = new QPushButton(tr("Open in browser"), dlg);
     layout->addWidget(openButton);
     connect(openButton, &QPushButton::clicked, this, [this]() {
+        if (!confirmBrowserBypassesProxy())
+            return;
+
         QDesktopServices::openUrl(QUrl(harnessUrl()));
         if (statusLabel)
             statusLabel->setText(tr("Waiting for you to finish in your browser..."));
@@ -201,6 +209,22 @@ void BrowserCaptchaResolver::startNext()
     dlg->show();
 
     beginChallenge(false);
+}
+
+bool BrowserCaptchaResolver::confirmBrowserBypassesProxy()
+{
+    if (!currentProxy.enabled())
+        return true;
+
+    ConfirmPopup dialog(tr("Proxy will be bypassed"),
+                        tr("This account connects through <b>%1</b>, but the captcha opens in your "
+                           "normal browser, which ignores that proxy.<br><br>"
+                           "The captcha provider will see your real IP address. Continue?")
+                                .arg(currentProxy.toDisplayString().toHtmlEscaped()),
+                        tr("Open Anyway"),
+                        modal ? static_cast<QWidget *>(modal.data()) : parentWindow);
+
+    return dialog.exec() == QDialog::Accepted;
 }
 
 void BrowserCaptchaResolver::beginChallenge(bool isRetry)

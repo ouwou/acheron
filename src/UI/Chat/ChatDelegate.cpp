@@ -29,7 +29,7 @@ static const QRegularExpression &emojiImgRegex()
 static const QString emojiCdnPrefix = QStringLiteral("https://cdn.discordapp.com/emojis/");
 
 static void registerEmojiResources(QTextDocument &doc, const QString &html,
-                                   Core::ImageManager *imageManager)
+                                   Core::ImageManager *imageManager, Core::Snowflake accountId)
 {
     if (!imageManager || !html.contains(emojiCdnPrefix))
         return;
@@ -39,7 +39,7 @@ static void registerEmojiResources(QTextDocument &doc, const QString &html,
         auto match = it.next();
         QUrl url(match.captured(1));
         int size = match.captured(2).toInt();
-        QPixmap px = imageManager->get(url, QSize(size, size));
+        QPixmap px = imageManager->get(url, QSize(size, size), accountId);
         doc.addResource(QTextDocument::ImageResource, url, px);
     }
 }
@@ -330,7 +330,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (!doc) {
         doc = new QTextDocument;
         ChatLayout::setupDocument(*doc, ctx.htmlContent, bodyFont, layout.textRect.width());
-        registerEmojiResources(*doc, ctx.htmlContent, imageManager);
+        registerEmojiResources(*doc, ctx.htmlContent, imageManager, chatModel->getAccountId());
         chatModel->cacheDocument(bodyKey, doc);
     } else if (int(doc->textWidth()) != layout.textRect.width()) {
         doc->setTextWidth(layout.textRect.width());
@@ -617,7 +617,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 titleDoc = new QTextDocument;
                 titleDoc->setDefaultFont(titleFont);
                 titleDoc->setTextWidth(embedLayout.titleRect.width());
-                registerEmojiResources(*titleDoc, titleHtml, imageManager);
+                registerEmojiResources(*titleDoc, titleHtml, imageManager, chatModel->getAccountId());
                 titleDoc->setHtml(titleHtml);
                 chatModel->cacheDocument(titleKey, titleDoc);
             } else if (int(titleDoc->textWidth()) != embedLayout.titleRect.width()) {
@@ -645,7 +645,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 descDoc = new QTextDocument;
                 descDoc->setDefaultFont(descFont);
                 descDoc->setTextWidth(embedLayout.descriptionRect.width());
-                registerEmojiResources(*descDoc, descHtml, imageManager);
+                registerEmojiResources(*descDoc, descHtml, imageManager, chatModel->getAccountId());
                 descDoc->setHtml(descHtml);
                 chatModel->cacheDocument(descKey, descDoc);
             } else if (int(descDoc->textWidth()) != embedLayout.descriptionRect.width()) {
@@ -678,7 +678,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 nameDoc = new QTextDocument;
                 nameDoc->setDefaultFont(fieldNameFont);
                 nameDoc->setTextWidth(fieldLayout.nameRect.width());
-                registerEmojiResources(*nameDoc, nameHtml, imageManager);
+                registerEmojiResources(*nameDoc, nameHtml, imageManager, chatModel->getAccountId());
                 nameDoc->setHtml(nameHtml);
                 chatModel->cacheDocument(nameKey, nameDoc);
             } else if (int(nameDoc->textWidth()) != fieldLayout.nameRect.width()) {
@@ -699,7 +699,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 valueDoc = new QTextDocument;
                 valueDoc->setDefaultFont(option.font);
                 valueDoc->setTextWidth(fieldLayout.valueRect.width());
-                registerEmojiResources(*valueDoc, valueHtml, imageManager);
+                registerEmojiResources(*valueDoc, valueHtml, imageManager, chatModel->getAccountId());
                 valueDoc->setHtml(valueHtml);
                 chatModel->cacheDocument(valueKey, valueDoc);
             } else if (int(valueDoc->textWidth()) != fieldLayout.valueRect.width()) {

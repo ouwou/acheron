@@ -117,6 +117,13 @@ void VoiceStatusBar::setImageManager(Core::ImageManager *manager)
         voiceWindow->setImageManager(manager);
 }
 
+void VoiceStatusBar::setAccount(Core::Snowflake id)
+{
+    accountId = id;
+    if (voiceWindow)
+        voiceWindow->setAccount(id);
+}
+
 void VoiceStatusBar::setChannelName(const QString &name)
 {
     if (name.isEmpty())
@@ -221,6 +228,7 @@ void VoiceStatusBar::configureVoiceWindow()
         return;
     if (imageManager)
         voiceWindow->setImageManager(imageManager);
+    voiceWindow->setAccount(accountId);
     if (nameResolver)
         voiceWindow->setNameResolver(nameResolver);
     if (avatarResolver)

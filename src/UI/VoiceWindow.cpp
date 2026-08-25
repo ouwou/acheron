@@ -725,6 +725,15 @@ void VoiceWindow::setImageManager(Core::ImageManager *manager)
     }
 }
 
+void VoiceWindow::setAccount(Core::Snowflake id)
+{
+    if (accountId == id)
+        return;
+
+    accountId = id;
+    avatarTracker.clear();
+}
+
 void VoiceWindow::refreshDevices()
 {
     if (!voiceManager)
@@ -983,7 +992,7 @@ void VoiceWindow::requestAvatar(Core::Snowflake userId, VoiceUserWidget *widget)
     if (!url.isValid())
         return;
 
-    QPixmap pm = avatarTracker.fetch(imageManager, url, AVATAR_REQUEST_SIZE, userId);
+    QPixmap pm = avatarTracker.fetch(imageManager, url, AVATAR_REQUEST_SIZE, userId, accountId);
     widget->setAvatar(pm);
 }
 

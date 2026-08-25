@@ -32,8 +32,8 @@ static int abort_when_closing(void *userdata, curl_off_t, curl_off_t, curl_off_t
 }
 
 Gateway::Gateway(const QString &token, const QString &gatewayUrl, ClientIdentity &identity,
-                 QObject *parent)
-    : QObject(parent), token(token), gatewayUrl(gatewayUrl), identity(identity), running(false)
+                 const Core::ProxyConfig &proxy, QObject *parent)
+    : QObject(parent), token(token), gatewayUrl(gatewayUrl), identity(identity), proxy(proxy), running(false)
 {
 }
 
@@ -699,6 +699,7 @@ void Gateway::runConnection()
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abort_when_closing);
         curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &wantToClose);
         CurlUtils::applyCommonOptions(curl);
+        CurlUtils::applyProxy(curl, proxy);
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {

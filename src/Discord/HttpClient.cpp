@@ -10,10 +10,10 @@ namespace Acheron {
 namespace Discord {
 
 HttpClient::HttpClient(const QString &baseUrl, const QString &token, ClientIdentity &identity,
-                       CaptchaResolver *captchaResolver, QObject *parent)
-    : QObject(parent), baseUrl(baseUrl), token(token), identity(identity), captchaResolver(captchaResolver)
+                       const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver, QObject *parent)
+    : QObject(parent), baseUrl(baseUrl), token(token), identity(identity), proxy(proxy), captchaResolver(captchaResolver)
 {
-    worker = std::make_unique<RequestWorker>(this, token, identity, captchaResolver);
+    worker = std::make_unique<RequestWorker>(this, token, identity, proxy, captchaResolver);
 }
 
 HttpClient::~HttpClient()
@@ -156,9 +156,7 @@ void HttpClient::onRequestComplete(RequestDescriptor descriptor, HttpResponse re
     }
 
     QPointer<HttpClient> self(this);
-    captchaResolver->resolve(*challenge, [this, self,
-                                          descriptor = std::move(descriptor),
-                                          response = std::move(response)](std::optional<CaptchaSolution> s) mutable {
+    captchaResolver->resolve(*challenge, proxy, [this, self, descriptor = std::move(descriptor), response = std::move(response)](std::optional<CaptchaSolution> s) mutable {
         if (!self)
             return;
         if (!s) {

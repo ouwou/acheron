@@ -1,7 +1,10 @@
 #include "Session.hpp"
 
 #include <QDebug>
+#include <QPointer>
 
+#include "Discord/CurlUtils.hpp"
+#include "ImageManager.hpp"
 #include "Logging.hpp"
 #include "TokenStore.hpp"
 
@@ -11,6 +14,9 @@ namespace Core {
 Session::Session(QObject *parent) : QObject(parent)
 {
     imageManager = new ImageManager(this);
+
+    for (const auto &acc : repo.getAllAccounts())
+        imageManager->setAccountProxy(acc.id, acc.proxy);
 }
 
 Session::~Session()
@@ -35,6 +41,9 @@ void Session::shutdown()
 
 void Session::connectAccount(Snowflake accountId)
 {
+    if (connectingAccounts.contains(accountId))
+        return;
+
     if (clients.contains(accountId)) {
         ClientInstance *existing = clients.value(accountId);
 
@@ -58,6 +67,21 @@ void Session::connectAccount(Snowflake accountId)
         qCWarning(LogCore) << "No token found in keychain for account:" << accountId;
         return;
     }
+
+    imageManager->setAccountProxy(acc.id, acc.proxy);
+
+    connectingAccounts.insert(accountId);
+    Discord::CurlUtils::ensureBuildNumber(
+            imageManager->networkManagerFor(acc.id),
+            [self = QPointer<Session>(this), acc]() {
+                if (self && self->connectingAccounts.remove(acc.id))
+                    self->startInstance(acc);
+            });
+}
+
+void Session::startInstance(const AccountInfo &acc)
+{
+    const Snowflake accountId = acc.id;
 
     auto *instance = new ClientInstance(acc, captchaResolver, this);
 
@@ -93,8 +117,17 @@ void Session::autoConnectAccounts()
     }
 }
 
+void Session::setAccountProxy(Snowflake accountId, const ProxyConfig &proxy)
+{
+    repo.updateProxy(accountId, proxy);
+    imageManager->setAccountProxy(accountId, proxy);
+}
+
 void Session::disconnectAccount(Snowflake accountId)
 {
+    // cancels a connect still waiting on the build-number fetch
+    connectingAccounts.remove(accountId);
+
     if (!clients.contains(accountId))
         return;
 

@@ -240,7 +240,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             return imageManager->placeholder(desiredSize);
 
         QUrl url = avatarUrlResolver(msg.author.get());
-        return avatarTracker.fetch(imageManager, url, desiredSize, index, Core::PinGroup::ChatView);
+        return avatarTracker.fetch(imageManager, url, desiredSize, index, currentAccountId, Core::PinGroup::ChatView);
     }
     case TimestampRole:
         return msg.timestamp;
@@ -402,7 +402,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 } else {
                     data.pixmap = suppressImageFetch
                                           ? imageManager->getIfCached(data.proxyUrl, data.displaySize)
-                                          : imageManager->get(data.proxyUrl, data.displaySize);
+                                          : imageManager->get(data.proxyUrl, data.displaySize, currentAccountId);
                     data.isLoading = !imageManager->isCached(data.proxyUrl, data.displaySize);
                 }
             } else {
@@ -453,7 +453,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 imageData.pixmap =
                         suppressImageFetch
                                 ? imageManager->getIfCached(imageData.url, imageData.displaySize)
-                                : imageManager->get(imageData.url, imageData.displaySize);
+                                : imageManager->get(imageData.url, imageData.displaySize, currentAccountId);
 
                 result[parentIndex].images.append(imageData);
             } else if (!shouldMerge && hasImage && !embedUrl.isEmpty() &&
@@ -503,7 +503,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                 suppressImageFetch
                                         ? imageManager->getIfCached(data.authorIconUrl,
                                                                     QSize(24, 24))
-                                        : imageManager->get(data.authorIconUrl, QSize(24, 24));
+                                        : imageManager->get(data.authorIconUrl, QSize(24, 24), currentAccountId);
                     }
                 }
 
@@ -516,7 +516,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                 suppressImageFetch
                                         ? imageManager->getIfCached(data.footerIconUrl,
                                                                     QSize(20, 20))
-                                        : imageManager->get(data.footerIconUrl, QSize(20, 20));
+                                        : imageManager->get(data.footerIconUrl, QSize(20, 20), currentAccountId);
                     }
                 }
 
@@ -546,7 +546,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                             suppressImageFetch
                                     ? imageManager->getIfCached(data.thumbnailUrl,
                                                                 data.thumbnailSize)
-                                    : imageManager->get(data.thumbnailUrl, data.thumbnailSize);
+                                    : imageManager->get(data.thumbnailUrl, data.thumbnailSize, currentAccountId);
                 }
 
                 if (hasImage) {
@@ -560,7 +560,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                             suppressImageFetch
                                     ? imageManager->getIfCached(imageData.url,
                                                                 imageData.displaySize)
-                                    : imageManager->get(imageData.url, imageData.displaySize);
+                                    : imageManager->get(imageData.url, imageData.displaySize, currentAccountId);
                     data.images.append(imageData);
                 }
 
@@ -568,8 +568,6 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     QUrl mediaUrl;
                     if (embed.video->proxyUrl.hasValue())
                         mediaUrl = QUrl(*embed.video->proxyUrl);
-                    if (mediaUrl.isEmpty() && embed.video->url.hasValue())
-                        mediaUrl = QUrl(*embed.video->url);
 
                     const QString videoType = embed.video->contentType.hasValue()
                                                       ? *embed.video->contentType
@@ -601,7 +599,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                                       ? imageManager->getIfCached(data.videoThumbnailUrl,
                                                                                   data.videoThumbnailSize)
                                                       : imageManager->get(data.videoThumbnailUrl,
-                                                                          data.videoThumbnailSize);
+                                                                          data.videoThumbnailSize,
+                                                                          currentAccountId);
                     }
 
                     if (data.videoPlayable && !data.videoThumbnailSize.isValid()) {
@@ -673,7 +672,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 emojiId = reaction.emoji->id;
                 QString emojiUrl = reaction.emoji->getImageUrl(48);
                 QSize emojiSize(16, 16);
-                emojiPixmap = imageManager->get(QUrl(emojiUrl), emojiSize);
+                emojiPixmap = imageManager->get(QUrl(emojiUrl), emojiSize, currentAccountId);
                 isLoading = !imageManager->isCached(QUrl(emojiUrl), emojiSize);
             }
 
@@ -1008,6 +1007,11 @@ void ChatModel::prunePreviewCaches(const Discord::Message &msg)
         if (att.proxyUrl.hasValue())
             localPixmapCache.remove(QUrl(*att.proxyUrl));
     }
+}
+
+void ChatModel::setAccount(Snowflake accountId)
+{
+    currentAccountId = accountId;
 }
 
 void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)

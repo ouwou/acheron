@@ -4,12 +4,10 @@
 #include "Core/Session.hpp"
 #include "Core/Logging.hpp"
 #include "Core/Theme/Manager.hpp"
-#include "Discord/CurlUtils.hpp"
 
 #include <curl/curl.h>
 
 #include <QtGlobal>
-#include <QNetworkAccessManager>
 #include <QFontDatabase>
 
 #ifndef ACHERON_NO_VOICE
@@ -73,9 +71,6 @@ int main(int argc, char *argv[])
     Core::Theme::Manager::instance().applyFonts();
 
     registerMetatypes();
-
-    QNetworkAccessManager buildNumberNam;
-    Discord::CurlUtils::fetchBuildNumber(&buildNumberNam);
 
     Acheron::Core::Logger::init();
 

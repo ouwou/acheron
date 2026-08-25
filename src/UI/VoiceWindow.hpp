@@ -127,6 +127,7 @@ public:
     void setNameResolver(NameResolver resolver);
     void setAvatarResolver(AvatarResolver resolver);
     void setImageManager(Core::ImageManager *manager);
+    void setAccount(Core::Snowflake accountId);
     void refreshDevices();
 
 protected:
@@ -154,6 +155,7 @@ private:
 
     Core::Audio::VoiceManager *voiceManager = nullptr;
     Core::ImageManager *imageManager = nullptr;
+    Core::Snowflake accountId;
     QMetaObject::Connection imageFetchedConn;
     NameResolver nameResolver;
     AvatarResolver avatarResolver;

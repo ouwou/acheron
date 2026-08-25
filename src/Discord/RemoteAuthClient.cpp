@@ -33,8 +33,8 @@ namespace Discord {
 static constexpr const char *gatewayUrl = "wss://remote-auth-gateway.discord.gg/?v=2";
 static constexpr const char *loginUrl = "https://discord.com/api/v9/users/@me/remote-auth/login";
 
-RemoteAuthClient::RemoteAuthClient(CaptchaResolver *captchaResolver, QObject *parent)
-    : QObject(parent), captchaResolver(captchaResolver)
+RemoteAuthClient::RemoteAuthClient(const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver, QObject *parent)
+    : QObject(parent), proxy(proxy), captchaResolver(captchaResolver)
 {
 }
 
@@ -161,6 +161,7 @@ void RemoteAuthClient::networkLoop()
     curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     CurlUtils::applyCommonOptions(curl);
+    CurlUtils::applyProxy(curl, proxy);
 
     curl_slist *headers = curl_slist_append(nullptr, "Origin: https://discord.com");
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -403,6 +404,7 @@ void RemoteAuthClient::postLogin(const QString &ticket, std::optional<CaptchaSol
 
         if (curl) {
             CurlUtils::applyCommonOptions(curl);
+            CurlUtils::applyProxy(curl, proxy);
 
             curl_slist *headers = nullptr;
             headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -455,6 +457,7 @@ void RemoteAuthClient::postLogin(const QString &ticket, std::optional<CaptchaSol
                             QPointer<RemoteAuthClient> self(this);
                             captchaResolver->resolve(
                                     *challenge,
+                                    proxy,
                                     [this, self, ticket, attempt](std::optional<CaptchaSolution> sol) {
                                         if (!self || done)
                                             return;

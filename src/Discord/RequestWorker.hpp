@@ -19,6 +19,7 @@
 #include <unordered_set>
 
 #include "CaptchaResolver.hpp"
+#include "Core/ProxyConfig.hpp"
 #include "HttpClient.hpp"
 
 namespace Acheron {
@@ -63,7 +64,7 @@ class RequestWorker
 {
 public:
     RequestWorker(HttpClient *owner, QString token, ClientIdentity &identity,
-                  CaptchaResolver *captchaResolver);
+                  const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver);
     ~RequestWorker();
 
     void submit(RequestDescriptor descriptor);
@@ -84,6 +85,7 @@ private:
     QPointer<HttpClient> ownerGuard; // null-check
     QString token;
     ClientIdentity &identity;
+    Core::ProxyConfig proxy;
     CaptchaResolver *captchaResolver;
 
     CURLM *multi = nullptr;

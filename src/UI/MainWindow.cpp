@@ -382,8 +382,15 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     currentInstance = newInstance;
     auto *msgs = currentInstance->messages();
 
+    memberListModel->setAccount(currentInstance->accountId());
     memberListModel->setManager(currentInstance->memberList());
 
+    if (auto *video = chatView->videoController())
+        video->setProxy(currentInstance->discord()->getProxy());
+
+    chatModel->setAccount(currentInstance->accountId());
+
+    forumModel->setAccount(currentInstance->accountId());
     forumModel->setManager(currentInstance->forums());
     connect(currentInstance->forums(), &Core::ForumManager::loadingChanged, this,
             [this](Core::Snowflake forumId, bool loading) {
@@ -1057,6 +1064,7 @@ void MainWindow::setupUi()
             });
 
     chatView->setModel(chatModel);
+    chatView->setImageManager(session->getImageManager());
     chatView->setItemDelegate(new ChatDelegate(session->getImageManager(), chatView));
     chatView->setIconSize(QSize(24, 24));
     chatView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -1244,6 +1252,14 @@ void MainWindow::setupUi()
                 ClientInstance *instance = session->client(accountNode->id);
                 if (!instance)
                     return;
+
+                if (!instance->discord()->getProxy().canRelayUdp()) {
+                    QMessageBox::warning(this,
+                                         tr("Voice unavailable"),
+                                         tr("This account uses an HTTP proxy, which cannot carry "
+                                            "voice traffic.<br>Switch it to a SOCKS5 proxy to use voice."));
+                    return;
+                }
 
                 if (isDM) {
                     qCInfo(LogVoice) << "Joining DM call" << node->name << node->id;
@@ -1634,6 +1650,7 @@ void MainWindow::updateVoiceStatusLabel()
 
     Core::Audio::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
     voiceStatusBar->setVoiceManager(vm);
+    voiceStatusBar->setAccount(voiceInstance ? voiceInstance->accountId() : Core::Snowflake());
 
     if (voiceInstance) {
         QPointer<Core::UserManager> um = voiceInstance->users();
@@ -2159,8 +2176,8 @@ void MainWindow::refreshGuildRoleData(Snowflake guildId)
 
 namespace {
 
-QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake userId,
-                             const QString &displayName, const QString &username,
+QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake accountId,
+                             Snowflake userId, const QString &displayName, const QString &username,
                              const QString &avatarHash)
 {
     auto *header = new QWidget(parent);
@@ -2172,7 +2189,7 @@ QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake us
     auto *avatar = new QLabel(header);
     avatar->setFixedSize(avatarSize);
     QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, 128);
-    session->getImageManager()->assign(avatar, url, avatarSize);
+    session->getImageManager()->assign(avatar, url, avatarSize, accountId);
     layout->addWidget(avatar);
 
     auto *textLayout = new QVBoxLayout;
@@ -2218,8 +2235,8 @@ void MainWindow::showUserContextMenu(Snowflake userId, Snowflake guildId, QPoint
         QString username = (user && user->username.hasValue()) ? user->username.get() : QString();
         QString avatarHash = (user && user->avatar.hasValue()) ? user->avatar.get() : QString();
 
-        auto *header = buildUserMenuHeader(&menu, session, userId, displayName, username,
-                                           avatarHash);
+        auto *header = buildUserMenuHeader(&menu, session, currentInstance->accountId(), userId,
+                                           displayName, username, avatarHash);
         auto *headerAction = new QWidgetAction(&menu);
         headerAction->setDefaultWidget(header);
         menu.addAction(headerAction);

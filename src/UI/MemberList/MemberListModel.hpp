@@ -29,6 +29,7 @@ public:
     explicit MemberListModel(Core::ImageManager *imageManager, QObject *parent = nullptr);
 
     void setManager(Core::MemberListManager *manager);
+    void setAccount(Core::Snowflake accountId);
 
     [[nodiscard]] int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     [[nodiscard]] QVariant data(const QModelIndex &index, int role) const override;
@@ -43,6 +44,7 @@ private:
 
     QPointer<Core::MemberListManager> manager;
     Core::ImageManager *imageManager;
+    Core::Snowflake accountId;
 
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
 };

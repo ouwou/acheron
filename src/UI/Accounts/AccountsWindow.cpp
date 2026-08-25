@@ -90,6 +90,14 @@ void AccountsWindow::setupUi()
     autoConnectCheck = new QCheckBox(tr("Connect on startup"), detailsContainer);
     autoConnectCheck->setToolTip(tr("Connect this account automatically when Acheron starts"));
 
+    proxyEdit = new ProxyLineEdit(detailsContainer);
+    proxyEdit->setToolTip(tr("Can only be changed while disconnected. Voice requires a SOCKS5 proxy."));
+    proxyApplyButton = new QPushButton(tr("Apply"), detailsContainer);
+
+    QHBoxLayout *proxyLayout = new QHBoxLayout();
+    proxyLayout->addWidget(proxyEdit);
+    proxyLayout->addWidget(proxyApplyButton);
+
     QHBoxLayout *actionBtnLayout = new QHBoxLayout();
     connectButton = new QPushButton(tr("Connect"), detailsContainer);
     disconnectButton = new QPushButton(tr("Disconnect"), detailsContainer);
@@ -102,6 +110,7 @@ void AccountsWindow::setupUi()
     form->addRow(tr("User ID:"), detailId);
     form->addRow(autoConnectCheck);
     form->addRow(tr("Actions:"), actionBtnLayout);
+    form->addRow(tr("Proxy:"), proxyLayout);
 
     containerLayout->addLayout(form);
     containerLayout->addStretch();
@@ -139,6 +148,23 @@ void AccountsWindow::setupUi()
         if (idx.isValid())
             model->setAutoConnect(idx.row(), checked);
     });
+
+    connect(proxyApplyButton, &QPushButton::clicked, this, &AccountsWindow::onProxyApplyClicked);
+    connect(proxyEdit, &QLineEdit::returnPressed, this, &AccountsWindow::onProxyApplyClicked);
+}
+
+void AccountsWindow::onProxyApplyClicked()
+{
+    QModelIndex idx = listView->selectionModel()->currentIndex();
+    if (!idx.isValid())
+        return;
+
+    std::optional<Core::ProxyConfig> proxy = proxyEdit->parseOrWarn();
+    if (!proxy)
+        return;
+
+    model->setProxy(idx.row(), *proxy);
+    proxyEdit->setText(proxy->toString());
 }
 
 void AccountsWindow::performConnect(int row)
@@ -171,7 +197,8 @@ void AccountsWindow::performDisconnect(int row)
 
 void AccountsWindow::onAddClicked()
 {
-    TokenInputDialog dlg(tr("Add Account"), tr("Enter your token:"), this);
+    TokenInputDialog dlg(tr("Add Account"), tr("Enter your token:"), this,
+                         TokenInputDialog::ProxyField::Shown);
     if (dlg.exec() != QDialog::Accepted) {
         return;
     }
@@ -192,6 +219,7 @@ void AccountsWindow::onAddClicked()
     acc.displayName = "unknown";
     acc.username = "unknown";
     acc.token = token;
+    acc.proxy = dlg.getProxy();
 
     // acc.avatar =
 
@@ -200,7 +228,13 @@ void AccountsWindow::onAddClicked()
 
 void AccountsWindow::onQrLoginClicked()
 {
-    QRLoginDialog dlg(session, this);
+    ProxyInputDialog proxyDlg(tr("QR Login"),
+                              tr("Proxy for this account (optional). Leave empty to connect directly."),
+                              this);
+    if (proxyDlg.exec() != QDialog::Accepted)
+        return;
+
+    QRLoginDialog dlg(session, proxyDlg.getProxy(), this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -219,6 +253,7 @@ void AccountsWindow::onQrLoginClicked()
     acc.token = token;
     acc.username = dlg.getUsername().isEmpty() ? QStringLiteral("unknown") : dlg.getUsername();
     acc.displayName = acc.username;
+    acc.proxy = proxyDlg.getProxy();
 
     model->addAccount(acc);
 }
@@ -344,13 +379,20 @@ void AccountsWindow::updateDetails(const AccountInfo *info)
     const QSize desiredSize(64, 64);
     QUrl TEMPORARY = Discord::Cdn::userAvatar(info->id, info->avatar, desiredSize.width());
 
-    session->getImageManager()->assign(detailAvatar, TEMPORARY, desiredSize);
+    session->getImageManager()->assign(detailAvatar, TEMPORARY, desiredSize, info->id);
     detailDisplayName->setText(info->displayName);
     detailUsername->setText(info->username);
     detailId->setText(QString::number(info->id));
 
     QSignalBlocker autoConnectBlocker(autoConnectCheck);
     autoConnectCheck->setChecked(info->autoConnect);
+
+    if (!proxyEdit->hasFocus())
+        proxyEdit->setText(info->proxy.toString());
+
+    const bool proxyEditable = info->state == ConnectionState::Disconnected;
+    proxyEdit->setEnabled(proxyEditable);
+    proxyApplyButton->setEnabled(proxyEditable);
 
     switch (info->state) {
     case ConnectionState::Disconnected:

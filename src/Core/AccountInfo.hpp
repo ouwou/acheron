@@ -5,6 +5,7 @@
 #include <QMetaType>
 
 #include "Enums.hpp"
+#include "ProxyConfig.hpp"
 #include "Snowflake.hpp"
 
 namespace Acheron {
@@ -20,6 +21,8 @@ struct AccountInfo
     QString gatewayUrl = "wss://gateway.discord.gg/?encoding=json&v=9&compress=zlib-stream";
     QString restUrl = "https://discord.com/api/v9";
     QString cdnUrl = "https://cdn.discordapp.com";
+
+    ProxyConfig proxy;
 
     int displayOrder = 0;
     bool autoConnect = false;

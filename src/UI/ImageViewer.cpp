@@ -10,10 +10,14 @@
 #include <QUrlQuery>
 #include <QApplication>
 
+#include "Core/ImageManager.hpp"
+
 namespace Acheron {
 namespace UI {
 
-ImageViewer::ImageViewer(QWidget *parent) : QWidget(parent)
+ImageViewer::ImageViewer(Core::ImageManager *imageManager, Core::Snowflake accountId, QWidget *parent)
+    : QWidget(parent),
+      networkManager(accountId.isValid() ? imageManager->networkManagerFor(accountId) : nullptr)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
@@ -21,8 +25,6 @@ ImageViewer::ImageViewer(QWidget *parent) : QWidget(parent)
     setMouseTracking(true);
     setCursor(Qt::OpenHandCursor);
     setFocusPolicy(Qt::StrongFocus);
-
-    networkManager = new QNetworkAccessManager(this);
 }
 
 void ImageViewer::showImage(const QUrl &proxyUrl, const QPixmap &preview)
@@ -63,6 +65,12 @@ void ImageViewer::fetchFullImage(const QUrl &proxyUrl)
     query.addQueryItem("format", "webp");
     query.addQueryItem("quality", "lossless");
     fetchUrl.setQuery(query);
+
+    // in event of fail to get a nam (proxy issue?)
+    if (!networkManager) {
+        isLoadingFull = false;
+        return;
+    }
 
     QNetworkRequest request(fetchUrl);
     QNetworkReply *reply = networkManager->get(request);

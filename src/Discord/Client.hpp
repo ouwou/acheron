@@ -13,6 +13,7 @@
 #include "Core/Result.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Enums.hpp"
+#include "Core/ProxyConfig.hpp"
 #include "Core/PendingAttachment.hpp"
 
 #include "Proto/UserSettings.hpp"
@@ -40,13 +41,15 @@ public:
     Q_ENUM(MessageLoadType)
 
     explicit Client(const QString &token, const QString &gatewayUrl, const QString &baseUrl,
-                    CaptchaResolver *captchaResolver = nullptr, QObject *parent = nullptr);
+                    const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver = nullptr,
+                    QObject *parent = nullptr);
     ~Client() override;
 
     void start();
     void stop();
 
     [[nodiscard]] Core::ConnectionState getState() const;
+    [[nodiscard]] const Core::ProxyConfig &getProxy() const { return proxyConfig; }
 
     using MessagesCallback = std::function<void(const Core::Result<QList<Message>> &)>;
     void fetchLatestMessages(Snowflake channelId, int limit, MessagesCallback callback);
@@ -249,6 +252,7 @@ private:
     Core::ConnectionState state = Core::ConnectionState::Disconnected;
 
     QString baseUrl;
+    Core::ProxyConfig proxyConfig;
     QString token;
 
     ClientIdentity identity;

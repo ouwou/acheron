@@ -52,8 +52,8 @@ static int xferinfoCallback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
 }
 
 RequestWorker::RequestWorker(HttpClient *owner, QString token, ClientIdentity &identity,
-                             CaptchaResolver *captchaResolver)
-    : owner(owner), ownerGuard(owner), token(std::move(token)), identity(identity), captchaResolver(captchaResolver)
+                             const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver)
+    : owner(owner), ownerGuard(owner), token(std::move(token)), identity(identity), proxy(proxy), captchaResolver(captchaResolver)
 {
     multi = curl_multi_init();
     curl_multi_setopt(multi, CURLMOPT_PIPELINING, static_cast<long>(CURLPIPE_MULTIPLEX));
@@ -186,6 +186,7 @@ CURL *RequestWorker::buildEasyHandle(TransferContext *ctx)
     }
 
     CurlUtils::applyCommonOptions(curl);
+    CurlUtils::applyProxy(curl, proxy);
 
     curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); // engine
     curl_easy_setopt(curl, CURLOPT_SHARE, share);

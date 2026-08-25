@@ -34,13 +34,13 @@ Proto::GuildFolders guildFoldersFromLegacy(const QList<GuildFolderEntry> &entrie
 } // namespace
 
 Client::Client(const QString &token, const QString &gatewayUrl, const QString &baseUrl,
-               CaptchaResolver *captchaResolver, QObject *parent)
-    : QObject(parent), token(token), baseUrl(baseUrl)
+               const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver, QObject *parent)
+    : QObject(parent), token(token), baseUrl(baseUrl), proxyConfig(proxy)
 {
     identity.regenerateClientHeartbeatSessionId();
 
-    gateway = new Gateway(token, gatewayUrl, identity, this);
-    httpClient = new HttpClient(baseUrl, token, identity, captchaResolver, this);
+    gateway = new Gateway(token, gatewayUrl, identity, proxy, this);
+    httpClient = new HttpClient(baseUrl, token, identity, proxy, captchaResolver, this);
 
     connect(gateway, &Gateway::connected, this, &Client::onConnected);
     connect(gateway, &Gateway::disconnected, this, &Client::onDisconnected);

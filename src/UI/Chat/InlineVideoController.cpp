@@ -185,7 +185,7 @@ void InlineVideoController::release(const MediaTarget &target, const QModelIndex
 void InlineVideoController::startPlayback(const MediaTarget &target)
 {
     withPlayableUrl(target.url, false, [this, key = target.key](const QUrl &url) {
-        auto *player = pool->acquire(key, url);
+        auto *player = pool->acquire(key, url, proxy);
         if (!player)
             return;
 
@@ -204,7 +204,7 @@ void InlineVideoController::retryPlayback(const MediaTarget &target)
         if (!player)
             return;
 
-        player->open(url);
+        player->open(url, proxy);
         player->play();
         refreshRow(key);
     });

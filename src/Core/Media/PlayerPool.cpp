@@ -31,7 +31,7 @@ Player *PlayerPool::find(const QString &key) const
     return it != players.constEnd() ? it.value() : nullptr;
 }
 
-Player *PlayerPool::acquire(const QString &key, const QUrl &url)
+Player *PlayerPool::acquire(const QString &key, const QUrl &url, const ProxyConfig &proxy)
 {
     if (!isSupported() || key.isEmpty() || url.isEmpty())
         return nullptr;
@@ -54,7 +54,7 @@ Player *PlayerPool::acquire(const QString &key, const QUrl &url)
         qCWarning(LogVideo) << "player" << key << "failed:" << message;
     });
 
-    player->open(url);
+    player->open(url, proxy);
     return player;
 }
 

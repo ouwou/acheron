@@ -39,6 +39,8 @@ class ChatView : public QListView
 public:
     ChatView(QWidget *parent = nullptr);
 
+    void setImageManager(Core::ImageManager *manager) { imageManager = manager; }
+
     int hoveredRowAtPaint() const { return hoveredRow; }
     int hoveredCharIndexAtPaint() const { return hoveredChar; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
@@ -105,6 +107,7 @@ private:
     void cancelInlineEdit();
 
     InlineVideoController *video = nullptr;
+    Core::ImageManager *imageManager = nullptr;
 
     QTextEdit *inlineEditWidget = nullptr;
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;

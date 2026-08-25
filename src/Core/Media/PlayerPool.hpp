@@ -25,7 +25,7 @@ public:
 
     [[nodiscard]] Player *find(const QString &key) const;
 
-    Player *acquire(const QString &key, const QUrl &url);
+    Player *acquire(const QString &key, const QUrl &url, const ProxyConfig &proxy);
 
     void touch(const QString &key);
     void release(const QString &key);

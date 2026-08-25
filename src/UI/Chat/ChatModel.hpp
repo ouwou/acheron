@@ -210,6 +210,9 @@ public:
         IsSystemMessageRole,
     };
 
+    void setAccount(Snowflake accountId);
+    [[nodiscard]] Snowflake getAccountId() const { return currentAccountId; }
+
     using AvatarUrlResolver = std::function<QUrl(const Discord::User &)>;
     void setAvatarUrlResolver(AvatarUrlResolver resolver);
 
@@ -269,6 +272,7 @@ private:
 
     Snowflake currentChannelId = Snowflake::Invalid;
     Snowflake currentGuildId = Snowflake::Invalid;
+    Snowflake currentAccountId;
 
     AvatarUrlResolver avatarUrlResolver;
     DisplayNameResolver displayNameResolver;

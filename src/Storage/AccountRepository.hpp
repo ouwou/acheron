@@ -21,6 +21,7 @@ public:
     void removeAccount(quint64 id);
     void updateDisplayOrder(quint64 id, int order);
     void updateAutoConnect(quint64 id, bool autoConnect);
+    void updateProxy(quint64 id, const Core::ProxyConfig &proxy);
 };
 
 } // namespace Storage

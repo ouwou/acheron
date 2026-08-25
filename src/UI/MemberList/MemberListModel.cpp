@@ -76,9 +76,9 @@ QVariant MemberListModel::data(const QModelIndex &index, int role) const
             return QVariant();
 
         if (imageManager->isCached(url, AvatarRequestSize))
-            return imageManager->get(url, AvatarRequestSize);
+            return imageManager->get(url, AvatarRequestSize, accountId);
 
-        imageManager->get(url, AvatarRequestSize);
+        imageManager->get(url, AvatarRequestSize, accountId);
         avatarTracker.track(url, index);
 
         return QVariant();
@@ -102,6 +102,11 @@ QVariant MemberListModel::data(const QModelIndex &index, int role) const
     }
 
     return {};
+}
+
+void MemberListModel::setAccount(Core::Snowflake id)
+{
+    accountId = id;
 }
 
 void MemberListModel::onListAboutToReset()

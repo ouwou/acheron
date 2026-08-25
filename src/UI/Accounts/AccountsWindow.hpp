@@ -3,7 +3,9 @@
 #include <QtWidgets>
 
 #include "AccountsModel.hpp"
+#include "UI/Dialogs/ProxyInputDialog.hpp"
 #include "UI/Dialogs/TokenInputDialog.hpp"
+#include "UI/ProxyLineEdit.hpp"
 
 namespace Acheron {
 
@@ -29,6 +31,7 @@ private slots:
     void onConnectClicked();
     void onDisconnectClicked();
     void onSetTokenRequested(int row);
+    void onProxyApplyClicked();
 
 private:
     Core::Session *session;
@@ -43,6 +46,8 @@ private:
     QLabel *detailId;
     QLabel *detailStatus;
     QCheckBox *autoConnectCheck;
+    ProxyLineEdit *proxyEdit;
+    QPushButton *proxyApplyButton;
     QWidget *detailsContainer;
     QLabel *emptyStateLabel;
 

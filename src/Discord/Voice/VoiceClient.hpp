@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "VoiceEnums.hpp"
 #include "VoiceEntities.hpp"
@@ -42,7 +43,7 @@ public:
 
     VoiceClient(const QString &endpoint, const QString &token, Core::Snowflake serverId,
                 Core::Snowflake channelId, Core::Snowflake userId, const QString &sessionId,
-                QObject *parent = nullptr);
+                const Core::ProxyConfig &proxy, QObject *parent = nullptr);
     ~VoiceClient() override;
 
     void start();
@@ -101,6 +102,7 @@ private:
 
     QString endpoint;
     QString token;
+    Core::ProxyConfig proxy;
     Core::Snowflake serverId;
     Core::Snowflake channelId;
     Core::Snowflake userId;

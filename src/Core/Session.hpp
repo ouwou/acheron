@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QMap>
+#include <QSet>
 #include <memory>
 
 #include "ClientInstance.hpp"
@@ -27,6 +28,8 @@ public:
 
     void autoConnectAccounts();
 
+    void setAccountProxy(Snowflake accountId, const ProxyConfig &proxy);
+
     [[nodiscard]] QList<ClientInstance *> getClients() const { return clients.values(); }
     [[nodiscard]] ClientInstance *client(Snowflake accountId) const;
     [[nodiscard]] AccountInfo getAccountInfo(Snowflake accountId);
@@ -43,9 +46,12 @@ signals:
     void ready(const Discord::Ready &ready);
 
 private:
+    void startInstance(const AccountInfo &acc);
+
     ImageManager *imageManager;
     Storage::AccountRepository repo;
     QMap<Snowflake, ClientInstance *> clients;
+    QSet<Snowflake> connectingAccounts;
     Discord::CaptchaResolver *captchaResolver = nullptr;
 };
 

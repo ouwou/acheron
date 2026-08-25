@@ -37,6 +37,8 @@ public:
     using UrlRefresher = std::function<void(const QUrl &stale, std::function<void(const QUrl &fresh)>)>;
     void setUrlRefresher(UrlRefresher refresher) { urlRefresher = std::move(refresher); }
 
+    void setProxy(const Core::ProxyConfig &config) { proxy = config; }
+
     void press(const MediaTarget &target, const QPoint &pos);
     void release(const MediaTarget &target, const QModelIndex &index, const QPoint &pos);
     [[nodiscard]] bool dragging() const { return drag.active(); }
@@ -96,6 +98,7 @@ private:
     QPointer<QAbstractItemModel> boundModel;
 
     UrlRefresher urlRefresher;
+    Core::ProxyConfig proxy;
     QHash<QUrl, QUrl> refreshedUrls;
     QHash<QUrl, QList<std::function<void(const QUrl &)>>> pendingRefreshes;
 

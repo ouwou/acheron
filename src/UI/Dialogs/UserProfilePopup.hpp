@@ -69,6 +69,8 @@ private:
     bool isBot() const;
 
 private:
+    [[nodiscard]] Core::Snowflake accountId() const;
+
     Core::ImageManager *images = nullptr;
     QPointer<Core::ClientInstance> instance;
     Core::Snowflake userId;

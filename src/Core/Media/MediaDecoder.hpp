@@ -8,6 +8,8 @@
 
 #include <vector>
 
+#include "Core/ProxyConfig.hpp"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -45,7 +47,7 @@ public:
 
     void setInterrupt(int (*callback)(void *), void *opaque);
 
-    bool open(const QString &input, QString *error);
+    bool open(const QString &input, const ProxyConfig &proxy, QString *error);
     void close();
 
     [[nodiscard]] Info info() const;
@@ -86,8 +88,12 @@ private:
     int audioStream = -1;
     QSize swsTarget;
 
+    static int denyNestedOpen(AVFormatContext *, AVIOContext **, const char *url, int, AVDictionary **);
+
     int (*interruptCallback)(void *) = nullptr;
     void *interruptOpaque = nullptr;
+
+    AVIOContext *curlIo = nullptr;
 };
 
 } // namespace Media

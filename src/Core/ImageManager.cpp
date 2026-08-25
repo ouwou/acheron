@@ -15,7 +15,6 @@ namespace Core {
 
 ImageManager::ImageManager(QObject *parent) : QObject(parent)
 {
-    networkManager = new QNetworkAccessManager(this);
     cache.setMaxCost(300);
 
     if (!tempDir.isValid())
@@ -32,7 +31,22 @@ bool ImageManager::isCached(const QUrl &url, const QSize &size)
     return QFile::exists(path);
 }
 
-void ImageManager::assign(QLabel *label, const QUrl &url, const QSize &size)
+void ImageManager::setAccountProxy(Snowflake accountId, const ProxyConfig &proxy)
+{
+    auto it = networkManagers.find(accountId);
+    if (it == networkManagers.end())
+        it = networkManagers.insert(accountId, new QNetworkAccessManager(this));
+
+    it.value()->setProxy(proxy.toQtProxy());
+}
+
+QNetworkAccessManager *ImageManager::networkManagerFor(Snowflake accountId) const
+{
+    auto it = networkManagers.constFind(accountId);
+    return it != networkManagers.constEnd() ? it.value() : nullptr;
+}
+
+void ImageManager::assign(QLabel *label, const QUrl &url, const QSize &size, Snowflake accountId)
 {
     if (!label)
         return;
@@ -40,7 +54,7 @@ void ImageManager::assign(QLabel *label, const QUrl &url, const QSize &size)
     // just in case
     disconnect(this, &ImageManager::imageFetched, label, nullptr);
 
-    QPixmap pixmap = get(url, size);
+    QPixmap pixmap = get(url, size, accountId);
     label->setPixmap(pixmap);
 
     if (!isCached(url, size)) {
@@ -52,17 +66,17 @@ void ImageManager::assign(QLabel *label, const QUrl &url, const QSize &size)
     }
 }
 
-QPixmap ImageManager::get(const QUrl &url, const QSize &size, PinGroup pin)
+QPixmap ImageManager::get(const QUrl &url, const QSize &size, Snowflake accountId, PinGroup pin)
 {
-    return getImpl(url, size, pin, true);
+    return getImpl(url, size, pin, true, accountId);
 }
 
-QPixmap ImageManager::getIfCached(const QUrl &url, const QSize &size, PinGroup pin)
+QPixmap ImageManager::getIfCached(const QUrl &url, const QSize &size)
 {
-    return getImpl(url, size, pin, false);
+    return getImpl(url, size, PinGroup::None, false, Snowflake());
 }
 
-QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, bool fetchIfNeeded)
+QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, bool fetchIfNeeded, Snowflake accountId)
 {
     ImageRequestKey k{ url, size };
 
@@ -113,7 +127,7 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
     }
 
     if (fetchIfNeeded) {
-        request(url, size, pin);
+        request(url, size, pin, accountId);
     }
 
     return placeholder(size);
@@ -129,8 +143,14 @@ QPixmap ImageManager::placeholder(const QSize &size)
     return pixmap;
 }
 
-void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin)
+void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId)
 {
+    QNetworkAccessManager *nam = networkManagerFor(accountId);
+    if (!nam) {
+        qCWarning(LogCore) << "Refusing to fetch image with no proxied route for the account:" << url;
+        return;
+    }
+
     ImageRequestKey k{ url, size };
     if (requests.contains(k)) {
         // promote
@@ -146,19 +166,19 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin)
     if (pin != PinGroup::None)
         pendingPins.insert(k, pin);
 
-    fetchFromNetwork(url, size, pin);
+    fetchFromNetwork(url, size, pin, nam);
 }
 
-void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin)
+void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin, QNetworkAccessManager *nam)
 {
     qreal dpr = qApp->devicePixelRatio();
-    bool proxy = isDiscordProxyUrl(url);
+    bool discordProxied = isDiscordProxyUrl(url);
 
-    QUrl fetchUrl = proxy ? buildOptimizedUrl(url, size, dpr) : url;
+    QUrl fetchUrl = discordProxied ? buildOptimizedUrl(url, size, dpr) : url;
     QNetworkRequest request(fetchUrl);
-    QNetworkReply *reply = networkManager->get(request);
+    QNetworkReply *reply = nam->get(request);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, proxy, dpr]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, discordProxied, dpr]() {
         ImageRequestKey k{ url, size };
         PinGroup pin = pendingPins.value(k, PinGroup::None);
         pendingPins.remove(k);
@@ -183,7 +203,7 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
 
         QPixmap pixmap;
         if (pixmap.loadFromData(data)) {
-            if (proxy) {
+            if (discordProxied) {
                 QSize physicalSize(qRound(size.width() * dpr), qRound(size.height() * dpr));
                 if (pixmap.size() != physicalSize)
                     pixmap = pixmap.scaled(physicalSize, Qt::KeepAspectRatio,

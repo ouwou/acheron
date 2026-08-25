@@ -81,7 +81,7 @@ QVariant AccountsModel::data(const QModelIndex &index, int role) const
     case Qt::DecorationRole: {
         const QSize desiredSize(32, 32);
         QUrl avatarUrl = Discord::Cdn::userAvatar(acc.id, acc.avatar, desiredSize.width());
-        return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index);
+        return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index, acc.id);
     }
     case AccountObjectRole:
         return QVariant::fromValue((void *)&acc);
@@ -112,6 +112,7 @@ void AccountsModel::addAccount(const AccountInfo &account)
 
     AccountRepository repo;
     repo.saveAccount(newAccount);
+    session->getImageManager()->setAccountProxy(newAccount.id, newAccount.proxy);
 
     // Don't keep the token in the in-memory model
     newAccount.token.clear();
@@ -162,6 +163,21 @@ void AccountsModel::setAutoConnect(int row, bool enabled)
 
     QModelIndex idx = index(row, 0);
     emit dataChanged(idx, idx, { Qt::CheckStateRole, AutoConnectRole });
+}
+
+void AccountsModel::setProxy(int row, const Core::ProxyConfig &proxy)
+{
+    if (row < 0 || row >= accounts.size())
+        return;
+
+    if (accounts[row].proxy == proxy || accounts[row].state != ConnectionState::Disconnected)
+        return;
+
+    accounts[row].proxy = proxy;
+    session->setAccountProxy(accounts[row].id, proxy);
+
+    QModelIndex idx = index(row, 0);
+    emit dataChanged(idx, idx, { AccountObjectRole });
 }
 
 Qt::ItemFlags AccountsModel::flags(const QModelIndex &index) const

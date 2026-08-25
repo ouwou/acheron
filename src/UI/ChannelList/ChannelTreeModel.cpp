@@ -153,10 +153,14 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return node->name;
 
     if (role == Qt::DecorationRole) {
+        ChannelNode *accountNode = getAccountNodeFor(node);
+        const Snowflake avatarAccountId = accountNode ? accountNode->id : Snowflake();
+
         if (node->type == ChannelNode::Type::Server) {
             const QSize desiredSize(64, 64);
             QUrl iconUrl = Discord::Cdn::guildIcon(node->id, node->TEMP_iconHash, desiredSize.width());
-            return avatarTracker.fetch(session->getImageManager(), iconUrl, desiredSize, index, Core::PinGroup::ChannelList);
+            return avatarTracker.fetch(session->getImageManager(), iconUrl, desiredSize, index,
+                                       avatarAccountId, Core::PinGroup::ChannelList);
         }
 
         if (node->type == ChannelNode::Type::DMChannel) {
@@ -172,7 +176,8 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             }
 
             if (!avatarUrl.isEmpty())
-                return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index, Core::PinGroup::ChannelList);
+                return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index,
+                                           avatarAccountId, Core::PinGroup::ChannelList);
         }
 
         if (node->type == ChannelNode::Type::VoiceParticipant &&
@@ -180,7 +185,8 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             const QSize desiredSize(32, 32);
             QUrl avatarUrl = Discord::Cdn::userAvatar(node->dmRecipientId, node->dmAvatarHash,
                                                       desiredSize.width());
-            return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index, Core::PinGroup::ChannelList);
+            return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index,
+                                       avatarAccountId, Core::PinGroup::ChannelList);
         }
 
         return {};

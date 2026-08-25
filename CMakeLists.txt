@@ -149,6 +149,7 @@ set(PROJECT_SOURCES
     resources.qrc
     src/main.cpp
     src/Core/Snowflake.cpp
+    src/Core/ProxyConfig.cpp
     src/Core/ClientInstance.cpp
     src/Core/Session.cpp
     src/Core/Logging.cpp
@@ -175,12 +176,14 @@ set(PROJECT_SOURCES
     src/Core/Media/MediaDecoder.cpp
     src/Core/Media/AudioOutput.cpp
     src/Core/Media/PlayerPool.cpp
+    src/Core/Media/CurlAvio.cpp
     src/UI/MainWindow.cpp
     src/UI/BrowserCaptchaResolver.cpp
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
     src/UI/ConnectionBanner.cpp
     src/UI/ElidedLabel.cpp
+    src/UI/ProxyLineEdit.cpp
     src/UI/ImageViewer.cpp
     src/UI/VideoFullscreenWindow.cpp
     src/UI/Accounts/AccountsWindow.cpp
@@ -209,6 +212,7 @@ set(PROJECT_SOURCES
     src/UI/Forum/NewPostDialog.cpp
     src/UI/ThreadBrowser/ThreadBrowserPopup.cpp
     src/UI/Dialogs/TokenInputDialog.cpp
+    src/UI/Dialogs/ProxyInputDialog.cpp
     src/UI/Dialogs/QRLoginDialog.cpp
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
@@ -249,6 +253,7 @@ if(ENABLE_VOICE)
         src/UI/VoiceWindow.cpp
         src/Discord/Voice/VoiceGateway.cpp
         src/Discord/Voice/UdpTransport.cpp
+        src/Discord/Voice/Socks5UdpAssociation.cpp
         src/Discord/Voice/VoiceClient.cpp
         src/Discord/Voice/RtpPacket.cpp
         src/Discord/Voice/VoiceEncryption.cpp
@@ -295,6 +300,14 @@ if(BUILD_TESTS)
     target_link_libraries(TestMarkdown PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
+
+    qt_add_executable(TestProxy tests/tst_Proxy.cpp src/Core/ProxyConfig.cpp
+        src/Core/Logging.cpp src/Core/ImageManager.cpp src/Core/Snowflake.cpp
+        src/Discord/Voice/Socks5UdpAssociation.cpp)
+
+    target_link_libraries(TestProxy PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Test)
+    target_include_directories(TestProxy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME ProxyTests COMMAND TestProxy)
 endif()
 
 qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${PROJECT_NAME})
@@ -310,13 +323,15 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        target_link_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
-        target_compile_options(TestMarkdown PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
-        target_compile_options(TestMarkdown PRIVATE /utf-8)
-        if(QT_VERSION_MAJOR LESS 6)
-            target_compile_options(TestMarkdown PRIVATE
-                "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
-        endif()
+        foreach(test_target TestMarkdown TestProxy)
+            target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
+            target_compile_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
+            target_compile_options(${test_target} PRIVATE /utf-8)
+            if(QT_VERSION_MAJOR LESS 6)
+                target_compile_options(${test_target} PRIVATE
+                    "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+            endif()
+        endforeach()
     endif()
 endif()
 

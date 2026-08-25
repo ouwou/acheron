@@ -5,17 +5,23 @@
 #include <QUrl>
 #include <QPointF>
 
+#include "Core/Snowflake.hpp"
+
 class QNetworkAccessManager;
 class QNetworkReply;
 
 namespace Acheron {
+namespace Core {
+class ImageManager;
+}
+
 namespace UI {
 
 class ImageViewer : public QWidget
 {
     Q_OBJECT
 public:
-    explicit ImageViewer(QWidget *parent = nullptr);
+    explicit ImageViewer(Core::ImageManager *imageManager, Core::Snowflake accountId, QWidget *parent = nullptr);
 
     void showImage(const QUrl &proxyUrl, const QPixmap &preview);
 

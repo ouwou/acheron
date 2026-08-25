@@ -11,8 +11,8 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-VoiceManager::VoiceManager(Snowflake accountId, QObject *parent)
-    : QObject(parent), accountId(accountId), audioBackend(IAudioBackend::create())
+VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObject *parent)
+    : QObject(parent), accountId(accountId), proxy(proxy), audioBackend(IAudioBackend::create())
 {
     connect(audioBackend.get(), &IAudioBackend::devicesChanged, this, &VoiceManager::onDevicesChanged);
 }
@@ -169,6 +169,11 @@ void VoiceManager::handleVoiceServerUpdate(const Discord::VoiceServerUpdate &eve
 
     if (event.endpoint.isNull() || event.endpoint.get().isEmpty()) {
         qCInfo(LogVoice) << "Voice server update with null endpoint, waiting for new one";
+        return;
+    }
+
+    if (!proxy.canRelayUdp()) {
+        qCWarning(LogVoice) << "Refusing voice connection: an HTTP proxy cannot relay voice UDP";
         return;
     }
 
@@ -456,7 +461,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 #endif
 
     Snowflake serverId = guildId.isValid() ? guildId : channelId;
-    voiceClient = new Discord::Voice::VoiceClient(endpoint, token, serverId, channelId, accountId, voiceSessionId);
+    voiceClient = new Discord::Voice::VoiceClient(endpoint, token, serverId, channelId, accountId, voiceSessionId, proxy);
     audioPipeline = new AudioPipeline;
 
     QList<Snowflake> channelUsers;

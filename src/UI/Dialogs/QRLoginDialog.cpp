@@ -16,8 +16,8 @@
 namespace Acheron {
 namespace UI {
 
-QRLoginDialog::QRLoginDialog(Core::Session *session, QWidget *parent)
-    : QDialog(parent), session(session)
+QRLoginDialog::QRLoginDialog(Core::Session *session, const Core::ProxyConfig &proxy, QWidget *parent)
+    : QDialog(parent), session(session), proxy(proxy)
 {
     setWindowTitle(tr("Log in with QR Code"));
 
@@ -43,7 +43,7 @@ QRLoginDialog::QRLoginDialog(Core::Session *session, QWidget *parent)
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     layout->addWidget(buttons);
 
-    client = new Discord::RemoteAuthClient(session->getCaptchaResolver(), this);
+    client = new Discord::RemoteAuthClient(proxy, session->getCaptchaResolver(), this);
     connect(client, &Discord::RemoteAuthClient::fingerprintReady, this, &QRLoginDialog::renderQr);
     connect(client, &Discord::RemoteAuthClient::pendingTicket, this, &QRLoginDialog::onPendingTicket);
     connect(client, &Discord::RemoteAuthClient::authenticated, this, &QRLoginDialog::onAuthenticated);
@@ -92,10 +92,12 @@ void QRLoginDialog::onPendingTicket(const QString &userId, const QString &name, 
     qrLabel->hide();
 
     const QString hash = (avatarHash == QLatin1String("0")) ? QString() : avatarHash;
-    const QUrl url = Discord::Cdn::userAvatar(Core::Snowflake(userId.toULongLong()), hash, 96);
+    const Core::Snowflake pendingAccount(userId.toULongLong());
+    const QUrl url = Discord::Cdn::userAvatar(pendingAccount, hash, 96);
     if (!url.isEmpty()) {
         avatarLabel->show();
-        session->getImageManager()->assign(avatarLabel, url, QSize(96, 96));
+        session->getImageManager()->setAccountProxy(pendingAccount, proxy);
+        session->getImageManager()->assign(avatarLabel, url, QSize(96, 96), pendingAccount);
     }
 
     statusLabel->setText(tr("Logging in as %1...").arg(name));
