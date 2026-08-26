@@ -724,13 +724,16 @@ void ChatView::commitInlineEdit()
     QString newContent = inlineEditWidget->toPlainText().trimmed();
     QString oldContent = currentEditingIndex.data(ChatModel::ContentRole).toString();
 
-    if (newContent != oldContent && !newContent.isEmpty()) {
-        auto *chatModel = qobject_cast<ChatModel *>(model());
-        Core::Snowflake channelId = chatModel ? chatModel->getActiveChannelId() : Core::Snowflake::Invalid;
-        emit editMessageRequested(channelId, currentEditingMessageId, newContent);
-    }
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    Core::Snowflake channelId = chatModel ? chatModel->getActiveChannelId() : Core::Snowflake::Invalid;
+    Core::Snowflake messageId = currentEditingMessageId;
 
     cancelInlineEdit();
+
+    if (newContent.isEmpty())
+        emit deleteMessageRequested(channelId, messageId);
+    else if (newContent != oldContent)
+        emit editMessageRequested(channelId, messageId, newContent);
 }
 
 void ChatView::cancelInlineEdit()
