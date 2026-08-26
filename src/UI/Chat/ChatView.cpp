@@ -716,6 +716,23 @@ void ChatView::startInlineEdit(const QModelIndex &index)
     });
 }
 
+void ChatView::editLastOwnMessage()
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !currentUserId.isValid())
+        return;
+
+    for (int row = chatModel->rowCount() - 1; row >= 0; --row) {
+        QModelIndex index = chatModel->index(row, 0);
+        if (index.data(ChatModel::UserIdRole).toULongLong() != currentUserId)
+            continue;
+        if (index.data(ChatModel::IsPendingRole).toBool())
+            continue;
+        startInlineEdit(index);
+        return;
+    }
+}
+
 void ChatView::commitInlineEdit()
 {
     if (!currentEditingIndex.isValid())
@@ -738,11 +755,15 @@ void ChatView::commitInlineEdit()
 
 void ChatView::cancelInlineEdit()
 {
+    bool wasEditing = currentEditingIndex.isValid();
     inlineEditWidget->setVisible(false);
 
     QModelIndex editedIndex = currentEditingIndex;
     currentEditingMessageId = Core::Snowflake::Invalid;
     currentEditingIndex = QModelIndex();
+
+    if (wasEditing)
+        emit inlineEditFinished();
 
     // Invalidate cached size so sizeHint returns the normal height
     if (editedIndex.isValid()) {

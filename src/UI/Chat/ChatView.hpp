@@ -89,9 +89,11 @@ signals:
                                const QString &emoji, bool currentlyReacted, bool isBurst);
     void channelMentionClicked(Core::Snowflake channelId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
+    void inlineEditFinished();
 
 public slots:
     void onHistoryRequestFinished();
+    void editLastOwnMessage();
 
 private slots:
     void onScrollBarValueChanged(int value);

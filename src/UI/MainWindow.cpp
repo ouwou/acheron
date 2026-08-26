@@ -1120,6 +1120,9 @@ void MainWindow::setupUi()
         }
     });
 
+    connect(messageInput, &MessageInput::editLastMessageRequested, chatView, &ChatView::editLastOwnMessage);
+    connect(chatView, &ChatView::inlineEditFinished, messageInput, qOverload<>(&QWidget::setFocus));
+
     connect(chatView, &ChatView::historyRequested, this, [this]() {
         Snowflake oldestId = chatModel->getOldestMessageId();
 

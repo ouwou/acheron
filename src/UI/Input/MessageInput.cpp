@@ -42,6 +42,10 @@ void ChatTextEdit::keyPressEvent(QKeyEvent *e)
         emit escapePressed();
         return;
     }
+    if (e->key() == Qt::Key_Up && e->modifiers() == Qt::NoModifier && document()->isEmpty()) {
+        emit editLastMessageRequested();
+        return;
+    }
     QTextEdit::keyPressEvent(e);
 }
 
@@ -127,6 +131,8 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
         emit sendMessage(txt, attachmentPanel->attachments());
         clear();
     });
+
+    connect(textEdit, &ChatTextEdit::editLastMessageRequested, this, &MessageInput::editLastMessageRequested);
 
     connect(textEdit, &ChatTextEdit::escapePressed, this, [this]() {
         clearReplyTarget();

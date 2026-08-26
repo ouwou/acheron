@@ -28,6 +28,7 @@ protected:
 signals:
     void returnPressed();
     void escapePressed();
+    void editLastMessageRequested();
     void filesPasted(const QList<QUrl> &urls);
     void imagePasted(const QImage &image);
 };
@@ -62,6 +63,7 @@ protected:
 
 signals:
     void sendMessage(const QString &text, const QList<Core::PendingAttachment> &attachments);
+    void editLastMessageRequested();
 
 private:
     ChatTextEdit *textEdit;
