@@ -579,6 +579,12 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
         });
     }
 
+    menu.addSeparator();
+    QAction *copyIdAction = menu.addAction(tr("Copy Message ID"));
+    connect(copyIdAction, &QAction::triggered, this, [messageId]() {
+        QGuiApplication::clipboard()->setText(QString::number(quint64(messageId)));
+    });
+
     menu.exec(event->globalPos());
 }
 

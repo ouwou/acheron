@@ -2,7 +2,9 @@
 #include "ChannelFilterProxyModel.hpp"
 #include "ChannelTreeModel.hpp"
 
+#include <QClipboard>
 #include <QContextMenuEvent>
+#include <QGuiApplication>
 #include <QMenu>
 
 namespace Acheron {
@@ -209,6 +211,16 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
     connect(markReadAction, &QAction::triggered, this, [this, proxyIndex]() {
         emit markAsReadRequested(proxyIndex);
     });
+
+    if (nodeType != ChannelNode::Type::Folder) {
+        Core::Snowflake nodeId(sourceIndex.data(ChannelTreeModel::IdRole).toULongLong());
+        QString label = nodeType == ChannelNode::Type::Server ? tr("Copy Server ID") : tr("Copy Channel ID");
+        menu.addSeparator();
+        QAction *copyIdAction = menu.addAction(label);
+        connect(copyIdAction, &QAction::triggered, this, [nodeId]() {
+            QGuiApplication::clipboard()->setText(QString::number(quint64(nodeId)));
+        });
+    }
 
     menu.exec(event->globalPos());
 }

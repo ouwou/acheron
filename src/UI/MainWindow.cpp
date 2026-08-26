@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
@@ -2292,6 +2294,12 @@ void MainWindow::showUserContextMenu(Snowflake userId, Snowflake guildId, QPoint
             }
         }
     }
+
+    menu.addSeparator();
+    QAction *copyIdAction = menu.addAction(tr("Copy User ID"));
+    connect(copyIdAction, &QAction::triggered, this, [userId]() {
+        QGuiApplication::clipboard()->setText(QString::number(quint64(userId)));
+    });
 
     menu.exec(globalPos);
 }

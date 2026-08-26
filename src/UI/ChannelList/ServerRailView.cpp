@@ -2,7 +2,9 @@
 
 #include "ServerRailModel.hpp"
 
+#include <QClipboard>
 #include <QContextMenuEvent>
+#include <QGuiApplication>
 #include <QMenu>
 #include <QMouseEvent>
 
@@ -80,6 +82,12 @@ void ServerRailView::contextMenuEvent(QContextMenuEvent *event)
         leaveAction->setEnabled(ownerId != accountId);
         connect(leaveAction, &QAction::triggered, this, [this, accountId, id]() {
             emit leaveGuildRequested(accountId, id);
+        });
+
+        menu.addSeparator();
+        QAction *copyIdAction = menu.addAction(tr("Copy Server ID"));
+        connect(copyIdAction, &QAction::triggered, this, [id]() {
+            QGuiApplication::clipboard()->setText(QString::number(quint64(id)));
         });
     }
 
