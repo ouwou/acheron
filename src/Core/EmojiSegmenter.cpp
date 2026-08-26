@@ -154,73 +154,89 @@ static CharacterCategory categorizeCodepoint(char32_t cp)
     return OTHER;
 }
 
-// Count the number of emoji presentation sequences in a text string using the
-// emoji-segmenter state machine. Returns -1 if any non-emoji, non-whitespace
-// content is found. Returns the emoji sequence count otherwise (0 if all whitespace).
-int countUnicodeEmojisSegmented(const QString &text)
-{
-    if (text.isEmpty())
-        return 0;
+namespace {
 
-    // Build categorized array: one entry per codepoint (not per UTF-16 unit).
-    // Also track which codepoints are whitespace so we can skip them.
+struct Segment
+{
+    // UTF-16 range in the source text
+    int start;
+    int length;
+    bool isEmoji;
+};
+
+// Runs the emoji-segmenter state machine over `text`, calling `visit(segment)` for each segment
+// until it returns false. Whitespace is fed to the scanner as OTHER so it never joins a sequence.
+template<typename Visit>
+void forEachSegment(const QString &text, Visit visit)
+{
     QVarLengthArray<CharacterCategory, 64> categories;
-    QVarLengthArray<bool, 64> isWhitespace;
+    QVarLengthArray<int, 64> unitOffsets; // UTF-16 offset of each codepoint, plus text.size()
 
     for (int i = 0; i < text.size(); ++i) {
+        unitOffsets.append(i);
         const QChar ch = text[i];
         char32_t cp;
-        if (ch.isHighSurrogate() && i + 1 < text.size() && text[i + 1].isLowSurrogate()) {
+        if (ch.isHighSurrogate() && i + 1 < text.size() && text[i + 1].isLowSurrogate())
             cp = QChar::surrogateToUcs4(ch, text[++i]);
-        } else {
+        else
             cp = ch.unicode();
-        }
-
-        if (QChar::isSpace(cp)) {
-            // Whitespace is OTHER to the scanner — it will produce a non-emoji segment.
-            // We track it separately so we can allow it.
-            categories.append(OTHER);
-            isWhitespace.append(true);
-        } else {
-            categories.append(categorizeCodepoint(cp));
-            isWhitespace.append(false);
-        }
+        categories.append(QChar::isSpace(cp) ? OTHER : categorizeCodepoint(cp));
     }
+    unitOffsets.append(text.size());
 
     const emoji_text_iter_t begin = categories.data();
     const emoji_text_iter_t end = begin + categories.size();
-    emoji_text_iter_t pos = const_cast<emoji_text_iter_t>(begin);
-
-    int emojiCount = 0;
+    emoji_text_iter_t pos = begin;
 
     while (pos < end) {
         bool isEmoji = false;
         bool hasVs = false;
         emoji_text_iter_t segEnd = scan_emoji_presentation(pos, end, &isEmoji, &hasVs);
+        if (segEnd == pos)
+            segEnd = pos + 1;
 
-        if (segEnd == pos) {
-            // Should not happen, but guard against infinite loop.
-            ++pos;
-            continue;
-        }
-
-        int segStart = static_cast<int>(pos - begin);
-        int segLen = static_cast<int>(segEnd - pos);
-
-        if (isEmoji) {
-            emojiCount++;
-        } else {
-            // Non-emoji segment: verify it's all whitespace.
-            for (int j = segStart; j < segStart + segLen; ++j) {
-                if (!isWhitespace[j])
-                    return -1;
-            }
-        }
+        const int start = unitOffsets[int(pos - begin)];
+        const int stop = unitOffsets[int(segEnd - begin)];
+        if (!visit(Segment{ start, stop - start, isEmoji }))
+            return;
 
         pos = segEnd;
     }
+}
 
-    return emojiCount;
+} // namespace
+
+int countUnicodeEmojisSegmented(const QString &text)
+{
+    int emojiCount = 0;
+    bool onlyEmojiAndWhitespace = true;
+
+    forEachSegment(text, [&](const Segment &segment) {
+        if (segment.isEmoji) {
+            emojiCount++;
+            return true;
+        }
+        for (int i = segment.start; i < segment.start + segment.length; ++i) {
+            if (!text.at(i).isSpace()) {
+                onlyEmojiAndWhitespace = false;
+                return false;
+            }
+        }
+        return true;
+    });
+
+    return onlyEmojiAndWhitespace ? emojiCount : -1;
+}
+
+QStringList extractEmojiSequences(const QString &text)
+{
+    QStringList sequences;
+    forEachSegment(text, [&](const Segment &segment) {
+        if (segment.isEmoji)
+            sequences.append(text.mid(segment.start, segment.length));
+        return true;
+    });
+    return sequences;
 }
 
 } // namespace Core

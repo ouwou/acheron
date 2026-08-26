@@ -7,6 +7,7 @@
 #include <QUrl>
 
 #include "Discord/Client.hpp"
+#include "Emoji/EmojiManager.hpp"
 #include "Markdown/Parser.hpp"
 #include "Logging.hpp"
 #include "UserManager.hpp"
@@ -104,6 +105,11 @@ void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolv
         Snowflake id(channelId.toULongLong());
         return resolver(id);
     });
+}
+
+void MessageManager::setEmojiManager(EmojiManager *manager)
+{
+    emojiManager = manager;
 }
 
 void MessageManager::requestLoadChannel(Snowflake channelId)
@@ -347,10 +353,20 @@ void MessageManager::onMessageSendFailed(const QString &nonce, const QString &er
     emit messageErrored(nonce);
 }
 
+void MessageManager::addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji, bool isBurst)
+{
+    if (emojiManager)
+        emojiManager->trackReaction(emoji);
+    client->addReaction(channelId, messageId, emoji, isBurst);
+}
+
 void MessageManager::sendMessage(Snowflake channelId, const QString &content,
                                  Snowflake replyToMessageId,
                                  const QList<PendingAttachment> &attachments)
 {
+    if (emojiManager)
+        emojiManager->trackMessageEmojis(content);
+
     Snowflake nonceId = Snowflake::generateNonce();
     QString nonce = QString::number(nonceId);
 

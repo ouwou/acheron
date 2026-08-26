@@ -31,6 +31,21 @@ Proto::GuildFolders guildFoldersFromLegacy(const QList<GuildFolderEntry> &entrie
     return result;
 }
 
+QString frecencySettingsEndpoint()
+{
+    return "/users/@me/settings-proto/" + QString::number(int(UserSettingsProtoType::FRECENCY));
+}
+
+std::optional<Proto::FrecencyUserSettings> decodeFrecencySettings(const QJsonObject &obj)
+{
+    const QByteArray proto = QByteArray::fromBase64(obj.value("settings").toString().toUtf8());
+    if (proto.isEmpty())
+        return std::nullopt;
+
+    Proto::ProtoReader reader(proto);
+    return Proto::FrecencyUserSettings::fromProto(reader);
+}
+
 } // namespace
 
 Client::Client(const QString &token, const QString &gatewayUrl, const QString &baseUrl,
@@ -70,6 +85,7 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayGuildRoleCreate, this, &Client::onGatewayGuildRoleCreate);
     connect(gateway, &Gateway::gatewayGuildRoleUpdate, this, &Client::onGatewayGuildRoleUpdate);
     connect(gateway, &Gateway::gatewayGuildRoleDelete, this, &Client::onGatewayGuildRoleDelete);
+    connect(gateway, &Gateway::gatewayGuildEmojisUpdate, this, &Client::guildEmojisUpdated);
     connect(gateway, &Gateway::gatewayMessageAck, this, &Client::messageAcked);
     connect(gateway, &Gateway::gatewayMessageReactionAdd, this, &Client::messageReactionAdd);
     connect(gateway, &Gateway::gatewayMessageReactionAddMany, this, &Client::messageReactionAddMany);
@@ -85,6 +101,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayRelationshipUpdate, this, &Client::relationshipUpdated);
     connect(gateway, &Gateway::gatewayRelationshipRemove, this, &Client::relationshipRemoved);
     connect(gateway, &Gateway::gatewayUserNoteUpdate, this, &Client::userNoteUpdated);
+    connect(gateway, &Gateway::gatewayUserSettingsProtoUpdate, this,
+            &Client::userSettingsProtoUpdated);
     connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
         setState(Core::ConnectionState::Connecting);
         emit reconnecting(attempt, maxAttempts);
@@ -1015,6 +1033,12 @@ Snowflake Client::getGuildIdForChannel(Snowflake channelId) const
     return channelToGuild.value(channelId, Snowflake::Invalid);
 }
 
+void Client::registerChannelGuild(Snowflake channelId, Snowflake guildId)
+{
+    if (channelId.isValid() && guildId.isValid())
+        channelToGuild.insert(channelId, guildId);
+}
+
 PremiumTier Client::getGuildPremiumTier(Snowflake guildId) const
 {
     return guildPremiumTiers.value(guildId, PremiumTier::NONE);
@@ -1076,6 +1100,61 @@ void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &user
 [[nodiscard]] const User &Client::getMe() const
 {
     return me;
+}
+
+bool Client::isPremium() const
+{
+    return me.premiumType.hasValue() && me.premiumType.get() != PremiumType::NONE;
+}
+
+void Client::fetchFrecencySettings(FrecencyCallback callback)
+{
+    httpClient->get(frecencySettingsEndpoint(), {}, [callback](const HttpResponse &response) {
+        if (!response.success) {
+            QString err = QStringLiteral("status=%1 error=%2")
+                                  .arg(response.statusCode)
+                                  .arg(response.error);
+            qCWarning(LogDiscord) << "Failed to fetch frecency settings:" << err;
+            callback(Core::Result<Proto::FrecencyUserSettings>::makeError(err));
+            return;
+        }
+
+        const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
+        callback(Core::Result<Proto::FrecencyUserSettings>::makeOk(
+                decodeFrecencySettings(obj).value_or(Proto::FrecencyUserSettings())));
+    });
+}
+
+void Client::patchFrecencySettings(const QByteArray &partialProto,
+                                   std::optional<uint32_t> requiredDataVersion,
+                                   FrecencyPatchCallback callback)
+{
+    QJsonObject payload;
+    payload["settings"] = QString::fromLatin1(partialProto.toBase64());
+    if (requiredDataVersion)
+        payload["required_data_version"] = static_cast<qint64>(*requiredDataVersion);
+
+    httpClient->patch(frecencySettingsEndpoint(), payload,
+                      [callback](const HttpResponse &response) {
+                          FrecencyPatchResult result;
+                          result.rateLimited = response.rateLimited();
+
+                          if (!response.success) {
+                              result.error = QStringLiteral("status=%1 error=%2")
+                                                     .arg(response.statusCode)
+                                                     .arg(response.error);
+                              qCWarning(LogDiscord) << "Failed to patch frecency settings:" << result.error;
+                              callback(result);
+                              return;
+                          }
+
+                          const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
+                          result.success = true;
+                          result.outOfDate = obj.value("out_of_date").toBool();
+                          result.settings = decodeFrecencySettings(obj);
+
+                          callback(result);
+                      });
 }
 
 void Client::setState(Core::ConnectionState state)

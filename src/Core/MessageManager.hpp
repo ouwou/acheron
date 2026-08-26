@@ -20,6 +20,7 @@ namespace Acheron {
 namespace Core {
 
 class UserManager;
+class EmojiManager;
 
 struct MessageRequestResult
 {
@@ -39,6 +40,7 @@ public:
     ~MessageManager() override;
 
     void setChannelResolver(std::function<QString(Snowflake)> resolver);
+    void setEmojiManager(EmojiManager *manager);
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
@@ -46,6 +48,7 @@ public:
                      Snowflake replyToMessageId = Snowflake::Invalid,
                      const QList<PendingAttachment> &attachments = {});
     void cancelSend(Snowflake channelId, const QString &nonce);
+    void addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji, bool isBurst);
 
 signals:
     void messagesReceived(const MessageRequestResult &result);
@@ -78,6 +81,7 @@ private:
 
     Discord::Client *client;
     UserManager *userManager;
+    EmojiManager *emojiManager = nullptr;
     std::unique_ptr<Markdown::Parser> parser;
 
     QCache<Snowflake, Discord::Message> messageCache;

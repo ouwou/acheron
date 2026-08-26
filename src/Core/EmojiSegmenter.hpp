@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 namespace Acheron {
 namespace Core {
@@ -32,6 +33,10 @@ typedef CharacterCategory *emoji_text_iter_t;
 // Returns -1 if any non-emoji, non-whitespace content is found.
 // Returns the emoji sequence count (0 if empty/all whitespace).
 int countUnicodeEmojisSegmented(const QString &text);
+
+// Every emoji presentation sequence in `text` (ZWJ chains, tone and keycap sequences, flags),
+// in order, as the exact substring that formed it.
+QStringList extractEmojiSequences(const QString &text);
 
 } // namespace Core
 } // namespace Acheron

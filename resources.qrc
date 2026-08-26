@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file>resources/placeholder.png</file>
+        <file>resources/emoji_data.json</file>
         <file>resources/icons/lucide/at-sign.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
         <file>resources/icons/lucide/file-audio.svg</file>

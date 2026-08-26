@@ -165,6 +165,9 @@ set(PROJECT_SOURCES
     src/Core/RelationshipManager.cpp
     src/Core/MurmurHash3.cpp
     src/Core/EmojiSegmenter.cpp
+    src/Core/Emoji/EmojiManager.cpp
+    src/Core/Emoji/FrecencyTracker.cpp
+    src/Core/Emoji/UnicodeEmojiIndex.cpp
     src/Core/Markdown/Parser.cpp
     src/Core/Theme/Tokens.cpp
     src/Core/Theme/Manager.cpp
@@ -221,6 +224,7 @@ set(PROJECT_SOURCES
     src/UI/MemberList/MemberListDelegate.cpp
     src/UI/MemberList/MemberListView.cpp
     src/UI/Input/MessageInput.cpp
+    src/UI/Input/EmojiAutocompletePopup.cpp
     src/UI/Input/AttachmentPreviewPanel.cpp
     src/Storage/DatabaseManager.cpp
     src/Storage/BaseRepository.cpp
@@ -242,7 +246,9 @@ set(PROJECT_SOURCES
     src/Discord/CdnUrls.cpp
     src/Discord/ClientIdentity.cpp
     src/Proto/ProtoReader.cpp
+    src/Proto/ProtoWriter.cpp
     src/Proto/UserSettings.cpp
+    src/Proto/FrecencySettings.cpp
     src/Core/TokenStore.cpp
     src/App.cpp
 )
@@ -301,6 +307,23 @@ if(BUILD_TESTS)
     target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
 
+    qt_add_executable(TestFrecency tests/tst_Frecency.cpp src/Core/Emoji/FrecencyTracker.cpp)
+    target_link_libraries(TestFrecency PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestFrecency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME FrecencyTests COMMAND TestFrecency)
+
+    qt_add_executable(TestUnicodeEmoji tests/tst_UnicodeEmoji.cpp
+        src/Core/Emoji/UnicodeEmojiIndex.cpp src/Core/Logging.cpp resources.qrc)
+    target_link_libraries(TestUnicodeEmoji PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestUnicodeEmoji PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME UnicodeEmojiTests COMMAND TestUnicodeEmoji)
+
+    qt_add_executable(TestProto tests/tst_Proto.cpp src/Proto/ProtoReader.cpp
+        src/Proto/ProtoWriter.cpp src/Proto/FrecencySettings.cpp src/Core/Logging.cpp)
+    target_link_libraries(TestProto PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestProto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME ProtoTests COMMAND TestProto)
+
     qt_add_executable(TestProxy tests/tst_Proxy.cpp src/Core/ProxyConfig.cpp
         src/Core/Logging.cpp src/Core/ImageManager.cpp src/Core/Snowflake.cpp
         src/Discord/Voice/Socks5UdpAssociation.cpp)
@@ -323,7 +346,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        foreach(test_target TestMarkdown TestProxy)
+        foreach(test_target TestMarkdown TestUnicodeEmoji TestFrecency TestProto TestProxy)
             target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
             target_compile_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
             target_compile_options(${test_target} PRIVATE /utf-8)

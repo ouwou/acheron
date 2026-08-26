@@ -154,6 +154,7 @@ enum class GatewayEvent {
     GUILD_ROLE_CREATE,
     GUILD_ROLE_UPDATE,
     GUILD_ROLE_DELETE,
+    GUILD_EMOJIS_UPDATE,
     MESSAGE_ACK,
     MESSAGE_REACTION_ADD,
     MESSAGE_REACTION_ADD_MANY,
@@ -169,6 +170,7 @@ enum class GatewayEvent {
     RELATIONSHIP_UPDATE,
     RELATIONSHIP_REMOVE,
     USER_NOTE_UPDATE,
+    USER_SETTINGS_PROTO_UPDATE,
 };
 
 enum class RelationshipType {
@@ -206,6 +208,7 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "GUILD_ROLE_CREATE", GatewayEvent::GUILD_ROLE_CREATE },
         { "GUILD_ROLE_UPDATE", GatewayEvent::GUILD_ROLE_UPDATE },
         { "GUILD_ROLE_DELETE", GatewayEvent::GUILD_ROLE_DELETE },
+        { "GUILD_EMOJIS_UPDATE", GatewayEvent::GUILD_EMOJIS_UPDATE },
         { "MESSAGE_ACK", GatewayEvent::MESSAGE_ACK },
         { "MESSAGE_REACTION_ADD", GatewayEvent::MESSAGE_REACTION_ADD },
         { "MESSAGE_REACTION_ADD_MANY", GatewayEvent::MESSAGE_REACTION_ADD_MANY },
@@ -221,6 +224,7 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "RELATIONSHIP_UPDATE", GatewayEvent::RELATIONSHIP_UPDATE },
         { "RELATIONSHIP_REMOVE", GatewayEvent::RELATIONSHIP_REMOVE },
         { "USER_NOTE_UPDATE", GatewayEvent::USER_NOTE_UPDATE },
+        { "USER_SETTINGS_PROTO_UPDATE", GatewayEvent::USER_SETTINGS_PROTO_UPDATE },
     };
 
     return events.value(event, GatewayEvent::UNKNOWN);
@@ -274,6 +278,12 @@ enum class ChannelFlag {
     IS_SPOILER_CHANNEL = 1 << 21,
 };
 ACHERON_DECLARE_FLAGS(ChannelFlags, ChannelFlag)
+
+// /users/@me/settings-proto/{type}
+enum class UserSettingsProtoType {
+    PRELOADED = 1,
+    FRECENCY = 2,
+};
 
 // user
 enum class PremiumType {

@@ -49,6 +49,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     forumManager = new ForumManager(client, channelRepo, readStateManager, this);
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
     relationshipManager = new RelationshipManager(this);
+    emojiManager = new EmojiManager(client, this, this);
+    messageManager->setEmojiManager(emojiManager);
 #ifndef ACHERON_NO_VOICE
     voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
 #endif
@@ -177,6 +179,10 @@ ClientInstance::ClientInstance(const AccountInfo &info,
                     userManager->setCachedNote(event.id.get(), event.note.get());
             });
 
+    connect(client, &Discord::Client::ready, emojiManager, &EmojiManager::onReady);
+    connect(client, &Discord::Client::guildEmojisUpdated, emojiManager, &EmojiManager::onGuildEmojisUpdated);
+    connect(client, &Discord::Client::userSettingsProtoUpdated, emojiManager, &EmojiManager::onUserSettingsProtoUpdated);
+
     connect(client, &Discord::Client::guildCreated, this, &ClientInstance::onGuildCreated);
     connect(client, &Discord::Client::guildDeleted, this, &ClientInstance::onGuildDeleted);
     connect(client, &Discord::Client::channelCreated, this, &ClientInstance::onChannelCreated);
@@ -284,6 +290,9 @@ void ClientInstance::saveGuild(const Discord::GatewayGuild &guild, const QList<D
 
     guildRepo.saveGuild(guild.asGuild(), db);
 
+    if (guild.emojis.hasValue())
+        emojiManager->setGuildEmojis(guildId, guild.emojis.get());
+
     if (guild.roles.hasValue())
         roleRepo.saveRoles(guildId, guild.roles.get(), db);
 
@@ -378,6 +387,7 @@ void ClientInstance::onGuildDeleted(const Discord::GuildDelete &event)
     }
 
     readStateManager->removeGuild(guildId);
+    emojiManager->removeGuild(guildId);
     userManager->removeGuildMembers(guildId);
     memberListManager->clearGuild(guildId);
     permissionManager->invalidateUserGuildCache(account.id, guildId);
@@ -519,7 +529,9 @@ void ClientInstance::cacheThread(const Discord::Channel &thread, Snowflake guild
     if (!copy.guildId.hasValue() && guildId.isValid())
         copy.guildId = guildId;
     threadCache.insert(copy.id.get(), copy);
-    registerThreadReadState(copy, copy.guildId.hasValue() ? copy.guildId.get() : guildId);
+    const Snowflake resolvedGuildId = copy.guildId.hasValue() ? copy.guildId.get() : guildId;
+    client->registerChannelGuild(copy.id.get(), resolvedGuildId);
+    registerThreadReadState(copy, resolvedGuildId);
 }
 
 void ClientInstance::ingestThread(const Discord::Channel &thread, Snowflake guildId)
@@ -1003,6 +1015,8 @@ void ClientInstance::start()
 
 void ClientInstance::stop()
 {
+    emojiManager->savePendingUsage();
+
     if (isInVoice()) {
         discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false);
 #ifndef ACHERON_NO_VOICE
@@ -1050,6 +1064,11 @@ RelationshipManager *ClientInstance::relationships() const
 MemberListManager *ClientInstance::memberList() const
 {
     return memberListManager;
+}
+
+EmojiManager *ClientInstance::emojis() const
+{
+    return emojiManager;
 }
 
 #ifndef ACHERON_NO_VOICE

@@ -1,6 +1,7 @@
 #include "MessageInput.hpp"
 #include "AttachmentPreviewPanel.hpp"
 
+#include "Core/Emoji/UnicodeEmojiIndex.hpp"
 #include "Core/Theme/Icons.hpp"
 
 #include <QHBoxLayout>
@@ -122,6 +123,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
         QString txt = textEdit->toPlainText().trimmed();
         if (txt.isEmpty() && !attachmentPanel->hasAttachments())
             return;
+        txt = Core::UnicodeEmojiIndex::instance().translateNamesToSurrogates(txt);
         emit sendMessage(txt, attachmentPanel->attachments());
         clear();
     });
@@ -133,6 +135,8 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
     connect(textEdit->document(), &QTextDocument::contentsChanged, this,
             &MessageInput::adjustHeight);
+
+    autocomplete = new EmojiAutocomplete(textEdit, this);
 
     connect(textEdit, &ChatTextEdit::filesPasted, this, &MessageInput::queueAttachments);
     connect(textEdit, &ChatTextEdit::imagePasted, attachmentPanel, &AttachmentPreviewPanel::addImage);

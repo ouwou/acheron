@@ -16,6 +16,7 @@
 #include "Core/ProxyConfig.hpp"
 #include "Core/PendingAttachment.hpp"
 
+#include "Proto/FrecencySettings.hpp"
 #include "Proto/UserSettings.hpp"
 
 #include "Gateway.hpp"
@@ -142,12 +143,30 @@ public:
     void requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds);
 
     [[nodiscard]] Snowflake getGuildIdForChannel(Snowflake channelId) const;
+    void registerChannelGuild(Snowflake channelId, Snowflake guildId);
 
     [[nodiscard]] PremiumTier getGuildPremiumTier(Snowflake guildId) const;
     [[nodiscard]] qint64 getMaxUploadSize(Snowflake channelId) const;
 
+    using FrecencyCallback = std::function<void(const Core::Result<Proto::FrecencyUserSettings> &)>;
+    void fetchFrecencySettings(FrecencyCallback callback);
+
+    struct FrecencyPatchResult
+    {
+        bool success = false;
+        bool rateLimited = false;
+        bool outOfDate = false;
+        QString error;
+        std::optional<Proto::FrecencyUserSettings> settings; // server state after the patch
+    };
+    using FrecencyPatchCallback = std::function<void(const FrecencyPatchResult &)>;
+    void patchFrecencySettings(const QByteArray &partialProto,
+                               std::optional<uint32_t> requiredDataVersion,
+                               FrecencyPatchCallback callback);
+
     [[nodiscard]] const Proto::PreloadedUserSettings &getSettings() const;
     [[nodiscard]] const User &getMe() const;
+    [[nodiscard]] bool isPremium() const;
 
 signals:
     void stateChanged(Core::ConnectionState state);
@@ -174,6 +193,7 @@ signals:
     void guildRoleCreated(const GuildRoleCreate &event);
     void guildRoleUpdated(const GuildRoleUpdate &event);
     void guildRoleDeleted(const GuildRoleDelete &event);
+    void guildEmojisUpdated(const GuildEmojisUpdate &event);
     void messageAcked(const MessageAck &event);
     void messageReactionAdd(const MessageReactionAdd &event);
     void messageReactionAddMany(const MessageReactionAddMany &event);
@@ -188,6 +208,7 @@ signals:
     void relationshipUpdated(const RelationshipPartial &event);
     void relationshipRemoved(const RelationshipPartial &event);
     void userNoteUpdated(const UserNoteUpdate &event);
+    void userSettingsProtoUpdated(const UserSettingsProtoUpdate &event);
     void messageSendFailed(const QString &nonce, const QString &error);
     void guildLeaveFailed(Core::Snowflake guildId, const QString &error);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);

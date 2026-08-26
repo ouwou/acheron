@@ -294,6 +294,39 @@ struct Channel : Core::JsonUtils::JsonObject
     bool isThread() const { return type.hasValue() && isThreadType(type.get()); }
 };
 
+struct Emoji : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake, false, true> id; // null for unicode emojis
+    Field<QString> name;
+    Field<bool, true> animated;
+    Field<QList<Core::Snowflake>, true> roles;
+    Field<bool, true> managed;
+    Field<bool, true> available;
+
+    static Emoji fromJson(const QJsonObject &obj)
+    {
+        Emoji emoji;
+        get(obj, "id", emoji.id);
+        get(obj, "name", emoji.name);
+        get(obj, "animated", emoji.animated);
+        get(obj, "roles", emoji.roles);
+        get(obj, "managed", emoji.managed);
+        get(obj, "available", emoji.available);
+        return emoji;
+    }
+
+    bool isUnicode() const { return !id.hasValue(); }
+
+    QString getImageUrl(int size = 48) const
+    {
+        if (isUnicode())
+            return {};
+        return QString("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
+                .arg(id->toString())
+                .arg(size);
+    }
+};
+
 struct Guild : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;
@@ -361,6 +394,7 @@ struct GatewayGuild : Core::JsonUtils::JsonObject
     // active/joined
     Field<QList<Channel>, true> threads;
     Field<QList<Role>, true> roles;
+    Field<QList<Emoji>, true> emojis;
     Field<QList<Member>, true> members;
     Field<QDateTime, true> joinedAt;
     Field<bool, true> unavailable;
@@ -372,6 +406,7 @@ struct GatewayGuild : Core::JsonUtils::JsonObject
         get(obj, "channels", guild.channels);
         get(obj, "threads", guild.threads);
         get(obj, "roles", guild.roles);
+        get(obj, "emojis", guild.emojis);
         get(obj, "members", guild.members);
         get(obj, "joined_at", guild.joinedAt);
         get(obj, "unavailable", guild.unavailable);
@@ -548,33 +583,6 @@ struct Attachment : Core::JsonUtils::JsonObject
     bool isSpoiler() const
     {
         return flags.hasValue() && flags->testFlag(AttachmentFlag::IS_SPOILER);
-    }
-};
-
-struct Emoji : Core::JsonUtils::JsonObject
-{
-    Field<Core::Snowflake, false, true> id; // null for unicode emojis
-    Field<QString> name;
-    Field<bool, true> animated;
-
-    static Emoji fromJson(const QJsonObject &obj)
-    {
-        Emoji emoji;
-        get(obj, "id", emoji.id);
-        get(obj, "name", emoji.name);
-        get(obj, "animated", emoji.animated);
-        return emoji;
-    }
-
-    bool isUnicode() const { return !id.hasValue(); }
-
-    QString getImageUrl(int size = 48) const
-    {
-        if (isUnicode())
-            return {};
-        return QString("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
-                .arg(id->toString())
-                .arg(size);
     }
 };
 

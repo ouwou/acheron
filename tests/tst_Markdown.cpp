@@ -1,3 +1,4 @@
+#include "Core/EmojiSegmenter.hpp"
 #include "Core/Markdown/Parser.hpp"
 
 #include <QElapsedTimer>
@@ -12,6 +13,7 @@ private slots:
     void testNewlines();
     void testAutolink();
     void testUrl();
+    void testEmojiSequences();
 };
 
 static QString renderInline(const QString &source)
@@ -89,6 +91,26 @@ void TestMarkdown::testUrl()
     // A host-only URL with a non-default port still gets the "/" path.
     QCOMPARE(renderInline("https://localhost:3000"),
              QStringLiteral("<a href=\"https://localhost:3000/\">https://localhost:3000/</a>"));
+}
+
+void TestMarkdown::testEmojiSequences()
+{
+    using Acheron::Core::countUnicodeEmojisSegmented;
+    using Acheron::Core::extractEmojiSequences;
+
+    const QString thumbsUp = QString::fromUtf8("\xF0\x9F\x91\x8D");
+    const QString thumbsUpTone2 = QString::fromUtf8("\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBC");
+    const QString family = QString::fromUtf8("\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7");
+    const QString keycapOne = QString::fromUtf8("1\xEF\xB8\x8F\xE2\x83\xA3");
+
+    // Tone modifiers, ZWJ chains and keycaps each come back as one intact sequence.
+    QCOMPARE(extractEmojiSequences("hi " + thumbsUpTone2 + " and " + family + keycapOne + "!"),
+             QStringList({ thumbsUpTone2, family, keycapOne }));
+    QVERIFY(extractEmojiSequences("plain text <:pepe:123> 1 + 1").isEmpty());
+
+    QCOMPARE(countUnicodeEmojisSegmented(thumbsUp + " " + family), 2);
+    QCOMPARE(countUnicodeEmojisSegmented("x " + thumbsUp), -1);
+    QCOMPARE(countUnicodeEmojisSegmented("   "), 0);
 }
 
 QTEST_MAIN(TestMarkdown)

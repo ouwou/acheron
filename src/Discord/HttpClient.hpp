@@ -25,6 +25,8 @@ struct HttpResponse
     QByteArray body;
     QString error;
     bool success = false;
+
+    [[nodiscard]] bool rateLimited() const { return statusCode == 429; }
 };
 
 struct FileUpload

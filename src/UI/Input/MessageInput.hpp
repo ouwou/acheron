@@ -6,6 +6,7 @@
 
 #include "Core/PendingAttachment.hpp"
 #include "Core/Snowflake.hpp"
+#include "EmojiAutocompletePopup.hpp"
 
 class QToolButton;
 
@@ -52,6 +53,8 @@ public:
     void queueAttachments(const QList<QUrl> &urls);
     void setMaxUploadSize(qint64 bytes);
 
+    [[nodiscard]] EmojiAutocomplete *emojiAutocomplete() const { return autocomplete; }
+
 protected:
     void resizeEvent(QResizeEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -66,6 +69,7 @@ private:
     QLabel *replyLabel;
     QToolButton *replyCancelButton;
     AttachmentPreviewPanel *attachmentPanel;
+    EmojiAutocomplete *autocomplete;
 
     Core::Snowflake replyMessageId;
     bool sendBlocked = false;

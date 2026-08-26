@@ -54,6 +54,10 @@ QString buildStyleSheet()
                           "#MessageInput:focus { border: 1px solid %3; }")
                    .arg(hex(baseBg), hex(divider), hex(highlight));
 
+    qss += QStringLiteral("#EmojiAutocompletePopup QListView {"
+                          "  background: transparent;"
+                          "  border: none; }");
+
     return qss;
 }
 

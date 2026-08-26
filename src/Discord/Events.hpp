@@ -345,6 +345,37 @@ struct GuildRoleDelete : Core::JsonUtils::JsonObject
     }
 };
 
+struct GuildEmojisUpdate : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> guildId;
+    Field<QList<Emoji>> emojis;
+
+    static GuildEmojisUpdate fromJson(const QJsonObject &obj)
+    {
+        GuildEmojisUpdate event;
+        get(obj, "guild_id", event.guildId);
+        get(obj, "emojis", event.emojis);
+        return event;
+    }
+};
+
+struct UserSettingsProtoUpdate : Core::JsonUtils::JsonObject
+{
+    Field<UserSettingsProtoType> type;
+    Field<QString> proto; // base64
+    Field<bool, true> partial;
+
+    static UserSettingsProtoUpdate fromJson(const QJsonObject &obj)
+    {
+        UserSettingsProtoUpdate event;
+        const QJsonObject settings = obj["settings"].toObject();
+        get(settings, "type", event.type);
+        get(settings, "proto", event.proto);
+        get(obj, "partial", event.partial);
+        return event;
+    }
+};
+
 struct GuildDelete : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;

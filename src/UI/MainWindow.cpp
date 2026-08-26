@@ -26,6 +26,7 @@
 #include "Accounts/AccountsModel.hpp"
 #include "Core/ClientInstance.hpp"
 #include "Core/AccountInfo.hpp"
+#include "Core/Emoji/EmojiManager.hpp"
 #include "Core/UserManager.hpp"
 #include "Core/TypingTracker.hpp"
 #include "Core/Logging.hpp"
@@ -202,6 +203,8 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
 
     if (!node || !node->opensChat())
         return;
+
+    messageInput->emojiAutocomplete()->cancel();
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
     if (!accountNode) {
@@ -389,6 +392,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         video->setProxy(currentInstance->discord()->getProxy());
 
     chatModel->setAccount(currentInstance->accountId());
+    messageInput->emojiAutocomplete()->cancel();
+    messageInput->emojiAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
 
     forumModel->setAccount(currentInstance->accountId());
     forumModel->setManager(currentInstance->forums());
@@ -887,6 +892,14 @@ void MainWindow::setupUi()
     chatView = new ChatView(rightSideWidget);
     chatView->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
     messageInput = new MessageInput(rightSideWidget);
+    messageInput->emojiAutocomplete()->setProvider([this](const QString &query) -> QList<Core::EmojiMatch> {
+        if (!currentInstance)
+            return {};
+        Snowflake channelId = chatModel->getActiveChannelId();
+        if (!channelId.isValid())
+            return {};
+        return currentInstance->emojis()->search(query, channelId);
+    });
     typingIndicator = new TypingIndicator(rightSideWidget);
     slowModeIndicator = new SlowModeIndicator(rightSideWidget);
 
@@ -1182,7 +1195,7 @@ void MainWindow::setupUi()
                 if (currentlyReacted)
                     currentInstance->discord()->removeReaction(channelId, messageId, emoji, isBurst);
                 else
-                    currentInstance->discord()->addReaction(channelId, messageId, emoji, isBurst);
+                    currentInstance->messages()->addReaction(channelId, messageId, emoji, isBurst);
             });
 
     connect(chatView, &ChatView::userContextMenuRequested, this,
