@@ -166,7 +166,7 @@ struct Segment
 
 // Runs the emoji-segmenter state machine over `text`, calling `visit(segment)` for each segment
 // until it returns false. Whitespace is fed to the scanner as OTHER so it never joins a sequence.
-template<typename Visit>
+template <typename Visit>
 void forEachSegment(const QString &text, Visit visit)
 {
     QVarLengthArray<CharacterCategory, 64> categories;
