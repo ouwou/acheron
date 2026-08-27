@@ -40,7 +40,8 @@ public:
         Formula formula = Formula::Chat;
     };
 
-    explicit FrecencyTracker(Options options = {});
+    FrecencyTracker() = default;
+    explicit FrecencyTracker(Options options);
 
     static Options chatEmojiOptions();
     static Options reactionEmojiOptions();
