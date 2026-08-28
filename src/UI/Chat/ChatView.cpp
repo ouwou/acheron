@@ -541,7 +541,7 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
         emit replyToMessageRequested(channelId, messageId);
     });
 
-    if (isOwnMessage) {
+    if (isOwnMessage && !index.data(ChatModel::IsSystemMessageRole).toBool()) {
         QAction *editAction = menu.addAction(tr("Edit Message"));
         connect(editAction, &QAction::triggered, this, [this, index]() {
             startInlineEdit(index);
@@ -727,6 +727,8 @@ void ChatView::editLastOwnMessage()
         if (index.data(ChatModel::UserIdRole).toULongLong() != currentUserId)
             continue;
         if (index.data(ChatModel::IsPendingRole).toBool())
+            continue;
+        if (index.data(ChatModel::IsSystemMessageRole).toBool())
             continue;
         startInlineEdit(index);
         return;
