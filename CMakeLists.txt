@@ -324,6 +324,11 @@ if(BUILD_TESTS)
     target_include_directories(TestProto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME ProtoTests COMMAND TestProto)
 
+    qt_add_executable(TestMessageEntities tests/tst_MessageEntities.cpp src/Core/Snowflake.cpp)
+    target_link_libraries(TestMessageEntities PRIVATE Qt::Core Qt::Gui Qt::Test)
+    target_include_directories(TestMessageEntities PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME MessageEntityTests COMMAND TestMessageEntities)
+
     qt_add_executable(TestProxy tests/tst_Proxy.cpp src/Core/ProxyConfig.cpp
         src/Core/Logging.cpp src/Core/ImageManager.cpp src/Core/Snowflake.cpp
         src/Discord/Voice/Socks5UdpAssociation.cpp)
@@ -346,7 +351,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        foreach(test_target TestMarkdown TestUnicodeEmoji TestFrecency TestProto TestProxy)
+        foreach(test_target TestMarkdown TestUnicodeEmoji TestFrecency TestProto TestMessageEntities TestProxy)
             target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
             target_compile_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
             target_compile_options(${test_target} PRIVATE /utf-8)

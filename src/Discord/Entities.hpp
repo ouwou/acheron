@@ -704,6 +704,18 @@ struct Message : Core::JsonUtils::JsonObject
     // track for MESSAGE_UPDATE
     QSet<QString> presentKeys;
 
+    [[nodiscard]] bool isForwarded() const
+    {
+        // Message reference type 1 is a Discord forward. Its visible payload is
+        // carried in message_snapshots rather than the outer message object.
+        const bool forwardReference = messageReference.hasValue() &&
+                                      messageReference->type.hasValue() &&
+                                      messageReference->type.get() == 1;
+        const bool hasSnapshotFlag = flags.hasValue() &&
+                                     flags->testFlag(MessageFlag::HAS_SNAPSHOT);
+        return forwardReference || hasSnapshotFlag;
+    }
+
     static Message fromJson(const QJsonObject &obj)
     {
         Message message;
@@ -729,6 +741,31 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
 
+        // Forwarded messages have an empty outer content/attachment/embed payload.
+        // Discord puts the immutable copy in the first message snapshot instead.
+        // Flatten those display fields onto Message so the rest of the rendering
+        // and persistence pipeline can treat a forward like a regular message.
+        const QJsonArray snapshots = obj.value("message_snapshots").toArray();
+        if (!snapshots.isEmpty()) {
+            const QJsonObject snapshotContainer = snapshots.first().toObject();
+            const QJsonObject snapshot = snapshotContainer.value("message").toObject();
+            if (!snapshot.isEmpty()) {
+                Message snapshotMessage = fromJson(snapshot);
+                if (snapshotMessage.content.hasValue())
+                    message.content = snapshotMessage.content;
+                if (snapshotMessage.attachments.hasValue())
+                    message.attachments = snapshotMessage.attachments;
+                if (snapshotMessage.embeds.hasValue()) {
+                    message.embeds = snapshotMessage.embeds;
+                    message.embedsJson = snapshotMessage.embedsJson;
+                }
+                if (snapshotMessage.mentions.hasValue())
+                    message.mentions = snapshotMessage.mentions;
+                if (snapshotMessage.mentionRoles.hasValue())
+                    message.mentionRoles = snapshotMessage.mentionRoles;
+            }
+        }
+
         // referenced_message: manually handle tri-state (absent / null / object)
         auto refIt = obj.find("referenced_message");
         if (refIt != obj.end()) {
@@ -740,7 +777,9 @@ struct Message : Core::JsonUtils::JsonObject
             }
         }
 
-        if (obj.contains("embeds")) {
+        // A forwarded snapshot may already have supplied the serialized embeds;
+        // do not replace them with the outer message's empty embeds array.
+        if (obj.contains("embeds") && message.embedsJson.isEmpty()) {
             QJsonDocument doc(obj.value("embeds").toArray());
             message.embedsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
         }

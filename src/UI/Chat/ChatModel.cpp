@@ -334,6 +334,13 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         QString html = msg.parsedContentCached;
 
+        if (msg.isForwarded()) {
+            const QString label = QStringLiteral(
+                    "<span style=\"color: gray; font-size: small; font-weight: 600\">%1</span>")
+                                          .arg(tr("Forwarded"));
+            html = html.isEmpty() ? label : label + QStringLiteral("<br>") + html;
+        }
+
         if (msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::HAS_THREAD)) {
             QString sep = html.isEmpty() ? QString() : QStringLiteral("<br>");
             html += sep +
