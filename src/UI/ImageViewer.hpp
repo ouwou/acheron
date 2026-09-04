@@ -7,9 +7,6 @@
 
 #include "Core/Snowflake.hpp"
 
-class QNetworkAccessManager;
-class QNetworkReply;
-
 namespace Acheron {
 namespace Core {
 class ImageManager;
@@ -53,7 +50,8 @@ private:
     bool isPanning = false;
 
     QWidget *trackedWindow = nullptr;
-    QNetworkAccessManager *networkManager;
+    Core::ImageManager *imageManager;
+    Core::Snowflake accountId;
 };
 
 } // namespace UI

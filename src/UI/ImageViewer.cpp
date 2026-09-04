@@ -4,10 +4,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QNetworkReply>
-#include <QUrlQuery>
+#include <QClipboard>
 #include <QApplication>
 
 #include "Core/ImageManager.hpp"
@@ -16,8 +13,7 @@ namespace Acheron {
 namespace UI {
 
 ImageViewer::ImageViewer(Core::ImageManager *imageManager, Core::Snowflake accountId, QWidget *parent)
-    : QWidget(parent),
-      networkManager(accountId.isValid() ? imageManager->networkManagerFor(accountId) : nullptr)
+    : QWidget(parent), imageManager(imageManager), accountId(accountId)
 {
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
@@ -60,31 +56,7 @@ void ImageViewer::updateGeometryToParent()
 
 void ImageViewer::fetchFullImage(const QUrl &proxyUrl)
 {
-    QUrl fetchUrl = proxyUrl;
-    QUrlQuery query(fetchUrl);
-    query.addQueryItem("format", "webp");
-    query.addQueryItem("quality", "lossless");
-    fetchUrl.setQuery(query);
-
-    // in event of fail to get a nam (proxy issue?)
-    if (!networkManager) {
-        isLoadingFull = false;
-        return;
-    }
-
-    QNetworkRequest request(fetchUrl);
-    QNetworkReply *reply = networkManager->get(request);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            isLoadingFull = false;
-            update();
-            return;
-        }
-
-        QByteArray data = reply->readAll();
+    imageManager->fetch(Core::ImageManager::fullQualityUrl(proxyUrl), accountId, this, [this](const QByteArray &data) {
         QPixmap pixmap;
         if (pixmap.loadFromData(data)) {
             qreal dpr = qApp->devicePixelRatio();
@@ -218,6 +190,13 @@ void ImageViewer::wheelEvent(QWheelEvent *event)
 
 void ImageViewer::keyPressEvent(QKeyEvent *event)
 {
+    if (event->matches(QKeySequence::Copy)) {
+        const QPixmap &best = fullImage.isNull() ? currentImage : fullImage;
+        if (!best.isNull())
+            QGuiApplication::clipboard()->setImage(best.toImage());
+        return;
+    }
+
     switch (event->key()) {
     case Qt::Key_Escape:
         close();

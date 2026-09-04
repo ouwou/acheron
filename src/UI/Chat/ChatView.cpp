@@ -7,6 +7,7 @@
 
 #include <algorithm>
 
+#include "Core/ImageManager.hpp"
 #include "Core/TimeUtils.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
@@ -489,6 +490,65 @@ void ChatView::setCanManageMessages(bool canManage)
     canManageMessages = canManage;
 }
 
+struct ContextMedia
+{
+    QUrl imageUrl;
+    QPixmap preview;
+    QUrl fileUrl;
+    QString filename;
+};
+
+static ContextMedia mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLayout::HitRegion &region,
+                            const ChatModel &chatModel)
+{
+    using Kind = ChatLayout::HitRegion::Kind;
+    ContextMedia media;
+    auto embedImage = [&media](const QUrl &url, const QPixmap &pixmap) {
+        media.imageUrl = url;
+        media.preview = pixmap;
+        media.fileUrl = url;
+        media.filename = QFileInfo(url.path()).fileName();
+    };
+
+    switch (region.kind) {
+    case Kind::AttachmentImage:
+    case Kind::AttachmentVideo:
+    case Kind::AttachmentAudio:
+    case Kind::AttachmentFile: {
+        if (region.index < 0 || region.index >= resolved.ctx.attachments.size())
+            break;
+        const AttachmentData &att = resolved.ctx.attachments[region.index];
+        bool hidden = att.isSpoiler && !chatModel.isSpoilerRevealed(att.id);
+        if (att.isImage && !hidden) {
+            media.imageUrl = att.proxyUrl;
+            media.preview = att.pixmap;
+        }
+        media.fileUrl = att.originalUrl;
+        media.filename = att.filename;
+        break;
+    }
+    case Kind::EmbedThumbnail: {
+        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
+            break;
+        const EmbedData &embed = resolved.ctx.embeds[region.index];
+        if (!embed.thumbnail.isNull())
+            embedImage(embed.thumbnailUrl, embed.thumbnail);
+        break;
+    }
+    case Kind::EmbedImage: {
+        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
+            break;
+        const EmbedData &embed = resolved.ctx.embeds[region.index];
+        if (region.subIndex >= 0 && region.subIndex < embed.images.size())
+            embedImage(embed.images[region.subIndex].url, embed.images[region.subIndex].pixmap);
+        break;
+    }
+    default:
+        break;
+    }
+    return media;
+}
+
 void ChatView::contextMenuEvent(QContextMenuEvent *event)
 {
     QModelIndex index = indexAt(event->pos());
@@ -514,14 +574,28 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     QMenu menu(this);
 
+    ContextMedia media = region ? mediaAt(resolved, *region, *chatModel) : ContextMedia();
+    if (!media.imageUrl.isEmpty()) {
+        QAction *copyImageAction = menu.addAction(tr("Copy Image"));
+        connect(copyImageAction, &QAction::triggered, this, [this, media]() {
+            copyImage(media.imageUrl, media.preview);
+        });
+    }
+    if (!media.fileUrl.isEmpty()) {
+        QAction *saveAction = menu.addAction(tr("Save As..."));
+        connect(saveAction, &QAction::triggered, this, [this, media]() {
+            saveMedia(media.fileUrl, media.filename);
+        });
+    }
     if (region && !region->url.isEmpty() && !region->url.startsWith(QLatin1String("acheron://"))) {
         QString linkUrl = region->url;
         QAction *copyLinkAction = menu.addAction(tr("Copy Link"));
         connect(copyLinkAction, &QAction::triggered, this, [linkUrl]() {
             QGuiApplication::clipboard()->setText(linkUrl);
         });
-        menu.addSeparator();
     }
+    if (!menu.isEmpty())
+        menu.addSeparator();
 
     QAction *copyAction = menu.addAction(tr("Copy Text"));
     copyAction->setShortcut(QKeySequence::Copy);
@@ -675,6 +749,34 @@ void ChatView::copyMessageContent(const QModelIndex &index)
     QString content = index.data(ChatModel::ContentRole).toString();
     if (!content.isEmpty())
         QGuiApplication::clipboard()->setText(content);
+}
+
+void ChatView::copyImage(const QUrl &proxyUrl, const QPixmap &preview)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    QUrl fullQualityUrl = Core::ImageManager::fullQualityUrl(proxyUrl);
+    imageManager->fetch(fullQualityUrl, chatModel->getAccountId(), this, [preview](const QByteArray &data) {
+        QImage image = QImage::fromData(data);
+        if (image.isNull())
+            image = preview.toImage();
+        if (!image.isNull())
+            QGuiApplication::clipboard()->setImage(image);
+    });
+}
+
+void ChatView::saveMedia(const QUrl &url, const QString &filename)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    QString path = QFileDialog::getSaveFileName(this, tr("Save As"), QDir(downloads).filePath(filename));
+    if (!path.isEmpty())
+        imageManager->download(url, chatModel->getAccountId(), path);
 }
 
 void ChatView::startInlineEdit(const QModelIndex &index)

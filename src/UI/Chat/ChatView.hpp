@@ -104,6 +104,8 @@ private slots:
 private:
     void copySelectedText();
     void copyMessageContent(const QModelIndex &index);
+    void copyImage(const QUrl &proxyUrl, const QPixmap &preview);
+    void saveMedia(const QUrl &url, const QString &filename);
     void startInlineEdit(const QModelIndex &index);
     void commitInlineEdit();
     void cancelInlineEdit();

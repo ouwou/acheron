@@ -10,6 +10,7 @@
 #include <QSet>
 #include <qlabel.h>
 
+#include <functional>
 #include <type_traits>
 
 #include "ProxyConfig.hpp"
@@ -68,6 +69,10 @@ public:
     void unpinGroup(PinGroup group);
 
     [[nodiscard]] static QSize calculateDisplaySize(const QSize &original);
+    [[nodiscard]] static QUrl fullQualityUrl(const QUrl &proxyUrl);
+
+    void fetch(const QUrl &url, Snowflake accountId, QObject *context, std::function<void(const QByteArray &)> done);
+    void download(const QUrl &url, Snowflake accountId, const QString &path);
 
 signals:
     void imageFetched(const QUrl &url, const QSize &size, const QPixmap &pixmap);

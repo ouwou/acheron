@@ -302,5 +302,56 @@ QUrl ImageManager::buildOptimizedUrl(const QUrl &proxyUrl, const QSize &displayS
     return optimized;
 }
 
+QUrl ImageManager::fullQualityUrl(const QUrl &proxyUrl)
+{
+    return isDiscordProxyUrl(proxyUrl) ? buildOptimizedUrl(proxyUrl, QSize(), 1.0) : proxyUrl;
+}
+
+void ImageManager::fetch(const QUrl &url, Snowflake accountId, QObject *context, std::function<void(const QByteArray &)> done)
+{
+    QNetworkAccessManager *nam = networkManagerFor(accountId);
+    if (!nam) {
+        qCWarning(LogCore) << "Refusing to fetch with no proxied route for the account:" << url;
+        done({});
+        return;
+    }
+
+    QNetworkReply *reply = nam->get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
+    connect(reply, &QNetworkReply::finished, context, [reply, done = std::move(done)]() {
+        done(reply->error() == QNetworkReply::NoError ? reply->readAll() : QByteArray());
+    });
+}
+
+void ImageManager::download(const QUrl &url, Snowflake accountId, const QString &path)
+{
+    QNetworkAccessManager *nam = networkManagerFor(accountId);
+    if (!nam) {
+        qCWarning(LogCore) << "Refusing to download with no proxied route for the account:" << url;
+        return;
+    }
+
+    QNetworkReply *reply = nam->get(QNetworkRequest(url));
+    auto *file = new QFile(path, reply);
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qCWarning(LogCore) << "Failed to open" << path << "for writing:" << file->errorString();
+        reply->abort();
+        reply->deleteLater();
+        return;
+    }
+
+    connect(reply, &QNetworkReply::readyRead, file, [reply, file]() {
+        file->write(reply->readAll());
+    });
+    connect(reply, &QNetworkReply::finished, reply, [reply, file, url]() {
+        file->close();
+        if (reply->error() != QNetworkReply::NoError) {
+            qCWarning(LogCore) << "Download failed:" << url << reply->errorString();
+            file->remove();
+        }
+        reply->deleteLater();
+    });
+}
+
 } // namespace Core
 } // namespace Acheron
