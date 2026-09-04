@@ -80,7 +80,7 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                     QString urlStr = url.toString();
                     for (int row = 0; row < messages.size(); ++row) {
                         const auto &msg = messages[row];
-                        bool found = msg.parsedContentCached.contains(urlStr);
+                        bool found = msg.contentMessage().parsedContentCached.contains(urlStr);
                         if (!found && embedCache.contains(msg.id)) {
                             for (const auto &embed : embedCache.value(msg.id)) {
                                 if (embed.titleParsed.contains(urlStr) ||
@@ -129,10 +129,11 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                 // attachment and embed images
                 for (int row = 0; row < messages.size(); ++row) {
                     const auto &msg = messages[row];
+                    const auto &visible = msg.contentMessage();
                     bool found = false;
 
-                    if (msg.attachments.hasValue()) {
-                        for (const auto &att : *msg.attachments) {
+                    if (visible.attachments.hasValue()) {
+                        for (const auto &att : *visible.attachments) {
                             if (QUrl(*att.proxyUrl) == url) {
                                 found = true;
                                 break;
@@ -140,8 +141,8 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                         }
                     }
 
-                    if (!found && msg.embeds.hasValue()) {
-                        for (const auto &embed : *msg.embeds) {
+                    if (!found && visible.embeds.hasValue()) {
+                        for (const auto &embed : *visible.embeds) {
                             if (embed.author.hasValue() && embed.author->proxyIconUrl.hasValue() &&
                                 QUrl(*embed.author->proxyIconUrl) == url) {
                                 found = true;
@@ -180,6 +181,15 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                         emit dataChanged(idx, idx, { AttachmentsRole, EmbedsRole, CachedSizeRole });
                     }
                 }
+
+                for (int row = 0; row < messages.size(); ++row) {
+                    auto it = forwardOriginCache.constFind(messages[row].id);
+                    if (it != forwardOriginCache.constEnd() && it->iconUrl.isValid() &&
+                        it->iconUrl == url) {
+                        QModelIndex idx = index(row, 0);
+                        emit dataChanged(idx, idx, { ForwardOriginRole });
+                    }
+                }
             });
 }
 
@@ -196,6 +206,16 @@ void ChatModel::setDisplayNameResolver(DisplayNameResolver resolver)
 void ChatModel::setRoleColorResolver(RoleColorResolver resolver)
 {
     roleColorResolver = std::move(resolver);
+}
+
+void ChatModel::setChannelNameResolver(ChannelNameResolver resolver)
+{
+    channelNameResolver = std::move(resolver);
+}
+
+void ChatModel::setGuildInfoResolver(GuildInfoResolver resolver)
+{
+    guildInfoResolver = std::move(resolver);
 }
 
 QString ChatModel::resolveAuthorName(const Discord::User &author) const
@@ -215,6 +235,42 @@ QColor ChatModel::resolveAuthorColor(const Discord::User &author) const
     return roleColorResolver(author.id.get(), currentGuildId);
 }
 
+ForwardOriginData ChatModel::forwardOrigin(const Discord::Message &msg) const
+{
+    const Discord::MessageReference &ref = *msg.messageReference;
+
+    ForwardOriginData origin;
+    origin.channelId = ref.channelId.get();
+
+    QString label;
+    bool crossGuild = ref.guildId.hasValue() && ref.guildId.get() != currentGuildId;
+    if (crossGuild && guildInfoResolver) {
+        auto [guildName, guildIcon] = guildInfoResolver(ref.guildId.get());
+        if (!guildName.isEmpty()) {
+            label = guildName;
+            origin.iconUrl = guildIcon;
+        }
+    }
+    if (label.isEmpty() && channelNameResolver) {
+        QString channelName = channelNameResolver(origin.channelId);
+        if (!channelName.isEmpty())
+            label = QStringLiteral("#%1").arg(channelName);
+    }
+    if (label.isEmpty())
+        return origin;
+
+    origin.text = label;
+    if (msg.snapshotMessage && msg.snapshotMessage->timestamp.hasValue()) {
+        QDateTime sent = msg.snapshotMessage->timestamp->toLocalTime();
+        QString sentText = sent.date() == QDate::currentDate()
+                                   ? sent.toString(QStringLiteral("hh:mm"))
+                                   : sent.toString(QStringLiteral("MMM d, yyyy h:mm AP"));
+        origin.text += QStringLiteral("  •  %1").arg(sentText);
+    }
+    origin.text += QStringLiteral("  ›");
+    return origin;
+}
+
 int ChatModel::rowCount(const QModelIndex &parent) const
 {
     return messages.size();
@@ -230,7 +286,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
         [[fallthrough]];
     case ContentRole:
-        return msg.content;
+        return msg.contentMessage().content;
     case UsernameRole:
         return resolveAuthorName(msg.author.get());
     case AvatarRole: {
@@ -321,18 +377,20 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             return tr("Sorry, we couldn't load the first message in this thread.");
         }
 
+        const Discord::Message &visible = msg.contentMessage();
+
+        QString html = visible.parsedContentCached;
+
         // for image embeds, suppress text if content is just the embed url
-        if (msg.embeds.hasValue() && msg.embeds->size() == 1) {
-            const auto &embed = msg.embeds->first();
+        if (visible.embeds.hasValue() && visible.embeds->size() == 1) {
+            const auto &embed = visible.embeds->first();
             QString embedType = embed.type.hasValue() ? *embed.type : QString();
             if (embedType == "image") {
                 QString embedUrl = embed.url.hasValue() ? *embed.url : QString();
-                if (!embedUrl.isEmpty() && msg.content == embedUrl)
-                    return QString();
+                if (!embedUrl.isEmpty() && visible.content == embedUrl)
+                    html.clear();
             }
         }
-
-        QString html = msg.parsedContentCached;
 
         if (msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::HAS_THREAD)) {
             QString sep = html.isEmpty() ? QString() : QStringLiteral("<br>");
@@ -345,10 +403,22 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                  tr("View Thread"));
         }
 
+        if (msg.isForwarded()) {
+            QString mutedColor = Core::Theme::Manager::instance()
+                                         .color(Core::Theme::Token::PlaceholderText)
+                                         .name();
+            QString header = QStringLiteral("<img src=\"acheron-icon:forwarded\" width=\"12\" height=\"12\""
+                                            " style=\"vertical-align: middle\">"
+                                            " <span style=\"color: %1; font-size: small\"><i>%2</i></span>")
+                                     .arg(mutedColor, tr("Forwarded"));
+            html = html.isEmpty() ? header : header + QStringLiteral("<br>") + html;
+        }
+
         return html;
     }
     case AttachmentsRole: {
-        if (!msg.attachments.hasValue() || msg.attachments->isEmpty())
+        const Discord::Message &visible = msg.contentMessage();
+        if (!visible.attachments.hasValue() || visible.attachments->isEmpty())
             return QVariant();
 
         const QVector<QPair<qint64, qint64>> *progress = nullptr;
@@ -359,12 +429,12 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         }
 
         QList<AttachmentData> result;
-        for (const auto &att : *msg.attachments) {
+        for (const auto &att : *visible.attachments) {
             AttachmentData data;
             data.id = att.id;
             data.proxyUrl = QUrl(*att.proxyUrl);
             data.originalUrl = QUrl(*att.url);
-            const MediaFlags media = mediaFlagsFor(att, msg);
+            const MediaFlags media = mediaFlagsFor(att, visible);
             data.isImage = media.isImage;
             data.contentType = media.contentType;
             data.isVideo = media.isVideo;
@@ -416,7 +486,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return QVariant::fromValue(result);
     }
     case EmbedsRole: {
-        if (!msg.embeds.hasValue() || msg.embeds->isEmpty())
+        const Discord::Message &visible = msg.contentMessage();
+        if (!visible.embeds.hasValue() || visible.embeds->isEmpty())
             return QVariant();
 
         if (embedCache.contains(msg.id))
@@ -426,7 +497,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         // for handling the url-based embed image merging
         QMap<QString, int> urlToEmbedIndex;
 
-        for (const auto &embed : *msg.embeds) {
+        for (const auto &embed : *visible.embeds) {
             QString embedUrl = embed.url.hasValue() ? *embed.url : QString();
 
             bool hasImage = embed.image.hasValue() && embed.image->proxyUrl.hasValue() &&
@@ -711,6 +782,23 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
     }
     case IsSystemMessageRole:
         return isSystemMessageType(msg.type);
+    case IsForwardedRole:
+        return msg.isForwarded();
+    case ForwardOriginRole: {
+        if (!msg.isForwarded() || !msg.messageReference->channelId.hasValue())
+            return {};
+
+        auto cached = forwardOriginCache.constFind(msg.id);
+        if (cached == forwardOriginCache.constEnd())
+            cached = forwardOriginCache.insert(msg.id, forwardOrigin(msg));
+
+        ForwardOriginData origin = cached.value();
+        if (origin.text.isEmpty())
+            return {};
+        if (origin.iconUrl.isValid())
+            origin.icon = imageManager->get(origin.iconUrl, QSize(16, 16), currentAccountId);
+        return QVariant::fromValue(origin);
+    }
     case ReplyDataRole: {
         ReplyData reply;
 
@@ -734,7 +822,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         reply.state = ReplyData::State::Present;
         reply.referencedMessageId = ref->id;
         reply.authorId = ref->author->id;
-        reply.contentSnippet = ref->content;
+        reply.contentSnippet = ref->contentMessage().content;
 
         reply.authorColor = resolveAuthorColor(ref->author.get());
         reply.authorName = resolveAuthorName(ref->author.get());
@@ -796,6 +884,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         beginResetModel();
         sizeCache.clear();
         embedCache.clear();
+        forwardOriginCache.clear();
         docCache.clear();
         pendingNonces.clear();
         erroredNonces.clear();
@@ -1028,6 +1117,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
     messages.clear();
     sizeCache.clear();
     embedCache.clear();
+    forwardOriginCache.clear();
     docCache.clear();
     pendingNonces.clear();
     erroredNonces.clear();
@@ -1065,9 +1155,9 @@ void ChatModel::revealSpoiler(Snowflake attachmentId)
     revealedSpoilers.insert(attachmentId);
 
     for (int row = 0; row < messages.size(); ++row) {
-        const auto &msg = messages[row];
-        if (msg.attachments.hasValue()) {
-            for (const auto &att : *msg.attachments) {
+        const auto &visible = messages[row].contentMessage();
+        if (visible.attachments.hasValue()) {
+            for (const auto &att : *visible.attachments) {
                 if (*att.id == attachmentId) {
                     QModelIndex idx = index(row, 0);
                     emit dataChanged(idx, idx, { AttachmentsRole, CachedSizeRole });
@@ -1125,10 +1215,11 @@ void ChatModel::setVideoNativeSize(Snowflake attachmentId, const QSize &size)
 
     for (int row = 0; row < messages.size(); ++row) {
         const auto &msg = messages[row];
-        if (!msg.attachments.hasValue())
+        const auto &visible = msg.contentMessage();
+        if (!visible.attachments.hasValue())
             continue;
 
-        for (const auto &att : *msg.attachments) {
+        for (const auto &att : *visible.attachments) {
             if (*att.id != attachmentId)
                 continue;
 

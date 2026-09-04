@@ -647,7 +647,7 @@ struct Reaction : Core::JsonUtils::JsonObject
 
 struct MessageReference : Core::JsonUtils::JsonObject
 {
-    Field<int, true> type;
+    Field<MessageReferenceType, true> type;
     Field<Core::Snowflake, true> messageId;
     Field<Core::Snowflake, true> channelId;
     Field<Core::Snowflake, true> guildId;
@@ -689,6 +689,8 @@ struct Message : Core::JsonUtils::JsonObject
     std::shared_ptr<Message> referencedMessage;
     bool referencedMessageNull = false;
 
+    std::shared_ptr<Message> snapshotMessage;
+
     // TRANSIENT for MESSAGE_UPDATE
     Field<Core::Snowflake, true> guildId;
     Field<ChannelType, true> channelType;
@@ -697,12 +699,31 @@ struct Message : Core::JsonUtils::JsonObject
     QString parsedContentCached;
     QString embedsJson;
     QString reactionsJson;
+    QString snapshotJson;
 
     // sent
     bool isPendingOutbound = false;
 
     // track for MESSAGE_UPDATE
     QSet<QString> presentKeys;
+
+    [[nodiscard]] bool isForwarded() const
+    {
+        return messageReference.hasValue() &&
+               messageReference->type.hasValue() &&
+               messageReference->type.get() == MessageReferenceType::FORWARD;
+    }
+
+    [[nodiscard]] const Message &contentMessage() const
+    {
+        return isForwarded() && snapshotMessage ? *snapshotMessage : *this;
+    }
+
+    void setSnapshot(const QJsonObject &snapshotObj)
+    {
+        snapshotMessage = std::make_shared<Message>(fromJson(snapshotObj));
+        snapshotJson = QString::fromUtf8(QJsonDocument(snapshotObj).toJson(QJsonDocument::Compact));
+    }
 
     static Message fromJson(const QJsonObject &obj)
     {
@@ -728,6 +749,10 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
+
+        const QJsonArray snapshots = obj.value("message_snapshots").toArray();
+        if (!snapshots.isEmpty())
+            message.setSnapshot(snapshots.first().toObject().value("message").toObject());
 
         // referenced_message: manually handle tri-state (absent / null / object)
         auto refIt = obj.find("referenced_message");
@@ -777,6 +802,11 @@ struct Message : Core::JsonUtils::JsonObject
             attachments = update.attachments;
         if (present.contains(QStringLiteral("message_reference")))
             messageReference = update.messageReference;
+
+        if (present.contains(QStringLiteral("message_snapshots"))) {
+            snapshotMessage = update.snapshotMessage;
+            snapshotJson = update.snapshotJson;
+        }
 
         if (present.contains(QStringLiteral("embeds"))) {
             embeds = update.embeds;

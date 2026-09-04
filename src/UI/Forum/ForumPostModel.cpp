@@ -327,8 +327,9 @@ QString ForumPostModel::previewHtml(Snowflake threadId) const
 
     QString contentHtml;
     const Discord::Message *msg = starterOf(threadId);
-    if (msg && msg->content.hasValue() && !msg->content.get().isEmpty()) {
-        QString content = msg->content.get();
+    const Discord::Message *visible = msg ? &msg->contentMessage() : nullptr;
+    if (visible && visible->content.hasValue() && !visible->content.get().isEmpty()) {
+        QString content = visible->content.get();
         content.replace('\n', ' ');
 
         static Core::Markdown::Parser parser;

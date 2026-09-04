@@ -17,6 +17,7 @@ inline constexpr auto AtSign = "at-sign";
 inline constexpr auto Eye = "eye";
 inline constexpr auto FileAudio = "file-audio";
 inline constexpr auto FileText = "file-text";
+inline constexpr auto Forward = "forward";
 inline constexpr auto Handshake = "handshake";
 inline constexpr auto IdCard = "id-card";
 inline constexpr auto Lock = "lock";

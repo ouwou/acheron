@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFont>
 #include <QRect>
 #include <QPoint>
 #include <QPalette>
@@ -103,6 +104,20 @@ constexpr int reactionTopMargin() noexcept
 {
     return 4;
 }
+constexpr int forwardOriginIconSize() noexcept
+{
+    return 16;
+}
+constexpr int forwardOriginIconGap() noexcept
+{
+    return 4;
+}
+inline QFont forwardOriginFont(const QFont &base)
+{
+    QFont font = base;
+    font.setPointSizeF(base.pointSizeF() * 0.85);
+    return font;
+}
 
 struct AttachmentGridCell
 {
@@ -189,6 +204,8 @@ struct HitRegion
         TextLink,
         TextCursor,
         EmbedLink,
+
+        ForwardOrigin,
     };
 
     Kind kind;
@@ -223,6 +240,8 @@ struct MessageLayout
     QList<EmbedLayout> embedLayouts;
     int embedsTotalHeight;
 
+    QRect forwardOriginRect;
+
     int reactionsTop;
     QList<ReactionLayout> reactionLayouts;
     int reactionsTotalHeight;
@@ -246,6 +265,7 @@ struct LayoutContext
     QList<EmbedData> embeds;
     QList<ReactionData> reactions;
     ReplyData replyData;
+    ForwardOriginData forwardOrigin;
 
     bool isSystemMessage = false;
     const ChatModel *model = nullptr;

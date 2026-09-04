@@ -772,6 +772,41 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         }
     }
 
+    if (!layout.forwardOriginRect.isNull() && !ctx.forwardOrigin.text.isEmpty()) {
+        QRect originRect = layout.forwardOriginRect;
+        int textX = originRect.left();
+
+        if (ctx.forwardOrigin.iconUrl.isValid()) {
+            const int iconSize = ChatLayout::forwardOriginIconSize();
+            if (!ctx.forwardOrigin.icon.isNull()) {
+                QRect iconRect(textX,
+                               originRect.top() + (originRect.height() - iconSize) / 2,
+                               iconSize,
+                               iconSize);
+                painter->save();
+                painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+                QPainterPath clip;
+                clip.addEllipse(iconRect);
+                painter->setClipPath(clip);
+                ChatLayout::drawCroppedPixmap(painter, iconRect, ctx.forwardOrigin.icon);
+                painter->restore();
+            }
+            textX += iconSize + ChatLayout::forwardOriginIconGap();
+        }
+
+        QFont originFont = ChatLayout::forwardOriginFont(option.font);
+        painter->setFont(originFont);
+        painter->setPen(Core::Theme::Manager::instance().color(Core::Theme::Token::PlaceholderText));
+        QFontMetrics originFm(originFont);
+        QRect textRect(textX,
+                       originRect.top(),
+                       originRect.right() - textX + 1,
+                       originRect.height());
+        painter->drawText(textRect,
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          originFm.elidedText(ctx.forwardOrigin.text, Qt::ElideRight, textRect.width()));
+    }
+
     QList<ReactionData> reactions = ctx.reactions;
 
     for (const auto &reactionLayout : layout.reactionLayouts) {

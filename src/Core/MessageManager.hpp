@@ -76,6 +76,7 @@ private:
     QList<Discord::Message> getCachedMessages();
     void emitReactionUpdate(Discord::Message &msg);
     void parseMessageContent(Discord::Message &msg);
+    QString inlineHtml(const QString &content) const;
 
     Storage::MessageRepository repo;
 

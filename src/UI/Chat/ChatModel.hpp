@@ -89,6 +89,14 @@ struct ReplyData
     QString contentSnippet;
 };
 
+struct ForwardOriginData
+{
+    Core::Snowflake channelId;
+    QString text;
+    QUrl iconUrl;
+    QPixmap icon;
+};
+
 struct ReactionData
 {
     QString emojiName;
@@ -208,6 +216,8 @@ public:
         ReplyDataRole,
         ReactionsRole,
         IsSystemMessageRole,
+        IsForwardedRole,
+        ForwardOriginRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -221,6 +231,12 @@ public:
 
     using RoleColorResolver = std::function<QColor(Snowflake userId, Snowflake guildId)>;
     void setRoleColorResolver(RoleColorResolver resolver);
+
+    using ChannelNameResolver = std::function<QString(Snowflake channelId)>;
+    void setChannelNameResolver(ChannelNameResolver resolver);
+
+    using GuildInfoResolver = std::function<QPair<QString, QUrl>(Snowflake guildId)>;
+    void setGuildInfoResolver(GuildInfoResolver resolver);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -259,6 +275,7 @@ private:
     void setMessages(const QList<Discord::Message> &messages);
     QString resolveAuthorName(const Discord::User &author) const;
     QColor resolveAuthorColor(const Discord::User &author) const;
+    ForwardOriginData forwardOrigin(const Discord::Message &msg) const;
     QPixmap localPixmap(const QUrl &url, const QSize &displaySize) const;
     QPixmap previewPixmap(Snowflake attachmentId, const QImage &image, const QSize &displaySize) const;
     void prunePreviewCaches(const Discord::Message &msg);
@@ -267,6 +284,7 @@ private:
     QVector<Discord::Message> messages;
     mutable QHash<Snowflake, QSize> sizeCache;
     mutable QHash<Snowflake, QList<EmbedData>> embedCache;
+    mutable QHash<Snowflake, ForwardOriginData> forwardOriginCache;
     mutable QCache<DocCacheKey, QTextDocument> docCache{ 500 };
     mutable int docCacheWidth = 0;
 
@@ -277,6 +295,8 @@ private:
     AvatarUrlResolver avatarUrlResolver;
     DisplayNameResolver displayNameResolver;
     RoleColorResolver roleColorResolver;
+    ChannelNameResolver channelNameResolver;
+    GuildInfoResolver guildInfoResolver;
 
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
     QSet<QString> pendingNonces;
@@ -308,6 +328,7 @@ private:
 } // namespace Acheron
 
 Q_DECLARE_METATYPE(Acheron::ReplyData)
+Q_DECLARE_METATYPE(Acheron::ForwardOriginData)
 Q_DECLARE_METATYPE(Acheron::AttachmentData)
 Q_DECLARE_METATYPE(QList<Acheron::AttachmentData>)
 Q_DECLARE_METATYPE(Acheron::EmbedFieldData)

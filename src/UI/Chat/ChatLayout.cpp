@@ -76,6 +76,13 @@ void setupDocument(QTextDocument &doc, const QString &htmlContent, const QFont &
                         Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Spool, 14, threadColor, 2.0));
     }
 
+    if (htmlContent.contains(QLatin1String("acheron-icon:forwarded"))) {
+        const QColor mutedColor = Core::Theme::Manager::instance().color(Core::Theme::Token::PlaceholderText);
+        doc.addResource(QTextDocument::ImageResource,
+                        QUrl(QStringLiteral("acheron-icon:forwarded")),
+                        Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Forward, 12, mutedColor, 2.0));
+    }
+
     doc.setHtml(wrapped);
     doc.setTextWidth(textWidth);
     doc.setDocumentMargin(0);
@@ -756,7 +763,27 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         totalHeight += layout.embedsTotalHeight;
     }
 
-    layout.reactionsTop = layout.embedsTop + layout.embedsTotalHeight;
+    int forwardOriginHeight = 0;
+    if (!ctx.forwardOrigin.text.isEmpty()) {
+        QFontMetrics originFm(forwardOriginFont(ctx.font));
+        int iconSpace = ctx.forwardOrigin.iconUrl.isValid()
+                                ? forwardOriginIconSize() + forwardOriginIconGap()
+                                : 0;
+        int originWidth = std::min(iconSpace + originFm.horizontalAdvance(ctx.forwardOrigin.text),
+                                   textWidth);
+        int originRowHeight = std::max(originFm.height(),
+                                       iconSpace > 0 ? forwardOriginIconSize() : 0);
+        layout.forwardOriginRect = QRect(textLeft, layout.embedsTop + layout.embedsTotalHeight,
+                                         originWidth, originRowHeight);
+        forwardOriginHeight = originRowHeight + padding() / 2;
+        totalHeight += forwardOriginHeight;
+        layout.hitRegions.append(
+                { HitRegion::Kind::ForwardOrigin, layout.forwardOriginRect, -1, -1,
+                  QStringLiteral("acheron://channel/%1")
+                          .arg(QString::number(static_cast<quint64>(ctx.forwardOrigin.channelId))) });
+    }
+
+    layout.reactionsTop = layout.embedsTop + layout.embedsTotalHeight + forwardOriginHeight;
     layout.reactionsTotalHeight = 0;
 
     if (!ctx.reactions.isEmpty()) {
@@ -1036,6 +1063,7 @@ LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QR
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
     ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
     ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
+    ctx.forwardOrigin = index.data(ChatModel::ForwardOriginRole).value<ForwardOriginData>();
     ctx.model = qobject_cast<const ChatModel *>(index.model());
     ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
 

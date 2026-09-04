@@ -83,20 +83,24 @@ MessageManager::~MessageManager() {}
 
 void MessageManager::parseMessageContent(Discord::Message &msg)
 {
-    Markdown::ParseState state;
-    state.isInline = true;
-    auto ast = parser->parse(resolveSystemMessageContent(msg), state);
-    bool jumbo = Markdown::Parser::isEmojiOnly(ast);
-    msg.parsedContentCached = parser->toHtml(ast, jumbo);
+    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg));
 
     if (msg.type.hasValue() && msg.type.get() == Discord::MessageType::THREAD_STARTER_MESSAGE &&
         msg.referencedMessage && msg.referencedMessage->content.hasValue() &&
-        msg.referencedMessage->parsedContentCached.isEmpty()) {
-        Markdown::ParseState refState;
-        refState.isInline = true;
-        auto refAst = parser->parse(msg.referencedMessage->content.get(), refState);
-        msg.referencedMessage->parsedContentCached = parser->toHtml(refAst, Markdown::Parser::isEmojiOnly(refAst));
-    }
+        msg.referencedMessage->parsedContentCached.isEmpty())
+        msg.referencedMessage->parsedContentCached = inlineHtml(msg.referencedMessage->content.get());
+
+    if (msg.snapshotMessage && msg.snapshotMessage->content.hasValue() &&
+        msg.snapshotMessage->parsedContentCached.isEmpty())
+        msg.snapshotMessage->parsedContentCached = inlineHtml(msg.snapshotMessage->content.get());
+}
+
+QString MessageManager::inlineHtml(const QString &content) const
+{
+    Markdown::ParseState state;
+    state.isInline = true;
+    auto ast = parser->parse(content, state);
+    return parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
 }
 
 void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)

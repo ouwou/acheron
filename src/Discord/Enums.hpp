@@ -375,6 +375,11 @@ enum class MessageType {
     EMOJI_ADDED = 63,
 };
 
+enum class MessageReferenceType {
+    DEFAULT = 0,
+    FORWARD = 1,
+};
+
 enum class MessageFlag {
     CROSSPOSTED = 1 << 0,
     IS_CROSSPOST = 1 << 1,

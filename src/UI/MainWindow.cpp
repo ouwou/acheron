@@ -92,6 +92,27 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
     chatModel->setRoleColorResolver(
             [this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
 
+    chatModel->setChannelNameResolver([this](Snowflake channelId) -> QString {
+        if (!currentInstance)
+            return QString();
+        auto channel = currentInstance->getChannel(channelId);
+        if (channel && channel->name.hasValue())
+            return channel->name.get();
+        return QString();
+    });
+
+    chatModel->setGuildInfoResolver([this](Snowflake guildId) -> QPair<QString, QUrl> {
+        if (!currentInstance)
+            return {};
+        auto guild = currentInstance->getGuild(guildId);
+        if (!guild || !guild->name.hasValue())
+            return {};
+        QUrl iconUrl;
+        if (guild->icon.hasValue() && !guild->icon.get().isEmpty())
+            iconUrl = Discord::Cdn::guildIcon(guildId, guild->icon.get(), 64);
+        return { guild->name.get(), iconUrl };
+    });
+
     typingTracker = new TypingTracker(this);
     memberListModel = new MemberListModel(session->getImageManager(), this);
 
