@@ -16,6 +16,75 @@
 
 namespace Acheron {
 namespace UI {
+
+struct MediaHit
+{
+    QUrl imageUrl;
+    QPixmap preview;
+    bool spoilerHidden = false;
+    Snowflake attachmentId;
+
+    QUrl fileUrl;
+    QString filename;
+    qint64 fileSizeBytes = -1;
+
+    [[nodiscard]] bool isImage() const { return !imageUrl.isEmpty(); }
+    [[nodiscard]] bool isFile() const { return !fileUrl.isEmpty(); }
+};
+
+static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLayout::HitRegion &region,
+                        const ChatModel &chatModel)
+{
+    using Kind = ChatLayout::HitRegion::Kind;
+    MediaHit hit;
+    auto embedImage = [&hit](const QUrl &url, const QPixmap &pixmap) {
+        hit.imageUrl = url;
+        hit.preview = pixmap;
+        hit.fileUrl = url;
+        hit.filename = QFileInfo(url.path()).fileName();
+    };
+
+    switch (region.kind) {
+    case Kind::AttachmentImage:
+    case Kind::AttachmentVideo:
+    case Kind::AttachmentAudio:
+    case Kind::AttachmentFile: {
+        if (region.index < 0 || region.index >= resolved.ctx.attachments.size())
+            break;
+        const AttachmentData &att = resolved.ctx.attachments[region.index];
+        if (att.isImage) {
+            hit.imageUrl = att.proxyUrl;
+            hit.preview = att.pixmap;
+            hit.spoilerHidden = att.isSpoiler && !chatModel.isSpoilerRevealed(att.id);
+        }
+        hit.attachmentId = att.id;
+        hit.fileUrl = att.originalUrl;
+        hit.filename = att.filename;
+        hit.fileSizeBytes = att.fileSizeBytes;
+        break;
+    }
+    case Kind::EmbedThumbnail: {
+        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
+            break;
+        const EmbedData &embed = resolved.ctx.embeds[region.index];
+        if (!embed.thumbnail.isNull())
+            embedImage(embed.thumbnailUrl, embed.thumbnail);
+        break;
+    }
+    case Kind::EmbedImage: {
+        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
+            break;
+        const EmbedData &embed = resolved.ctx.embeds[region.index];
+        if (region.subIndex >= 0 && region.subIndex < embed.images.size())
+            embedImage(embed.images[region.subIndex].url, embed.images[region.subIndex].pixmap);
+        break;
+    }
+    default:
+        break;
+    }
+    return hit;
+}
+
 ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hoveredChar(-1)
 {
     setMouseTracking(true);
@@ -213,7 +282,8 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
     auto region = ChatLayout::hitTest(resolved, pos);
 
-    if (!region) {
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!region || !chatModel) {
         QListView::mouseReleaseEvent(event);
         return;
     }
@@ -230,20 +300,16 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
             QDesktopServices::openUrl(QUrl(url));
     };
 
-    auto openImage = [this](const QUrl &url, const QPixmap &pixmap) {
-        auto *chatModel = qobject_cast<ChatModel *>(model());
-        auto *viewer = new ImageViewer(imageManager,
-                                       chatModel ? chatModel->getAccountId() : Snowflake(),
-                                       window());
-        viewer->showImage(url, pixmap);
+    auto openImage = [this, chatModel](const MediaHit &hit) {
+        auto *viewer = new ImageViewer(imageManager, chatModel->getAccountId(), window());
+        viewer->showImage(hit.imageUrl, hit.preview);
     };
 
     switch (region->kind) {
     case Kind::Reaction: {
         if (hasTextSelection())
             break;
-        auto *chatModel = qobject_cast<ChatModel *>(model());
-        if (!chatModel || region->index < 0 || region->index >= resolved.ctx.reactions.size())
+        if (region->index < 0 || region->index >= resolved.ctx.reactions.size())
             break;
         Snowflake channelId = chatModel->getActiveChannelId();
         Snowflake messageId = idx.data(ChatModel::MessageIdRole).toULongLong();
@@ -261,8 +327,7 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
             break;
 
         if (target.spoilered) {
-            if (auto *chatModel = qobject_cast<ChatModel *>(model()))
-                chatModel->revealSpoiler(target.attachmentId);
+            chatModel->revealSpoiler(target.attachmentId);
             break;
         }
 
@@ -272,49 +337,36 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
 
     case Kind::AttachmentImage:
     case Kind::AttachmentFile: {
-        if (region->index < 0 || region->index >= resolved.ctx.attachments.size())
-            break;
-        const AttachmentData &att = resolved.ctx.attachments[region->index];
-        if (att.isImage) {
-            if (att.isSpoiler) {
-                auto *chatModel = qobject_cast<ChatModel *>(model());
-                if (chatModel && !chatModel->isSpoilerRevealed(att.id)) {
-                    chatModel->revealSpoiler(att.id);
-                    break;
-                }
-            }
-            openImage(att.proxyUrl, att.pixmap);
-        } else {
+        MediaHit hit = mediaAt(resolved, *region, *chatModel);
+        if (hit.spoilerHidden) {
+            chatModel->revealSpoiler(hit.attachmentId);
+        } else if (hit.isImage()) {
+            openImage(hit);
+        } else if (hit.isFile()) {
             ConfirmPopup dialog(tr("Open File"),
                                 QString(tr("Do you want to open <b>%1</b> (%2) in your browser?"))
-                                        .arg(att.filename)
-                                        .arg(ChatLayout::formatFileSize(att.fileSizeBytes)),
+                                        .arg(hit.filename)
+                                        .arg(ChatLayout::formatFileSize(hit.fileSizeBytes)),
                                 tr("Open"), this);
             if (dialog.exec() == QDialog::Accepted)
-                QDesktopServices::openUrl(att.originalUrl);
+                QDesktopServices::openUrl(hit.fileUrl);
         }
         break;
     }
 
     case Kind::EmbedThumbnail: {
-        if (region->index < 0 || region->index >= resolved.ctx.embeds.size())
-            break;
-        const auto &embed = resolved.ctx.embeds[region->index];
-        if (!embed.thumbnail.isNull())
-            openImage(QUrl(region->url), embed.thumbnail);
+        MediaHit hit = mediaAt(resolved, *region, *chatModel);
+        if (hit.isImage())
+            openImage(hit);
         else
             openExternalLink(region->url);
         break;
     }
 
     case Kind::EmbedImage: {
-        if (region->index < 0 || region->index >= resolved.ctx.embeds.size())
-            break;
-        const auto &embed = resolved.ctx.embeds[region->index];
-        if (region->subIndex < 0 || region->subIndex >= embed.images.size())
-            break;
-        const auto &img = embed.images[region->subIndex];
-        openImage(img.url, img.pixmap);
+        MediaHit hit = mediaAt(resolved, *region, *chatModel);
+        if (hit.isImage())
+            openImage(hit);
         break;
     }
 
@@ -490,65 +542,6 @@ void ChatView::setCanManageMessages(bool canManage)
     canManageMessages = canManage;
 }
 
-struct ContextMedia
-{
-    QUrl imageUrl;
-    QPixmap preview;
-    QUrl fileUrl;
-    QString filename;
-};
-
-static ContextMedia mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLayout::HitRegion &region,
-                            const ChatModel &chatModel)
-{
-    using Kind = ChatLayout::HitRegion::Kind;
-    ContextMedia media;
-    auto embedImage = [&media](const QUrl &url, const QPixmap &pixmap) {
-        media.imageUrl = url;
-        media.preview = pixmap;
-        media.fileUrl = url;
-        media.filename = QFileInfo(url.path()).fileName();
-    };
-
-    switch (region.kind) {
-    case Kind::AttachmentImage:
-    case Kind::AttachmentVideo:
-    case Kind::AttachmentAudio:
-    case Kind::AttachmentFile: {
-        if (region.index < 0 || region.index >= resolved.ctx.attachments.size())
-            break;
-        const AttachmentData &att = resolved.ctx.attachments[region.index];
-        bool hidden = att.isSpoiler && !chatModel.isSpoilerRevealed(att.id);
-        if (att.isImage && !hidden) {
-            media.imageUrl = att.proxyUrl;
-            media.preview = att.pixmap;
-        }
-        media.fileUrl = att.originalUrl;
-        media.filename = att.filename;
-        break;
-    }
-    case Kind::EmbedThumbnail: {
-        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
-            break;
-        const EmbedData &embed = resolved.ctx.embeds[region.index];
-        if (!embed.thumbnail.isNull())
-            embedImage(embed.thumbnailUrl, embed.thumbnail);
-        break;
-    }
-    case Kind::EmbedImage: {
-        if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
-            break;
-        const EmbedData &embed = resolved.ctx.embeds[region.index];
-        if (region.subIndex >= 0 && region.subIndex < embed.images.size())
-            embedImage(embed.images[region.subIndex].url, embed.images[region.subIndex].pixmap);
-        break;
-    }
-    default:
-        break;
-    }
-    return media;
-}
-
 void ChatView::contextMenuEvent(QContextMenuEvent *event)
 {
     QModelIndex index = indexAt(event->pos());
@@ -574,17 +567,17 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     QMenu menu(this);
 
-    ContextMedia media = region ? mediaAt(resolved, *region, *chatModel) : ContextMedia();
-    if (!media.imageUrl.isEmpty()) {
+    MediaHit hit = region ? mediaAt(resolved, *region, *chatModel) : MediaHit();
+    if (hit.isImage() && !hit.spoilerHidden) {
         QAction *copyImageAction = menu.addAction(tr("Copy Image"));
-        connect(copyImageAction, &QAction::triggered, this, [this, media]() {
-            copyImage(media.imageUrl, media.preview);
+        connect(copyImageAction, &QAction::triggered, this, [this, hit]() {
+            copyImage(hit.imageUrl, hit.preview);
         });
     }
-    if (!media.fileUrl.isEmpty()) {
+    if (hit.isFile()) {
         QAction *saveAction = menu.addAction(tr("Save As..."));
-        connect(saveAction, &QAction::triggered, this, [this, media]() {
-            saveMedia(media.fileUrl, media.filename);
+        connect(saveAction, &QAction::triggered, this, [this, hit]() {
+            saveMedia(hit.fileUrl, hit.filename);
         });
     }
     if (region && !region->url.isEmpty() && !region->url.startsWith(QLatin1String("acheron://"))) {
