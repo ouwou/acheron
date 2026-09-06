@@ -782,6 +782,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
     }
     case IsSystemMessageRole:
         return isSystemMessageType(msg.type);
+    case MessageTypeRole:
+        return static_cast<int>(msg.type.get());
     case IsForwardedRole:
         return msg.isForwarded();
     case ForwardOriginRole: {

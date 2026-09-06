@@ -30,6 +30,10 @@ constexpr int separatorHeight() noexcept
 {
     return 24;
 }
+constexpr int systemIconSize() noexcept
+{
+    return 18;
+}
 constexpr int embedMaxWidth() noexcept
 {
     return 400;
@@ -223,6 +227,7 @@ struct MessageLayout
     QRect avatarRect;
     QRect headerRect;
     QRect textRect;
+    QRect systemIconRect;
 
     bool showHeader;
     bool hasSeparator;
@@ -268,9 +273,12 @@ struct LayoutContext
     ForwardOriginData forwardOrigin;
 
     bool isSystemMessage = false;
+    Discord::MessageType messageType = Discord::MessageType::DEFAULT;
     const ChatModel *model = nullptr;
     Core::Snowflake messageId;
 };
+
+const char *systemMessageIcon(Discord::MessageType type);
 
 bool embedHasVideoArea(const EmbedData &embed);
 bool embedHasPlayableVideo(const EmbedData &embed);

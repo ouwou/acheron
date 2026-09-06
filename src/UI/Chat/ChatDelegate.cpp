@@ -44,6 +44,29 @@ static void registerEmojiResources(QTextDocument &doc, const QString &html,
     }
 }
 
+static void drawSystemMessageIcon(QPainter *painter, const QStyleOptionViewItem &option, Discord::MessageType type, const QRect &rect)
+{
+    using Discord::MessageType;
+
+    QColor color = option.palette.text().color();
+    qreal opacity = 0.55;
+    if (type == MessageType::USER_JOIN || type == MessageType::RECIPIENT_ADD) {
+        color = QColor(0x3b, 0xa5, 0x5c);
+        opacity = 1.0;
+    } else if (type == MessageType::RECIPIENT_REMOVE) {
+        color = Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError);
+        opacity = 1.0;
+    }
+
+    const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    const QPixmap icon = Core::Theme::Icons::pixmap(ChatLayout::systemMessageIcon(type), rect.width(), color, dpr);
+
+    painter->save();
+    painter->setOpacity(opacity);
+    painter->drawPixmap(rect, icon);
+    painter->restore();
+}
+
 static void drawUploadProgress(QPainter *painter, const QRect &barRect, qint64 sent, qint64 total, const QPalette &palette)
 {
     qreal fraction = total > 0 ? qBound(0.0, qreal(sent) / qreal(total), 1.0) : 0.0;
@@ -287,6 +310,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                               tr("Unknown message"));
         }
     }
+
+    if (ctx.isSystemMessage)
+        drawSystemMessageIcon(painter, option, ctx.messageType, layout.systemIconRect);
 
     if (layout.showHeader) {
         if (!avatar.isNull())

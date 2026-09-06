@@ -216,6 +216,7 @@ public:
         ReplyDataRole,
         ReactionsRole,
         IsSystemMessageRole,
+        MessageTypeRole,
         IsForwardedRole,
         ForwardOriginRole,
     };

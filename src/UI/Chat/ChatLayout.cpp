@@ -592,6 +592,91 @@ int calculateEmbedsHeight(const QList<EmbedData> &embeds, const QFont &font, int
     return totalHeight;
 }
 
+const char *systemMessageIcon(Discord::MessageType type)
+{
+    using Discord::MessageType;
+    using namespace Core::Theme::Icons::Name;
+
+    switch (type) {
+    case MessageType::RECIPIENT_ADD:
+    case MessageType::USER_JOIN:
+        return ArrowRight;
+    case MessageType::RECIPIENT_REMOVE:
+        return ArrowLeft;
+    case MessageType::CALL:
+    case MessageType::VOICE_HANGOUT_INVITE:
+        return Phone;
+    case MessageType::CHANNEL_NAME_CHANGE:
+    case MessageType::CHAT_WALLPAPER_SET:
+    case MessageType::CHAT_WALLPAPER_REMOVE:
+        return Pencil;
+    case MessageType::CHANNEL_ICON_CHANGE:
+        return Image;
+    case MessageType::CHANNEL_PINNED_MESSAGE:
+        return Pin;
+    case MessageType::PREMIUM_GUILD_SUBSCRIPTION:
+    case MessageType::PREMIUM_GUILD_SUBSCRIPTION_TIER_1:
+    case MessageType::PREMIUM_GUILD_SUBSCRIPTION_TIER_2:
+    case MessageType::PREMIUM_GUILD_SUBSCRIPTION_TIER_3:
+    case MessageType::ROLE_SUBSCRIPTION_PURCHASE:
+    case MessageType::INTERACTION_PREMIUM_UPSELL:
+    case MessageType::GUILD_APPLICATION_PREMIUM_SUBSCRIPTION:
+    case MessageType::PREMIUM_REFERRAL:
+    case MessageType::CUSTOM_GIFT:
+    case MessageType::PURCHASE_NOTIFICATION:
+    case MessageType::NITRO_NOTIFICATION:
+    case MessageType::GIFTING_PROMPT:
+    case MessageType::HD_STREAMING_UPGRADED:
+        return Gem;
+    case MessageType::CHANNEL_FOLLOW_ADD:
+        return Rss;
+    case MessageType::GUILD_STREAM:
+    case MessageType::STAGE_START:
+    case MessageType::STAGE_END:
+    case MessageType::STAGE_SPEAKER:
+    case MessageType::STAGE_TOPIC:
+        return Radio;
+    case MessageType::STAGE_RAISE_HAND:
+        return Hand;
+    case MessageType::GUILD_DISCOVERY_DISQUALIFIED:
+    case MessageType::GUILD_DISCOVERY_REQUALIFIED:
+    case MessageType::GUILD_DISCOVERY_GRACE_PERIOD_INITIAL_WARNING:
+    case MessageType::GUILD_DISCOVERY_GRACE_PERIOD_FINAL_WARNING:
+        return Compass;
+    case MessageType::THREAD_CREATED:
+    case MessageType::THREAD_STARTER_MESSAGE:
+        return Spool;
+    case MessageType::GUILD_INVITE_REMINDER:
+    case MessageType::GUILD_DEADCHAT_REVIVE_PROMPT:
+    case MessageType::GUILD_GAMING_STATS_PROMPT:
+    case MessageType::CHANGELOG:
+    case MessageType::IN_GAME_MESSAGE_NUX:
+        return Bell;
+    case MessageType::AUTO_MODERATION_ACTION:
+    case MessageType::GUILD_INCIDENT_ALERT_MODE_ENABLED:
+    case MessageType::GUILD_INCIDENT_ALERT_MODE_DISABLED:
+    case MessageType::GUILD_INCIDENT_REPORT_RAID:
+    case MessageType::GUILD_INCIDENT_REPORT_FALSE_ALARM:
+    case MessageType::REPORT_TO_MOD_DELETED_MESSAGE:
+    case MessageType::REPORT_TO_MOD_TIMEOUT_USER:
+        return ShieldAlert;
+    case MessageType::PRIVATE_CHANNEL_INTEGRATION_ADDED:
+    case MessageType::PRIVATE_CHANNEL_INTEGRATION_REMOVED:
+    case MessageType::CHANNEL_LINKED_TO_LOBBY:
+        return Bot;
+    case MessageType::POLL:
+    case MessageType::POLL_RESULT:
+        return ChartColumn;
+    case MessageType::GUILD_JOIN_REQUEST_ACCEPT_NOTIFICATION:
+        return UserPlus;
+    case MessageType::GUILD_JOIN_REQUEST_REJECT_NOTIFICATION:
+    case MessageType::GUILD_JOIN_REQUEST_WITHDRAWN_NOTIFICATION:
+        return UserMinus;
+    default:
+        return MessageCircle;
+    }
+}
+
 MessageLayout calculateMessageLayout(const LayoutContext &ctx)
 {
     MessageLayout layout = {};
@@ -670,6 +755,11 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
     }
 
     layout.textRect = QRect(textLeft, textTop, textWidth, layout.textHeight);
+
+    if (ctx.isSystemMessage) {
+        layout.systemIconRect = QRect(0, 0, systemIconSize(), systemIconSize());
+        layout.systemIconRect.moveCenter(QPoint(padding() + avatarSize() / 2, textTop + fm.height() / 2));
+    }
 
     int totalHeight = 0;
     if (layout.hasReply) {
@@ -1063,6 +1153,7 @@ LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QR
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
     ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
     ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
+    ctx.messageType = static_cast<Discord::MessageType>(index.data(ChatModel::MessageTypeRole).toInt());
     ctx.forwardOrigin = index.data(ChatModel::ForwardOriginRole).value<ForwardOriginData>();
     ctx.model = qobject_cast<const ChatModel *>(index.model());
     ctx.messageId = index.data(ChatModel::MessageIdRole).toULongLong();
