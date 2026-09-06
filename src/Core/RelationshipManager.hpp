@@ -23,6 +23,7 @@ public:
     [[nodiscard]] std::optional<Discord::Relationship> getRelationship(Snowflake userId) const;
 
     [[nodiscard]] bool isFriend(Snowflake userId) const;
+    [[nodiscard]] bool isBlockedOrIgnored(Snowflake userId) const;
 
 public slots:
     void onRelationshipAdded(const Discord::Relationship &rel);

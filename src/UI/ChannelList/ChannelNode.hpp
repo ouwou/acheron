@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "Core/ChannelReadState.hpp"
 #include "Core/Snowflake.hpp"
 
 namespace Acheron {
@@ -31,12 +32,9 @@ struct ChannelNode
     QString name;
     Type type;
     int position = 0;
+    Core::ChannelReadState self; // before descendants
     bool isUnread = false;
-    int mentionCount = 0; // what this row shows
-    int subtreeMentionCount = 0; // what gets handed above
-    bool selfUnread = false;
-    int selfMentionCount = 0;
-    bool selfCountsForGuildUnread = false;
+    int mentionCount = 0;
     bool isMuted = false;
     bool countsForGuildUnread = false;
     bool collapsed = false;

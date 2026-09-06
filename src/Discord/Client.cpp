@@ -92,8 +92,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayMessageReactionRemove, this, &Client::messageReactionRemove);
     connect(gateway, &Gateway::gatewayMessageReactionRemoveAll, this, &Client::messageReactionRemoveAll);
     connect(gateway, &Gateway::gatewayMessageReactionRemoveEmoji, this, &Client::messageReactionRemoveEmoji);
-    connect(gateway, &Gateway::gatewayUserGuildSettingsUpdate, this,
-            &Client::userGuildSettingsUpdated);
+    connect(gateway, &Gateway::gatewayUserGuildSettingsUpdate, this, &Client::userGuildSettingsUpdated);
+    connect(gateway, &Gateway::gatewayNotificationSettingsUpdate, this, &Client::notificationSettingsUpdated);
     connect(gateway, &Gateway::gatewayGuildMemberListUpdate, this, &Client::guildMemberListUpdate);
     connect(gateway, &Gateway::gatewayVoiceStateUpdate, this, &Client::voiceStateUpdated);
     connect(gateway, &Gateway::gatewayVoiceServerUpdate, this, &Client::voiceServerUpdated);

@@ -36,6 +36,16 @@ bool RelationshipManager::isFriend(Snowflake userId) const
     return it.value().type.get() == Discord::RelationshipType::FRIEND;
 }
 
+bool RelationshipManager::isBlockedOrIgnored(Snowflake userId) const
+{
+    auto it = store.constFind(userId);
+    if (it == store.constEnd())
+        return false;
+    const auto &rel = it.value();
+    return (rel.type.hasValue() && rel.type.get() == Discord::RelationshipType::BLOCKED) ||
+           (rel.userIgnored.hasValue() && rel.userIgnored.get());
+}
+
 void RelationshipManager::onRelationshipAdded(const Discord::Relationship &rel)
 {
     if (!rel.id.hasValue())

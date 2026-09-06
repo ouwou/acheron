@@ -87,6 +87,7 @@ signals:
     void gatewayMessageReactionRemoveAll(const MessageReactionRemoveAll &data);
     void gatewayMessageReactionRemoveEmoji(const MessageReactionRemoveEmoji &data);
     void gatewayUserGuildSettingsUpdate(const UserGuildSettings &data);
+    void gatewayNotificationSettingsUpdate(const NotificationSettings &data);
     void gatewayGuildMemberListUpdate(const GuildMemberListUpdate &data);
     void gatewayVoiceStateUpdate(const VoiceState &data);
     void gatewayVoiceServerUpdate(const VoiceServerUpdate &data);
@@ -134,6 +135,7 @@ private:
     void handleMessageReactionRemoveAll(const Inbound &data);
     void handleMessageReactionRemoveEmoji(const Inbound &data);
     void handleUserGuildSettingsUpdate(const Inbound &data);
+    void handleNotificationSettingsUpdate(const Inbound &data);
     void handleGuildMemberListUpdate(const Inbound &data);
     void handleVoiceStateUpdate(const Inbound &data);
     void handleVoiceStateUpdateBatch(const Inbound &data);

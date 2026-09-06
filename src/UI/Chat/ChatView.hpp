@@ -78,6 +78,7 @@ protected:
 
 signals:
     void historyRequested();
+    void atBottomChanged(bool atBottom);
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -129,6 +130,7 @@ private:
     QPersistentModelIndex anchorIndex;
     int anchorDistanceFromBottom = 0;
 
+    void setAtBottom(bool value);
     bool atBottom = true;
 
     Core::Snowflake currentUserId = Core::Snowflake::Invalid;

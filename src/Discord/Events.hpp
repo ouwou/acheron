@@ -20,6 +20,7 @@ struct Ready : Core::JsonUtils::JsonObject
     Field<QList<Channel>, true> privateChannels;
     Field<QList<ReadStateEntry>, true> readState;
     Field<QList<UserGuildSettings>, true> userGuildSettings;
+    Field<NotificationSettings, true> notificationSettings;
     Field<UserSettings, true> userSettings;
     Field<QList<Relationship>> relationships;
     Field<QString> sessionId;
@@ -33,6 +34,7 @@ struct Ready : Core::JsonUtils::JsonObject
         get(obj, "guilds", ready.guilds);
         get(obj, "user_settings_proto", ready.userSettingsProto);
         get(obj, "user_settings", ready.userSettings);
+        get(obj, "notification_settings", ready.notificationSettings);
         get(obj, "merged_members", ready.mergedMembers);
         get(obj, "users", ready.users);
         get(obj, "private_channels", ready.privateChannels);
@@ -397,6 +399,7 @@ struct MessageAck : Core::JsonUtils::JsonObject
     Field<Core::Snowflake> channelId;
     Field<Core::Snowflake> messageId;
     Field<int, true> mentionCount;
+    Field<bool, true> manual;
     Field<int, true> flags;
     Field<int, true> version;
 
@@ -406,6 +409,7 @@ struct MessageAck : Core::JsonUtils::JsonObject
         get(obj, "channel_id", ack.channelId);
         get(obj, "message_id", ack.messageId);
         get(obj, "mention_count", ack.mentionCount);
+        get(obj, "manual", ack.manual);
         get(obj, "flags", ack.flags);
         get(obj, "version", ack.version);
         return ack;

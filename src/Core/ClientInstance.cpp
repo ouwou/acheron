@@ -109,7 +109,10 @@ ClientInstance::ClientInstance(const AccountInfo &info,
                 ready.readState.hasValue() ? ready.readState.get()
                                            : QList<Discord::ReadStateEntry>{},
                 ready.userGuildSettings.hasValue() ? ready.userGuildSettings.get()
-                                                   : QList<Discord::UserGuildSettings>{});
+                                                   : QList<Discord::UserGuildSettings>{},
+                ready.notificationSettings.hasValue() && ready.notificationSettings->flags.hasValue()
+                        ? ready.notificationSettings->flags.get()
+                        : 0);
 
         for (const auto &guild : ready.guilds.get())
             initGuildReadState(guild);
@@ -200,6 +203,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 
     connect(client, &Discord::Client::messageAcked, readStateManager, &ReadStateManager::onMessageAck);
     connect(client, &Discord::Client::userGuildSettingsUpdated, readStateManager, &ReadStateManager::onUserGuildSettingsUpdate);
+    connect(client, &Discord::Client::notificationSettingsUpdated, readStateManager, &ReadStateManager::onNotificationSettingsUpdate);
 
     connect(client, &Discord::Client::messageCreated, this, &ClientInstance::onMessageCreated);
 
@@ -319,11 +323,12 @@ void ClientInstance::initGuildReadState(const Discord::GatewayGuild &guild)
             guild.joinedAt.hasValue() ? guild.joinedAt.get() : QDateTime(),
             props.defaultMessageNotifications.hasValue()
                     ? props.defaultMessageNotifications.get()
-                    : Discord::MessageNotificationLevel::ALL_MESSAGES);
+                    : Discord::MessageNotificationLevel::ALL_MESSAGES,
+            props.hasFeature(QStringLiteral("COMMUNITY")));
 
     if (guild.channels.hasValue()) {
         for (const auto &channel : guild.channels.get()) {
-            readStateManager->registerChannelGuild(channel.id.get(), guildId);
+            readStateManager->registerChannel(channel, guildId);
             if (channel.lastMessageId.hasValue())
                 readStateManager->updateChannelLastMessageId(channel.id.get(), channel.lastMessageId.get());
         }
@@ -438,7 +443,7 @@ void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
         readStateManager->updateChannelLastMessageId(channelId, lastMsg);
     } else {
         if (channel.guildId.hasValue())
-            readStateManager->registerChannelGuild(channelId, channel.guildId.get());
+            readStateManager->registerChannel(channel, channel.guildId.get());
         if (channel.lastMessageId.hasValue())
             readStateManager->updateChannelLastMessageId(channelId, channel.lastMessageId.get());
     }
@@ -472,6 +477,11 @@ void ClientInstance::onChannelUpdated(const Discord::ChannelUpdate &event)
 
     permissionManager->invalidateChannelCache(channelId);
     forumParentCache.remove(channelId);
+
+    if (channel.guildId.hasValue()) {
+        readStateManager->registerChannel(channel, channel.guildId.get());
+        emit readStateChanged(channelId);
+    }
 
     emit channelUpdated(event);
 }
@@ -941,29 +951,45 @@ void ClientInstance::onMessageCreated(const Discord::Message &msg)
     if (msg.guildId.hasValue())
         readStateManager->registerChannelGuild(channelId, msg.guildId.get());
 
-    bool isMention = isMessageMentioningMe(msg);
-    readStateManager->handleMessageCreated(channelId, messageId, isMention);
+    bool fromSelf = msg.author.hasValue() && msg.author->id.get() == account.id;
+    bool isMention = !fromSelf && isMessageMentioningMe(msg);
+    readStateManager->handleMessageCreated(channelId, messageId, fromSelf, isMention);
 
     emit channelLastMessageUpdated(channelId, messageId);
 }
 
 bool ClientInstance::isMessageMentioningMe(const Discord::Message &msg) const
 {
+    if (msg.author.hasValue() && relationshipManager->isBlockedOrIgnored(msg.author->id.get()))
+        return false;
+
+    if (!msg.guildId.hasValue()) {
+        if (msg.type.hasValue() && msg.type.get() == Discord::MessageType::RECIPIENT_REMOVE)
+            return false;
+        return !readStateManager->isChannelMuted(msg.channelId.get());
+    }
+
+    Snowflake guildId = msg.guildId.get();
+
+    if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
+        !readStateManager->isSuppressEveryone(guildId))
+        return true;
+
     if (msg.mentions.hasValue()) {
         for (const auto &user : msg.mentions.get())
             if (user.id.get() == account.id)
                 return true;
     }
 
-    if (msg.mentionRoles.hasValue() && msg.guildId.hasValue()) {
-        Snowflake guildId = msg.guildId.get();
-        auto myRoles = userManager->getMemberRoles(guildId, account.id);
-        if (myRoles) {
-            for (const auto &roleId : msg.mentionRoles.get())
-                if (myRoles->contains(roleId))
-                    return true;
-        }
-    }
+    if (!msg.mentionRoles.hasValue() || readStateManager->isSuppressRoles(guildId))
+        return false;
+
+    auto myRoles = userManager->getMemberRoles(guildId, account.id);
+    if (!myRoles)
+        return false;
+    for (const auto &roleId : msg.mentionRoles.get())
+        if (myRoles->contains(roleId))
+            return true;
 
     return false;
 }
@@ -974,9 +1000,11 @@ void ClientInstance::handleAckRequest(Snowflake channelId, Snowflake messageId)
     bool isGuildChannel = channelOpt && channelOpt->guildId.hasValue();
     if (!isGuildChannel)
         isGuildChannel = client->getGuildIdForChannel(channelId).isValid();
-    int ackFlags = isGuildChannel
-                           ? static_cast<int>(Discord::ReadStateFlag::IS_GUILD_CHANNEL)
-                           : 0;
+    int ackFlags = 0;
+    if (channelOpt && channelOpt->isThread())
+        ackFlags = static_cast<int>(Discord::ReadStateFlag::IS_THREAD);
+    else if (isGuildChannel)
+        ackFlags = static_cast<int>(Discord::ReadStateFlag::IS_GUILD_CHANNEL);
     int lastViewed = ReadStateManager::daysSinceDiscordEpoch();
     client->ackMessage(channelId, messageId, ackFlags, lastViewed);
 }

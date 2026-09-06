@@ -278,9 +278,6 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
     switchChatChannel(node->id, guildId);
     selectedInstance->messages()->requestLoadChannel(node->id);
 
-    if (node->isUnread && node->lastMessageId.isValid())
-        selectedInstance->readState()->markChannelAsRead(node->id, node->lastMessageId);
-
     tabBar->updateCurrentTab(makeTabEntry(node, accountNode));
 
     if (node->type == ChannelNode::Type::Channel && guildNode)
@@ -535,6 +532,9 @@ TabEntry MainWindow::makeTabEntry(ChannelNode *node, ChannelNode *accountNode) c
 void MainWindow::openForumChannel(Core::ClientInstance *instance, Core::Snowflake forumId,
                                   Core::Snowflake guildId)
 {
+    Snowflake newestPost = instance->readState()->getChannelLastMessageId(forumId);
+    if (newestPost.isValid())
+        instance->readState()->markChannelAsRead(forumId, newestPost);
     instance->readState()->setActiveChannel(forumId);
 
     currentForumId = forumId;
@@ -543,10 +543,6 @@ void MainWindow::openForumChannel(Core::ClientInstance *instance, Core::Snowflak
     forumModel->setForum(forumId, guildId);
     setViewMode(ViewMode::ForumBrowse);
     forumBrowser->setLoading(instance->forums()->isLoading(forumId));
-
-    Snowflake newestPost = instance->readState()->getChannelLastMessageId(forumId);
-    if (newestPost.isValid())
-        instance->readState()->markChannelAsRead(forumId, newestPost);
 }
 
 void MainWindow::openForumPost(Core::Snowflake threadId, Core::Snowflake guildId)
@@ -567,9 +563,9 @@ void MainWindow::openForumPost(Core::Snowflake threadId, Core::Snowflake guildId
     chatView->setCanManageMessages(false);
 
     switchChatChannel(threadId, guildId);
-    currentInstance->readState()->setActiveChannel(threadId);
     Snowflake lastMsgId = currentInstance->readState()->getChannelLastMessageId(threadId);
     currentInstance->readState()->markForumPostAsRead(threadId, lastMsgId.isValid() ? lastMsgId : threadId);
+    currentInstance->readState()->setActiveChannel(threadId);
     currentInstance->messages()->requestLoadChannel(threadId);
 }
 
@@ -1230,6 +1226,10 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
+    connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
+        if (currentInstance)
+            currentInstance->readState()->setActiveChannelAtBottom(atBottom);
+    });
 
     connect(channelTree->selectionModel(), &QItemSelectionModel::currentChanged, this,
             &MainWindow::onChannelSelectionChanged);
@@ -1792,10 +1792,6 @@ void MainWindow::activateChannel(const TabEntry &entry)
     switchChatChannel(entry.channelId, entry.guildId);
     instance->messages()->requestLoadChannel(entry.channelId);
 
-    Snowflake lastMsgId = instance->readState()->getChannelLastMessageId(entry.channelId);
-    if (lastMsgId.isValid())
-        instance->readState()->markChannelAsRead(entry.channelId, lastMsgId);
-
     refreshTabReadStates();
 }
 
@@ -1810,8 +1806,10 @@ void MainWindow::refreshTabReadStates()
         if (!inst)
             continue;
 
-        auto state = inst->readState()->computeChannelReadState(
-                entry.channelId, entry.guildId, Snowflake::Invalid, entry.isDm);
+        auto *readState = inst->readState();
+        auto state = entry.isDm ? readState->computeDMReadState(entry.channelId)
+                                : readState->computeChannelReadState(entry.channelId, entry.guildId,
+                                                                     Snowflake::Invalid);
         if (entry.isForum) {
             auto posts = inst->forums()->joinedPostsContribution(entry.channelId);
             state.isUnread = state.isUnread || posts.unread;

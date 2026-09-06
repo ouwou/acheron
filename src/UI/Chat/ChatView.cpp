@@ -133,7 +133,7 @@ void ChatView::setModel(QAbstractItemModel *model)
     connect(model, &QAbstractItemModel::modelReset, this, [this]() {
         isFetchingTop = false;
         anchorIndex = QPersistentModelIndex();
-        atBottom = true;
+        setAtBottom(true);
         QTimer::singleShot(0, this, &ChatView::scrollToBottom);
     });
 
@@ -514,9 +514,17 @@ void ChatView::onDataChanged(const QModelIndex &topLeft, const QModelIndex &bott
     scrollToBottom();
 }
 
+void ChatView::setAtBottom(bool value)
+{
+    if (atBottom == value)
+        return;
+    atBottom = value;
+    emit atBottomChanged(value);
+}
+
 void ChatView::onScrollBarValueChanged(int value)
 {
-    atBottom = (value >= verticalScrollBar()->maximum());
+    setAtBottom(value >= verticalScrollBar()->maximum());
 
     if (value < 200 && !isFetchingTop) {
         isFetchingTop = true;

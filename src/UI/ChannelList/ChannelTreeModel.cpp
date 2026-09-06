@@ -19,15 +19,6 @@
 namespace Acheron {
 namespace UI {
 
-static bool isContainerType(ChannelNode::Type type)
-{
-    return type == ChannelNode::Type::Category ||
-           type == ChannelNode::Type::Server ||
-           type == ChannelNode::Type::Folder ||
-           type == ChannelNode::Type::DMHeader ||
-           type == ChannelNode::Type::Channel;
-}
-
 static bool isChannelPrivate(const Discord::Channel &channel, Core::Snowflake guildId)
 {
     if (!channel.permissionOverwrites.hasValue())
@@ -202,8 +193,6 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return static_cast<quint64>(node->lastMessageId);
     if (role == IsUnreadRole)
         return node->isUnread;
-    if (role == CountsForGuildUnreadRole)
-        return node->countsForGuildUnread;
     if (role == MentionCountRole)
         return node->mentionCount;
     if (role == IsMutedRole)
@@ -466,8 +455,7 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
         endInsertRows();
     }
 
-    initChannelReadStates(accNode, instance);
-    recomputeSubtreeAggregates(accNode);
+    refreshReadStates(accNode, instance);
 }
 
 ChannelNode *ChannelTreeModel::getAccountNodeFor(ChannelNode *node)
@@ -612,9 +600,7 @@ ChannelNode *ChannelTreeModel::insertThreadNode(const Discord::Channel &thread, 
     insertChildAt(parentChannel, row, std::move(node));
 
     if (auto *instance = session->client(accountId)) {
-        ChannelNode *guildNode = findGuildNode(parentChannel);
-        Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-        applyChannelReadState(raw, computeNodeReadState(raw, guildId, instance));
+        setSelfReadState(raw, computeNodeReadState(raw, instance));
         updateNodeAggregates(parentChannel);
     }
 
@@ -1015,10 +1001,8 @@ void ChannelTreeModel::addGuild(const Discord::GatewayGuild &guild, Snowflake ac
     ChannelNode *guildPtr = guildNode.get();
 
     // compute read state on the detached subtree so the views see final values on insert
-    if (instance) {
-        initChannelReadStates(guildPtr, instance);
-        recomputeSubtreeAggregates(guildPtr);
-    }
+    if (instance)
+        refreshReadStates(guildPtr, instance);
 
     // handle a (potentially) unavailable guild coming back
     if (ChannelNode *existing = findGuildNodeById(guildId, accNode)) {
@@ -1067,7 +1051,8 @@ void ChannelTreeModel::removeGuild(Snowflake accountId, Snowflake guildId)
     if (!parent)
         return;
 
-    removeChildRow(parent, guildNode);
+    if (removeChildRow(parent, guildNode))
+        updateNodeAggregates(parent);
 }
 
 void ChannelTreeModel::placeGuildNode(ChannelNode *accNode, Snowflake guildId,
@@ -1112,7 +1097,7 @@ void ChannelTreeModel::placeGuildNode(ChannelNode *accNode, Snowflake guildId,
         } else {
             auto newFolder = createFolderNode(*folder);
             newFolder->addChild(std::move(guildNode));
-            recomputeSubtreeAggregates(newFolder.get());
+            aggregateChildren(newFolder.get());
             guildNode = std::move(newFolder);
         }
     }
@@ -1358,6 +1343,8 @@ void ChannelTreeModel::deleteChannel(const Discord::ChannelDelete &event, Snowfl
     if (!removeChildRow(parent, channelNode))
         return;
 
+    updateNodeAggregates(parent);
+
     // notify proxy to re-check category visibility
     QModelIndex parentIdx = indexForNode(parent);
     if (parent->type == ChannelNode::Type::Category && parentIdx.isValid())
@@ -1380,46 +1367,14 @@ void ChannelTreeModel::invalidateGuildData(Snowflake guildId)
     }
 }
 
-static Core::ChannelReadState forumPostReadState(Core::ReadStateManager *readState, const ChannelNode *node, Snowflake guildId)
+Core::ChannelReadState ChannelTreeModel::shownReadState(const ChannelNode *node)
 {
-    Core::ChannelReadState state;
-    state.isUnread = readState->isForumPostUnread(node->id, node->lastMessageId, false);
-    state.mentionCount = readState->getMentionCount(node->id);
-    state.isMuted = readState->isChannelMuted(node->id);
-    bool guildMuted = guildId.isValid() && readState->isGuildMuted(guildId);
-    state.countsForGuildUnread = state.mentionCount > 0 || (state.isUnread && !state.isMuted && !guildMuted);
-    return state;
+    return { node->isUnread, node->mentionCount, node->isMuted, node->countsForGuildUnread };
 }
 
-void ChannelTreeModel::applyForumReadState(ChannelNode *node, Core::ReadStateManager *readState, Snowflake guildId)
+bool ChannelTreeModel::notifyIfReadStateChanged(ChannelNode *node, const Core::ChannelReadState &before)
 {
-    applyChannelReadState(node, readState->computeChannelReadState(node->id, guildId, node->parentId, false));
-    for (const auto &post : node->children) {
-        node->subtreeMentionCount += post->subtreeMentionCount;
-        if (post->countsForGuildUnread)
-            node->countsForGuildUnread = true;
-    }
-}
-
-bool ChannelTreeModel::refreshForumNode(ChannelNode *forumNode, Core::ClientInstance *instance,
-                                        Snowflake guildId)
-{
-    ReadStateSnapshot before = readStateSnapshot(forumNode);
-    applyForumReadState(forumNode, instance->readState(), guildId);
-    return notifyIfReadStateChanged(forumNode, before);
-}
-
-ChannelTreeModel::ReadStateSnapshot ChannelTreeModel::readStateSnapshot(const ChannelNode *node)
-{
-    return { node->isUnread, node->isMuted, node->countsForGuildUnread, node->mentionCount, node->subtreeMentionCount };
-}
-
-bool ChannelTreeModel::notifyIfReadStateChanged(ChannelNode *node, const ReadStateSnapshot &before)
-{
-    if (before.isUnread == node->isUnread && before.isMuted == node->isMuted &&
-        before.countsForGuildUnread == node->countsForGuildUnread &&
-        before.mentionCount == node->mentionCount &&
-        before.subtreeMentionCount == node->subtreeMentionCount)
+    if (shownReadState(node) == before)
         return false;
 
     QModelIndex idx = indexForNode(node);
@@ -1442,31 +1397,10 @@ void ChannelTreeModel::updateReadState(Snowflake channelId, Snowflake accountId)
     if (!instance)
         return;
 
-    // determine guildId for this channel
-    ChannelNode *guildNode = findGuildNode(channelNode);
-    Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-
-    ReadStateSnapshot before = readStateSnapshot(channelNode);
-
-    if (channelNode->type == ChannelNode::Type::Forum) {
-        applyForumReadState(channelNode, instance->readState(), guildId);
-    } else {
-        applyChannelReadState(channelNode, computeNodeReadState(channelNode, guildId, instance));
-        if (isContainerType(channelNode->type))
-            aggregateChildren(channelNode);
-    }
-
-    if (!notifyIfReadStateChanged(channelNode, before))
-        return;
-
-    ChannelNode *parent = channelNode->parent;
-    if (parent && parent->type == ChannelNode::Type::Forum) {
-        if (!refreshForumNode(parent, instance, guildId))
-            return;
-        parent = parent->parent;
-    }
-    if (parent)
-        updateNodeAggregates(parent);
+    Core::ChannelReadState before = shownReadState(channelNode);
+    setSelfReadState(channelNode, computeNodeReadState(channelNode, instance));
+    if (notifyIfReadStateChanged(channelNode, before))
+        updateNodeAggregates(channelNode->parent);
 }
 
 void ChannelTreeModel::updateForumBadge(Snowflake forumId, Snowflake accountId)
@@ -1540,9 +1474,6 @@ void ChannelTreeModel::updateForumThreads(Snowflake forumId, Snowflake accountId
         endRemoveRows();
     }
 
-    ChannelNode *guildNode = findGuildNode(forumNode);
-    Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-
     if (!posts.isEmpty()) {
         beginInsertRows(forumIdx, 0, posts.size() - 1);
         for (const auto &post : posts) {
@@ -1553,13 +1484,12 @@ void ChannelTreeModel::updateForumThreads(Snowflake forumId, Snowflake accountId
             node->parentId = forumId;
             node->lastMessageId = post.effectiveLastMessageId();
             ChannelNode *added = forumNode->addChild(std::move(node));
-            applyChannelReadState(added, forumPostReadState(instance->readState(), added, guildId));
+            setSelfReadState(added, computeNodeReadState(added, instance));
         }
         endInsertRows();
     }
 
-    if (refreshForumNode(forumNode, instance, guildId) && forumNode->parent)
-        updateNodeAggregates(forumNode->parent);
+    updateNodeAggregates(forumNode);
 }
 
 void ChannelTreeModel::updateGuildSettings(Snowflake guildId, Snowflake accountId)
@@ -1587,157 +1517,83 @@ void ChannelTreeModel::updateGuildSettings(Snowflake guildId, Snowflake accountI
     if (!targetNode)
         return;
 
-    if (targetNode->type == ChannelNode::Type::Server) {
-        targetNode->isMuted = instance->readState()->isGuildMuted(guildId);
-        QModelIndex idx = indexForNode(targetNode);
-        if (idx.isValid())
-            emit dataChanged(idx, idx, { IsMutedRole });
-    }
-
-    updateChildrenReadState(targetNode, guildId, instance);
-    recomputeSubtreeAggregates(targetNode);
+    refreshReadStates(targetNode, instance);
     QModelIndex targetIdx = indexForNode(targetNode);
     if (targetIdx.isValid())
         emitDataChangedRecursive(targetIdx);
-    if (targetNode->parent)
-        updateNodeAggregates(targetNode->parent);
+    updateNodeAggregates(targetNode->parent);
 }
 
-void ChannelTreeModel::applyChannelReadState(ChannelNode *node, const Core::ChannelReadState &state)
+Core::ChannelReadState ChannelTreeModel::computeNodeReadState(ChannelNode *node, Core::ClientInstance *instance)
 {
-    node->selfUnread = state.isUnread;
-    node->selfMentionCount = state.mentionCount;
-    node->selfCountsForGuildUnread = state.countsForGuildUnread;
-    node->isMuted = state.isMuted;
+    auto *readState = instance->readState();
+    ChannelNode *guildNode = findGuildNode(node);
+    Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
 
-    node->isUnread = state.isUnread;
-    node->mentionCount = state.mentionCount;
-    node->subtreeMentionCount = state.mentionCount;
-    node->countsForGuildUnread = state.countsForGuildUnread;
-}
-
-Core::ChannelReadState ChannelTreeModel::computeNodeReadState(ChannelNode *node, Snowflake guildId, Core::ClientInstance *instance)
-{
-    if (node->type == ChannelNode::Type::Thread) {
+    Core::ChannelReadState state;
+    switch (node->type) {
+    case ChannelNode::Type::Server:
+        state.isMuted = readState->isGuildMuted(node->id);
+        break;
+    case ChannelNode::Type::Category:
+        state.isMuted = readState->isChannelMuted(node->id);
+        break;
+    case ChannelNode::Type::Channel:
+    case ChannelNode::Type::Forum:
+        return readState->computeChannelReadState(node->id, guildId, node->parentId);
+    case ChannelNode::Type::DMChannel:
+        return readState->computeDMReadState(node->id);
+    case ChannelNode::Type::Thread: {
+        Snowflake categoryId = node->parent ? node->parent->parentId : Snowflake::Invalid;
         if (node->parent && node->parent->type == ChannelNode::Type::Forum)
-            return forumPostReadState(instance->readState(), node, guildId);
-
-        bool joined = instance->isThreadJoined(node->id);
-        auto state = instance->readState()->computeThreadReadState(node->id, guildId, node->parentId, joined);
-        if (node->parent && node->parent->type == ChannelNode::Type::Channel) {
-            bool parentMuted = node->parent->isMuted ||
-                               (node->parent->parentId.isValid() &&
-                                instance->readState()->isChannelMuted(node->parent->parentId));
-            if (parentMuted) {
-                state.isMuted = true;
-                state.countsForGuildUnread = false;
-            }
-        }
-        return state;
+            return readState->computeForumPostReadState(node->id, guildId, node->parent->id, categoryId);
+        return readState->computeThreadReadState(node->id, guildId, node->parentId, categoryId, instance->isThreadJoined(node->id));
     }
+    default:
+        break;
+    }
+    return state;
+}
 
-    bool isDM = node->type == ChannelNode::Type::DMChannel;
-    return instance->readState()->computeChannelReadState(node->id, guildId, node->parentId, isDM);
+void ChannelTreeModel::setSelfReadState(ChannelNode *node, const Core::ChannelReadState &state)
+{
+    node->self = state;
+    node->isMuted = state.isMuted;
+    aggregateChildren(node);
 }
 
 void ChannelTreeModel::aggregateChildren(ChannelNode *node)
 {
-    bool isChannel = node->type == ChannelNode::Type::Channel;
-    node->mentionCount = isChannel ? node->selfMentionCount : 0;
-    node->isUnread = isChannel ? node->selfUnread : false;
-    node->countsForGuildUnread = isChannel ? node->selfCountsForGuildUnread : false;
+    node->isUnread = node->self.isUnread;
+    node->mentionCount = node->self.mentionCount;
+    node->countsForGuildUnread = node->self.countsForGuildUnread;
     for (const auto &child : node->children) {
         if (child->isUnread && !child->isMuted)
             node->isUnread = true;
-
         if (child->countsForGuildUnread)
             node->countsForGuildUnread = true;
-
-        node->mentionCount += child->subtreeMentionCount;
+        node->mentionCount += child->mentionCount;
     }
-    node->subtreeMentionCount = node->mentionCount;
+
+    if (node->type == ChannelNode::Type::Server || node->type == ChannelNode::Type::Folder ||
+        node->type == ChannelNode::Type::DMHeader)
+        node->isUnread = node->countsForGuildUnread;
 }
 
-void ChannelTreeModel::recomputeSubtreeAggregates(ChannelNode *node)
+void ChannelTreeModel::refreshReadStates(ChannelNode *node, Core::ClientInstance *instance)
 {
     for (const auto &child : node->children)
-        recomputeSubtreeAggregates(child.get());
-
-    if (isContainerType(node->type))
-        aggregateChildren(node);
+        refreshReadStates(child.get(), instance);
+    setSelfReadState(node, computeNodeReadState(node, instance));
 }
 
 void ChannelTreeModel::updateNodeAggregates(ChannelNode *node)
 {
-    if (!node || !isContainerType(node->type))
-        return;
-
-    int oldMentionCount = node->mentionCount;
-    bool oldIsUnread = node->isUnread;
-    bool oldCounts = node->countsForGuildUnread;
-
-    aggregateChildren(node);
-
-    if (oldMentionCount != node->mentionCount || oldIsUnread != node->isUnread || oldCounts != node->countsForGuildUnread) {
-        QModelIndex idx = indexForNode(node);
-        if (idx.isValid())
-            emit dataChanged(idx, idx, { IsUnreadRole, CountsForGuildUnreadRole, MentionCountRole });
-
-        if (node->parent)
-            updateNodeAggregates(node->parent);
-    }
-}
-
-void ChannelTreeModel::initChannelReadStates(ChannelNode *node, Core::ClientInstance *instance)
-{
-    if (node->type == ChannelNode::Type::Server)
-        node->isMuted = instance->readState()->isGuildMuted(node->id);
-    else if (node->type == ChannelNode::Type::Category)
-        node->isMuted = instance->readState()->isChannelMuted(node->id);
-
-    if (node->type == ChannelNode::Type::Forum) {
-        ChannelNode *guildNode = findGuildNode(node);
-        Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-        applyForumReadState(node, instance->readState(), guildId);
-    } else if (node->type == ChannelNode::Type::Channel ||
-               node->type == ChannelNode::Type::DMChannel ||
-               node->type == ChannelNode::Type::Thread) {
-        ChannelNode *guildNode = findGuildNode(node);
-        Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-        applyChannelReadState(node, computeNodeReadState(node, guildId, instance));
-    }
-
-    for (const auto &child : node->children)
-        initChannelReadStates(child.get(), instance);
-}
-
-void ChannelTreeModel::updateChildrenReadState(ChannelNode *node, Snowflake guildId,
-                                               Core::ClientInstance *instance)
-{
-    for (const auto &child : node->children) {
-        if (child->type == ChannelNode::Type::Channel ||
-            child->type == ChannelNode::Type::DMChannel ||
-            child->type == ChannelNode::Type::Thread) {
-            ReadStateSnapshot before = readStateSnapshot(child.get());
-            applyChannelReadState(child.get(), computeNodeReadState(child.get(), guildId, instance));
-            notifyIfReadStateChanged(child.get(), before);
-        } else if (child->type == ChannelNode::Type::Category) {
-            child->isMuted = instance->readState()->isChannelMuted(child->id);
-
-            QModelIndex idx = indexForNode(child.get());
-            if (idx.isValid())
-                emit dataChanged(idx, idx, { IsMutedRole });
-        } else if (child->type == ChannelNode::Type::Forum) {
-            for (const auto &post : child->children) {
-                ReadStateSnapshot before = readStateSnapshot(post.get());
-                applyChannelReadState(post.get(), forumPostReadState(instance->readState(), post.get(), guildId));
-                notifyIfReadStateChanged(post.get(), before);
-            }
-            refreshForumNode(child.get(), instance, guildId);
-        }
-
-        if (!child->children.empty())
-            updateChildrenReadState(child.get(), guildId, instance);
+    for (; node && node != root.get(); node = node->parent) {
+        Core::ChannelReadState before = shownReadState(node);
+        aggregateChildren(node);
+        if (!notifyIfReadStateChanged(node, before))
+            return;
     }
 }
 
@@ -1914,12 +1770,8 @@ void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflak
 void ChannelTreeModel::collectMarkableChannels(ChannelNode *node,
                                                QList<QPair<Snowflake, Snowflake>> &out)
 {
-    if (node->type == ChannelNode::Type::Channel ||
-        node->type == ChannelNode::Type::DMChannel) {
-        if (node->lastMessageId.isValid())
-            out.append({ node->id, node->lastMessageId });
-        return;
-    }
+    if (node->opensChat() && node->lastMessageId.isValid())
+        out.append({ node->id, node->lastMessageId });
     for (auto &child : node->children)
         collectMarkableChannels(child.get(), out);
 }

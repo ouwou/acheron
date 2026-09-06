@@ -255,6 +255,9 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::USER_GUILD_SETTINGS_UPDATE:
         handleUserGuildSettingsUpdate(data);
         break;
+    case GatewayEvent::NOTIFICATION_SETTINGS_UPDATE:
+        handleNotificationSettingsUpdate(data);
+        break;
     case GatewayEvent::GUILD_MEMBER_LIST_UPDATE:
         handleGuildMemberListUpdate(data);
         break;
@@ -527,6 +530,13 @@ void Gateway::handleUserGuildSettingsUpdate(const Inbound &data)
     UserGuildSettings settings = data.getData<UserGuildSettings>();
 
     emit gatewayUserGuildSettingsUpdate(settings);
+}
+
+void Gateway::handleNotificationSettingsUpdate(const Inbound &data)
+{
+    NotificationSettings settings = data.getData<NotificationSettings>();
+
+    emit gatewayNotificationSettingsUpdate(settings);
 }
 
 void Gateway::handleGuildMemberListUpdate(const Inbound &data)

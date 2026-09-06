@@ -201,6 +201,7 @@ signals:
     void messageReactionRemoveAll(const MessageReactionRemoveAll &event);
     void messageReactionRemoveEmoji(const MessageReactionRemoveEmoji &event);
     void userGuildSettingsUpdated(const UserGuildSettings &settings);
+    void notificationSettingsUpdated(const NotificationSettings &settings);
     void guildMemberListUpdate(const GuildMemberListUpdate &event);
     void voiceStateUpdated(const VoiceState &event);
     void voiceServerUpdated(const VoiceServerUpdate &event);

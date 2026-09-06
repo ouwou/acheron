@@ -162,6 +162,7 @@ enum class GatewayEvent {
     MESSAGE_REACTION_REMOVE_ALL,
     MESSAGE_REACTION_REMOVE_EMOJI,
     USER_GUILD_SETTINGS_UPDATE,
+    NOTIFICATION_SETTINGS_UPDATE,
     GUILD_MEMBER_LIST_UPDATE,
     VOICE_STATE_UPDATE,
     VOICE_STATE_UPDATE_BATCH,
@@ -216,6 +217,7 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "MESSAGE_REACTION_REMOVE_ALL", GatewayEvent::MESSAGE_REACTION_REMOVE_ALL },
         { "MESSAGE_REACTION_REMOVE_EMOJI", GatewayEvent::MESSAGE_REACTION_REMOVE_EMOJI },
         { "USER_GUILD_SETTINGS_UPDATE", GatewayEvent::USER_GUILD_SETTINGS_UPDATE },
+        { "NOTIFICATION_SETTINGS_UPDATE", GatewayEvent::NOTIFICATION_SETTINGS_UPDATE },
         { "GUILD_MEMBER_LIST_UPDATE", GatewayEvent::GUILD_MEMBER_LIST_UPDATE },
         { "VOICE_STATE_UPDATE", GatewayEvent::VOICE_STATE_UPDATE },
         { "VOICE_STATE_UPDATE_BATCH", GatewayEvent::VOICE_STATE_UPDATE_BATCH },
@@ -268,6 +270,7 @@ enum class ChannelFlag {
     IS_GUILD_RESOURCE_CHANNEL = 1 << 7,
     CLYDE_AI = 1 << 8,
     IS_SCHEDULED_FOR_DELETION = 1 << 9,
+    IS_MEDIA_CHANNEL = 1 << 10,
     SUMMARIES_DISABLED = 1 << 11,
     IS_ROLE_SUBSCRIPTION_TEMPLATE_PREVIEW_CHANNEL = 1 << 13,
     IS_BROADCASTING = 1 << 14,
@@ -276,6 +279,8 @@ enum class ChannelFlag {
     OBFUSCATED = 1 << 17,
     IS_MODERATOR_REPORT_CHANNEL = 1 << 19,
     IS_SPOILER_CHANNEL = 1 << 21,
+    IS_GAME_INVITES_CHANNEL = 1 << 22,
+    HAS_ONLY_SYSTEM_MESSAGES = 1 << 23,
 };
 ACHERON_DECLARE_FLAGS(ChannelFlags, ChannelFlag)
 
@@ -466,6 +471,27 @@ enum class ReadStateFlag {
     IS_MENTION_LOW_IMPORTANCE = 1 << 2,
 };
 ACHERON_DECLARE_FLAGS(ReadStateFlags, ReadStateFlag)
+
+enum class NotificationSettingsFlag {
+    USE_NEW_NOTIFICATIONS = 1 << 4,
+    MENTION_ON_ALL_MESSAGES = 1 << 5,
+};
+
+enum class UserGuildSettingsFlag {
+    UNREADS_ALL_MESSAGES = 1 << 11,
+    UNREADS_ONLY_MENTIONS = 1 << 12,
+    OPT_IN_CHANNELS_OFF = 1 << 13,
+    OPT_IN_CHANNELS_ON = 1 << 14,
+};
+
+enum class ChannelOverrideFlag {
+    UNREADS_ONLY_MENTIONS = 1 << 9,
+    UNREADS_ALL_MESSAGES = 1 << 10,
+    FAVORITED = 1 << 11,
+    OPT_IN_ENABLED = 1 << 12,
+    NEW_FORUM_THREADS_OFF = 1 << 13,
+    NEW_FORUM_THREADS_ON = 1 << 14,
+};
 
 enum class AttachmentFlag {
     IS_CLIP = 1 << 0,

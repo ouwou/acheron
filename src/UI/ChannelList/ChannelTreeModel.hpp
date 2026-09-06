@@ -14,9 +14,7 @@ using Acheron::Core::Session;
 using Acheron::Core::Snowflake;
 
 namespace Acheron::Core {
-struct ChannelReadState;
 class ClientInstance;
-class ReadStateManager;
 } // namespace Acheron::Core
 
 namespace Acheron::Proto {
@@ -46,9 +44,8 @@ public:
         IsVoiceDeafenedRole = Qt::UserRole + 11,
         IconHashRole = Qt::UserRole + 12,
         FolderColorRole = Qt::UserRole + 13,
-        CountsForGuildUnreadRole = Qt::UserRole + 14,
-        ThreadJoinedRole = Qt::UserRole + 15,
-        OwnerIdRole = Qt::UserRole + 16,
+        ThreadJoinedRole = Qt::UserRole + 14,
+        OwnerIdRole = Qt::UserRole + 15,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
@@ -101,27 +98,14 @@ public:
     QModelIndex dmHeaderIndex(Snowflake accountId);
 
 private:
-    void initChannelReadStates(ChannelNode *node, Core::ClientInstance *instance);
-    void updateChildrenReadState(ChannelNode *node, Snowflake guildId,
-                                 Core::ClientInstance *instance);
     static void collectMarkableChannels(ChannelNode *node,
                                         QList<QPair<Snowflake, Snowflake>> &out);
-    void applyChannelReadState(ChannelNode *node, const Core::ChannelReadState &state);
-    Core::ChannelReadState computeNodeReadState(ChannelNode *node, Snowflake guildId, Core::ClientInstance *instance);
-    void applyForumReadState(ChannelNode *node, Core::ReadStateManager *readState, Snowflake guildId);
-    struct ReadStateSnapshot
-    {
-        bool isUnread;
-        bool isMuted;
-        bool countsForGuildUnread;
-        int mentionCount;
-        int subtreeMentionCount;
-    };
-    static ReadStateSnapshot readStateSnapshot(const ChannelNode *node);
-    bool notifyIfReadStateChanged(ChannelNode *node, const ReadStateSnapshot &before);
-    bool refreshForumNode(ChannelNode *forumNode, Core::ClientInstance *instance, Snowflake guildId);
+    static Core::ChannelReadState computeNodeReadState(ChannelNode *node, Core::ClientInstance *instance);
+    static Core::ChannelReadState shownReadState(const ChannelNode *node);
+    static void setSelfReadState(ChannelNode *node, const Core::ChannelReadState &state);
     static void aggregateChildren(ChannelNode *node);
-    void recomputeSubtreeAggregates(ChannelNode *root);
+    void refreshReadStates(ChannelNode *node, Core::ClientInstance *instance);
+    bool notifyIfReadStateChanged(ChannelNode *node, const Core::ChannelReadState &before);
     void updateNodeAggregates(ChannelNode *node);
     std::unique_ptr<ChannelNode> createGuildNode(const Discord::GatewayGuild &guild, Core::ClientInstance *instance);
     static std::unique_ptr<ChannelNode> makeThreadNode(const Discord::Channel &thread);

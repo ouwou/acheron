@@ -101,7 +101,7 @@ QVariant ServerRailModel::data(const QModelIndex &index, int role) const
         return e.depth;
     case IsUnreadRole:
         return e.unreadSrcIndex.isValid()
-                       ? e.unreadSrcIndex.data(ChannelTreeModel::CountsForGuildUnreadRole)
+                       ? e.unreadSrcIndex.data(ChannelTreeModel::IsUnreadRole)
                        : QVariant(false);
     case MentionCountRole:
         return e.unreadSrcIndex.isValid()

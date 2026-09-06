@@ -337,6 +337,7 @@ struct Guild : Core::JsonUtils::JsonObject
     Field<PremiumTier, true> premiumTier;
     Field<Core::Snowflake, false, true> rulesChannelId;
     Field<MessageNotificationLevel, true> defaultMessageNotifications;
+    Field<QList<QString>, true> features;
 
     static Guild fromJson(const QJsonObject &obj)
     {
@@ -349,7 +350,13 @@ struct Guild : Core::JsonUtils::JsonObject
         get(obj, "premium_tier", guild.premiumTier);
         get(obj, "rules_channel_id", guild.rulesChannelId);
         get(obj, "default_message_notifications", guild.defaultMessageNotifications);
+        get(obj, "features", guild.features);
         return guild;
+    }
+
+    [[nodiscard]] bool hasFeature(const QString &feature) const
+    {
+        return features.hasValue() && features->contains(feature);
     }
 };
 
@@ -678,6 +685,7 @@ struct Message : Core::JsonUtils::JsonObject
     Field<QList<Embed>, true> embeds;
     Field<QList<User>, true> mentions;
     Field<QList<Core::Snowflake>, true> mentionRoles;
+    Field<bool, true> mentionEveryone;
     Field<QList<Reaction>, true> reactions;
 
     Field<MessageReference, true> messageReference;
@@ -745,6 +753,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "embeds", message.embeds);
         get(obj, "mentions", message.mentions);
         get(obj, "mention_roles", message.mentionRoles);
+        get(obj, "mention_everyone", message.mentionEveryone);
         get(obj, "reactions", message.reactions);
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
@@ -798,6 +807,8 @@ struct Message : Core::JsonUtils::JsonObject
             mentions = update.mentions;
         if (present.contains(QStringLiteral("mention_roles")))
             mentionRoles = update.mentionRoles;
+        if (present.contains(QStringLiteral("mention_everyone")))
+            mentionEveryone = update.mentionEveryone;
         if (present.contains(QStringLiteral("attachments")))
             attachments = update.attachments;
         if (present.contains(QStringLiteral("message_reference")))
@@ -817,6 +828,18 @@ struct Message : Core::JsonUtils::JsonObject
             reactions = update.reactions;
             reactionsJson = update.reactionsJson;
         }
+    }
+};
+
+struct NotificationSettings : Core::JsonUtils::JsonObject
+{
+    Field<int, true> flags;
+
+    static NotificationSettings fromJson(const QJsonObject &obj)
+    {
+        NotificationSettings settings;
+        get(obj, "flags", settings.flags);
+        return settings;
     }
 };
 
