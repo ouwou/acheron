@@ -4,6 +4,8 @@
 #include <QSet>
 #include <QVariantMap>
 
+#include "Core/Snowflake.hpp"
+
 namespace Acheron {
 namespace Core {
 namespace Markdown {
@@ -50,6 +52,23 @@ struct MarkdownRule
 using UserResolverFn = std::function<QString(const QString &userId)>;
 using ChannelResolverFn = std::function<QString(const QString &channelId)>;
 
+struct ChannelLinkRef
+{
+    Snowflake guildId; // invalid for DM links
+    Snowflake channelId;
+    Snowflake messageId; // invalid for plain channel links
+    Snowflake sourceChannelId; // channel the message containing the link was posted in
+};
+
+struct ChannelLinkPart
+{
+    QString icon;
+    QString text;
+    bool italic = false;
+};
+
+using ChannelLinkResolverFn = std::function<QList<ChannelLinkPart>(const ChannelLinkRef &)>;
+
 class Parser
 {
 public:
@@ -60,6 +79,7 @@ public:
 
     void setUserResolver(UserResolverFn resolver);
     void setChannelResolver(ChannelResolverFn resolver);
+    void setChannelLinkResolver(ChannelLinkResolverFn resolver);
 
     static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
 
@@ -74,6 +94,7 @@ private:
     QMap<QString, MarkdownRule *> ruleMap;
     UserResolverFn userResolver;
     ChannelResolverFn channelResolver;
+    ChannelLinkResolverFn channelLinkResolver;
 };
 
 } // namespace Markdown

@@ -244,8 +244,12 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
 
     [[nodiscard]] Snowflake getOldestMessageId() const;
+    [[nodiscard]] Snowflake getNewestMessageId() const;
+    [[nodiscard]] int rowForMessage(Snowflake messageId) const;
     [[nodiscard]] Snowflake getActiveChannelId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
+
+    [[nodiscard]] bool isAtLatest() const { return atLatest; }
 
     void setVideoNativeSize(Snowflake attachmentId, const QSize &size);
 
@@ -254,6 +258,9 @@ public:
     void invalidateDocCache();
     void invalidateDocCacheForMessage(Snowflake messageId);
     void invalidateLayout();
+
+signals:
+    void atLatestChanged(bool atLatest);
 
 public slots:
     void setActiveChannel(Snowflake channelId, Snowflake guildId = Snowflake::Invalid);
@@ -273,7 +280,9 @@ public slots:
     }
 
 private:
-    void setMessages(const QList<Discord::Message> &messages);
+    void resetMessages(const QVector<Discord::Message> &sortedIncoming);
+    void appendMessages(const QVector<Discord::Message> &sortedIncoming);
+    void setAtLatest(bool value);
     QString resolveAuthorName(const Discord::User &author) const;
     QColor resolveAuthorColor(const Discord::User &author) const;
     ForwardOriginData forwardOrigin(const Discord::Message &msg) const;
@@ -292,6 +301,7 @@ private:
     Snowflake currentChannelId = Snowflake::Invalid;
     Snowflake currentGuildId = Snowflake::Invalid;
     Snowflake currentAccountId;
+    bool atLatest = true;
 
     AvatarUrlResolver avatarUrlResolver;
     DisplayNameResolver displayNameResolver;

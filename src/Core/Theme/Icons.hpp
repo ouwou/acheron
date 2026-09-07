@@ -13,12 +13,14 @@ namespace Theme {
 namespace Icons {
 
 namespace Name {
+inline constexpr auto ArrowDown = "arrow-down";
 inline constexpr auto ArrowLeft = "arrow-left";
 inline constexpr auto ArrowRight = "arrow-right";
 inline constexpr auto AtSign = "at-sign";
 inline constexpr auto Bell = "bell";
 inline constexpr auto Bot = "bot";
 inline constexpr auto ChartColumn = "chart-column";
+inline constexpr auto ChevronRight = "chevron-right";
 inline constexpr auto Compass = "compass";
 inline constexpr auto Eye = "eye";
 inline constexpr auto FileAudio = "file-audio";
@@ -27,11 +29,13 @@ inline constexpr auto Forward = "forward";
 inline constexpr auto Gem = "gem";
 inline constexpr auto Hand = "hand";
 inline constexpr auto Handshake = "handshake";
+inline constexpr auto Hash = "hash";
 inline constexpr auto IdCard = "id-card";
 inline constexpr auto Image = "image";
 inline constexpr auto Lock = "lock";
 inline constexpr auto Maximize = "maximize";
 inline constexpr auto MessageCircle = "message-circle";
+inline constexpr auto MessagesSquare = "messages-square";
 inline constexpr auto Mic = "mic";
 inline constexpr auto Minimize = "minimize";
 inline constexpr auto Pause = "pause";

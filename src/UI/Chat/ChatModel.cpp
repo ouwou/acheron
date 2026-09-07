@@ -857,12 +857,61 @@ Snowflake ChatModel::getOldestMessageId() const
     return messages.first().id;
 }
 
+Snowflake ChatModel::getNewestMessageId() const
+{
+    if (messages.isEmpty())
+        return Snowflake::Invalid;
+    return messages.last().id;
+}
+
+int ChatModel::rowForMessage(Snowflake messageId) const
+{
+    for (int row = 0; row < messages.size(); ++row) {
+        if (messages[row].id == messageId)
+            return row;
+    }
+    return -1;
+}
+
 Snowflake ChatModel::getActiveChannelId() const
 {
     return currentChannelId;
 }
 
-void ChatModel::setMessages(const QList<Discord::Message> &messages) {}
+void ChatModel::setAtLatest(bool value)
+{
+    if (atLatest == value)
+        return;
+    atLatest = value;
+    emit atLatestChanged(value);
+}
+
+void ChatModel::resetMessages(const QVector<Discord::Message> &sortedIncoming)
+{
+    beginResetModel();
+    sizeCache.clear();
+    embedCache.clear();
+    forwardOriginCache.clear();
+    docCache.clear();
+    pendingNonces.clear();
+    erroredNonces.clear();
+    uploadProgress.clear();
+    localPixmapCache.clear();
+    previewPixmapCache.clear();
+    mediaFlagsCache.clear();
+    messages = sortedIncoming;
+    endResetModel();
+}
+
+void ChatModel::appendMessages(const QVector<Discord::Message> &sortedIncoming)
+{
+    if (sortedIncoming.isEmpty())
+        return;
+
+    beginInsertRows({}, messages.size(), messages.size() + sortedIncoming.size() - 1);
+    messages += sortedIncoming;
+    endInsertRows();
+}
 
 void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
 {
@@ -872,9 +921,6 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
     if (result.channelId != currentChannelId)
         return;
 
-    if (result.messages.isEmpty())
-        return;
-
     QVector<Discord::Message> incomingMessages{ result.messages.cbegin(), result.messages.cend() };
     std::sort(incomingMessages.begin(), incomingMessages.end(),
               [](const Discord::Message &a, const Discord::Message &b) {
@@ -882,23 +928,27 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
               });
 
     switch (result.type) {
-    case Discord::Client::MessageLoadType::Latest: {
-        beginResetModel();
-        sizeCache.clear();
-        embedCache.clear();
-        forwardOriginCache.clear();
-        docCache.clear();
-        pendingNonces.clear();
-        erroredNonces.clear();
-        uploadProgress.clear();
-        localPixmapCache.clear();
-        previewPixmapCache.clear();
-        mediaFlagsCache.clear();
-        messages = incomingMessages;
-        endResetModel();
+    case Discord::Client::MessageLoadType::Latest:
+        resetMessages(incomingMessages);
+        setAtLatest(true);
         break;
-    };
+    case Discord::Client::MessageLoadType::Jump:
+        if (incomingMessages.isEmpty())
+            break;
+        resetMessages(incomingMessages);
+        setAtLatest(result.reachedLatest);
+        break;
+    case Discord::Client::MessageLoadType::Future:
+        if (result.anchorId != getNewestMessageId())
+            break;
+        appendMessages(incomingMessages);
+        if (result.reachedLatest)
+            setAtLatest(true);
+        break;
     case Discord::Client::MessageLoadType::History: {
+        if (incomingMessages.isEmpty() || result.anchorId != getOldestMessageId())
+            break;
+
         int numNew = incomingMessages.size();
 
         const Snowflake oldAnchorId = messages.first().id;
@@ -916,6 +966,9 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
         break;
     }
     case Discord::Client::MessageLoadType::Created: {
+        if (incomingMessages.isEmpty())
+            break;
+
         bool isUpdate = false;
         for (const auto &incomingMsg : incomingMessages) {
             for (int i = 0; i < messages.size(); i++) {
@@ -960,7 +1013,7 @@ void ChatModel::handleIncomingMessages(const Core::MessageRequestResult &result)
             }
         }
 
-        if (!replacedPreview) {
+        if (!replacedPreview && atLatest) {
             beginInsertRows({}, messages.size(), messages.size() + incomingMessages.size() - 1);
 
             for (const auto &msg : incomingMessages) {
@@ -1114,6 +1167,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
 
     currentChannelId = channelId;
     currentGuildId = guildId;
+    setAtLatest(true);
 
     beginResetModel();
     messages.clear();

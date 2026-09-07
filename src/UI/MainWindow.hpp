@@ -5,6 +5,8 @@
 #include <optional>
 
 #include <Core/Snowflake.hpp>
+#include <optional>
+
 #include "Input/MessageInput.hpp"
 #include "MemberList/MemberListView.hpp"
 #include "MemberList/MemberListModel.hpp"
@@ -132,6 +134,7 @@ private:
 
     void openThreadBrowser();
     void navigateToChannel(Core::Snowflake channelId);
+    void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
     void setThreadBrowserTarget(Core::Snowflake channelId);
 
     ChatView *chatView;
@@ -167,6 +170,13 @@ private:
     QToolButton *threadBrowserButton = nullptr;
     ThreadBrowserPopup *threadBrowser = nullptr;
     Core::Snowflake threadBrowserChannelId = Core::Snowflake::Invalid;
+
+    struct PendingLinkJump
+    {
+        Core::Snowflake channelId;
+        Core::Snowflake messageId;
+    };
+    std::optional<PendingLinkJump> pendingLinkJump;
     MessageInput *messageInput;
     TypingIndicator *typingIndicator;
     SlowModeIndicator *slowModeIndicator;

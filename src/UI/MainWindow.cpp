@@ -6,6 +6,8 @@
 #include <QPointer>
 #include <QSettings>
 
+#include <utility>
+
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
@@ -356,6 +358,9 @@ void MainWindow::switchChatChannel(Core::Snowflake channelId, Core::Snowflake gu
         userColorCache.clear();
     }
 
+    if (pendingLinkJump && pendingLinkJump->channelId != channelId)
+        pendingLinkJump.reset();
+
     chatModel->setActiveChannel(channelId, guildId);
     typingTracker->setActiveChannel(channelId);
     messageInput->clearReplyTarget();
@@ -437,9 +442,17 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs, &MessageManager::attachmentUploadProgress, chatModel, &ChatModel::handleUploadProgress);
     connect(msgs, &MessageManager::messagesReceived, this,
             [this](const MessageRequestResult &result) {
-                if (result.success && result.type == Discord::Client::MessageLoadType::History &&
-                    result.channelId == chatModel->getActiveChannelId())
+                if (result.channelId != chatModel->getActiveChannelId())
+                    return;
+                if (result.type == Discord::Client::MessageLoadType::History) {
                     chatView->onHistoryRequestFinished();
+                } else if (result.type == Discord::Client::MessageLoadType::Future) {
+                    chatView->onFutureRequestFinished(!result.messages.isEmpty());
+                } else if (result.type == Discord::Client::MessageLoadType::Latest) {
+                    auto jump = std::exchange(pendingLinkJump, std::nullopt);
+                    if (jump && result.success && jump->channelId == result.channelId)
+                        chatView->jumpToMessage(jump->messageId);
+                }
             });
 
     connect(currentInstance->discord(), &Discord::Client::typingStart, this,
@@ -1124,6 +1137,8 @@ void MainWindow::setupUi()
         }
 
         Snowflake replyTo = messageInput->replyTargetMessageId();
+        if (!chatModel->isAtLatest())
+            chatView->jumpToPresent();
         currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
 
         int rateLimit = currentInstance->getChannelRateLimit(channelId);
@@ -1146,6 +1161,23 @@ void MainWindow::setupUi()
         if (currentInstance && oldestId.isValid())
             currentInstance->messages()->requestLoadHistory(chatModel->getActiveChannelId(),
                                                             oldestId);
+    });
+
+    connect(chatView, &ChatView::futureRequested, this, [this]() {
+        Snowflake newestId = chatModel->getNewestMessageId();
+
+        if (currentInstance && newestId.isValid())
+            currentInstance->messages()->requestLoadFuture(chatModel->getActiveChannelId(), newestId);
+    });
+
+    connect(chatView, &ChatView::jumpRequested, this, [this](Snowflake messageId) {
+        if (currentInstance)
+            currentInstance->messages()->requestLoadAround(chatModel->getActiveChannelId(), messageId);
+    });
+
+    connect(chatView, &ChatView::presentRequested, this, [this]() {
+        if (currentInstance)
+            currentInstance->messages()->requestLoadChannel(chatModel->getActiveChannelId());
     });
 
     connect(chatView, &ChatView::filesDropped, this, [this](const QList<QUrl> &urls) {
@@ -1226,6 +1258,7 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
+    connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
         if (currentInstance)
             currentInstance->readState()->setActiveChannelAtBottom(atBottom);
@@ -2392,6 +2425,17 @@ void MainWindow::navigateToChannel(Core::Snowflake channelId)
             channelTreeModel->showTemporaryThread(*chOpt, acc);
     }
     selectChannelInTree(channelId);
+}
+
+void MainWindow::jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId)
+{
+    if (channelId == chatModel->getActiveChannelId()) {
+        chatView->jumpToMessage(messageId);
+        return;
+    }
+
+    pendingLinkJump = { channelId, messageId };
+    navigateToChannel(channelId);
 }
 
 } // namespace UI

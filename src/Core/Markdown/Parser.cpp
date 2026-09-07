@@ -1,5 +1,6 @@
 #include "Parser.hpp"
 #include "Core/EmojiSegmenter.hpp"
+#include "Discord/ChannelLink.hpp"
 
 #include <QRegularExpression>
 #include <QStringList>
@@ -163,6 +164,38 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
             continue;
         }
 
+        if (node.type == "channelLink") {
+            QString href = node.attributes["href"].toString().toHtmlEscaped();
+
+            QList<ChannelLinkPart> parts;
+            if (channelLinkResolver) {
+                auto id = [&node](const char *key) { return Snowflake(node.attributes[key].toULongLong()); };
+                parts = channelLinkResolver({ id("guildId"), id("channelId"), id("messageId"), id("sourceChannelId") });
+            }
+
+            if (parts.isEmpty()) {
+                result += QString("<a href=\"%1\">%1</a>").arg(href);
+                continue;
+            }
+
+            auto iconHtml = [](const QString &icon) {
+                return QString("<img src=\"acheron-icon:mention-%1\" width=\"14\" height=\"14\" style=\"vertical-align: middle\" />")
+                        .arg(icon);
+            };
+
+            QString inner;
+            for (int i = 0; i < parts.size(); ++i) {
+                if (i > 0)
+                    inner += iconHtml("chevron");
+                if (!parts[i].icon.isEmpty())
+                    inner += iconHtml(parts[i].icon);
+                QString text = parts[i].text.toHtmlEscaped();
+                inner += parts[i].italic ? "<i>" + text + "</i>" : text;
+            }
+            result += QString("<a href=\"%1\" class=\"mention\">%2</a>").arg(href, inner);
+            continue;
+        }
+
         if (node.type == "customEmoji") {
             QString id = node.content;
             QString name = node.attributes["name"].toString();
@@ -204,6 +237,11 @@ void Parser::setUserResolver(UserResolverFn resolver)
 void Parser::setChannelResolver(ChannelResolverFn resolver)
 {
     channelResolver = std::move(resolver);
+}
+
+void Parser::setChannelLinkResolver(ChannelLinkResolverFn resolver)
+{
+    channelLinkResolver = std::move(resolver);
 }
 
 static MatchFn inlineRegex(QRegularExpression regex)
@@ -354,9 +392,28 @@ void Parser::setupDefaultRules()
     };
     rules.append(autolink);
 
+    MarkdownRule channelLink;
+    channelLink.name = "channelLink";
+    channelLink.order = 16;
+    channelLink.regex = Discord::ChannelLink::pattern(R"((?=$|[\s<.,:;"'!?)\]]))");
+    channelLink.match = inlineRegex(channelLink.regex);
+    channelLink.parse = [](const Capture &match, NestedParseFn, ParseState state) -> AstNode {
+        auto link = Discord::ChannelLink::fromMatch(match);
+        AstNode node;
+        node.type = "channelLink";
+        node.content = match.captured(0);
+        node.attributes["href"] = node.content;
+        node.attributes["guildId"] = quint64(link.guildId);
+        node.attributes["channelId"] = quint64(link.channelId);
+        node.attributes["messageId"] = quint64(link.messageId);
+        node.attributes["sourceChannelId"] = state.customState.value("channelId");
+        return node;
+    };
+    rules.append(channelLink);
+
     MarkdownRule url;
     url.name = "url";
-    url.order = 16;
+    url.order = 17;
     url.regex = QRegularExpression(R"(^(https?:\/\/[^\s<]+[^<.,:;"'\]\s]))");
     url.match = [regex = url.regex](const QString &source, const ParseState &state) -> Capture {
         if (!state.isInline)
@@ -386,7 +443,7 @@ void Parser::setupDefaultRules()
 
     MarkdownRule link;
     link.name = "link";
-    link.order = 17;
+    link.order = 18;
     link.regex = QRegularExpression(
             R"(^\[((?:\[[^\]]*\]|[^\[\]]|\](?=[^\[]*\]))*)\]\(\s*<?((?:\([^)]*\)|[^\s\\]|\\.)*?)>?(?:\s+['"]([\s\S]*?)['"])?\s*\))");
     link.match = inlineRegex(link.regex);

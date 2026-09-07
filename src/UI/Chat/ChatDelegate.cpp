@@ -198,6 +198,12 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     ChatLayout::LayoutContext ctx = ChatLayout::buildContext(index, option.font, option.rect, option.palette);
     ChatLayout::MessageLayout layout = ChatLayout::calculateMessageLayout(ctx);
 
+    if (chatView && chatView->highlightedRow() == index.row()) {
+        QColor flash = option.palette.highlight().color();
+        flash.setAlphaF(0.3 * chatView->highlightOpacity());
+        painter->fillRect(option.rect, flash);
+    }
+
     const QString username = index.data(ChatModel::UsernameRole).toString();
     const QPixmap avatar = qvariant_cast<QPixmap>(index.data(ChatModel::AvatarRole));
     const QDateTime timestamp = index.data(ChatModel::TimestampRole).toDateTime().toLocalTime();
@@ -275,7 +281,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->setFont(replyFont);
 
         QColor replyTextColor = option.palette.text().color();
-        replyTextColor.setAlpha(180);
+        bool replyHovered = chatView && chatView->hoveredRowAtPaint() == index.row() && chatView->replyBarHoveredAtPaint();
+        replyTextColor.setAlpha(replyHovered ? 255 : 180);
 
         if (replyData.state == ReplyData::State::Present) {
             // Author name in bold, with role color if available

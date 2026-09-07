@@ -33,6 +33,25 @@ struct ChatCursor
     }
 };
 
+class JumpToPresentBar : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit JumpToPresentBar(QWidget *parent = nullptr);
+
+signals:
+    void clicked();
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+
+private:
+    void applyTheme();
+
+    QLabel *label = nullptr;
+    QPushButton *button = nullptr;
+};
+
 class ChatView : public QListView
 {
     Q_OBJECT
@@ -43,7 +62,12 @@ public:
 
     int hoveredRowAtPaint() const { return hoveredRow; }
     int hoveredCharIndexAtPaint() const { return hoveredChar; }
+    bool replyBarHoveredAtPaint() const { return hoveredReplyBar; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
+
+    // jump flash
+    int highlightedRow() const;
+    qreal highlightOpacity() const { return highlightAlpha; }
 
     [[nodiscard]] InlineVideoController *videoController() const { return video; }
 
@@ -78,6 +102,9 @@ protected:
 
 signals:
     void historyRequested();
+    void futureRequested();
+    void jumpRequested(Core::Snowflake messageId);
+    void presentRequested();
     void atBottomChanged(bool atBottom);
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -89,15 +116,21 @@ signals:
     void toggleReactionClicked(Core::Snowflake channelId, Core::Snowflake messageId,
                                const QString &emoji, bool currentlyReacted, bool isBurst);
     void channelMentionClicked(Core::Snowflake channelId);
+    void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
     void inlineEditFinished();
 
 public slots:
     void onHistoryRequestFinished();
+    void onFutureRequestFinished(bool loadedMore);
     void editLastOwnMessage();
+    void jumpToMessage(Core::Snowflake messageId);
+    void jumpToPresent();
 
 private slots:
     void onScrollBarValueChanged(int value);
+    void onModelReset();
+    void onAtLatestChanged(bool atLatest);
     void onRowsAboutToBeInserted(const QModelIndex &parent, int start, int end);
     void onRowsInserted(const QModelIndex &parent, int start, int end);
     void onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight);
@@ -110,6 +143,13 @@ private:
     void startInlineEdit(const QModelIndex &index);
     void commitInlineEdit();
     void cancelInlineEdit();
+    bool scrollToMessage(Core::Snowflake messageId);
+    void flashMessage(Core::Snowflake messageId);
+    bool modelAtLatest() const;
+    void updateScrollState();
+    void maybeRequestFuture();
+    void positionJumpToPresentBar();
+    void updateJumpToPresentBar();
 
     InlineVideoController *video = nullptr;
     Core::ImageManager *imageManager = nullptr;
@@ -118,8 +158,15 @@ private:
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;
     QModelIndex currentEditingIndex;
 
+    JumpToPresentBar *jumpToPresentBar = nullptr;
+    Core::Snowflake pendingJumpMessageId = Core::Snowflake::Invalid;
+    Core::Snowflake highlightedMessageId = Core::Snowflake::Invalid;
+    qreal highlightAlpha = 0.0;
+    QVariantAnimation *highlightAnimation = nullptr;
+
     int hoveredRow;
     int hoveredChar;
+    bool hoveredReplyBar = false;
 
     ChatCursor selectionAnchor;
     ChatCursor selectionHead;

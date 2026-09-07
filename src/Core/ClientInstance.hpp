@@ -136,6 +136,7 @@ private slots:
 
 private:
     bool runInCacheTransaction(const char *what, const std::function<void(QSqlDatabase &)> &op);
+    QList<Markdown::ChannelLinkPart> channelLinkParts(const Markdown::ChannelLinkRef &ref);
 
     void saveGuild(const Discord::GatewayGuild &guild, const QList<Discord::Member> *members, Snowflake myId, QSqlDatabase &db);
     void initGuildReadState(const Discord::GatewayGuild &guild);

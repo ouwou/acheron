@@ -27,9 +27,7 @@ public:
     QString getReactionsJson(Core::Snowflake messageId);
     std::optional<Discord::Message> getMessage(Core::Snowflake messageId);
 
-    QList<Discord::Message> getLatestMessages(Core::Snowflake channelId, int limit);
-    QList<Discord::Message> getMessagesBefore(Core::Snowflake channelId, Core::Snowflake beforeId,
-                                              int limit);
+    QList<Discord::Message> getMessagesInRange(Core::Snowflake channelId, Core::Snowflake fromId, Core::Snowflake toId);
 
 private:
     void loadAttachmentsForMessages(QList<Discord::Message> &messages, QSqlDatabase &db);

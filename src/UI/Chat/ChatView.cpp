@@ -8,7 +8,10 @@
 #include <algorithm>
 
 #include "Core/ImageManager.hpp"
+#include "Core/Theme/Icons.hpp"
+#include "Core/Theme/Manager.hpp"
 #include "Core/TimeUtils.hpp"
+#include "Discord/ChannelLink.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
@@ -85,6 +88,8 @@ static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLa
     return hit;
 }
 
+static constexpr int LoadMoreThreshold = 200;
+
 ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hoveredChar(-1)
 {
     setMouseTracking(true);
@@ -105,8 +110,29 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
 
     video = new InlineVideoController(this);
 
-    connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
-            &ChatView::onScrollBarValueChanged);
+    jumpToPresentBar = new JumpToPresentBar(this);
+    jumpToPresentBar->setVisible(false);
+    connect(jumpToPresentBar, &JumpToPresentBar::clicked, this, &ChatView::jumpToPresent);
+
+    highlightAnimation = new QVariantAnimation(this);
+    highlightAnimation->setDuration(2400);
+    highlightAnimation->setStartValue(1.0);
+    highlightAnimation->setKeyValueAt(0.6, 1.0);
+    highlightAnimation->setEndValue(0.0);
+    connect(highlightAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+        highlightAlpha = value.toReal();
+        int row = highlightedRow();
+        if (row >= 0)
+            update(visualRect(model()->index(row, 0)));
+    });
+    connect(highlightAnimation, &QVariantAnimation::finished, this, [this]() {
+        highlightedMessageId = Core::Snowflake::Invalid;
+        highlightAlpha = 0.0;
+        viewport()->update();
+    });
+
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, &ChatView::onScrollBarValueChanged);
+    connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, &ChatView::updateJumpToPresentBar);
 }
 
 bool ChatView::hasTextSelection() const
@@ -130,12 +156,9 @@ void ChatView::setModel(QAbstractItemModel *model)
 
     video->attachModel(model);
 
-    connect(model, &QAbstractItemModel::modelReset, this, [this]() {
-        isFetchingTop = false;
-        anchorIndex = QPersistentModelIndex();
-        setAtBottom(true);
-        QTimer::singleShot(0, this, &ChatView::scrollToBottom);
-    });
+    connect(model, &QAbstractItemModel::modelReset, this, &ChatView::onModelReset);
+    if (auto *chatModel = qobject_cast<ChatModel *>(model))
+        connect(chatModel, &ChatModel::atLatestChanged, this, &ChatView::onAtLatestChanged);
 
     connect(model, &QAbstractItemModel::rowsAboutToBeInserted, this,
             &ChatView::onRowsAboutToBeInserted);
@@ -148,6 +171,7 @@ void ChatView::resizeEvent(QResizeEvent *event)
     video->invalidateRects();
 
     QListView::resizeEvent(event);
+    positionJumpToPresentBar();
 }
 
 void ChatView::paintEvent(QPaintEvent *event)
@@ -252,11 +276,13 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
     if (viewport()->cursor().shape() != shape)
         viewport()->setCursor(shape);
 
-    if (hoveredRow != idx.row() || hoveredChar != charPos) {
+    bool overReplyBar = region && region->kind == ChatLayout::HitRegion::Kind::ReplyBar;
+    if (hoveredRow != idx.row() || hoveredChar != charPos || hoveredReplyBar != overReplyBar) {
         if (hoveredRow != -1)
             update(visualRect(model()->index(hoveredRow, 0)));
         hoveredRow = idx.row();
         hoveredChar = charPos;
+        hoveredReplyBar = overReplyBar;
         if (hoveredRow != -1)
             update(visualRect(idx));
     }
@@ -293,6 +319,13 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     auto openExternalLink = [this](const QString &url) {
         if (url.isEmpty())
             return;
+        if (auto link = Discord::ChannelLink::parse(url)) {
+            if (link->messageId.isValid())
+                emit messageLinkClicked(link->channelId, link->messageId);
+            else
+                emit channelMentionClicked(link->channelId);
+            return;
+        }
         ConfirmPopup dialog(tr("External Link"),
                             QString(tr("Are you sure you want to open <b>%1</b>?")).arg(url),
                             tr("Open Link"), this);
@@ -397,10 +430,14 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         }
         break;
 
+    case Kind::ReplyBar:
+        if (!hasTextSelection() && resolved.ctx.replyData.referencedMessageId.isValid())
+            jumpToMessage(resolved.ctx.replyData.referencedMessageId);
+        break;
+
     case Kind::TextCursor:
     case Kind::Avatar:
     case Kind::UsernameHeader:
-    case Kind::ReplyBar:
     case Kind::EmbedDescription:
     case Kind::EmbedFieldName:
     case Kind::EmbedFieldValue:
@@ -424,6 +461,7 @@ void ChatView::leaveEvent(QEvent *event)
     bool needsUpdate = (hoveredRow != -1);
     hoveredRow = -1;
     hoveredChar = -1;
+    hoveredReplyBar = false;
 
     if (!video->dragging())
         video->clearHover();
@@ -461,6 +499,60 @@ bool ChatView::viewportEvent(QEvent *event)
 void ChatView::onHistoryRequestFinished()
 {
     isFetchingTop = false;
+}
+
+void ChatView::onFutureRequestFinished(bool loadedMore)
+{
+    isFetchingBottom = false;
+
+    if (loadedMore)
+        QTimer::singleShot(0, this, &ChatView::maybeRequestFuture);
+}
+
+void ChatView::maybeRequestFuture()
+{
+    auto *bar = verticalScrollBar();
+    if (modelAtLatest() || isFetchingBottom || bar->maximum() - bar->value() >= LoadMoreThreshold)
+        return;
+    isFetchingBottom = true;
+    emit futureRequested();
+}
+
+void ChatView::onModelReset()
+{
+    isFetchingTop = false;
+    isFetchingBottom = false;
+    anchorIndex = QPersistentModelIndex();
+
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    bool hasJumpTarget = pendingJumpMessageId.isValid() && chatModel &&
+                         chatModel->rowForMessage(pendingJumpMessageId) >= 0;
+    if (!hasJumpTarget)
+        pendingJumpMessageId = Core::Snowflake::Invalid;
+
+    setAtBottom(!hasJumpTarget && modelAtLatest());
+
+    QTimer::singleShot(0, this, [this]() {
+        Core::Snowflake target = pendingJumpMessageId;
+        pendingJumpMessageId = Core::Snowflake::Invalid;
+        if (target.isValid() && scrollToMessage(target)) {
+            maybeRequestFuture();
+            return;
+        }
+        scrollToBottom();
+        setAtBottom(modelAtLatest());
+        updateJumpToPresentBar();
+    });
+}
+
+void ChatView::onAtLatestChanged(bool atLatest)
+{
+    if (atLatest) {
+        updateScrollState();
+        return;
+    }
+    setAtBottom(false);
+    updateJumpToPresentBar();
 }
 
 void ChatView::onRowsAboutToBeInserted(const QModelIndex &parent, int start, int end)
@@ -522,17 +614,170 @@ void ChatView::setAtBottom(bool value)
     emit atBottomChanged(value);
 }
 
-void ChatView::onScrollBarValueChanged(int value)
+void ChatView::onScrollBarValueChanged(int)
 {
-    setAtBottom(value >= verticalScrollBar()->maximum());
+    updateScrollState();
 
-    if (value < 200 && !isFetchingTop) {
+    if (underMouse())
+        video->refreshHoverAt(viewport()->mapFromGlobal(QCursor::pos()));
+}
+
+void ChatView::updateScrollState()
+{
+    auto *bar = verticalScrollBar();
+
+    setAtBottom(bar->value() >= bar->maximum() && modelAtLatest());
+
+    if (bar->value() < LoadMoreThreshold && !isFetchingTop) {
         isFetchingTop = true;
         emit historyRequested();
     }
 
-    if (underMouse())
-        video->refreshHoverAt(viewport()->mapFromGlobal(QCursor::pos()));
+    maybeRequestFuture();
+    updateJumpToPresentBar();
+}
+
+bool ChatView::modelAtLatest() const
+{
+    auto *chatModel = qobject_cast<const ChatModel *>(model());
+    return !chatModel || chatModel->isAtLatest();
+}
+
+int ChatView::highlightedRow() const
+{
+    if (!highlightedMessageId.isValid())
+        return -1;
+    auto *chatModel = qobject_cast<const ChatModel *>(model());
+    return chatModel ? chatModel->rowForMessage(highlightedMessageId) : -1;
+}
+
+bool ChatView::scrollToMessage(Core::Snowflake messageId)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return false;
+
+    int row = chatModel->rowForMessage(messageId);
+    if (row < 0)
+        return false;
+
+    scrollTo(chatModel->index(row, 0), QAbstractItemView::PositionAtCenter);
+    flashMessage(messageId);
+    return true;
+}
+
+void ChatView::flashMessage(Core::Snowflake messageId)
+{
+    highlightedMessageId = messageId;
+    highlightAlpha = 1.0;
+    highlightAnimation->stop();
+    highlightAnimation->start();
+    viewport()->update();
+}
+
+void ChatView::jumpToMessage(Core::Snowflake messageId)
+{
+    if (!messageId.isValid() || scrollToMessage(messageId))
+        return;
+
+    pendingJumpMessageId = messageId;
+    emit jumpRequested(messageId);
+}
+
+void ChatView::jumpToPresent()
+{
+    pendingJumpMessageId = Core::Snowflake::Invalid;
+
+    if (modelAtLatest())
+        scrollToBottom();
+    else
+        emit presentRequested();
+}
+
+void ChatView::positionJumpToPresentBar()
+{
+    constexpr int MinWidth = 284;
+    constexpr int SideMargin = 16;
+    constexpr int BottomMargin = 8;
+
+    jumpToPresentBar->ensurePolished();
+    QSize hint = jumpToPresentBar->sizeHint();
+    QRect area = viewport()->geometry();
+    int width = qBound(qMin(MinWidth, area.width() - 2 * SideMargin),
+                       qMax(MinWidth, hint.width()),
+                       area.width() - 2 * SideMargin);
+    jumpToPresentBar->setGeometry(area.left() + (area.width() - width) / 2,
+                                  area.bottom() + 1 - hint.height() - BottomMargin,
+                                  width,
+                                  hint.height());
+}
+
+void ChatView::updateJumpToPresentBar()
+{
+    constexpr int ScrolledUpThreshold = 120;
+
+    auto *bar = verticalScrollBar();
+    bool scrolledUp = bar->maximum() - bar->value() > ScrolledUpThreshold;
+    bool show = !modelAtLatest() || scrolledUp;
+    if (show == jumpToPresentBar->isVisible())
+        return;
+    if (show) {
+        positionJumpToPresentBar();
+        jumpToPresentBar->raise();
+    }
+    jumpToPresentBar->setVisible(show);
+}
+
+JumpToPresentBar::JumpToPresentBar(QWidget *parent) : QWidget(parent)
+{
+    setObjectName("jumpToPresentBar");
+    setAttribute(Qt::WA_StyledBackground);
+    setCursor(Qt::PointingHandCursor);
+
+    auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(12, 6, 6, 6);
+    layout->setSpacing(12);
+
+    label = new QLabel(tr("You're viewing older messages"), this);
+    label->setAttribute(Qt::WA_TransparentForMouseEvents);
+    layout->addWidget(label, 1);
+
+    button = new QPushButton(tr("Jump To Present"), this);
+    button->setObjectName("jumpToPresentButton");
+    button->setCursor(Qt::PointingHandCursor);
+    button->setFocusPolicy(Qt::NoFocus);
+    layout->addWidget(button, 0);
+    connect(button, &QPushButton::clicked, this, &JumpToPresentBar::clicked);
+
+    applyTheme();
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &JumpToPresentBar::applyTheme);
+}
+
+void JumpToPresentBar::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        emit clicked();
+    QWidget::mousePressEvent(event);
+}
+
+void JumpToPresentBar::applyTheme()
+{
+    using namespace Core::Theme;
+    const auto &theme = Manager::instance();
+    QColor surface = theme.color(Token::ButtonBg);
+    QColor border = theme.color(Token::Divider);
+    QColor text = theme.color(Token::PrimaryText);
+    QColor accent = theme.color(Token::Highlight);
+    QColor accentText = theme.color(Token::HighlightedText);
+
+    button->setIcon(Icons::icon(Icons::Name::ArrowDown, Token::HighlightedText));
+    setStyleSheet(QStringLiteral(
+                          "#jumpToPresentBar { background: %1; border: 1px solid %2; border-radius: 8px; }"
+                          "#jumpToPresentBar QLabel { color: %3; font-weight: 500; background: transparent; }"
+                          "#jumpToPresentButton { background: %4; color: %5; border: none; border-radius: 4px; padding: 4px 10px; font-weight: 600; }"
+                          "#jumpToPresentButton:hover { background: %6; }")
+                          .arg(surface.name(), border.name(), text.name(), accent.name(), accentText.name(), accent.lighter(115).name()));
+    adjustSize();
 }
 
 void ChatView::setCurrentUserId(Core::Snowflake userId)

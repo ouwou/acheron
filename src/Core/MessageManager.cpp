@@ -83,24 +83,36 @@ MessageManager::~MessageManager() {}
 
 void MessageManager::parseMessageContent(Discord::Message &msg)
 {
-    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg));
+    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg), msg.channelId);
 
     if (msg.type.hasValue() && msg.type.get() == Discord::MessageType::THREAD_STARTER_MESSAGE &&
         msg.referencedMessage && msg.referencedMessage->content.hasValue() &&
         msg.referencedMessage->parsedContentCached.isEmpty())
-        msg.referencedMessage->parsedContentCached = inlineHtml(msg.referencedMessage->content.get());
+        msg.referencedMessage->parsedContentCached =
+                inlineHtml(msg.referencedMessage->content.get(), msg.referencedMessage->channelId);
 
     if (msg.snapshotMessage && msg.snapshotMessage->content.hasValue() &&
         msg.snapshotMessage->parsedContentCached.isEmpty())
-        msg.snapshotMessage->parsedContentCached = inlineHtml(msg.snapshotMessage->content.get());
+        msg.snapshotMessage->parsedContentCached = inlineHtml(msg.snapshotMessage->content.get(), msg.channelId);
 }
 
-QString MessageManager::inlineHtml(const QString &content) const
+static Markdown::ParseState inlineParseState(Snowflake channelId)
 {
     Markdown::ParseState state;
     state.isInline = true;
-    auto ast = parser->parse(content, state);
+    state.customState["channelId"] = quint64(channelId);
+    return state;
+}
+
+QString MessageManager::inlineHtml(const QString &content, Snowflake channelId) const
+{
+    auto ast = parser->parse(content, inlineParseState(channelId));
     return parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
+}
+
+void MessageManager::setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver)
+{
+    parser->setChannelLinkResolver(std::move(resolver));
 }
 
 void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)
@@ -118,178 +130,168 @@ void MessageManager::setEmojiManager(EmojiManager *manager)
 
 void MessageManager::requestLoadChannel(Snowflake channelId)
 {
+    if (pagesInFlight.contains({ channelId, LoadType::Latest }))
+        return;
+
     if (fetchedChannels.contains(channelId)) {
-        // ram cache
-        if (channelMessages.contains(channelId)) {
-            const auto &order = channelMessages[channelId];
-
-            int count = order.size();
-            int startIndex = (count > 30) ? (count - 30) : 0;
-
-            bool cached = true;
-            QList<Discord::Message> result;
-            result.reserve(count - startIndex);
-
-            for (int i = startIndex; i < count; i++) {
-                Snowflake msgId = order[i];
-                if (auto *msg = messageCache.object(msgId)) {
-                    result.append(*msg);
-                } else {
-                    cached = false;
-                    break;
-                }
-            }
-
-            if (cached) {
-                emit messagesReceived({
-                        true,
-                        Discord::Client::MessageLoadType::Latest,
-                        channelId,
-                        result,
-                });
+        if (const auto *tail = segments[channelId].tail()) {
+            int count = static_cast<int>(tail->ids.size());
+            if (auto slice = cachedSlice(channelId, *tail, std::max(0, count - PageSize), count)) {
+                emit messagesReceived({ .success = true,
+                                        .type = LoadType::Latest,
+                                        .channelId = channelId,
+                                        .messages = *slice,
+                                        .reachedLatest = true });
                 return;
             }
         }
-
-        // disk cache
-        QList<Discord::Message> msgs = repo.getLatestMessages(channelId, 30);
-        if (!msgs.isEmpty()) { // probably good
-            for (auto &msg : msgs)
-                parseMessageContent(msg);
-
-            emit messagesReceived({
-                    true,
-                    Discord::Client::MessageLoadType::Latest,
-                    channelId,
-                    msgs,
-            });
-            return;
-        }
     }
 
-    QPointer<MessageManager> guard = this;
-    client->fetchLatestMessages(
-            channelId, 30, [this, guard, channelId](const Result<QList<Discord::Message>> &result) {
-                if (!guard)
-                    return;
-
-                if (!result.success()) {
-                    qWarning() << "Failed to fetch messages" << result.error;
-                } else {
-                    onApiMessagesReceived(result.value.value(),
-                                          Discord::Client::MessageLoadType::Latest, channelId);
-                }
-            });
+    fetchPage(LoadType::Latest, channelId, Snowflake::Invalid, [this, channelId](Discord::Client::MessagesCallback done) {
+        client->fetchLatestMessages(channelId, PageSize, std::move(done));
+    });
 }
 
 void MessageManager::requestLoadHistory(Snowflake channelId, Snowflake beforeId)
 {
-    if (historyDebounce.contains(channelId))
+    if (pagesInFlight.contains({ channelId, LoadType::History }))
         return;
 
-    if (lowestKnownId.contains(channelId)) {
-        // nothing to see here
-        if (lowestKnownId[channelId] >= beforeId) {
-            emit messagesReceived({
-                    true,
-                    Discord::Client::MessageLoadType::History,
-                    channelId,
-                    {},
-            });
+    auto start = channelStartId.constFind(channelId);
+    if (start != channelStartId.constEnd() && start.value() >= beforeId) {
+        emit messagesReceived({ .success = true,
+                                .type = LoadType::History,
+                                .channelId = channelId,
+                                .anchorId = beforeId });
+        return;
+    }
+
+    if (auto pos = segments[channelId].find(beforeId); pos.run && pos.index > 0) {
+        if (auto slice = cachedSlice(channelId, *pos.run, std::max(0, pos.index - PageSize), pos.index)) {
+            emit messagesReceived({ .success = true,
+                                    .type = LoadType::History,
+                                    .channelId = channelId,
+                                    .messages = *slice,
+                                    .anchorId = beforeId });
             return;
         }
     }
 
-    if (fetchedChannels.contains(channelId)) {
-        // ram cache
-        const auto &order = channelMessages[channelId];
-        if (!order.empty()) {
-            auto it = std::lower_bound(order.begin(), order.end(), beforeId);
-            int index = std::distance(order.begin(), it);
-
-            if (index > 0) {
-                int count = std::min(index, 30);
-                int startIndex = index - count;
-
-                bool cached = true;
-                QList<Discord::Message> result;
-                result.reserve(count);
-
-                for (int i = startIndex; i < index; i++) {
-                    Snowflake msgId = order[i];
-                    if (auto *msg = messageCache.object(msgId)) {
-                        result.append(*msg);
-                    } else {
-                        cached = false;
-                        break;
-                    }
-                }
-
-                if (cached) {
-                    emit messagesReceived({
-                            true,
-                            Discord::Client::MessageLoadType::History,
-                            channelId,
-                            result,
-                    });
-                    return;
-                }
-            }
-        }
-
-        // disk cache
-        QList<Discord::Message> msgs = repo.getMessagesBefore(channelId, beforeId, 30);
-
-        for (auto &msg : msgs)
-            parseMessageContent(msg);
-
-        if (!msgs.isEmpty()) { // probably good
-            emit messagesReceived({
-                    true,
-                    Discord::Client::MessageLoadType::History,
-                    channelId,
-                    msgs,
-            });
-            return;
-        }
-    }
-
-    historyDebounce.insert(channelId);
-
-    QPointer<MessageManager> guard = this;
-    client->fetchHistory(channelId, beforeId, 30,
-                         [this, guard, channelId](const Result<QList<Discord::Message>> &result) {
-                             if (!guard)
-                                 return;
-
-                             historyDebounce.remove(channelId);
-
-                             if (!result.success()) {
-                                 qWarning() << "Failed to fetch history" << result.error;
-                                 emit messagesReceived({
-                                         false,
-                                         Discord::Client::MessageLoadType::History,
-                                 });
-                             } else {
-                                 onApiMessagesReceived(result.value.value(),
-                                                       Discord::Client::MessageLoadType::History,
-                                                       channelId);
-                             }
-                         });
+    fetchPage(LoadType::History, channelId, beforeId, [this, channelId, beforeId](Discord::Client::MessagesCallback done) {
+        client->fetchHistory(channelId, beforeId, PageSize, std::move(done));
+    });
 }
 
-void MessageManager::cacheMessages(Snowflake channelId, const QList<Discord::Message> &msgs)
+void MessageManager::requestLoadFuture(Snowflake channelId, Snowflake afterId)
 {
-    if (msgs.isEmpty())
+    if (pagesInFlight.contains({ channelId, LoadType::Future }))
         return;
 
-    auto &order = channelMessages[channelId];
-    for (const auto &msg : msgs) {
-        messageCache.insert(msg.id, new Discord::Message(msg));
-        auto it = std::lower_bound(order.begin(), order.end(), msg.id);
-        if (it == order.end() || *it != msg.id.get())
-            order.insert(it, msg.id);
+    if (auto pos = segments[channelId].find(afterId); pos.run) {
+        int count = static_cast<int>(pos.run->ids.size());
+        bool knowsWhatFollows = pos.index + 1 < count || pos.run->isTail;
+        if (knowsWhatFollows) {
+            int end = std::min(count, pos.index + 1 + PageSize);
+            if (auto slice = cachedSlice(channelId, *pos.run, pos.index + 1, end)) {
+                emit messagesReceived({ .success = true,
+                                        .type = LoadType::Future,
+                                        .channelId = channelId,
+                                        .messages = *slice,
+                                        .reachedLatest = pos.run->isTail && end == count,
+                                        .anchorId = afterId });
+                return;
+            }
+        }
     }
+
+    fetchPage(LoadType::Future, channelId, afterId, [this, channelId, afterId](Discord::Client::MessagesCallback done) {
+        client->fetchMessagesAfter(channelId, afterId, PageSize, std::move(done));
+    });
+}
+
+void MessageManager::requestLoadAround(Snowflake channelId, Snowflake messageId)
+{
+    if (pagesInFlight.contains({ channelId, LoadType::Jump }))
+        return;
+
+    if (auto pos = segments[channelId].find(messageId); pos.run) {
+        int count = static_cast<int>(pos.run->ids.size());
+        int from = std::max(0, pos.index - JumpWindow / 2);
+        int to = std::min(count, from + JumpWindow);
+        if (auto slice = cachedSlice(channelId, *pos.run, from, to)) {
+            emit messagesReceived({ .success = true,
+                                    .type = LoadType::Jump,
+                                    .channelId = channelId,
+                                    .messages = *slice,
+                                    .reachedLatest = pos.run->isTail && to == count });
+            return;
+        }
+    }
+
+    fetchPage(LoadType::Jump, channelId, messageId, [this, channelId, messageId](Discord::Client::MessagesCallback done) {
+        client->fetchMessagesAround(channelId, messageId, JumpWindow, std::move(done));
+    });
+}
+
+void MessageManager::fetchPage(LoadType type, Snowflake channelId, Snowflake anchorId, const PageFetcher &fetch)
+{
+    pagesInFlight.insert({ channelId, type });
+
+    QPointer<MessageManager> guard = this;
+    fetch([this, guard, type, channelId, anchorId](const Result<QList<Discord::Message>> &result) {
+        if (!guard)
+            return;
+
+        pagesInFlight.remove({ channelId, type });
+
+        if (!result.success()) {
+            qCWarning(LogCore) << "Failed to load" << type << "page in" << channelId << result.error;
+            emit messagesReceived({ .success = false,
+                                    .type = type,
+                                    .channelId = channelId,
+                                    .anchorId = anchorId });
+            return;
+        }
+        onApiMessagesReceived(result.value.value(), type, channelId, anchorId);
+    });
+}
+
+std::optional<QList<Discord::Message>> MessageManager::cachedSlice(Snowflake channelId,
+                                                                   const MessageSegments::Run &run,
+                                                                   int from, int to)
+{
+    QList<Discord::Message> result;
+    if (from >= to)
+        return result;
+
+    result.reserve(to - from);
+    for (int i = from; i < to; i++) {
+        auto *msg = messageCache.object(run.ids[i]);
+        if (!msg) {
+            result.clear();
+            break;
+        }
+        result.append(*msg);
+    }
+    if (!result.isEmpty())
+        return result;
+
+    QList<Discord::Message> fromDisk = repo.getMessagesInRange(channelId, run.ids[from], run.ids[to - 1]);
+    if (fromDisk.isEmpty())
+        return std::nullopt;
+
+    for (auto &msg : fromDisk)
+        parseMessageContent(msg);
+    return fromDisk;
+}
+
+static QList<Snowflake> idsOf(const QList<Discord::Message> &messages)
+{
+    QList<Snowflake> ids;
+    ids.reserve(messages.size());
+    for (const auto &msg : messages)
+        ids.append(msg.id.get());
+    return ids;
 }
 
 void MessageManager::onMessageCreated(const Discord::Message &message)
@@ -338,12 +340,8 @@ void MessageManager::onMessageDeleted(const Discord::MessageDelete &event)
 
     messageCache.remove(messageId);
 
-    if (channelMessages.contains(channelId)) {
-        auto &order = channelMessages[channelId];
-        auto it = std::find(order.begin(), order.end(), messageId);
-        if (it != order.end())
-            order.erase(it);
-    }
+    if (segments.contains(channelId))
+        segments[channelId].remove(messageId);
 
     repo.markMessageDeleted(messageId);
 
@@ -426,9 +424,7 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
         preview.type = Discord::MessageType::DEFAULT;
     }
 
-    Markdown::ParseState state;
-    state.isInline = true;
-    auto ast = parser->parse(content, state);
+    auto ast = parser->parse(content, inlineParseState(channelId));
     bool jumbo = Markdown::Parser::isEmojiOnly(ast);
     preview.parsedContentCached = parser->toHtml(ast, jumbo);
 
@@ -453,12 +449,8 @@ void MessageManager::cancelSend(Snowflake channelId, const QString &nonce)
 
     Snowflake nonceId(nonce.toULongLong());
     messageCache.remove(nonceId);
-    if (channelMessages.contains(channelId)) {
-        auto &order = channelMessages[channelId];
-        auto it = std::find(order.begin(), order.end(), nonceId);
-        if (it != order.end())
-            order.erase(it);
-    }
+    if (segments.contains(channelId))
+        segments[channelId].remove(nonceId);
     emit messageDeleted(channelId, nonceId);
 }
 
@@ -787,9 +779,8 @@ void MessageManager::onReactionRemoveEmoji(const Discord::MessageReactionRemoveE
     emitReactionUpdate(msg);
 }
 
-void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messages,
-                                           Discord::Client::MessageLoadType type,
-                                           Snowflake channelId)
+void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messages, LoadType type,
+                                           Snowflake channelId, Snowflake anchorId)
 {
     repo.saveMessages(messages);
 
@@ -797,15 +788,11 @@ void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messag
     std::sort(sortedMessages.begin(), sortedMessages.end(),
               [](const auto &a, const auto &b) { return a.id.get() < b.id.get(); });
 
-    if (type == Discord::Client::MessageLoadType::Latest ||
-        type == Discord::Client::MessageLoadType::History) {
-        // hit the end probably
-        // maybe 0 could happen mistakenly prob not tho
-        if (sortedMessages.size() == 0)
-            lowestKnownId[channelId] = 0;
-        else if (sortedMessages.size() < 30)
-            lowestKnownId[channelId] = sortedMessages.first().id;
-    }
+    bool shortPage = sortedMessages.size() < PageSize;
+    if (type == LoadType::History && shortPage)
+        channelStartId[channelId] = sortedMessages.isEmpty() ? anchorId : sortedMessages.first().id.get();
+    else if (type == LoadType::Latest && shortPage && !sortedMessages.isEmpty())
+        channelStartId[channelId] = sortedMessages.first().id.get();
 
     for (auto &msg : sortedMessages)
         parseMessageContent(msg);
@@ -816,15 +803,59 @@ void MessageManager::onApiMessagesReceived(const QList<Discord::Message> &messag
         messageCache.insert(toCache->id, toCache); // should remove old copies
     }
 
-    if (type == Discord::Client::MessageLoadType::Latest) {
+    auto &segs = segments[channelId];
+    QList<Snowflake> ids = idsOf(sortedMessages);
+    bool reachedLatest = false;
+
+    switch (type) {
+    case LoadType::Latest:
         fetchedChannels.insert(channelId);
-        // channel load means channelMessages should be fresh
-        channelMessages[channelId].clear();
+        segs.setTail(ids);
+        reachedLatest = true;
+        break;
+    case LoadType::Created:
+        segs.merge(ids, Snowflake::Invalid, true);
+        break;
+    case LoadType::History:
+        segs.merge(ids, anchorId, false);
+        break;
+    case LoadType::Future:
+    case LoadType::Jump: {
+        bool coversPresent = false;
+        if (type == LoadType::Future) {
+            coversPresent = sortedMessages.size() < PageSize;
+        } else {
+            int atOrAfterTarget = std::count_if(ids.cbegin(), ids.cend(),
+                                                [&](Snowflake id) { return id >= anchorId; });
+            coversPresent = atOrAfterTarget < JumpWindow / 2;
+        }
+        segs.merge(ids, anchorId, coversPresent);
+
+        Snowflake newestLoaded = ids.isEmpty() ? anchorId : ids.last();
+        auto pos = segs.find(newestLoaded);
+
+        reachedLatest = pos.run ? pos.run->isTail : coversPresent;
+        qCDebug(LogCore) << "Loaded" << ids.size() << "messages around/after" << anchorId << "in"
+                         << channelId << "coversPresent" << coversPresent << "reachedLatest" << reachedLatest;
+
+        if (pos.run && reachedLatest) {
+            for (int i = pos.index + 1; i < static_cast<int>(pos.run->ids.size()); ++i) {
+                auto *cached = messageCache.object(pos.run->ids[i]);
+                if (!cached)
+                    break;
+                sortedMessages.append(*cached);
+            }
+        }
+        break;
+    }
     }
 
-    cacheMessages(channelId, sortedMessages);
-
-    emit messagesReceived({ true, type, channelId, sortedMessages });
+    emit messagesReceived({ .success = true,
+                            .type = type,
+                            .channelId = channelId,
+                            .messages = sortedMessages,
+                            .reachedLatest = reachedLatest,
+                            .anchorId = anchorId });
 }
 
 } // namespace Core

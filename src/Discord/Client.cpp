@@ -138,16 +138,14 @@ void Client::stop()
     return state;
 }
 
-void Client::fetchLatestMessages(Snowflake channelId, int limit, MessagesCallback callback)
+void Client::fetchMessages(Snowflake channelId, QUrlQuery query, int limit, MessagesCallback callback)
 {
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
-    QUrlQuery query;
     query.addQueryItem("limit", QString::number(limit));
 
-    httpClient->get(endpoint, query, [this, channelId, callback](const HttpResponse &response) {
+    httpClient->get(endpoint, query, [callback](const HttpResponse &response) {
         if (!response.success) {
-            qCWarning(LogDiscord) << "Failed to fetch latest messages: " << response.error;
-            callback({ {}, "Failed to fetch latest messages: " + response.error });
+            callback({ {}, response.error });
             return;
         }
 
@@ -160,28 +158,31 @@ void Client::fetchLatestMessages(Snowflake channelId, int limit, MessagesCallbac
     });
 }
 
+void Client::fetchLatestMessages(Snowflake channelId, int limit, MessagesCallback callback)
+{
+    fetchMessages(channelId, {}, limit, std::move(callback));
+}
+
 void Client::fetchHistory(Snowflake channelId, Snowflake beforeId, int limit,
                           MessagesCallback callback)
 {
-    QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
     QUrlQuery query;
     query.addQueryItem("before", QString::number(beforeId));
-    query.addQueryItem("limit", QString::number(limit));
+    fetchMessages(channelId, query, limit, std::move(callback));
+}
 
-    httpClient->get(endpoint, query, [this, channelId, callback](const HttpResponse &response) {
-        if (!response.success) {
-            qCWarning(LogDiscord) << "Failed to fetch history: " << response.error;
-            callback({ {}, "Failed to fetch history: " + response.error });
-            return;
-        }
+void Client::fetchMessagesAfter(Snowflake channelId, Snowflake afterId, int limit, MessagesCallback callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("after", QString::number(afterId));
+    fetchMessages(channelId, query, limit, std::move(callback));
+}
 
-        QList<Message> results;
-        QJsonArray arr = QJsonDocument::fromJson(response.body).array();
-        for (const QJsonValue &val : arr)
-            results.append(Message::fromJson(val.toObject()));
-
-        callback({ results });
-    });
+void Client::fetchMessagesAround(Snowflake channelId, Snowflake messageId, int limit, MessagesCallback callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("around", QString::number(messageId));
+    fetchMessages(channelId, query, limit, std::move(callback));
 }
 
 void Client::fetchUserProfile(Snowflake userId, Snowflake guildId, ProfileCallback callback)

@@ -54,8 +54,9 @@ public:
 
     using MessagesCallback = std::function<void(const Core::Result<QList<Message>> &)>;
     void fetchLatestMessages(Snowflake channelId, int limit, MessagesCallback callback);
-    void fetchHistory(Snowflake channelId, Snowflake beforeId, int limit,
-                      MessagesCallback callback);
+    void fetchHistory(Snowflake channelId, Snowflake beforeId, int limit, MessagesCallback callback);
+    void fetchMessagesAfter(Snowflake channelId, Snowflake afterId, int limit, MessagesCallback callback);
+    void fetchMessagesAround(Snowflake channelId, Snowflake messageId, int limit, MessagesCallback callback);
 
     using ProfileCallback = std::function<void(const Core::Result<UserProfile> &)>;
     void fetchUserProfile(Snowflake userId, Snowflake guildId, ProfileCallback callback);
@@ -241,6 +242,7 @@ private slots:
     void onGatewayGuildRoleDelete(const GuildRoleDelete &event);
 
 private:
+    void fetchMessages(Snowflake channelId, QUrlQuery query, int limit, MessagesCallback callback);
     void indexGuildMappings(const GatewayGuild &guild);
     void removeGuildMappings(Snowflake guildId);
 

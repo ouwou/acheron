@@ -225,46 +225,7 @@ std::optional<Discord::Message> MessageRepository::getMessage(Core::Snowflake me
     return single.first();
 }
 
-QList<Discord::Message> MessageRepository::getLatestMessages(Core::Snowflake channelId, int limit)
-{
-    auto db = getDb();
-
-    QList<Discord::Message> messages;
-    QSqlQuery q(db);
-    q.prepare(R"(
-		SELECT m.id, m.channel_id, m.author_id, m.content, m.timestamp, m.edited_timestamp, m.type, m.flags, m.embeds, m.reactions,
-               u.id, u.username, u.global_name, u.avatar, u.bot,
-               m.referenced_message_id,
-               rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds,
-               ru.id, ru.username, ru.global_name, ru.avatar, ru.bot,
-               m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot
-		FROM messages m
-        INNER JOIN users u ON m.author_id = u.id
-        LEFT JOIN messages rm ON m.referenced_message_id = rm.id
-        LEFT JOIN users ru ON rm.author_id = ru.id
-		WHERE m.channel_id = :channel_id AND m.deleted = 0 AND m.context_only = 0
-		ORDER BY m.id DESC
-        LIMIT :limit
-    )");
-
-    q.bindValue(":channel_id", static_cast<qint64>(channelId));
-    q.bindValue(":limit", limit);
-
-    if (!execLogged(q, "MessageRepository: Get messages"))
-        return messages;
-
-    while (q.next()) {
-        Discord::Message message = readMessageFromQuery(q);
-        messages.append(message);
-    }
-
-    loadAttachmentsForMessages(messages, db);
-
-    return messages;
-}
-
-QList<Discord::Message> MessageRepository::getMessagesBefore(Core::Snowflake channelId,
-                                                             Core::Snowflake beforeId, int limit)
+QList<Discord::Message> MessageRepository::getMessagesInRange(Core::Snowflake channelId, Core::Snowflake fromId, Core::Snowflake toId)
 {
     auto db = getDb();
 
@@ -281,14 +242,13 @@ QList<Discord::Message> MessageRepository::getMessagesBefore(Core::Snowflake cha
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
 		LEFT JOIN users ru ON rm.author_id = ru.id
-		WHERE m.channel_id = :channel_id AND m.id < :before_id AND m.deleted = 0 AND m.context_only = 0
-		ORDER BY m.id DESC
-		LIMIT :limit
+		WHERE m.channel_id = :channel_id AND m.id >= :from_id AND m.id <= :to_id AND m.deleted = 0 AND m.context_only = 0
+		ORDER BY m.id ASC
 	)");
 
     q.bindValue(":channel_id", static_cast<qint64>(channelId));
-    q.bindValue(":before_id", static_cast<qint64>(beforeId));
-    q.bindValue(":limit", limit);
+    q.bindValue(":from_id", static_cast<qint64>(fromId));
+    q.bindValue(":to_id", static_cast<qint64>(toId));
 
     if (!execLogged(q, "MessageRepository: Get messages"))
         return messages;

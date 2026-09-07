@@ -1,20 +1,20 @@
 #pragma once
 
-#include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <QCache>
+#include <QPair>
+#include <QSet>
 
+#include "MessageSegments.hpp"
 #include "PendingAttachment.hpp"
 #include "Snowflake.hpp"
 #include "Storage/MessageRepository.hpp"
 #include "Discord/Entities.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/Client.hpp"
-
-namespace Acheron::Core::Markdown {
-class Parser;
-}
+#include "Markdown/Parser.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -29,6 +29,8 @@ struct MessageRequestResult
     Discord::Client::MessageLoadType type;
     Snowflake channelId;
     QList<Discord::Message> messages;
+    bool reachedLatest = false;
+    Snowflake anchorId = Snowflake::Invalid;
 };
 
 class MessageManager : public QObject
@@ -40,10 +42,13 @@ public:
     ~MessageManager() override;
 
     void setChannelResolver(std::function<QString(Snowflake)> resolver);
+    void setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver);
     void setEmojiManager(EmojiManager *manager);
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
+    void requestLoadFuture(Snowflake channelId, Snowflake afterId);
+    void requestLoadAround(Snowflake channelId, Snowflake messageId);
     void sendMessage(Snowflake channelId, const QString &content,
                      Snowflake replyToMessageId = Snowflake::Invalid,
                      const QList<PendingAttachment> &attachments = {});
@@ -67,16 +72,21 @@ public slots:
     void onReactionRemoveAll(const Discord::MessageReactionRemoveAll &event);
     void onReactionRemoveEmoji(const Discord::MessageReactionRemoveEmoji &event);
 
-private slots:
-    void onApiMessagesReceived(const QList<Discord::Message> &messages,
-                               Discord::Client::MessageLoadType type, Snowflake channelId);
-
 private:
-    void cacheMessages(Snowflake channelId, const QList<Discord::Message> &msgs);
-    QList<Discord::Message> getCachedMessages();
+    using LoadType = Discord::Client::MessageLoadType;
+    static constexpr int PageSize = 30;
+    static constexpr int JumpWindow = 30;
+
+    using PageFetcher = std::function<void(Discord::Client::MessagesCallback)>;
+    void fetchPage(LoadType type, Snowflake channelId, Snowflake anchorId, const PageFetcher &fetch);
+    void onApiMessagesReceived(const QList<Discord::Message> &messages, LoadType type,
+                               Snowflake channelId, Snowflake anchorId = Snowflake::Invalid);
+    [[nodiscard]] std::optional<QList<Discord::Message>> cachedSlice(Snowflake channelId,
+                                                                     const MessageSegments::Run &run,
+                                                                     int from, int to);
     void emitReactionUpdate(Discord::Message &msg);
     void parseMessageContent(Discord::Message &msg);
-    QString inlineHtml(const QString &content) const;
+    QString inlineHtml(const QString &content, Snowflake channelId) const;
 
     Storage::MessageRepository repo;
 
@@ -86,10 +96,10 @@ private:
     std::unique_ptr<Markdown::Parser> parser;
 
     QCache<Snowflake, Discord::Message> messageCache;
-    QHash<Snowflake, std::deque<Snowflake>> channelMessages;
+    QHash<Snowflake, MessageSegments> segments;
     QSet<Snowflake> fetchedChannels;
-    QHash<Snowflake, Snowflake> lowestKnownId;
-    QSet<Snowflake> historyDebounce;
+    QHash<Snowflake, Snowflake> channelStartId; // nothing exists before this message
+    QSet<QPair<Snowflake, LoadType>> pagesInFlight;
 };
 
 } // namespace Core

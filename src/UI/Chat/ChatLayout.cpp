@@ -83,6 +83,27 @@ void setupDocument(QTextDocument &doc, const QString &htmlContent, const QFont &
                         Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Forward, 12, mutedColor, 2.0));
     }
 
+    if (htmlContent.contains(QLatin1String("acheron-icon:mention-"))) {
+        using namespace Core::Theme::Icons;
+        static const QList<QPair<QString, QString>> mentionIcons = {
+            { "hash", Name::Hash },
+            { "chevron", Name::ChevronRight },
+            { "message", Name::MessageCircle },
+            { "post", Name::FileText },
+            { "forum", Name::MessagesSquare },
+            { "thread", Name::Spool },
+            { "voice", Name::VolumeOn },
+            { "announcement", Name::Radio },
+            { "locked", Name::Lock },
+        };
+        const QColor mentionColor = Core::Theme::Manager::instance().color(Core::Theme::Token::MentionText);
+        for (const auto &icon : mentionIcons) {
+            QString url = "acheron-icon:mention-" + icon.first;
+            if (htmlContent.contains(url))
+                doc.addResource(QTextDocument::ImageResource, QUrl(url), pixmap(icon.second, 14, mentionColor, 2.0));
+        }
+    }
+
     doc.setHtml(wrapped);
     doc.setTextWidth(textWidth);
     doc.setDocumentMargin(0);
@@ -698,6 +719,11 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         int replyWidth = ctx.rowWidth - replyLeft - padding();
         layout.replyRect = QRect(replyLeft, replyTop, replyWidth, replyBarHeight());
         replyOffset = padding() + replyBarHeight();
+
+        bool canJumpToReferenced = ctx.replyData.referencedMessageId.isValid() &&
+                                   ctx.replyData.state != ReplyData::State::Deleted;
+        if (canJumpToReferenced)
+            layout.hitRegions.append({ HitRegion::Kind::ReplyBar, layout.replyRect, -1, -1, {} });
     }
 
     int textLeft = padding() + avatarSize() + padding();

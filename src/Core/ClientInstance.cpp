@@ -43,6 +43,9 @@ ClientInstance::ClientInstance(const AccountInfo &info,
             return ch->name.get();
         return QString::number(channelId);
     });
+    messageManager->setChannelLinkResolver([this](const Markdown::ChannelLinkRef &ref) {
+        return channelLinkParts(ref);
+    });
 
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);
@@ -903,13 +906,94 @@ void ClientInstance::onGuildMemberListUpdate(const Discord::GuildMemberListUpdat
         userManager->saveMembers(guildId, members);
 }
 
+static Markdown::ChannelLinkPart channelLinkPart(const Discord::Channel &channel)
+{
+    using Discord::ChannelType;
+
+    QString icon = "hash";
+    if (channel.isThread()) {
+        icon = "thread";
+    } else if (channel.type.hasValue()) {
+        switch (channel.type.get()) {
+        case ChannelType::GUILD_FORUM:
+        case ChannelType::GUILD_MEDIA:
+            icon = "forum";
+            break;
+        case ChannelType::GUILD_VOICE:
+        case ChannelType::GUILD_STAGE_VOICE:
+            icon = "voice";
+            break;
+        case ChannelType::GUILD_NEWS:
+            icon = "announcement";
+            break;
+        default:
+            break;
+        }
+    }
+
+    QString name = channel.name.hasValue() ? channel.name.get() : QString::number(channel.id.get());
+    return { icon, name };
+}
+
+QList<Markdown::ChannelLinkPart> ClientInstance::channelLinkParts(const Markdown::ChannelLinkRef &ref)
+{
+    using Part = Markdown::ChannelLinkPart;
+
+    auto source = channelRepo.getChannel(ref.sourceChannelId);
+    Snowflake sourceGuildId = source && source->guildId.hasValue() ? source->guildId.get() : Snowflake::Invalid;
+    bool hasMessage = ref.messageId.isValid();
+
+    auto channel = channelRepo.getChannel(ref.channelId);
+    if (!channel) {
+        QList<Part> parts;
+        if (ref.guildId.isValid()) {
+            auto guild = guildRepo.getGuild(ref.guildId);
+            if (!guild)
+                return {};
+            if (ref.guildId != sourceGuildId)
+                parts.append({ {}, guild->name.get() });
+        }
+        parts.append({ "hash", QObject::tr("unknown"), true });
+        return parts;
+    }
+
+    if (!channel->guildId.hasValue())
+        return {};
+    auto guild = guildRepo.getGuild(channel->guildId.get());
+    if (!guild)
+        return {};
+
+    if (!permissionManager->hasChannelPermission(accountId(), ref.channelId, Discord::Permission::VIEW_CHANNEL))
+        return { { "locked", QObject::tr("No Access") } };
+
+    bool isForumPost = channel->isThread() && channel->parentId.hasValue() && isForumParent(channel->parentId.get());
+
+    Part channelPart = channelLinkPart(*channel);
+    if (isForumPost)
+        channelPart.icon = "post";
+    Part messagePart{ isForumPost ? "post" : "message", {} };
+    Part guildPart{ {}, guild->name.get() };
+
+    bool sameGuild = channel->guildId.get() == sourceGuildId;
+    if (sameGuild && hasMessage) {
+        auto forum = isForumPost ? channelRepo.getChannel(channel->parentId.get()) : std::nullopt;
+        if (forum)
+            return { channelLinkPart(*forum), channelPart };
+        return { channelPart, messagePart };
+    }
+    if (sameGuild)
+        return { channelPart };
+    if (hasMessage)
+        return { guildPart, isForumPost ? channelPart : messagePart };
+    return { guildPart, channelPart };
+}
+
 void ClientInstance::onMessagesReceived(const MessageRequestResult &result)
 {
     if (!result.success || result.messages.isEmpty())
         return;
 
-    if (result.type != Discord::Client::MessageLoadType::Latest &&
-        result.type != Discord::Client::MessageLoadType::History)
+    if (result.type == Discord::Client::MessageLoadType::Created)
         return;
 
     auto channelOpt = channelRepo.getChannel(result.channelId);
