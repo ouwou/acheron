@@ -136,6 +136,11 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
         nodeType == ChannelNode::Type::DMHeader)
         return;
 
+    if (nodeType == ChannelNode::Type::VoiceParticipant) {
+        emit voiceParticipantContextMenuRequested(proxyIndex, event->globalPos());
+        return;
+    }
+
     bool isUnread = sourceIndex.data(ChannelTreeModel::IsUnreadRole).toBool();
     int mentionCount = sourceIndex.data(ChannelTreeModel::MentionCountRole).toInt();
     bool isVoiceChannel = (nodeType == ChannelNode::Type::VoiceChannel);

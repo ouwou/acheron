@@ -95,6 +95,7 @@ signals:
     void volumeChanged(Core::Snowflake userId, int pct);
     void muteToggled(Core::Snowflake userId, bool muted);
     void verificationCodeRequested(Core::Snowflake userId);
+    void profileRequested(Core::Snowflake userId);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -129,6 +130,9 @@ public:
     void setImageManager(Core::ImageManager *manager);
     void setAccount(Core::Snowflake accountId);
     void refreshDevices();
+
+signals:
+    void userProfileRequested(Core::Snowflake accountId, Core::Snowflake userId);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;

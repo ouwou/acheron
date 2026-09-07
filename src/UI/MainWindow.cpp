@@ -878,6 +878,14 @@ void MainWindow::setupUi()
             }
         }
     });
+    connect(voiceStatusBar, &VoiceStatusBar::userProfileRequested, this,
+            [this](Snowflake accountId, Snowflake userId) {
+                ClientInstance *instance = session->client(accountId);
+                if (!instance)
+                    return;
+                (new UserProfilePopup(session->getImageManager(), instance, userId, instance->voiceGuildId(), this))
+                        ->show();
+            });
 #endif
 
     serverRail = new ServerRailView(this);
@@ -1068,7 +1076,7 @@ void MainWindow::setupUi()
                 Snowflake guildId = currentInstance
                                             ? currentInstance->memberList()->currentGuildId()
                                             : Snowflake::Invalid;
-                showUserContextMenu(userId, guildId,
+                showUserContextMenu(currentInstance, userId, guildId,
                                     memberListView->viewport()->mapToGlobal(pos));
             });
 
@@ -1271,7 +1279,7 @@ void MainWindow::setupUi()
 
     connect(chatView, &ChatView::userContextMenuRequested, this,
             [this](Snowflake userId, QPoint globalPos) {
-                showUserContextMenu(userId, cachedGuildId, globalPos);
+                showUserContextMenu(currentInstance, userId, cachedGuildId, globalPos);
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
@@ -1285,6 +1293,22 @@ void MainWindow::setupUi()
             &MainWindow::onChannelSelectionChanged);
 
     connect(tabBar, &TabBar::tabChanged, this, &MainWindow::switchToTabEntry);
+
+    connect(channelTree, &ChannelTreeView::voiceParticipantContextMenuRequested, this,
+            [this](const QModelIndex &proxyIndex, QPoint globalPos) {
+                QModelIndex sourceIndex = channelFilterProxy->mapToSource(proxyIndex);
+                auto *node = channelTreeModel->nodeFromIndex(sourceIndex);
+                if (!node || node->type != ChannelNode::Type::VoiceParticipant)
+                    return;
+
+                ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+                if (!accountNode)
+                    return;
+
+                ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
+                Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
+                showUserContextMenu(session->client(accountNode->id), node->id, guildId, globalPos);
+            });
 
     connect(channelTree, &ChannelTreeView::openInNewTabRequested, this,
             [this](const QModelIndex &proxyIndex) {
@@ -2314,17 +2338,19 @@ QWidget *buildRoleChip(const Discord::Role &role, QWidget *parent)
 
 } // namespace
 
-void MainWindow::showUserContextMenu(Snowflake userId, Snowflake guildId, QPoint globalPos)
+void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId, Snowflake guildId,
+                                     QPoint globalPos)
 {
     QMenu menu(this);
+    QPointer<ClientInstance> instanceGuard(instance);
 
-    if (currentInstance) {
-        auto user = currentInstance->users()->getUser(userId);
-        QString displayName = currentInstance->users()->getDisplayName(userId, guildId);
+    if (instance) {
+        auto user = instance->users()->getUser(userId);
+        QString displayName = instance->users()->getDisplayName(userId, guildId);
         QString username = (user && user->username.hasValue()) ? user->username.get() : QString();
         QString avatarHash = (user && user->avatar.hasValue()) ? user->avatar.get() : QString();
 
-        auto *header = buildUserMenuHeader(&menu, session, currentInstance->accountId(), userId,
+        auto *header = buildUserMenuHeader(&menu, session, instance->accountId(), userId,
                                            displayName, username, avatarHash);
         auto *headerAction = new QWidgetAction(&menu);
         headerAction->setDefaultWidget(header);
@@ -2333,31 +2359,33 @@ void MainWindow::showUserContextMenu(Snowflake userId, Snowflake guildId, QPoint
     }
 
     QAction *profileAction = menu.addAction(tr("Profile"));
-    connect(profileAction, &QAction::triggered, this, [this, userId, guildId]() {
-        (new UserProfilePopup(session->getImageManager(), currentInstance, userId, guildId,
-                              this))
+    connect(profileAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {
+        (new UserProfilePopup(session->getImageManager(), instanceGuard, userId, guildId, this))
                 ->show();
     });
 
     QAction *mentionAction = menu.addAction(tr("Mention"));
+    mentionAction->setEnabled(instance == currentInstance);
     connect(mentionAction, &QAction::triggered, this, [this, userId]() {
         messageInput->insertText(QStringLiteral("<@%1>").arg(quint64(userId)));
     });
 
     QAction *openDmAction = menu.addAction(tr("Open DM"));
     std::optional<Snowflake> dmChannelId;
-    if (currentInstance)
-        dmChannelId = currentInstance->findDmChannelWithUser(userId);
+    if (instance)
+        dmChannelId = instance->findDmChannelWithUser(userId);
     if (dmChannelId.has_value()) {
         connect(openDmAction, &QAction::triggered, this,
-                [this, channelId = *dmChannelId]() { selectChannelInTree(channelId); });
+                [this, accountId = instance->accountId(), channelId = *dmChannelId]() {
+                    selectChannelInTree(accountId, channelId);
+                });
     } else {
         openDmAction->setEnabled(false);
     }
 
-    if (guildId.isValid() && currentInstance) {
+    if (guildId.isValid() && instance) {
         QMenu *rolesMenu = menu.addMenu(tr("Roles"));
-        const auto memberRoles = currentInstance->getMemberRolesSorted(guildId, userId);
+        const auto memberRoles = instance->getMemberRolesSorted(guildId, userId);
         if (memberRoles.isEmpty()) {
             rolesMenu->addAction(tr("No roles"))->setEnabled(false);
         } else {
@@ -2378,17 +2406,13 @@ void MainWindow::showUserContextMenu(Snowflake userId, Snowflake guildId, QPoint
     menu.exec(globalPos);
 }
 
-void MainWindow::selectChannelInTree(Snowflake channelId)
+void MainWindow::selectChannelInTree(Snowflake accountId, Snowflake channelId)
 {
-    if (!currentInstance)
-        return;
-    ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId,
-                                                              currentInstance->accountId());
+    ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, accountId);
     if (!node)
         return;
 
     if (channelListMode == ChannelListMode::Classic) {
-        Snowflake accountId = currentInstance->accountId();
         if (node->type == ChannelNode::Type::DMChannel) {
             onRailAccountHomeSelected(accountId);
         } else {
@@ -2443,7 +2467,7 @@ void MainWindow::navigateToChannel(Core::Snowflake channelId)
         if (chOpt && chOpt->isThread())
             channelTreeModel->showTemporaryThread(*chOpt, acc);
     }
-    selectChannelInTree(channelId);
+    selectChannelInTree(acc, channelId);
 }
 
 void MainWindow::jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId)

@@ -42,6 +42,7 @@ public:
 
 signals:
     void disconnectRequested();
+    void userProfileRequested(Core::Snowflake accountId, Core::Snowflake userId);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;

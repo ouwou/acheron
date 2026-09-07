@@ -230,15 +230,19 @@ void VoiceUserWidget::setVolume(int pct)
 
 void VoiceUserWidget::contextMenuEvent(QContextMenuEvent *event)
 {
-    if (!daveActive)
-        return;
-
     QMenu menu(this);
 
-    auto *verifyAction = menu.addAction(tr("View Verification Code"));
-    connect(verifyAction, &QAction::triggered, this, [this]() {
-        emit verificationCodeRequested(userId);
+    auto *profileAction = menu.addAction(tr("Profile"));
+    connect(profileAction, &QAction::triggered, this, [this]() {
+        emit profileRequested(userId);
     });
+
+    if (daveActive) {
+        auto *verifyAction = menu.addAction(tr("View Verification Code"));
+        connect(verifyAction, &QAction::triggered, this, [this]() {
+            emit verificationCodeRequested(userId);
+        });
+    }
 
     menu.exec(event->globalPos());
 }
@@ -815,6 +819,10 @@ void VoiceWindow::onParticipantJoined(Core::Snowflake userId)
 
     connect(widget, &VoiceUserWidget::verificationCodeRequested,
             this, &VoiceWindow::showVerificationCode);
+
+    connect(widget, &VoiceUserWidget::profileRequested, this, [this](Core::Snowflake uid) {
+        emit userProfileRequested(accountId, uid);
+    });
 
     userListLayout->insertWidget(userListLayout->count() - 1, widget);
     userWidgets.insert(userId, widget);

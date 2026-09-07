@@ -214,6 +214,7 @@ void VoiceStatusBar::showVoiceWindow()
 {
     if (!voiceWindow) {
         voiceWindow = new VoiceWindow(window());
+        connect(voiceWindow, &VoiceWindow::userProfileRequested, this, &VoiceStatusBar::userProfileRequested);
         configureVoiceWindow();
     }
 
