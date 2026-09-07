@@ -162,7 +162,7 @@ private:
     Core::Snowflake pendingJumpMessageId = Core::Snowflake::Invalid;
     Core::Snowflake highlightedMessageId = Core::Snowflake::Invalid;
     qreal highlightAlpha = 0.0;
-    QVariantAnimation *highlightAnimation = nullptr;
+    QSequentialAnimationGroup *highlightAnimation = nullptr;
 
     int hoveredRow;
     int hoveredChar;

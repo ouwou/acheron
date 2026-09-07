@@ -114,18 +114,22 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     jumpToPresentBar->setVisible(false);
     connect(jumpToPresentBar, &JumpToPresentBar::clicked, this, &ChatView::jumpToPresent);
 
-    highlightAnimation = new QVariantAnimation(this);
-    highlightAnimation->setDuration(2400);
-    highlightAnimation->setStartValue(1.0);
-    highlightAnimation->setKeyValueAt(0.6, 1.0);
-    highlightAnimation->setEndValue(0.0);
-    connect(highlightAnimation, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
+    auto *highlightFade = new QVariantAnimation(this);
+    highlightFade->setDuration(1000);
+    highlightFade->setStartValue(1.0);
+    highlightFade->setEndValue(0.0);
+    highlightFade->setEasingCurve(QEasingCurve::OutQuad);
+    connect(highlightFade, &QVariantAnimation::valueChanged, this, [this](const QVariant &value) {
         highlightAlpha = value.toReal();
         int row = highlightedRow();
         if (row >= 0)
-            update(visualRect(model()->index(row, 0)));
+            update(model()->index(row, 0));
     });
-    connect(highlightAnimation, &QVariantAnimation::finished, this, [this]() {
+
+    highlightAnimation = new QSequentialAnimationGroup(this);
+    highlightAnimation->addPause(1200);
+    highlightAnimation->addAnimation(highlightFade);
+    connect(highlightAnimation, &QAbstractAnimation::finished, this, [this]() {
         highlightedMessageId = Core::Snowflake::Invalid;
         highlightAlpha = 0.0;
         viewport()->update();
