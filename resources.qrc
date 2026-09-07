@@ -2,12 +2,14 @@
     <qresource prefix="/">
         <file>resources/placeholder.png</file>
         <file>resources/emoji_data.json</file>
+        <file>resources/icons/lucide/arrow-down.svg</file>
         <file>resources/icons/lucide/arrow-left.svg</file>
         <file>resources/icons/lucide/arrow-right.svg</file>
         <file>resources/icons/lucide/at-sign.svg</file>
         <file>resources/icons/lucide/bell.svg</file>
         <file>resources/icons/lucide/bot.svg</file>
         <file>resources/icons/lucide/chart-column.svg</file>
+        <file>resources/icons/lucide/chevron-right.svg</file>
         <file>resources/icons/lucide/compass.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
         <file>resources/icons/lucide/file-audio.svg</file>
@@ -16,11 +18,13 @@
         <file>resources/icons/lucide/gem.svg</file>
         <file>resources/icons/lucide/hand.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
+        <file>resources/icons/lucide/hash.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/maximize.svg</file>
         <file>resources/icons/lucide/message-circle.svg</file>
+        <file>resources/icons/lucide/messages-square.svg</file>
         <file>resources/icons/lucide/mic.svg</file>
         <file>resources/icons/lucide/minimize.svg</file>
         <file>resources/icons/lucide/pause.svg</file>
