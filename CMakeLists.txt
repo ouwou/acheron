@@ -303,7 +303,8 @@ else()
 endif()
 
 if(BUILD_TESTS)
-    qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp src/Core/EmojiSegmenter.cpp)
+    qt_add_executable(TestMarkdown tests/tst_Markdown.cpp src/Core/Markdown/Parser.cpp
+        src/Core/EmojiSegmenter.cpp src/Core/Snowflake.cpp)
     target_link_libraries(TestMarkdown PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
