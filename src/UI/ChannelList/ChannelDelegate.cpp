@@ -4,6 +4,8 @@
 #include "ChannelTreeModel.hpp"
 #include "ChannelFilterProxyModel.hpp"
 
+#include "Core/Theme/Icons.hpp"
+
 namespace Acheron {
 namespace UI {
 ChannelDelegate::ChannelDelegate(QAbstractProxyModel *proxyModel, QObject *parent)
@@ -40,6 +42,17 @@ static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option
     painter->setBrush(option.palette.brightText().color());
     painter->setPen(Qt::NoPen);
     painter->drawRoundedRect(QRect(pillX, pillY, pillWidth * 2, pillHeight), pillWidth, pillWidth);
+}
+
+static void drawLucideIcon(QPainter *painter, const QRect &contentRect, const QString &name, const QColor &color)
+{
+    constexpr int iconSize = 16;
+    int x = contentRect.left() + (24 - iconSize) / 2;
+    int y = contentRect.top() + (contentRect.height() - iconSize) / 2;
+
+    const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    painter->drawPixmap(QRect(x, y, iconSize, iconSize),
+                        Core::Theme::Icons::pixmap(name, iconSize, color, dpr));
 }
 
 static void drawHashIcon(QPainter *painter, const QRect &contentRect, const QColor &color)
@@ -482,7 +495,13 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     }
 
     if (node->type == ChannelNode::Type::Channel) {
-        drawHashIcon(painter, contentOpt.rect, textColor);
+        const ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
+        if (guildNode && guildNode->rulesChannelId == node->id)
+            drawLucideIcon(painter, contentOpt.rect, Core::Theme::Icons::Name::BookCheck, textColor);
+        else if (node->isAnnouncement)
+            drawLucideIcon(painter, contentOpt.rect, Core::Theme::Icons::Name::Megaphone, textColor);
+        else
+            drawHashIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
             drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
     } else if (node->type == ChannelNode::Type::Forum) {

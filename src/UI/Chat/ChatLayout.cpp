@@ -93,7 +93,7 @@ void setupDocument(QTextDocument &doc, const QString &htmlContent, const QFont &
             { "forum", Name::MessagesSquare },
             { "thread", Name::Spool },
             { "voice", Name::VolumeOn },
-            { "announcement", Name::Radio },
+            { "announcement", Name::Megaphone },
             { "locked", Name::Lock },
         };
         const QColor mentionColor = Core::Theme::Manager::instance().color(Core::Theme::Token::MentionText);

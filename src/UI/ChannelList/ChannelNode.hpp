@@ -41,6 +41,7 @@ struct ChannelNode
     bool unavailable = false;
     bool isArchived = false;
     bool isTemporary = false;
+    bool isAnnouncement = false;
     Core::Snowflake parentId;
     Core::Snowflake rulesChannelId;
     Core::Snowflake ownerId;

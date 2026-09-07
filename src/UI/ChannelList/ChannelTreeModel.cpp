@@ -507,6 +507,7 @@ std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::Ga
         node->position = channel.position;
         node->parentId = channel.parentId.hasValue() ? channel.parentId.get() : Core::Snowflake();
         node->isPrivate = isChannelPrivate(channel, guild.properties->id);
+        node->isAnnouncement = channel.type == Discord::ChannelType::GUILD_NEWS;
         if (*nodeType == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
             node->userLimit = channel.userLimit.get();
         node->lastMessageId = channel.lastMessageId.hasValue() ? channel.lastMessageId.get()
@@ -1198,6 +1199,7 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         insertChildAt(guildNode, static_cast<int>(guildNode->children.size()), std::move(node));
     } else {
         node->isPrivate = isChannelPrivate(channel, guildId);
+        node->isAnnouncement = channel.type == Discord::ChannelType::GUILD_NEWS;
         if (*nodeType == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
             node->userLimit = channel.userLimit.get();
 
@@ -1268,6 +1270,7 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         node->position = channel.position.get();
         node->parentId = newParentId;
         node->isPrivate = isChannelPrivate(channel, guildNode->id);
+        node->isAnnouncement = channel.type == Discord::ChannelType::GUILD_NEWS;
         if (node->type == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
             node->userLimit = channel.userLimit.get();
 
@@ -1304,6 +1307,7 @@ void ChannelTreeModel::updateChannel(const Discord::ChannelUpdate &update, Snowf
         ChannelNode *guildNode = findGuildNode(channelNode);
         if (guildNode)
             channelNode->isPrivate = isChannelPrivate(channel, guildNode->id);
+        channelNode->isAnnouncement = channel.type == Discord::ChannelType::GUILD_NEWS;
 
         if (channelNode->type == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
             channelNode->userLimit = channel.userLimit.get();

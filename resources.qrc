@@ -7,6 +7,7 @@
         <file>resources/icons/lucide/arrow-right.svg</file>
         <file>resources/icons/lucide/at-sign.svg</file>
         <file>resources/icons/lucide/bell.svg</file>
+        <file>resources/icons/lucide/book-check.svg</file>
         <file>resources/icons/lucide/bot.svg</file>
         <file>resources/icons/lucide/chart-column.svg</file>
         <file>resources/icons/lucide/chevron-right.svg</file>
@@ -23,6 +24,7 @@
         <file>resources/icons/lucide/image.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/maximize.svg</file>
+        <file>resources/icons/lucide/megaphone.svg</file>
         <file>resources/icons/lucide/message-circle.svg</file>
         <file>resources/icons/lucide/messages-square.svg</file>
         <file>resources/icons/lucide/mic.svg</file>
