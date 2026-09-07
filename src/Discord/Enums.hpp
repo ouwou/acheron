@@ -261,6 +261,11 @@ inline bool isThreadType(ChannelType t)
            t == ChannelType::PRIVATE_THREAD;
 }
 
+inline bool isVoiceType(ChannelType t)
+{
+    return t == ChannelType::GUILD_VOICE || t == ChannelType::GUILD_STAGE_VOICE;
+}
+
 enum class ChannelFlag {
     GUILD_FEED_REMOVED = 1 << 0,
     PINNED = 1 << 1,

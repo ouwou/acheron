@@ -66,6 +66,7 @@ void ReadStateManager::loadFromReady(const QList<Discord::ReadStateEntry> &readS
     guildInfo.clear();
     channelGuildMap.clear();
     resourceChannels.clear();
+    voiceChannels.clear();
     ackIdAtSelect.clear();
     outgoingAcks.clear();
 
@@ -122,6 +123,10 @@ ChannelReadState ReadStateManager::computeChannelReadState(Snowflake channelId, 
     result.mentionCount = canReadHistory ? getMentionCount(channelId) : 0;
     result.isUnread = isChannelUnread(channelId, lastMessageId, guildId);
 
+    bool isVoice = voiceChannels.contains(channelId);
+    if (isVoice && !permissionManager->hasChannelPermission(accountId, channelId, Discord::Permission::CONNECT))
+        result.mentionCount = 0;
+
     if (isOptInGuild(guildId)) {
         bool optedIn = isChannelOptedIn(channelId) || (parentId.isValid() && isChannelOptedIn(parentId));
         if (isOlderThanDays(lastMessageId, 7)) {
@@ -132,7 +137,7 @@ ChannelReadState ReadStateManager::computeChannelReadState(Snowflake channelId, 
         }
     }
 
-    bool countsWhenUnread = result.mentionCount > 0 || unreadCountsForGuild(guildId, channelId, parentId);
+    bool countsWhenUnread = result.mentionCount > 0 || (!isVoice && unreadCountsForGuild(guildId, channelId, parentId));
     result.countsForGuildUnread = result.isUnread &&
                                   countsWhenUnread &&
                                   !isMutedThroughParents(channelId, parentId, Snowflake::Invalid, guildId);
@@ -442,6 +447,11 @@ void ReadStateManager::registerChannel(const Discord::Channel &channel, Snowflak
     Snowflake channelId = channel.id.get();
     registerChannelGuild(channelId, guildId);
 
+    if (channel.isVoice())
+        voiceChannels.insert(channelId);
+    else
+        voiceChannels.remove(channelId);
+
     if (!channel.flags.hasValue())
         return;
     if (channel.flags->testFlag(Discord::ChannelFlag::IS_GUILD_RESOURCE_CHANNEL))
@@ -460,6 +470,7 @@ void ReadStateManager::removeGuild(Snowflake guildId)
         channelOverrideCache.remove(channelId);
         channelGuildMap.remove(channelId);
         resourceChannels.remove(channelId);
+        voiceChannels.remove(channelId);
         outgoingAcks.remove(channelId);
         if (activeChannelId == channelId)
             activeChannelId = Snowflake();

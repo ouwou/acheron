@@ -126,25 +126,25 @@ bool ChannelFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex 
         return true;
 
     // hide read channels under collapsed categories, but keep selected channel visible
-    if (nodeType == ChannelNode::Type::Channel || nodeType == ChannelNode::Type::Forum) {
+    if (nodeType == ChannelNode::Type::Channel || nodeType == ChannelNode::Type::VoiceChannel || nodeType == ChannelNode::Type::Forum) {
         ChannelNode *parentNode = static_cast<ChannelNode *>(sourceParent.internalPointer());
         if (parentNode && parentNode->type == ChannelNode::Type::Category && parentNode->collapsed) {
             Core::Snowflake channelId =
                     Core::Snowflake(index.data(ChannelTreeModel::IdRole).toULongLong());
             if (channelId == selectedChannelId && userId == selectedAccountId)
                 return true;
-            bool unread = index.data(ChannelTreeModel::IsUnreadRole).toBool();
-            bool muted = index.data(ChannelTreeModel::IsMutedRole).toBool();
-            if (!unread || muted || parentNode->isMuted)
-                return false;
+            if (nodeType == ChannelNode::Type::VoiceChannel) {
+                // a collapsed category keeps a voice channel only while joined or mentioned
+                bool joined = channelId == instance->voiceChannelId();
+                if (!joined && index.data(ChannelTreeModel::MentionCountRole).toInt() == 0)
+                    return false;
+            } else {
+                bool unread = index.data(ChannelTreeModel::IsUnreadRole).toBool();
+                bool muted = index.data(ChannelTreeModel::IsMutedRole).toBool();
+                if (!unread || muted || parentNode->isMuted)
+                    return false;
+            }
         }
-    }
-
-    // hide voice channels under collapsed categories
-    if (nodeType == ChannelNode::Type::VoiceChannel) {
-        ChannelNode *parentNode = static_cast<ChannelNode *>(sourceParent.internalPointer());
-        if (parentNode && parentNode->type == ChannelNode::Type::Category && parentNode->collapsed)
-            return false;
     }
 
     if (nodeType == ChannelNode::Type::Channel || nodeType == ChannelNode::Type::VoiceChannel || nodeType == ChannelNode::Type::Forum) {

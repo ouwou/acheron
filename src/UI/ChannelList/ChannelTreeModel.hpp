@@ -83,6 +83,7 @@ public:
     void updateGuildSettings(Snowflake guildId, Snowflake accountId);
     void updateChannelLastMessageId(Snowflake channelId, Snowflake messageId, Snowflake accountId);
     void updateVoiceCount(Snowflake channelId, int count, Snowflake accountId);
+    void setAccountVoiceChannel(Snowflake accountId, Snowflake channelId);
     void updateVoiceParticipant(Snowflake channelId, Snowflake userId, bool joined, Snowflake accountId);
     void updateVoiceParticipantState(Snowflake channelId, Snowflake userId, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
@@ -126,6 +127,7 @@ private:
 
     std::unique_ptr<ChannelNode> root;
     QHash<Snowflake, ChannelNode *> accountNodes;
+    QHash<Snowflake, Snowflake> accountVoiceChannels;
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
 
     Snowflake temporaryThreadId;

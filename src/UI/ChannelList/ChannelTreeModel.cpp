@@ -26,7 +26,8 @@ static bool isChannelPrivate(const Discord::Channel &channel, Core::Snowflake gu
 
     for (const auto &ow : channel.permissionOverwrites.get()) {
         if (ow.type.get() == Discord::PermissionOverwrite::Type::Role && ow.id.get() == guildId)
-            return ow.deny->testFlag(Discord::Permission::VIEW_CHANNEL);
+            return ow.deny->testFlag(Discord::Permission::VIEW_CHANNEL) ||
+                   (channel.isVoice() && ow.deny->testFlag(Discord::Permission::CONNECT));
     }
     return false;
 }
@@ -260,10 +261,6 @@ Qt::ItemFlags ChannelTreeModel::flags(const QModelIndex &index) const
     if (node->opensChat())
         return f | Qt::ItemIsSelectable | Qt::ItemIsEnabled;
 
-    // Voice channels: enabled (for context menu) but not selectable
-    if (node->type == ChannelNode::Type::VoiceChannel)
-        return (f | Qt::ItemIsEnabled) & ~Qt::ItemIsSelectable;
-
     // Folders should be enabled (for expansion) but not selectable
     if (node->type == ChannelNode::Type::Folder)
         return f | Qt::ItemIsEnabled;
@@ -309,6 +306,7 @@ void ChannelTreeModel::removeAccount(Snowflake accountId)
         accountNodes.remove(accountId);
         endRemoveRows();
     }
+    accountVoiceChannels.remove(accountId);
 }
 
 void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
@@ -509,13 +507,10 @@ std::unique_ptr<ChannelNode> ChannelTreeModel::createGuildNode(const Discord::Ga
         node->position = channel.position;
         node->parentId = channel.parentId.hasValue() ? channel.parentId.get() : Core::Snowflake();
         node->isPrivate = isChannelPrivate(channel, guild.properties->id);
-        if (*nodeType == ChannelNode::Type::VoiceChannel) {
-            if (channel.userLimit.hasValue())
-                node->userLimit = channel.userLimit.get();
-        } else {
-            node->lastMessageId = channel.lastMessageId.hasValue() ? channel.lastMessageId.get()
-                                                                   : Core::Snowflake();
-        }
+        if (*nodeType == ChannelNode::Type::VoiceChannel && channel.userLimit.hasValue())
+            node->userLimit = channel.userLimit.get();
+        node->lastMessageId = channel.lastMessageId.hasValue() ? channel.lastMessageId.get()
+                                                               : Core::Snowflake();
 
         ChannelNode *rawNode = node.get();
         bool placed = false;
@@ -1541,6 +1536,12 @@ Core::ChannelReadState ChannelTreeModel::computeNodeReadState(ChannelNode *node,
     case ChannelNode::Type::Channel:
     case ChannelNode::Type::Forum:
         return readState->computeChannelReadState(node->id, guildId, node->parentId);
+    case ChannelNode::Type::VoiceChannel:
+        state = readState->computeChannelReadState(node->id, guildId, node->parentId);
+
+        if (instance->voiceChannelId() != node->id)
+            state.isUnread = false;
+        return state;
     case ChannelNode::Type::DMChannel:
         return readState->computeDMReadState(node->id);
     case ChannelNode::Type::Thread: {
@@ -1647,6 +1648,25 @@ void ChannelTreeModel::updateChannelLastMessageId(Snowflake channelId, Snowflake
 
     channelNode->lastMessageId = messageId;
     updateReadState(channelId, accountId);
+}
+
+void ChannelTreeModel::setAccountVoiceChannel(Snowflake accountId, Snowflake channelId)
+{
+    Snowflake previous = Snowflake::Invalid;
+    if (auto it = accountVoiceChannels.constFind(accountId); it != accountVoiceChannels.constEnd())
+        previous = it.value();
+    if (previous == channelId)
+        return;
+
+    if (channelId.isValid())
+        accountVoiceChannels.insert(accountId, channelId);
+    else
+        accountVoiceChannels.remove(accountId);
+
+    if (previous.isValid())
+        updateReadState(previous, accountId);
+    if (channelId.isValid())
+        updateReadState(channelId, accountId);
 }
 
 void ChannelTreeModel::updateVoiceCount(Snowflake channelId, int count, Snowflake accountId)

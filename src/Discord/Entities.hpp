@@ -292,6 +292,8 @@ struct Channel : Core::JsonUtils::JsonObject
     bool isPinned() const { return flags.hasValue() && flags->testFlag(ChannelFlag::PINNED); }
 
     bool isThread() const { return type.hasValue() && isThreadType(type.get()); }
+
+    bool isVoice() const { return type.hasValue() && isVoiceType(type.get()); }
 };
 
 struct Emoji : Core::JsonUtils::JsonObject

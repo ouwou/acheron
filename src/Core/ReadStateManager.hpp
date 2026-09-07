@@ -123,6 +123,7 @@ private:
     QHash<Snowflake, GuildReadInfo> guildInfo;
     QHash<Snowflake, Snowflake> channelGuildMap;
     QSet<Snowflake> resourceChannels;
+    QSet<Snowflake> voiceChannels;
     bool useNewNotifications = false;
 
     Snowflake activeChannelId;

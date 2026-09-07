@@ -62,7 +62,11 @@ struct ChannelNode
 
     [[nodiscard]] bool opensChat() const
     {
-        return type == Type::Channel || type == Type::DMChannel || type == Type::Forum || type == Type::Thread;
+        return type == Type::Channel ||
+               type == Type::VoiceChannel ||
+               type == Type::DMChannel ||
+               type == Type::Forum ||
+               type == Type::Thread;
     }
 
     ChannelNode *addChild(std::unique_ptr<ChannelNode> node)

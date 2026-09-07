@@ -468,10 +468,10 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     // determine text color
     QColor textColor = option.palette.text().color();
     bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
-    if (node->opensChat() || node->type == ChannelNode::Type::VoiceChannel) {
+    if (node->opensChat()) {
         if (node->isMuted)
             textColor = option.palette.text().color().darker(150);
-        else if (isSelected || (node->isUnread && node->type != ChannelNode::Type::VoiceChannel))
+        else if (isSelected || node->isUnread)
             textColor = option.palette.brightText().color();
     } else if (node->type == ChannelNode::Type::Server) {
         if (node->isUnread && !node->isMuted)
@@ -505,9 +505,11 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                     ? ChannelDelegate::tr("%1 New").arg(node->forumBadgeCount)
                     : QString::number(node->forumBadgeCount);
 
-    // reserve right-side space for voice limit badge
+    // the mention badge takes the same spot, so the user limit yields to it
+    const bool showUserLimit = node->type == ChannelNode::Type::VoiceChannel && node->userLimit > 0 && node->mentionCount == 0;
+
     int rightReserve = iconSize;
-    if (node->type == ChannelNode::Type::VoiceChannel && node->userLimit > 0) {
+    if (showUserLimit) {
         QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
         QFontMetrics fm(painter->font());
         rightReserve = fm.horizontalAdvance(countText) + fm.height() / 2 + 8;
@@ -530,8 +532,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         !node->isMuted)
         drawUnreadPill(painter, option);
 
-    // voice user limit for voice channels
-    if (node->type == ChannelNode::Type::VoiceChannel && node->userLimit > 0) {
+    if (showUserLimit) {
         QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
         QFontMetrics fm(painter->font());
         int textWidth = fm.horizontalAdvance(countText);

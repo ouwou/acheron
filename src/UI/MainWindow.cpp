@@ -65,6 +65,14 @@ QString guildChannelKey(Core::Snowflake accountId, Core::Snowflake guildId)
             .arg(static_cast<quint64>(accountId))
             .arg(static_cast<quint64>(guildId));
 }
+
+bool voiceChatLocked(Core::ClientInstance *instance, Core::Snowflake channelId)
+{
+    auto channel = instance->getChannel(channelId);
+    if (!channel || !channel->isVoice())
+        return false;
+    return !instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
+}
 } // namespace
 
 MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent), session(session)
@@ -282,7 +290,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
 
     tabBar->updateCurrentTab(makeTabEntry(node, accountNode));
 
-    if (node->type == ChannelNode::Type::Channel && guildNode)
+    if ((node->type == ChannelNode::Type::Channel || node->type == ChannelNode::Type::VoiceChannel) && guildNode)
         recordLastViewedChannel(accountNode->id, guildNode->id, node->id);
     else if (isDm)
         recordLastViewedChannel(accountNode->id, Snowflake::Invalid, node->id);
@@ -296,13 +304,18 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
 
     Snowflake threadParentId = Snowflake::Invalid;
     bool archived = false;
-    if (auto ch = instance->getChannel(channelId); ch && ch->isThread()) {
-        threadParentId = ch->parentId.hasValue() ? ch->parentId.get() : Snowflake::Invalid;
-        archived = ch->isArchived();
+    bool isVoice = false;
+    if (auto ch = instance->getChannel(channelId); ch) {
+        isVoice = ch->isVoice();
+        if (ch->isThread()) {
+            threadParentId = ch->parentId.hasValue() ? ch->parentId.get() : Snowflake::Invalid;
+            archived = ch->isArchived();
+        }
     }
     bool isThread = threadParentId.isValid();
 
-    setThreadBrowserTarget(isDm ? Snowflake::Invalid : (isThread ? threadParentId : channelId));
+    // voice channels cannot hold threads
+    setThreadBrowserTarget(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId));
 
     if (isDm) {
         messageInput->setEnabled(true);
@@ -319,7 +332,8 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
     Snowflake permChannel = isThread ? threadParentId : channelId;
     Discord::Permission sendPerm = isThread ? Discord::Permission::SEND_MESSAGES_IN_THREADS : Discord::Permission::SEND_MESSAGES;
 
-    bool canSend = instance->permissions()->hasChannelPermission(userId, permChannel, sendPerm);
+    bool voiceLocked = voiceChatLocked(instance, channelId);
+    bool canSend = !voiceLocked && instance->permissions()->hasChannelPermission(userId, permChannel, sendPerm);
     bool canPin = instance->permissions()->hasChannelPermission(userId, permChannel, Discord::Permission::PIN_MESSAGES);
     bool canManage = instance->permissions()->hasChannelPermission(userId, permChannel, Discord::Permission::MANAGE_MESSAGES);
 
@@ -335,6 +349,8 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
 
     if (archived)
         messageInput->setPlaceholder("This thread is archived");
+    else if (voiceLocked)
+        messageInput->setPlaceholder("You do not have permission to connect to this channel");
     else if (!canSend)
         messageInput->setPlaceholder("You do not have permission to send messages");
     else if (onCooldown)
@@ -818,6 +834,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
     connect(instance, &Core::ClientInstance::voiceStateChanged, this,
             [this, instance](Core::Snowflake channelId, Core::Snowflake) {
                 channelTree->setAccountVoiceChannel(instance->accountId(), channelId);
+                channelTreeModel->setAccountVoiceChannel(instance->accountId(), channelId);
 #ifndef ACHERON_NO_VOICE
                 updateVoiceStatusLabel();
 #endif
@@ -1645,7 +1662,7 @@ bool MainWindow::channelReadable(Snowflake accountId, Snowflake guildId, Snowfla
     if (!channelId.isValid())
         return false;
     ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, accountId);
-    if (!node || node->type != ChannelNode::Type::Channel)
+    if (!node || (node->type != ChannelNode::Type::Channel && node->type != ChannelNode::Type::VoiceChannel))
         return false;
     ChannelNode *guild = ChannelTreeModel::findGuildNode(node);
     if (!guild || guild->id != guildId)
@@ -2174,8 +2191,8 @@ void MainWindow::onChannelPermissionsChanged(Core::Snowflake channelId)
         return;
 
     Core::Snowflake userId = currentInstance->accountId();
-    bool canSend = currentInstance->permissions()->hasChannelPermission(
-            userId, channelId, Discord::Permission::SEND_MESSAGES);
+    bool voiceLocked = voiceChatLocked(currentInstance, channelId);
+    bool canSend = !voiceLocked && currentInstance->permissions()->hasChannelPermission(userId, channelId, Discord::Permission::SEND_MESSAGES);
     bool canPin = currentInstance->permissions()->hasChannelPermission(
             userId, channelId, Discord::Permission::PIN_MESSAGES);
     bool canManage = currentInstance->permissions()->hasChannelPermission(
@@ -2192,7 +2209,9 @@ void MainWindow::onChannelPermissionsChanged(Core::Snowflake channelId)
     chatView->setCanPinMessages(canPin);
     chatView->setCanManageMessages(canManage);
 
-    if (!canSend) {
+    if (voiceLocked) {
+        messageInput->setPlaceholder("You do not have permission to connect to this channel");
+    } else if (!canSend) {
         messageInput->setPlaceholder("You do not have permission to send messages");
     } else if (onCooldown) {
         messageInput->setPlaceholder("Slowmode is active");

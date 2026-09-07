@@ -109,7 +109,10 @@ bool ChannelTreeView::handleMouseEventForExpansion(QMouseEvent *event)
         sourceModel->toggleCollapsed(sourceIndex);
         proxy->invalidateFilter();
         return true;
-    } else if (nodeType != ChannelNode::Type::Channel && !isAlwaysExpanded(nodeType) && model()->hasChildren(proxyIndex)) {
+    } else if (nodeType != ChannelNode::Type::Channel &&
+               nodeType != ChannelNode::Type::VoiceChannel &&
+               !isAlwaysExpanded(nodeType) &&
+               model()->hasChildren(proxyIndex)) {
         setExpanded(proxyIndex, !isExpanded(proxyIndex));
         return true;
     }
@@ -135,9 +138,10 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
 
     bool isUnread = sourceIndex.data(ChannelTreeModel::IsUnreadRole).toBool();
     int mentionCount = sourceIndex.data(ChannelTreeModel::MentionCountRole).toInt();
-    bool isChannel = (nodeType == ChannelNode::Type::Channel ||
-                      nodeType == ChannelNode::Type::DMChannel);
     bool isVoiceChannel = (nodeType == ChannelNode::Type::VoiceChannel);
+    bool isChannel = (nodeType == ChannelNode::Type::Channel ||
+                      nodeType == ChannelNode::Type::DMChannel ||
+                      isVoiceChannel);
 
     QMenu menu(this);
 
