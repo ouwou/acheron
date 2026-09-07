@@ -43,6 +43,16 @@ struct ChannelLink
             return std::nullopt;
         return fromMatch(match);
     }
+
+    QString toUrl() const
+    {
+        QString url = "https://discord.com/channels/";
+        url += guildId.isValid() ? QString::number(guildId) : QString("@me");
+        url += "/" + QString::number(channelId);
+        if (messageId.isValid())
+            url += "/" + QString::number(messageId);
+        return url;
+    }
 };
 
 } // namespace Discord

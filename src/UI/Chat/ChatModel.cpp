@@ -878,6 +878,11 @@ Snowflake ChatModel::getActiveChannelId() const
     return currentChannelId;
 }
 
+Snowflake ChatModel::getActiveGuildId() const
+{
+    return currentGuildId;
+}
+
 void ChatModel::setAtLatest(bool value)
 {
     if (atLatest == value)

@@ -906,6 +906,12 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     }
 
     menu.addSeparator();
+    QAction *copyMessageLinkAction = menu.addAction(tr("Copy Message Link"));
+    connect(copyMessageLinkAction, &QAction::triggered, this, [chatModel, channelId, messageId]() {
+        Discord::ChannelLink link{ chatModel->getActiveGuildId(), channelId, messageId };
+        QGuiApplication::clipboard()->setText(link.toUrl());
+    });
+
     QAction *copyIdAction = menu.addAction(tr("Copy Message ID"));
     connect(copyIdAction, &QAction::triggered, this, [messageId]() {
         QGuiApplication::clipboard()->setText(QString::number(quint64(messageId)));

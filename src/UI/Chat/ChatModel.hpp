@@ -247,6 +247,7 @@ public:
     [[nodiscard]] Snowflake getNewestMessageId() const;
     [[nodiscard]] int rowForMessage(Snowflake messageId) const;
     [[nodiscard]] Snowflake getActiveChannelId() const;
+    [[nodiscard]] Snowflake getActiveGuildId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
 
     [[nodiscard]] bool isAtLatest() const { return atLatest; }
