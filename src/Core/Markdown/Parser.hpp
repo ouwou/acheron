@@ -10,6 +10,9 @@ namespace Acheron {
 namespace Core {
 namespace Markdown {
 
+inline constexpr int InlineEmojiPx = 22;
+inline constexpr int JumboEmojiPx = 44;
+
 struct AstNode
 {
     QString type;

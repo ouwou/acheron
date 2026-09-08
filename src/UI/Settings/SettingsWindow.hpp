@@ -13,6 +13,7 @@ public:
 
 signals:
     void channelListModeChanged(bool classic);
+    void animateEmojiChanged(bool enabled);
 
 private:
     void setupUi();

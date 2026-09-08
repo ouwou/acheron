@@ -13,8 +13,12 @@ class GeneralPage : public QWidget
 public:
     explicit GeneralPage(QWidget *parent = nullptr);
 
+signals:
+    void animateEmojiChanged(bool enabled);
+
 private:
     QCheckBox *inMemoryCacheCheckbox;
+    QCheckBox *animateEmojiCheckbox;
 };
 
 } // namespace UI

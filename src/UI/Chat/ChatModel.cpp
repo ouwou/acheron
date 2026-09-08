@@ -9,10 +9,16 @@
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Manager.hpp"
 #include "Core/Media/Player.hpp"
+#include "Discord/CdnUrls.hpp"
 #include "Discord/Enums.hpp"
 
 namespace Acheron {
 namespace UI {
+
+static QUrl reactionEmojiUrl(const Discord::Emoji &emoji)
+{
+    return emoji.getImageUrl(emoji.isAnimated());
+}
 
 static bool isSystemMessageType(Discord::MessageType type)
 {
@@ -75,22 +81,23 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                         emit dataChanged(index, index, { Qt::DecorationRole });
                 });
 
-                // custom emoji in message content and embed text
-                if (url.host() == u"cdn.discordapp.com" && url.path().startsWith(u"/emojis/")) {
-                    QString urlStr = url.toString();
+                if (Discord::Cdn::isEmojiUrl(url)) {
+                    const QString srcPrefix = url.toString(QUrl::RemoveQuery);
+                    const bool documentSize = size == QSize(Core::Markdown::InlineEmojiPx, Core::Markdown::InlineEmojiPx) ||
+                                              size == QSize(Core::Markdown::JumboEmojiPx, Core::Markdown::JumboEmojiPx);
                     for (int row = 0; row < messages.size(); ++row) {
                         const auto &msg = messages[row];
-                        bool found = msg.contentMessage().parsedContentCached.contains(urlStr);
-                        if (!found && embedCache.contains(msg.id)) {
+                        bool found = documentSize && msg.contentMessage().parsedContentCached.contains(srcPrefix);
+                        if (documentSize && !found && embedCache.contains(msg.id)) {
                             for (const auto &embed : embedCache.value(msg.id)) {
-                                if (embed.titleParsed.contains(urlStr) ||
-                                    embed.descriptionParsed.contains(urlStr)) {
+                                if (embed.titleParsed.contains(srcPrefix) ||
+                                    embed.descriptionParsed.contains(srcPrefix)) {
                                     found = true;
                                     break;
                                 }
                                 for (const auto &field : embed.fields) {
-                                    if (field.nameParsed.contains(urlStr) ||
-                                        field.valueParsed.contains(urlStr)) {
+                                    if (field.nameParsed.contains(srcPrefix) ||
+                                        field.valueParsed.contains(srcPrefix)) {
                                         found = true;
                                         break;
                                     }
@@ -103,20 +110,16 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                         bool reactionFound = false;
                         if (!found && msg.reactions.hasValue()) {
                             for (const auto &reaction : *msg.reactions) {
-                                if (!reaction.emoji->isUnicode()) {
-                                    QString emojiUrl = reaction.emoji->getImageUrl(48);
-                                    if (emojiUrl == urlStr) {
-                                        reactionFound = true;
-                                        break;
-                                    }
+                                if (!reaction.emoji->isUnicode() && reactionEmojiUrl(*reaction.emoji) == url) {
+                                    reactionFound = true;
+                                    break;
                                 }
                             }
                         }
 
                         if (found) {
-                            invalidateDocCacheForMessage(msg.id);
                             QModelIndex idx = index(row, 0);
-                            emit dataChanged(idx, idx, { HtmlRole, EmbedsRole, CachedSizeRole });
+                            emit dataChanged(idx, idx, { HtmlRole });
                         } else if (reactionFound) {
                             sizeCache.remove(msg.id);
                             QModelIndex idx = index(row, 0);
@@ -739,12 +742,13 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             QPixmap emojiPixmap;
             bool isLoading = false;
             Core::Snowflake emojiId;
+            QUrl emojiUrl;
             if (!reaction.emoji->isUnicode()) {
                 emojiId = reaction.emoji->id;
-                QString emojiUrl = reaction.emoji->getImageUrl(48);
+                emojiUrl = reactionEmojiUrl(*reaction.emoji);
                 QSize emojiSize(16, 16);
-                emojiPixmap = imageManager->get(QUrl(emojiUrl), emojiSize, currentAccountId);
-                isLoading = !imageManager->isCached(QUrl(emojiUrl), emojiSize);
+                emojiPixmap = imageManager->get(emojiUrl, emojiSize, currentAccountId);
+                isLoading = !imageManager->isCached(emojiUrl, emojiSize);
             }
 
             int normalCount = reaction.countDetails.hasValue() ? *reaction.countDetails->normal : *reaction.count;
@@ -754,7 +758,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 ReactionData data;
                 data.emojiName = reaction.emoji->name;
                 data.emojiId = emojiId;
-                data.emojiAnimated = reaction.emoji->animated.hasValue() && *reaction.emoji->animated;
+                data.emojiUrl = emojiUrl;
+                data.emojiAnimated = reaction.emoji->isAnimated();
                 data.count = burstCount;
                 data.me = reaction.meBurst.hasValue() && *reaction.meBurst;
                 data.isBurst = true;
@@ -768,7 +773,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 ReactionData data;
                 data.emojiName = reaction.emoji->name;
                 data.emojiId = emojiId;
-                data.emojiAnimated = reaction.emoji->animated.hasValue() && *reaction.emoji->animated;
+                data.emojiUrl = emojiUrl;
+                data.emojiAnimated = reaction.emoji->isAnimated();
                 data.count = normalCount;
                 data.me = reaction.me;
                 data.isBurst = false;

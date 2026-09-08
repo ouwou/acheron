@@ -12,6 +12,7 @@
 #include "Core/Theme/Manager.hpp"
 #include "Core/TimeUtils.hpp"
 #include "Discord/ChannelLink.hpp"
+#include "UI/Chat/EmojiAnimator.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
@@ -109,6 +110,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     inlineEditWidget->installEventFilter(this);
 
     video = new InlineVideoController(this);
+    animator = new EmojiAnimator(this);
 
     jumpToPresentBar = new JumpToPresentBar(this);
     jumpToPresentBar->setVisible(false);
@@ -159,6 +161,7 @@ void ChatView::setModel(QAbstractItemModel *model)
     QListView::setModel(model);
 
     video->attachModel(model);
+    animator->attachModel(model);
 
     connect(model, &QAbstractItemModel::modelReset, this, &ChatView::onModelReset);
     if (auto *chatModel = qobject_cast<ChatModel *>(model))
@@ -173,6 +176,7 @@ void ChatView::setModel(QAbstractItemModel *model)
 void ChatView::resizeEvent(QResizeEvent *event)
 {
     video->invalidateRects();
+    animator->invalidateRects();
 
     QListView::resizeEvent(event);
     positionJumpToPresentBar();
@@ -181,8 +185,22 @@ void ChatView::resizeEvent(QResizeEvent *event)
 void ChatView::paintEvent(QPaintEvent *event)
 {
     video->setPaintDamage(event->rect());
+    animator->setPaintDamage(event->region());
     QListView::paintEvent(event);
     video->setPaintDamage(QRect());
+    animator->setPaintDamage(QRegion());
+}
+
+void ChatView::showEvent(QShowEvent *event)
+{
+    QListView::showEvent(event);
+    animator->setViewVisible(true);
+}
+
+void ChatView::hideEvent(QHideEvent *event)
+{
+    animator->setViewVisible(false);
+    QListView::hideEvent(event);
 }
 
 void ChatView::mousePressEvent(QMouseEvent *event)

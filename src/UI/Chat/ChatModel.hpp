@@ -101,6 +101,7 @@ struct ReactionData
 {
     QString emojiName;
     Core::Snowflake emojiId;
+    QUrl emojiUrl;
     bool emojiAnimated = false;
     int count = 0;
     bool me = false;

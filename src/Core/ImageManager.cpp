@@ -9,13 +9,20 @@
 #include <QApplication>
 
 #include "Logging.hpp"
+#include "Discord/CdnUrls.hpp"
 
 namespace Acheron {
 namespace Core {
 
+namespace {
+constexpr qint64 FailedFetchRetryMs = 60 * 1000;
+constexpr int MaxMemoizedPlaceholderPx = 64;
+} // namespace
+
 ImageManager::ImageManager(QObject *parent) : QObject(parent)
 {
     cache.setMaxCost(300);
+    uptime.start();
 
     if (!tempDir.isValid())
         qCWarning(LogCore) << "Failed to create temp directory for image cache";
@@ -27,8 +34,13 @@ bool ImageManager::isCached(const QUrl &url, const QSize &size)
     if (pinnedImages.contains(k) || cache.contains(k))
         return true;
 
-    QString path = getCachePath(url, size);
-    return QFile::exists(path);
+    return !rawDownloadPath(url, size).isEmpty();
+}
+
+QString ImageManager::rawDownloadPath(const QUrl &url, const QSize &size) const
+{
+    const QString path = getCachePath(url, size);
+    return QFile::exists(path) ? path : QString();
 }
 
 void ImageManager::setAccountProxy(Snowflake accountId, const ProxyConfig &proxy)
@@ -87,8 +99,8 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
         return pinnedIt.value();
     }
 
-    if (cache.contains(k)) {
-        QPixmap pixmap = *cache.object(k);
+    if (const QPixmap *cached = cache.object(k)) {
+        QPixmap pixmap = *cached;
         if (pin != PinGroup::None) {
             pinnedImages.insert(k, pixmap);
             pinGroupKeys.insert(pin, k);
@@ -97,15 +109,20 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
         return pixmap;
     }
 
+    if (requests.contains(k) || recentlyFailed(k)) {
+        if (fetchIfNeeded)
+            request(url, size, pin, accountId);
+        return placeholder(size);
+    }
+
     // check disk cache
     QString path = getCachePath(url, size);
     if (QFile::exists(path)) {
         QPixmap pixmap;
         if (pixmap.load(path)) {
             qreal dpr = qApp->devicePixelRatio();
-            bool proxy = isDiscordProxyUrl(url);
 
-            if (proxy) {
+            if (scalesToDevicePixels(url)) {
                 QSize physicalSize(qRound(size.width() * dpr), qRound(size.height() * dpr));
                 if (pixmap.size() != physicalSize)
                     pixmap = pixmap.scaled(physicalSize, Qt::KeepAspectRatio,
@@ -135,12 +152,27 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
 
 QPixmap ImageManager::placeholder(const QSize &size)
 {
+    const bool memoize = size.width() <= MaxMemoizedPlaceholderPx && size.height() <= MaxMemoizedPlaceholderPx;
+    if (memoize) {
+        auto it = placeholders.constFind(size);
+        if (it != placeholders.constEnd())
+            return it.value();
+    }
+
     qreal dpr = qApp->devicePixelRatio();
     QSize physicalSize(qRound(size.width() * dpr), qRound(size.height() * dpr));
     QPixmap pixmap(physicalSize);
     pixmap.setDevicePixelRatio(dpr);
     pixmap.fill(QColor(60, 60, 60));
+    if (memoize)
+        placeholders.insert(size, pixmap);
     return pixmap;
+}
+
+bool ImageManager::recentlyFailed(const ImageRequestKey &key) const
+{
+    const auto it = failedAtMs.constFind(key);
+    return it != failedAtMs.constEnd() && uptime.elapsed() - it.value() < FailedFetchRetryMs;
 }
 
 void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId)
@@ -152,6 +184,9 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
     }
 
     ImageRequestKey k{ url, size };
+    if (recentlyFailed(k))
+        return;
+
     if (requests.contains(k)) {
         // promote
         if (pin != PinGroup::None) {
@@ -172,13 +207,13 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
 void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin, QNetworkAccessManager *nam)
 {
     qreal dpr = qApp->devicePixelRatio();
-    bool discordProxied = isDiscordProxyUrl(url);
+    const bool deviceScaled = scalesToDevicePixels(url);
 
-    QUrl fetchUrl = discordProxied ? buildOptimizedUrl(url, size, dpr) : url;
+    QUrl fetchUrl = isDiscordProxyUrl(url) ? buildOptimizedUrl(url, size, dpr) : url;
     QNetworkRequest request(fetchUrl);
     QNetworkReply *reply = nam->get(request);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, discordProxied, dpr]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr]() {
         ImageRequestKey k{ url, size };
         PinGroup pin = pendingPins.value(k, PinGroup::None);
         pendingPins.remove(k);
@@ -186,9 +221,11 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
         if (reply->error() != QNetworkReply::NoError) {
             qCWarning(LogCore) << "Failed to fetch image:" << reply->errorString();
             requests.remove(k);
+            failedAtMs.insert(k, uptime.elapsed());
             reply->deleteLater();
             return;
         }
+        failedAtMs.remove(k);
 
         QByteArray data = reply->readAll();
         reply->deleteLater();
@@ -203,7 +240,7 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
 
         QPixmap pixmap;
         if (pixmap.loadFromData(data)) {
-            if (discordProxied) {
+            if (deviceScaled) {
                 QSize physicalSize(qRound(size.width() * dpr), qRound(size.height() * dpr));
                 if (pixmap.size() != physicalSize)
                     pixmap = pixmap.scaled(physicalSize, Qt::KeepAspectRatio,
@@ -275,6 +312,11 @@ QString ImageManager::getCachePath(const QUrl &url, const QSize &size) const
             QCryptographicHash::hash(compound.toUtf8(), QCryptographicHash::Sha1);
     QString filename = QString::fromLatin1(hash.toHex());
     return tempDir.filePath(filename);
+}
+
+bool ImageManager::scalesToDevicePixels(const QUrl &url)
+{
+    return isDiscordProxyUrl(url) || Discord::Cdn::isEmojiUrl(url);
 }
 
 bool ImageManager::isDiscordProxyUrl(const QUrl &url)

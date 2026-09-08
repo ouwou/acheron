@@ -15,6 +15,7 @@
 
 #include "Core/Snowflake.hpp"
 #include "Core/JsonUtils.hpp"
+#include "CdnUrls.hpp"
 
 namespace Acheron {
 namespace Discord {
@@ -319,13 +320,13 @@ struct Emoji : Core::JsonUtils::JsonObject
 
     bool isUnicode() const { return !id.hasValue(); }
 
-    QString getImageUrl(int size = 48) const
+    bool isAnimated() const { return animated.hasValue() && *animated; }
+
+    QUrl getImageUrl(bool animatedFrames = false) const
     {
         if (isUnicode())
             return {};
-        return QString("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
-                .arg(id->toString())
-                .arg(size);
+        return Cdn::emoji(*id, 48, animatedFrames);
     }
 };
 

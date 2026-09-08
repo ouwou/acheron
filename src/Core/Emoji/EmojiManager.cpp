@@ -342,7 +342,7 @@ QList<EmojiMatch> EmojiManager::search(const QString &query, Snowflake channelId
         entry.match.insertText = (animated ? "<a:" : "<:") + custom.originalName + ":" + id.toString() + ">";
         entry.match.displayLabel = ":" + custom.disambiguatedName + ":";
         entry.match.customId = id;
-        entry.match.imageUrl = QUrl(custom.emoji.getImageUrl());
+        entry.match.imageUrl = custom.emoji.getImageUrl();
         scored.append(entry);
     }
 

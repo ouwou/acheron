@@ -3,11 +3,12 @@
 #include "ChatModel.hpp"
 #include "ChatLayout.hpp"
 #include "ChatView.hpp"
-#include "Core/ImageManager.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
 #include "Core/Media/Player.hpp"
 #include "Core/Media/PlayerPool.hpp"
+#include "UI/Chat/EmojiAnimator.hpp"
+#include "UI/Chat/EmojiTextObject.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Chat/VideoControls.hpp"
@@ -19,29 +20,96 @@
 namespace Acheron {
 namespace UI {
 
-static const QRegularExpression &emojiImgRegex()
+ChatDelegate::ChatDelegate(Core::ImageManager *imageManager, ChatView *view)
+    : QStyledItemDelegate(view),
+      emojiHandler(new EmojiTextObject(imageManager, view->emojiAnimator(), this))
 {
-    static const QRegularExpression re(
-            R"lol(<img src="(https://cdn\.discordapp\.com/emojis/\d+\.webp\?size=\d+)"[^>]*width="(\d+)")lol");
-    return re;
 }
 
-static const QString emojiCdnPrefix = QStringLiteral("https://cdn.discordapp.com/emojis/");
-
-static void registerEmojiResources(QTextDocument &doc, const QString &html,
-                                   Core::ImageManager *imageManager, Core::Snowflake accountId)
+static void drawHighlightFlash(QPainter *painter, const QStyleOptionViewItem &option, const ChatView *view, int row, const QRect &rect)
 {
-    if (!imageManager || !html.contains(emojiCdnPrefix))
+    if (!view || view->highlightedRow() != row)
+        return;
+    QColor flash = option.palette.highlight().color();
+    flash.setAlphaF(0.3 * view->highlightOpacity());
+    painter->fillRect(rect, flash);
+}
+
+static QColor bodyTextColor(const QStyleOptionViewItem &option, const QModelIndex &index)
+{
+    if (index.data(ChatModel::IsErroredRole).toBool())
+        return Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError);
+    if (index.data(ChatModel::IsPendingRole).toBool())
+        return option.palette.text().color().lighter(50);
+    if (index.data(ChatModel::IsSystemMessageRole).toBool()) {
+        QColor color = option.palette.text().color();
+        color.setAlpha(140);
+        return color;
+    }
+    return (option.state & QStyle::State_Selected) ? option.palette.highlightedText().color()
+                                                   : option.palette.text().color();
+}
+
+static void applyTextSelection(QAbstractTextDocumentLayout::PaintContext &paintCtx, const ChatView *view,
+                               QTextDocument *doc, const QModelIndex &index, const QPalette &palette)
+{
+    if (!view || !view->hasTextSelection())
         return;
 
-    auto it = emojiImgRegex().globalMatch(html);
-    while (it.hasNext()) {
-        auto match = it.next();
-        QUrl url(match.captured(1));
-        int size = match.captured(2).toInt();
-        QPixmap px = imageManager->get(url, QSize(size, size), accountId);
-        doc.addResource(QTextDocument::ImageResource, url, px);
-    }
+    const auto start = view->selectionStart();
+    const auto end = view->selectionEnd();
+    const int r = index.row();
+    if (r < start.row || r > end.row)
+        return;
+
+    int startChar = 0;
+    int endChar = -1;
+    if (r == start.row)
+        startChar = start.index;
+    if (r == end.row)
+        endChar = end.index;
+
+    QTextCursor cursor(doc);
+    cursor.setPosition(startChar);
+    if (endChar == -1)
+        cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    else
+        cursor.setPosition(endChar, QTextCursor::KeepAnchor);
+
+    QAbstractTextDocumentLayout::Selection sel;
+    sel.cursor = cursor;
+    sel.format.setBackground(palette.highlight());
+    sel.format.setForeground(palette.highlightedText());
+    paintCtx.selections.append(sel);
+}
+
+static void drawBodyDocument(QPainter *painter, QTextDocument *doc, const QRect &textRect, const QRectF &clip,
+                             const QStyleOptionViewItem &option, const QModelIndex &index, const ChatView *view)
+{
+    painter->save();
+    painter->translate(textRect.topLeft());
+
+    QAbstractTextDocumentLayout::PaintContext paintCtx;
+    paintCtx.clip = clip;
+    paintCtx.palette.setColor(QPalette::Text, bodyTextColor(option, index));
+    applyTextSelection(paintCtx, view, doc, index, option.palette);
+    doc->documentLayout()->draw(painter, paintCtx);
+
+    painter->restore();
+}
+
+bool ChatDelegate::paintBodyTextOnly(QPainter *painter, const QStyleOptionViewItem &option,
+                                     const QModelIndex &index, const ChatModel *chatModel,
+                                     const ChatView *chatView, const QRect &textRect, const QRect &damage) const
+{
+    const Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
+    QTextDocument *doc = chatModel->getCachedDocument(bodyDocKey(msgId));
+    if (!doc)
+        return false;
+
+    drawHighlightFlash(painter, option, chatView, index.row(), damage);
+    drawBodyDocument(painter, doc, textRect, damage.translated(-textRect.topLeft()), option, index, chatView);
+    return true;
 }
 
 static void drawSystemMessageIcon(QPainter *painter, const QStyleOptionViewItem &option, Discord::MessageType type, const QRect &rect)
@@ -186,6 +254,12 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     const auto *chatView = qobject_cast<const ChatView *>(option.widget);
     const InlineVideoController *video = chatView ? chatView->videoController() : nullptr;
+    EmojiAnimator *animator = chatView ? chatView->emojiAnimator() : nullptr;
+
+    if (animator && !animator->intersectsPaintDamage(option.rect)) {
+        painter->restore();
+        return;
+    }
 
     if (video) {
         if (const auto surface = video->surfaceCoveringDamage(index); surface && !surface->isAudio()) {
@@ -195,14 +269,24 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         }
     }
 
+    if (chatModel)
+        emojiHandler->setAccountId(chatModel->getAccountId());
+
+    if (animator && chatModel) {
+        const auto repaint = animator->bodyOnlyRepaint(index.row(), option.rect);
+        if (repaint && paintBodyTextOnly(painter, option, index, chatModel, chatView, repaint->textRect, repaint->damage)) {
+            painter->restore();
+            return;
+        }
+    }
+
     ChatLayout::LayoutContext ctx = ChatLayout::buildContext(index, option.font, option.rect, option.palette);
     ChatLayout::MessageLayout layout = ChatLayout::calculateMessageLayout(ctx);
 
-    if (chatView && chatView->highlightedRow() == index.row()) {
-        QColor flash = option.palette.highlight().color();
-        flash.setAlphaF(0.3 * chatView->highlightOpacity());
-        painter->fillRect(option.rect, flash);
-    }
+    if (animator)
+        animator->beginRow(index.row(), option.rect, layout.textRect);
+
+    drawHighlightFlash(painter, option, chatView, index.row(), option.rect);
 
     const QString username = index.data(ChatModel::UsernameRole).toString();
     const QPixmap avatar = qvariant_cast<QPixmap>(index.data(ChatModel::AvatarRole));
@@ -362,71 +446,19 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     QTextDocument *doc = chatModel->getCachedDocument(bodyKey);
     if (!doc) {
         doc = new QTextDocument;
+        emojiHandler->install(*doc);
         ChatLayout::setupDocument(*doc, ctx.htmlContent, bodyFont, layout.textRect.width());
-        registerEmojiResources(*doc, ctx.htmlContent, imageManager, chatModel->getAccountId());
         chatModel->cacheDocument(bodyKey, doc);
     } else if (int(doc->textWidth()) != layout.textRect.width()) {
         doc->setTextWidth(layout.textRect.width());
     }
 
-    painter->translate(layout.textRect.topLeft());
-
-    QAbstractTextDocumentLayout::PaintContext paintCtx;
-
-    bool isPending = index.data(ChatModel::IsPendingRole).toBool();
-    bool isErrored = index.data(ChatModel::IsErroredRole).toBool();
-
-    QColor textColor;
-    if (isErrored) {
-        textColor = Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError);
-    } else if (isPending) {
-        textColor = option.palette.text().color().lighter(50);
-    } else if (ctx.isSystemMessage) {
-        textColor = option.palette.text().color();
-        textColor.setAlpha(140);
-    } else {
-        textColor = (option.state & QStyle::State_Selected)
-                            ? option.palette.highlightedText().color()
-                            : option.palette.text().color();
-    }
-    paintCtx.palette.setColor(QPalette::Text, textColor);
-
-    const ChatView *view = qobject_cast<const ChatView *>(option.widget);
-    if (view && view->hasTextSelection()) {
-        auto start = view->selectionStart();
-        auto end = view->selectionEnd();
-        int r = index.row();
-
-        if (r >= start.row && r <= end.row) {
-            int startChar = 0;
-            int endChar = -1;
-
-            if (r == start.row)
-                startChar = start.index;
-            if (r == end.row)
-                endChar = end.index;
-
-            QTextCursor cursor(doc);
-            cursor.setPosition(startChar);
-
-            if (endChar == -1)
-                cursor.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
-            else
-                cursor.setPosition(endChar, QTextCursor::KeepAnchor);
-
-            QAbstractTextDocumentLayout::Selection sel;
-            sel.cursor = cursor;
-            sel.format.setBackground(option.palette.highlight());
-            sel.format.setForeground(option.palette.highlightedText());
-            paintCtx.selections.append(sel);
-        }
-    }
-
-    doc->documentLayout()->draw(painter, paintCtx);
+    drawBodyDocument(painter, doc, layout.textRect, QRectF(), option, index, chatView);
 
     painter->restore();
     painter->save();
 
+    const bool isPending = index.data(ChatModel::IsPendingRole).toBool();
     QList<AttachmentData> attachments = ctx.attachments;
 
     for (const auto &imgLayout : layout.imageLayouts) {
@@ -650,7 +682,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 titleDoc = new QTextDocument;
                 titleDoc->setDefaultFont(titleFont);
                 titleDoc->setTextWidth(embedLayout.titleRect.width());
-                registerEmojiResources(*titleDoc, titleHtml, imageManager, chatModel->getAccountId());
+                emojiHandler->install(*titleDoc);
                 titleDoc->setHtml(titleHtml);
                 chatModel->cacheDocument(titleKey, titleDoc);
             } else if (int(titleDoc->textWidth()) != embedLayout.titleRect.width()) {
@@ -678,7 +710,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 descDoc = new QTextDocument;
                 descDoc->setDefaultFont(descFont);
                 descDoc->setTextWidth(embedLayout.descriptionRect.width());
-                registerEmojiResources(*descDoc, descHtml, imageManager, chatModel->getAccountId());
+                emojiHandler->install(*descDoc);
                 descDoc->setHtml(descHtml);
                 chatModel->cacheDocument(descKey, descDoc);
             } else if (int(descDoc->textWidth()) != embedLayout.descriptionRect.width()) {
@@ -711,7 +743,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 nameDoc = new QTextDocument;
                 nameDoc->setDefaultFont(fieldNameFont);
                 nameDoc->setTextWidth(fieldLayout.nameRect.width());
-                registerEmojiResources(*nameDoc, nameHtml, imageManager, chatModel->getAccountId());
+                emojiHandler->install(*nameDoc);
                 nameDoc->setHtml(nameHtml);
                 chatModel->cacheDocument(nameKey, nameDoc);
             } else if (int(nameDoc->textWidth()) != fieldLayout.nameRect.width()) {
@@ -732,7 +764,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 valueDoc = new QTextDocument;
                 valueDoc->setDefaultFont(option.font);
                 valueDoc->setTextWidth(fieldLayout.valueRect.width());
-                registerEmojiResources(*valueDoc, valueHtml, imageManager, chatModel->getAccountId());
+                emojiHandler->install(*valueDoc);
                 valueDoc->setHtml(valueHtml);
                 chatModel->cacheDocument(valueKey, valueDoc);
             } else if (int(valueDoc->textWidth()) != fieldLayout.valueRect.width()) {
@@ -873,8 +905,14 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->setRenderHint(QPainter::Antialiasing, false);
 
         if (reaction.emojiId.isValid()) {
-            if (!reaction.emojiPixmap.isNull())
-                painter->drawPixmap(reactionLayout.emojiRect, reaction.emojiPixmap);
+            QPixmap emojiPixmap;
+            if (animator && reaction.emojiAnimated)
+                emojiPixmap = animator->frame(reaction.emojiUrl, reactionLayout.emojiRect.size(),
+                                              chatModel->getAccountId(), reactionLayout.emojiRect);
+            if (emojiPixmap.isNull())
+                emojiPixmap = reaction.emojiPixmap;
+            if (!emojiPixmap.isNull())
+                painter->drawPixmap(reactionLayout.emojiRect, emojiPixmap);
         } else {
             // render smaller than the rect to fit within pill
             QFont emojiFont = option.font;
@@ -898,6 +936,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         painter->drawText(reactionLayout.countRect, Qt::AlignLeft | Qt::AlignVCenter,
                           QString::number(reaction.count));
     }
+
+    if (animator)
+        animator->endRow();
 
     painter->restore();
 }

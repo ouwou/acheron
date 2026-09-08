@@ -11,6 +11,7 @@
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
+#include "Chat/EmojiAnimator.hpp"
 #include "Chat/InlineVideoController.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
@@ -1135,6 +1136,8 @@ void MainWindow::setupUi()
 
     chatView->setModel(chatModel);
     chatView->setImageManager(session->getImageManager());
+    chatView->emojiAnimator()->setCache(session->getAnimatedImageCache());
+    chatView->emojiAnimator()->setEnabled(QSettings().value("chat/animate_emoji", true).toBool());
     chatView->setItemDelegate(new ChatDelegate(session->getImageManager(), chatView));
     chatView->setIconSize(QSize(24, 24));
     chatView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -2182,6 +2185,9 @@ void MainWindow::openSettingsWindow()
         settingsWindow = new SettingsWindow(this);
         connect(settingsWindow, &SettingsWindow::channelListModeChanged, this, [this](bool classic) {
             setChannelListMode(classic ? ChannelListMode::Classic : ChannelListMode::Tree);
+        });
+        connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
+            chatView->emojiAnimator()->setEnabled(enabled);
         });
     }
 

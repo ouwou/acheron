@@ -11,6 +11,7 @@
 namespace Acheron {
 namespace UI {
 
+class EmojiAnimator;
 class ImageViewer;
 class InlineVideoController;
 struct ChatCursor
@@ -70,6 +71,7 @@ public:
     qreal highlightOpacity() const { return highlightAlpha; }
 
     [[nodiscard]] InlineVideoController *videoController() const { return video; }
+    [[nodiscard]] EmojiAnimator *emojiAnimator() const { return animator; }
 
     static constexpr int InlineEditMinHeight = 60;
 
@@ -96,6 +98,8 @@ protected:
     void leaveEvent(QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -152,6 +156,7 @@ private:
     void updateJumpToPresentBar();
 
     InlineVideoController *video = nullptr;
+    EmojiAnimator *animator = nullptr;
     Core::ImageManager *imageManager = nullptr;
 
     QTextEdit *inlineEditWidget = nullptr;

@@ -78,13 +78,24 @@ inline QUrl badgeIcon(const QString &hash, int size = 64)
                         .arg(hash, QString::number(size)));
 }
 
-inline QUrl emoji(Core::Snowflake emojiId, int size = 48)
+inline QUrl emoji(Core::Snowflake emojiId, int size = 48, bool animated = false)
 {
     if (!emojiId.isValid())
         return {};
-    return QUrl(QStringLiteral("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
-                        .arg(QString::number(quint64(emojiId)), QString::number(size)));
+    QString url = QStringLiteral("https://cdn.discordapp.com/emojis/%1.webp?size=%2")
+                          .arg(QString::number(quint64(emojiId)), QString::number(size));
+    if (animated)
+        url += QStringLiteral("&animated=true");
+    return QUrl(url);
 }
+
+inline bool isEmojiUrl(const QUrl &url)
+{
+    return url.host() == QLatin1String("cdn.discordapp.com") && url.path().startsWith(QLatin1String("/emojis/"));
+}
+
+bool isAnimatedEmojiUrl(const QUrl &url);
+QUrl stillEmojiUrl(const QUrl &animatedUrl);
 
 QUrl connectionIcon(const QString &type);
 

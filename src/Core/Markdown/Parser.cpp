@@ -1,6 +1,7 @@
 #include "Parser.hpp"
 #include "Core/EmojiSegmenter.hpp"
 #include "Discord/ChannelLink.hpp"
+#include "Discord/CdnUrls.hpp"
 
 #include <QRegularExpression>
 #include <QStringList>
@@ -11,6 +12,11 @@ using Acheron::Core::countUnicodeEmojisSegmented;
 namespace Acheron {
 namespace Core {
 namespace Markdown {
+
+namespace {
+constexpr int InlineEmojiCdnPx = 64;
+constexpr int JumboEmojiCdnPx = 128;
+} // namespace
 
 Parser::Parser()
 {
@@ -197,10 +203,12 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
         }
 
         if (node.type == "customEmoji") {
-            QString id = node.content;
+            Snowflake id(node.content.toULongLong());
             QString name = node.attributes["name"].toString();
-            int emojiSize = jumboEmoji ? 44 : 22;
-            QString url = QString("https://cdn.discordapp.com/emojis/%1.webp?size=128").arg(id);
+            bool animated = node.attributes["animated"].toBool();
+            int emojiSize = jumboEmoji ? JumboEmojiPx : InlineEmojiPx;
+            int cdnSize = jumboEmoji ? JumboEmojiCdnPx : InlineEmojiCdnPx;
+            QString url = Discord::Cdn::emoji(id, cdnSize, animated).toString();
             result += QString(R"(<img src="%1" alt=":%2:" width="%3" height="%3" style="vertical-align: middle;" />)")
                               .arg(url.toHtmlEscaped())
                               .arg(name.toHtmlEscaped())
@@ -211,7 +219,7 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
         if (jumboEmoji && node.type == "text") {
             QString escaped = node.content.toHtmlEscaped();
             if (!node.content.trimmed().isEmpty())
-                result += QString(R"(<span style="font-size: 44px;">%1</span>)").arg(escaped);
+                result += QString(R"(<span style="font-size: %1px;">%2</span>)").arg(JumboEmojiPx).arg(escaped);
             else
                 result += escaped;
             continue;

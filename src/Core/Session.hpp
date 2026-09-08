@@ -8,6 +8,7 @@
 #include "ClientInstance.hpp"
 #include "Storage/AccountRepository.hpp"
 #include "Core/Enums.hpp"
+#include "Core/AnimatedImageCache.hpp"
 #include "Core/ImageManager.hpp"
 
 namespace Acheron {
@@ -34,6 +35,7 @@ public:
     [[nodiscard]] ClientInstance *client(Snowflake accountId) const;
     [[nodiscard]] AccountInfo getAccountInfo(Snowflake accountId);
     [[nodiscard]] ImageManager *getImageManager() { return imageManager; }
+    [[nodiscard]] AnimatedImageCache *getAnimatedImageCache() { return animatedImageCache; }
     [[nodiscard]] bool hasActiveConnection() const;
 
     void setCaptchaResolver(Discord::CaptchaResolver *resolver) { captchaResolver = resolver; }
@@ -49,6 +51,7 @@ private:
     void startInstance(const AccountInfo &acc);
 
     ImageManager *imageManager;
+    AnimatedImageCache *animatedImageCache;
     Storage::AccountRepository repo;
     QMap<Snowflake, ClientInstance *> clients;
     QSet<Snowflake> connectingAccounts;

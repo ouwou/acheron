@@ -34,6 +34,20 @@ bool isDiscordMediaUrl(const QUrl &url)
     return host == QLatin1String("cdn.discordapp.com") || host == QLatin1String("media.discordapp.net");
 }
 
+bool isAnimatedEmojiUrl(const QUrl &url)
+{
+    return isEmojiUrl(url) && url.query().contains(QLatin1String("animated=true"));
+}
+
+QUrl stillEmojiUrl(const QUrl &animatedUrl)
+{
+    QUrlQuery query(animatedUrl);
+    query.removeQueryItem(QStringLiteral("animated"));
+    QUrl still = animatedUrl;
+    still.setQuery(query);
+    return still;
+}
+
 bool isSigned(const QUrl &url)
 {
     return isDiscordMediaUrl(url) && expiryEpochSecs(url) > 0;

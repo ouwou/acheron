@@ -14,6 +14,7 @@ namespace Core {
 Session::Session(QObject *parent) : QObject(parent)
 {
     imageManager = new ImageManager(this);
+    animatedImageCache = new AnimatedImageCache(imageManager, this);
 
     for (const auto &acc : repo.getAllAccounts())
         imageManager->setAccountProxy(acc.id, acc.proxy);

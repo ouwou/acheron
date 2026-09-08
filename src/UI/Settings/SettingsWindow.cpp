@@ -33,7 +33,9 @@ void SettingsWindow::setupUi()
         pages->addWidget(page);
     };
 
-    addPage(tr("General"), new GeneralPage(this));
+    auto *general = new GeneralPage(this);
+    addPage(tr("General"), general);
+    connect(general, &GeneralPage::animateEmojiChanged, this, &SettingsWindow::animateEmojiChanged);
 
     auto *appearance = new AppearancePage(this);
     addPage(tr("Appearance"), appearance);

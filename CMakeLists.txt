@@ -157,6 +157,7 @@ set(PROJECT_SOURCES
     src/Core/MessageSegments.cpp
     src/Core/ForumManager.cpp
     src/Core/ImageManager.cpp
+    src/Core/AnimatedImageCache.cpp
     src/Core/UserManager.cpp
     src/Core/TypingTracker.cpp
     src/Core/PermissionManager.cpp
@@ -208,6 +209,8 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatView.cpp
     src/UI/Chat/ChatLayout.cpp
     src/UI/Chat/InlineVideoController.cpp
+    src/UI/Chat/EmojiAnimator.cpp
+    src/UI/Chat/EmojiTextObject.cpp
     src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
     src/UI/Forum/ForumPostModel.cpp
