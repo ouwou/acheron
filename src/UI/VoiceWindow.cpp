@@ -2,6 +2,7 @@
 
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/ImageManager.hpp"
+#include "UI/StatusIndicator.hpp"
 
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -117,6 +118,16 @@ void VoiceAvatar::paintEvent(QPaintEvent *)
         p.setBrush(palette().color(QPalette::Mid));
         p.drawRoundedRect(avatarRect, AVATAR_RADIUS, AVATAR_RADIUS);
     }
+
+    p.setClipping(false);
+    StatusIndicator::paintOnAvatar(p, avatarRect.toRect(), STATUS_DOT_SIZE, badge, palette().color(QPalette::Window));
+}
+
+void VoiceAvatar::setStatus(const Core::PresenceBadge &newBadge)
+{
+    badge = newBadge;
+    setToolTip(StatusIndicator::tooltip(badge));
+    update();
 }
 
 VoiceUserWidget::VoiceUserWidget(Core::Snowflake userId, QWidget *parent)
@@ -260,6 +271,11 @@ void VoiceUserWidget::setDisplayName(const QString &name)
 void VoiceUserWidget::setAvatar(const QPixmap &pm)
 {
     avatarWidget->setPixmap(pm);
+}
+
+void VoiceUserWidget::setStatus(const Core::PresenceBadge &badge)
+{
+    avatarWidget->setStatus(badge);
 }
 
 VoiceWindow::VoiceWindow(QWidget *parent)
@@ -712,6 +728,26 @@ void VoiceWindow::setAvatarResolver(AvatarResolver resolver)
         requestAvatar(it.key(), it.value());
 }
 
+void VoiceWindow::setStatusResolver(StatusResolver resolver)
+{
+    statusResolver = std::move(resolver);
+
+    for (auto it = userWidgets.begin(); it != userWidgets.end(); ++it)
+        it.value()->setStatus(statusResolver ? statusResolver(it.key()) : Core::PresenceBadge());
+}
+
+void VoiceWindow::refreshPresences(const QList<Core::Snowflake> &userIds)
+{
+    if (!statusResolver)
+        return;
+
+    for (Core::Snowflake userId : userIds) {
+        auto it = userWidgets.constFind(userId);
+        if (it != userWidgets.constEnd())
+            it.value()->setStatus(statusResolver(userId));
+    }
+}
+
 void VoiceWindow::setImageManager(Core::ImageManager *manager)
 {
     if (imageManager == manager)
@@ -791,6 +827,9 @@ void VoiceWindow::onParticipantJoined(Core::Snowflake userId)
     QString name = nameResolver ? nameResolver(userId) : QString::number(userId);
     widget->setDisplayName(name);
 
+    if (statusResolver)
+        widget->setStatus(statusResolver(userId));
+
     if (voiceManager) {
         widget->setLocallyMuted(voiceManager->isUserMuted(userId));
         widget->setDaveActive(!voiceManager->privacyCode().isEmpty());
@@ -845,6 +884,9 @@ void VoiceWindow::onParticipantUpdated(Core::Snowflake userId)
     auto it = userWidgets.constFind(userId);
     if (it == userWidgets.constEnd())
         return;
+
+    if (statusResolver)
+        it.value()->setStatus(statusResolver(userId));
 
     if (!voiceManager)
         return;

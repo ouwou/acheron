@@ -10,12 +10,27 @@
 namespace Acheron {
 namespace Discord {
 
+struct MergedPresences : Core::JsonUtils::JsonObject
+{
+    Field<QList<Presence>, true> friends;
+    Field<QList<QList<Presence>>, true> guilds;
+
+    static MergedPresences fromJson(const QJsonObject &obj)
+    {
+        MergedPresences merged;
+        get(obj, "friends", merged.friends);
+        get(obj, "guilds", merged.guilds);
+        return merged;
+    }
+};
+
 struct Ready : Core::JsonUtils::JsonObject
 {
     Field<User> user;
     Field<QList<GatewayGuild>> guilds;
     Field<QString> userSettingsProto;
     Field<QList<QList<Member>>, true> mergedMembers;
+    Field<MergedPresences, true> mergedPresences;
     Field<QList<User>, true> users;
     Field<QList<Channel>, true> privateChannels;
     Field<QList<ReadStateEntry>, true> readState;
@@ -36,6 +51,7 @@ struct Ready : Core::JsonUtils::JsonObject
         get(obj, "user_settings", ready.userSettings);
         get(obj, "notification_settings", ready.notificationSettings);
         get(obj, "merged_members", ready.mergedMembers);
+        get(obj, "merged_presences", ready.mergedPresences);
         get(obj, "users", ready.users);
         get(obj, "private_channels", ready.privateChannels);
         get(obj, "relationships", ready.relationships);
@@ -89,12 +105,14 @@ struct ReadySupplemental : Core::JsonUtils::JsonObject
 {
     Field<QList<SupplementalGuild>> guilds;
     Field<QList<QList<Member>>> mergedMembers;
+    Field<MergedPresences, true> mergedPresences;
 
     static ReadySupplemental fromJson(const QJsonObject &obj)
     {
         ReadySupplemental readySupplemental;
         get(obj, "guilds", readySupplemental.guilds);
         get(obj, "merged_members", readySupplemental.mergedMembers);
+        get(obj, "merged_presences", readySupplemental.mergedPresences);
         return readySupplemental;
     }
 };
@@ -262,12 +280,14 @@ struct GuildMembersChunk : Core::JsonUtils::JsonObject
     Field<int> chunkIndex;
     Field<int> chunkCount;
     Field<QList<Core::Snowflake>, true> notFound;
+    Field<QList<Presence>, true> presences;
 
     static GuildMembersChunk fromJson(const QJsonObject &obj)
     {
         GuildMembersChunk chunk;
         get(obj, "guild_id", chunk.guildId);
         get(obj, "members", chunk.members);
+        get(obj, "presences", chunk.presences);
         get(obj, "chunk_index", chunk.chunkIndex);
         get(obj, "chunk_count", chunk.chunkCount);
         get(obj, "not_found", chunk.notFound);

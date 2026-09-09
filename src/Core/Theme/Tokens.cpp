@@ -54,6 +54,18 @@ const std::vector<TokenDescriptor> &registry()
           std::nullopt, false },
         { Token::MentionBg, "chat.mentionBg", "Mention background", "Chat",
           QColor(88, 101, 242, 77), std::nullopt, true },
+
+        // presence
+        { Token::StatusOnline, "status.online", "Online", "Presence", QColor(35, 165, 90),
+          std::nullopt, false },
+        { Token::StatusIdle, "status.idle", "Idle", "Presence", QColor(240, 178, 50),
+          std::nullopt, false },
+        { Token::StatusDnd, "status.dnd", "Do not disturb", "Presence", QColor(242, 63, 67),
+          std::nullopt, false },
+        { Token::StatusOffline, "status.offline", "Offline", "Presence", QColor(128, 132, 142),
+          std::nullopt, false },
+        { Token::StatusStreaming, "status.streaming", "Streaming", "Presence", QColor(89, 54, 149),
+          std::nullopt, false },
     };
     return reg;
 }

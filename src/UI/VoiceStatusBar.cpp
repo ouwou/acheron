@@ -110,6 +110,19 @@ void VoiceStatusBar::setAvatarResolver(AvatarResolver resolver)
         voiceWindow->setAvatarResolver(avatarResolver);
 }
 
+void VoiceStatusBar::setStatusResolver(StatusResolver resolver)
+{
+    statusResolver = std::move(resolver);
+    if (voiceWindow)
+        voiceWindow->setStatusResolver(statusResolver);
+}
+
+void VoiceStatusBar::refreshPresences(const QList<Core::Snowflake> &userIds)
+{
+    if (voiceWindow)
+        voiceWindow->refreshPresences(userIds);
+}
+
 void VoiceStatusBar::setImageManager(Core::ImageManager *manager)
 {
     imageManager = manager;
@@ -234,6 +247,8 @@ void VoiceStatusBar::configureVoiceWindow()
         voiceWindow->setNameResolver(nameResolver);
     if (avatarResolver)
         voiceWindow->setAvatarResolver(avatarResolver);
+    if (statusResolver)
+        voiceWindow->setStatusResolver(statusResolver);
     if (voiceManager)
         voiceWindow->setVoiceManager(voiceManager);
 }

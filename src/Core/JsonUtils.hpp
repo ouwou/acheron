@@ -69,6 +69,15 @@ concept QFlagType = detail::is_qflags<T>::value;
 
 class JsonObject
 {
+public:
+    // so entities can default themselves
+    template <typename T>
+        requires std::is_same_v<T, JsonObject>
+    bool operator==(const T &) const
+    {
+        return true;
+    }
+
 protected:
     template <typename T, bool IsOptional = false, bool IsNullable = false>
     class Field
@@ -134,6 +143,11 @@ protected:
         bool operator==(const U &value) const
         {
             return this->value == value;
+        }
+
+        bool operator==(const Field &other) const
+        {
+            return state == other.state && (state != State::Value || value == other.value);
         }
 
         [[nodiscard]] bool isUndefined() const { return IsOptional && state == State::Undefined; }

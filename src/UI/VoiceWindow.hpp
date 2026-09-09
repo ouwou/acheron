@@ -18,6 +18,7 @@
 
 #include "Core/Snowflake.hpp"
 #include "UI/AvatarRequestTracker.hpp"
+#include "Core/Presence/PresenceBadge.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -59,6 +60,7 @@ public:
 
     void setPixmap(const QPixmap &pm);
     void setSpeaking(bool speaking);
+    void setStatus(const Core::PresenceBadge &badge);
 
     QSize sizeHint() const override { return QSize(OUTER_SIZE, OUTER_SIZE); }
     QSize minimumSizeHint() const override { return sizeHint(); }
@@ -69,10 +71,12 @@ protected:
 private:
     QPixmap avatar;
     bool speaking = false;
+    Core::PresenceBadge badge;
 
     static constexpr int OUTER_SIZE = 32;
     static constexpr int BORDER_WIDTH = 2;
     static constexpr int AVATAR_RADIUS = 4;
+    static constexpr int STATUS_DOT_SIZE = 8;
 };
 
 class VoiceUserWidget : public QWidget
@@ -88,6 +92,7 @@ public:
     void setVolume(int pct);
     void setDisplayName(const QString &name);
     void setAvatar(const QPixmap &pm);
+    void setStatus(const Core::PresenceBadge &badge);
     void setDaveActive(bool active);
     int volume() const { return volumeSlider->value(); }
 
@@ -121,12 +126,15 @@ class VoiceWindow : public QWidget
 public:
     using NameResolver = std::function<QString(Core::Snowflake)>;
     using AvatarResolver = std::function<QUrl(Core::Snowflake)>;
+    using StatusResolver = std::function<Core::PresenceBadge(Core::Snowflake)>;
 
     explicit VoiceWindow(QWidget *parent = nullptr);
 
     void setVoiceManager(Core::Audio::VoiceManager *manager);
     void setNameResolver(NameResolver resolver);
     void setAvatarResolver(AvatarResolver resolver);
+    void setStatusResolver(StatusResolver resolver);
+    void refreshPresences(const QList<Core::Snowflake> &userIds);
     void setImageManager(Core::ImageManager *manager);
     void setAccount(Core::Snowflake accountId);
     void refreshDevices();
@@ -163,6 +171,7 @@ private:
     QMetaObject::Connection imageFetchedConn;
     NameResolver nameResolver;
     AvatarResolver avatarResolver;
+    StatusResolver statusResolver;
     AvatarRequestTracker<Core::Snowflake> avatarTracker;
 
     QScrollArea *userScrollArea;

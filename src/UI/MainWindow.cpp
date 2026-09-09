@@ -47,6 +47,7 @@
 #include "Discord/CdnUrls.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/MemberListManager.hpp"
+#include "Core/Presence/PresenceManager.hpp"
 #include "Core/Session.hpp"
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
@@ -402,6 +403,7 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     disconnect(currentInstance->forums(), nullptr, this, nullptr);
 
     memberListModel->setManager(nullptr);
+    memberListModel->setPresenceManager(nullptr);
     forumModel->setManager(nullptr);
     typingTracker->clear();
     typingTracker->setUserManager(nullptr);
@@ -428,6 +430,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     auto *msgs = currentInstance->messages();
 
     memberListModel->setAccount(currentInstance->accountId());
+    memberListModel->setPresenceManager(currentInstance->presences());
     memberListModel->setManager(currentInstance->memberList());
 
     if (auto *video = chatView->videoController())
@@ -778,6 +781,15 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 channelTreeModel->updateReadState(channelId, instance->accountId());
                 refreshTabReadStates();
                 forumModel->refreshPost(channelId);
+            });
+
+    connect(instance->presences(), &Core::PresenceManager::presencesChanged, this,
+            [this, instance](const QList<Core::Snowflake> &userIds) {
+                channelTreeModel->updatePresence(instance->accountId(), userIds);
+#ifndef ACHERON_NO_VOICE
+                if (voiceStatusBar)
+                    voiceStatusBar->refreshPresences(userIds);
+#endif
             });
 
     connect(instance, &Core::ClientInstance::forumBadgeChanged, this,
@@ -1784,9 +1796,17 @@ void MainWindow::updateVoiceStatusLabel()
                 return {};
             return Discord::Cdn::userAvatar(userId, user->avatar.get(), 32);
         });
+
+        QPointer<Core::PresenceManager> pm = voiceInstance->presences();
+        voiceStatusBar->setStatusResolver([pm](Core::Snowflake userId) -> Core::PresenceBadge {
+            if (!pm)
+                return {};
+            return pm->badge(userId);
+        });
     } else {
         voiceStatusBar->setNameResolver(nullptr);
         voiceStatusBar->setAvatarResolver(nullptr);
+        voiceStatusBar->setStatusResolver(nullptr);
     }
 
     QString channelName;
@@ -2309,6 +2329,7 @@ QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake ac
     avatar->setFixedSize(avatarSize);
     QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, 128);
     session->getImageManager()->assign(avatar, url, avatarSize, accountId);
+
     layout->addWidget(avatar);
 
     auto *textLayout = new QVBoxLayout;

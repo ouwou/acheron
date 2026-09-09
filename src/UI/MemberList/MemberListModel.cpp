@@ -1,11 +1,13 @@
 #include "MemberListModel.hpp"
 
+#include "Core/Presence/ActivityFormat.hpp"
 #include "Discord/CdnUrls.hpp"
 
 namespace Acheron {
 namespace UI {
 
 constexpr static QSize AvatarRequestSize = QSize(32, 32);
+constexpr static QSize EmojiRequestSize = QSize(16, 16);
 
 MemberListModel::MemberListModel(Core::ImageManager *imageManager, QObject *parent)
     : QAbstractListModel(parent), imageManager(imageManager)
@@ -66,23 +68,14 @@ QVariant MemberListModel::data(const QModelIndex &index, int role) const
         return item->type == Core::MemberListItem::Type::Member
                        ? item->displayName
                        : QString();
-    case AvatarRole: {
+    case AvatarRole:
         if (item->type != Core::MemberListItem::Type::Member)
             return QVariant();
 
-        Core::Snowflake userId = item->userId;
-        QUrl url = Discord::Cdn::userAvatar(userId, item->member.user->avatar.get(), AvatarRequestSize.width());
-        if (url.isEmpty())
-            return QVariant();
-
-        if (imageManager->isCached(url, AvatarRequestSize))
-            return imageManager->get(url, AvatarRequestSize, accountId);
-
-        imageManager->get(url, AvatarRequestSize, accountId);
-        avatarTracker.track(url, index);
-
-        return QVariant();
-    }
+        return cachedImage(Discord::Cdn::userAvatar(item->userId,
+                                                    item->member.user->avatar.get(),
+                                                    AvatarRequestSize.width()),
+                           AvatarRequestSize, index);
     case RoleColorRole:
         return item->type == Core::MemberListItem::Type::Member
                        ? QVariant::fromValue(item->roleColor)
@@ -99,14 +92,117 @@ QVariant MemberListModel::data(const QModelIndex &index, int role) const
         return item->type == Core::MemberListItem::Type::Group
                        ? QVariant::fromValue(item->groupColor)
                        : QVariant();
+    case PresenceBadgeRole:
+    case HasActivityRole:
+    case ActivityRole:
+        return presenceData(*item, role, index);
+    default:
+        return {};
     }
+}
+
+QVariant MemberListModel::presenceData(const Core::MemberListItem &item, int role,
+                                       const QModelIndex &index) const
+{
+    const bool member = item.type == Core::MemberListItem::Type::Member && presenceManager;
+    const Core::Snowflake guildId = manager->currentGuildId();
+
+    if (role == PresenceBadgeRole)
+        return QVariant::fromValue(member ? presenceManager->badge(item.userId, guildId)
+                                          : Core::PresenceBadge());
+
+    if (role == HasActivityRole)
+        return member && !activityText(item, guildId).isEmpty();
+
+    return QVariant::fromValue(member ? activityLine(item, guildId, index) : MemberActivity());
+}
+
+QString MemberListModel::activityText(const Core::MemberListItem &item, Core::Snowflake guildId) const
+{
+    const Discord::Activity *activity = presenceManager->primaryActivity(item.userId, guildId);
+    if (activity == nullptr)
+        return {};
+
+    return Core::ActivityFormat::secondaryText(*activity);
+}
+
+MemberActivity MemberListModel::activityLine(const Core::MemberListItem &item, Core::Snowflake guildId, const QModelIndex &index) const
+{
+    const Discord::Activity *activity = presenceManager->primaryActivity(item.userId, guildId);
+    if (activity == nullptr)
+        return {};
+
+    MemberActivity line;
+    line.text = Core::ActivityFormat::secondaryText(*activity);
+    line.kind = activity->kind();
+
+    if (!activity->isCustom() || !activity->emoji.hasValue())
+        return line;
+
+    const Discord::ActivityEmoji &emoji = activity->emoji.get();
+    if (emoji.isUnicode())
+        line.emojiText = emoji.nameText();
+    else
+        line.emoji = qvariant_cast<QPixmap>(
+                cachedImage(emoji.stillImageUrl(EmojiRequestSize.width()),
+                            EmojiRequestSize,
+                            index));
+
+    return line;
+}
+
+QVariant MemberListModel::cachedImage(const QUrl &url, const QSize &size, const QModelIndex &index) const
+{
+    if (url.isEmpty())
+        return {};
+
+    if (imageManager->isCached(url, size))
+        return imageManager->get(url, size, accountId);
+
+    imageManager->get(url, size, accountId);
+    avatarTracker.track(url, index);
 
     return {};
+}
+
+void MemberListModel::setPresenceManager(Core::PresenceManager *presences)
+{
+    if (presenceManager)
+        disconnect(presenceManager, nullptr, this, nullptr);
+
+    presenceManager = presences;
+
+    if (presenceManager)
+        connect(presenceManager, &Core::PresenceManager::presencesChanged, this, &MemberListModel::onPresencesChanged);
 }
 
 void MemberListModel::setAccount(Core::Snowflake id)
 {
     accountId = id;
+}
+
+void MemberListModel::notifyRows(const QList<int> &rows)
+{
+    if (rows.isEmpty())
+        return;
+
+    for (int row : rows) {
+        if (row >= 0 && row < rowCount())
+            emit dataChanged(index(row), index(row));
+    }
+}
+
+void MemberListModel::onItemsChanged(const QList<int> &indices)
+{
+    notifyRows(indices);
+}
+
+void MemberListModel::onPresencesChanged(const QList<Core::Snowflake> &userIds)
+{
+    if (!manager)
+        return;
+
+    notifyRows(manager->indicesForUsers(QSet<Core::Snowflake>(userIds.cbegin(), userIds.cend())));
 }
 
 void MemberListModel::onListAboutToReset()
@@ -136,10 +232,9 @@ void MemberListModel::connectManager()
     if (!manager)
         return;
 
-    connect(manager, &Core::MemberListManager::listAboutToReset,
-            this, &MemberListModel::onListAboutToReset);
-    connect(manager, &Core::MemberListManager::listReset,
-            this, &MemberListModel::onListReset);
+    connect(manager, &Core::MemberListManager::listAboutToReset, this, &MemberListModel::onListAboutToReset);
+    connect(manager, &Core::MemberListManager::listReset, this, &MemberListModel::onListReset);
+    connect(manager, &Core::MemberListManager::itemsChanged, this, &MemberListModel::onItemsChanged);
 }
 
 void MemberListModel::disconnectManager()

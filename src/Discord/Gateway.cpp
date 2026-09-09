@@ -285,6 +285,15 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::USER_SETTINGS_PROTO_UPDATE:
         handleUserSettingsProtoUpdate(data);
         break;
+    case GatewayEvent::PRESENCE_UPDATE:
+        handlePresenceUpdate(data);
+        break;
+    case GatewayEvent::PRESENCES_REPLACE:
+        handlePresencesReplace(data);
+        break;
+    case GatewayEvent::SESSIONS_REPLACE:
+        handleSessionsReplace(data);
+        break;
     case GatewayEvent::UNKNOWN:
         qCInfo(LogDiscord) << "Unknown gateway event: " << t;
         break;
@@ -601,12 +610,44 @@ void Gateway::handleUserSettingsProtoUpdate(const Inbound &data)
     emit gatewayUserSettingsProtoUpdate(event);
 }
 
+void Gateway::handlePresenceUpdate(const Inbound &data)
+{
+    Presence event = data.getData<Presence>();
+    emit gatewayPresenceUpdate(event);
+}
+
+void Gateway::handlePresencesReplace(const Inbound &data)
+{
+    const QJsonArray array = data.data.toArray();
+
+    QList<Presence> presences;
+    presences.reserve(array.size());
+    for (const QJsonValue &value : array)
+        presences.append(Presence::fromJson(value.toObject()));
+
+    qCDebug(LogDiscord) << "PRESENCES_REPLACE:" << presences.size() << "presences";
+    emit gatewayPresencesReplace(presences);
+}
+
+void Gateway::handleSessionsReplace(const Inbound &data)
+{
+    const QJsonArray array = data.data.toArray();
+
+    QList<UserSession> sessions;
+    sessions.reserve(array.size());
+    for (const QJsonValue &value : array)
+        sessions.append(UserSession::fromJson(value.toObject()));
+
+    qCDebug(LogDiscord) << "SESSIONS_REPLACE:" << sessions.size() << "sessions";
+    emit gatewaySessionsReplace(sessions);
+}
+
 void Gateway::requestGuildMembers(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds)
 {
     RequestGuildMembers request;
     request.guildId = guildId;
     request.userIds = userIds;
-    request.presences = false;
+    request.presences = true;
 
     sendPayload(request.toJson());
 }

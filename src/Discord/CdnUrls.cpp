@@ -60,6 +60,50 @@ bool hasExpired(const QUrl &url)
     return QDateTime::currentSecsSinceEpoch() + RefreshWindowSecs >= expiryEpochSecs(url);
 }
 
+QUrl activityAsset(Core::Snowflake applicationId, const QString &key, int size)
+{
+    if (key.isEmpty())
+        return {};
+
+    const int separator = key.indexOf(QLatin1Char(':'));
+    if (separator > 0) {
+        const QString scheme = key.left(separator);
+        const QString value = key.mid(separator + 1);
+        if (value.isEmpty())
+            return {};
+
+        const QString encoded = QString::fromUtf8(QUrl::toPercentEncoding(value, "/"));
+
+        if (scheme == QLatin1String("mp")) {
+            QString url = QStringLiteral("https://media.discordapp.net/%1").arg(encoded);
+            if (value.endsWith(QLatin1String(".gif"), Qt::CaseInsensitive))
+                url += QStringLiteral("?format=webp&animated=true");
+            return QUrl(url);
+        }
+        if (scheme == QLatin1String("spotify"))
+            return QUrl(QStringLiteral("https://i.scdn.co/image/%1")
+                                .arg(encoded));
+        if (scheme == QLatin1String("youtube"))
+            return QUrl(QStringLiteral("https://i.ytimg.com/vi/%1/hqdefault_live.jpg")
+                                .arg(encoded));
+        if (scheme == QLatin1String("twitch"))
+            return QUrl(QStringLiteral("https://static-cdn.jtvnw.net/previews-ttv/live_user_%1-%2x%3.jpg")
+                                .arg(encoded, QString::number(size), QString::number(size)));
+
+        return {};
+    }
+
+    if (!applicationId.isValid() ||
+        key.contains(QLatin1Char('/')) ||
+        key.contains(QLatin1String("..")))
+        return {};
+
+    return QUrl(QStringLiteral("https://cdn.discordapp.com/app-assets/%1/%2.png?size=%3")
+                        .arg(QString::number(quint64(applicationId)),
+                             QString::fromUtf8(QUrl::toPercentEncoding(key)),
+                             QString::number(size)));
+}
+
 QUrl connectionIcon(const QString &type)
 {
     static const QHash<QString, QString> table = {

@@ -7,12 +7,15 @@
 
 #include "Core/Snowflake.hpp"
 #include "Discord/Entities.hpp"
+#include "UI/Dialogs/ActivityCard.hpp"
+#include "UI/StatusIndicator.hpp"
 
 class QFrame;
 class QLabel;
 class QPushButton;
 class QTabWidget;
 class QTextEdit;
+class QTimer;
 class QVBoxLayout;
 class QWidget;
 
@@ -35,6 +38,7 @@ public:
 protected:
     void showEvent(QShowEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *obj, QEvent *event) override;
 
@@ -51,6 +55,9 @@ private:
     void renderMutualServers();
     void renderMutualFriends();
     void renderFriendStatus();
+    void renderPresence();
+    QUrl activityFallbackImage(const Discord::Activity &activity);
+    void updateActivityTicker();
     void applyView();
 
     void loadCachedNote();
@@ -94,6 +101,15 @@ private:
 
     QWidget *bioSection = nullptr;
     QLabel *bioLabel = nullptr;
+
+    QWidget *customStatusRow = nullptr;
+    QLabel *customStatusEmoji = nullptr;
+    QLabel *customStatusLabel = nullptr;
+    StatusDot *avatarStatusDot = nullptr;
+    QWidget *activitySection = nullptr;
+    QVBoxLayout *activityLayout = nullptr;
+    QList<ActivityCard *> activityCards;
+    QTimer *activityTicker = nullptr;
 
     QPushButton *viewToggle = nullptr;
 

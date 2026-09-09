@@ -72,7 +72,6 @@ struct UpdatePresence : Acheron::Core::JsonUtils::JsonObject
 {
     Field<QString> status;
     Field<int> since;
-    // QList<Activity> activities;
     Field<bool> afk;
 
     QJsonObject toJson() const
@@ -80,6 +79,7 @@ struct UpdatePresence : Acheron::Core::JsonUtils::JsonObject
         QJsonObject obj;
         insert(obj, "status", status);
         insert(obj, "since", since);
+        obj["activities"] = QJsonArray();
         insert(obj, "afk", afk);
         return obj;
     }

@@ -15,6 +15,7 @@ class QSqlDatabase;
 #include "Emoji/EmojiManager.hpp"
 #include "MessageManager.hpp"
 #include "MemberListManager.hpp"
+#include "Presence/PresenceManager.hpp"
 #include "RelationshipManager.hpp"
 #include "UserManager.hpp"
 #include "PermissionManager.hpp"
@@ -51,6 +52,7 @@ public:
     [[nodiscard]] ReadStateManager *readState() const;
     [[nodiscard]] MemberListManager *memberList() const;
     [[nodiscard]] RelationshipManager *relationships() const;
+    [[nodiscard]] PresenceManager *presences() const;
     [[nodiscard]] EmojiManager *emojis() const;
 #ifndef ACHERON_NO_VOICE
     [[nodiscard]] Audio::VoiceManager *voice() const;
@@ -157,6 +159,7 @@ private:
     ReadStateManager *readStateManager;
     MemberListManager *memberListManager;
     RelationshipManager *relationshipManager;
+    PresenceManager *presenceManager;
     EmojiManager *emojiManager;
 #ifndef ACHERON_NO_VOICE
     Audio::VoiceManager *voiceManager;

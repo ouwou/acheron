@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QList>
 #include <QColor>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 
@@ -85,12 +86,14 @@ public:
     [[nodiscard]] int totalMemberCount() const;
     [[nodiscard]] int onlineCount() const;
     [[nodiscard]] const QList<QPair<int, int>> &currentRanges() const { return ranges; }
+    [[nodiscard]] QList<int> indicesForUsers(const QSet<Snowflake> &userIds) const;
 
     static QString computeListId(const QList<Discord::PermissionOverwrite> &overwrites, Discord::Permissions everyonePermissions);
 
 signals:
     void listAboutToReset();
     void listReset();
+    void itemsChanged(const QList<int> &indices);
 
     void subscriptionRequested(Snowflake guildId, Snowflake channelId, const QList<QPair<int, int>> &ranges);
 

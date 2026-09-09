@@ -96,6 +96,9 @@ signals:
     void gatewayRelationshipRemove(const RelationshipPartial &data);
     void gatewayUserNoteUpdate(const UserNoteUpdate &data);
     void gatewayUserSettingsProtoUpdate(const UserSettingsProtoUpdate &data);
+    void gatewayPresenceUpdate(const Presence &data);
+    void gatewayPresencesReplace(const QList<Presence> &data);
+    void gatewaySessionsReplace(const QList<UserSession> &data);
 
 private:
     void sendPayload(const QJsonObject &obj);
@@ -145,6 +148,9 @@ private:
     void handleRelationshipRemove(const Inbound &data);
     void handleUserNoteUpdate(const Inbound &data);
     void handleUserSettingsProtoUpdate(const Inbound &data);
+    void handlePresenceUpdate(const Inbound &data);
+    void handlePresencesReplace(const Inbound &data);
+    void handleSessionsReplace(const Inbound &data);
     void handleHello(const Inbound &data);
     void identify();
     void resume();

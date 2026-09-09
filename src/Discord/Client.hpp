@@ -61,6 +61,9 @@ public:
     using ProfileCallback = std::function<void(const Core::Result<UserProfile> &)>;
     void fetchUserProfile(Snowflake userId, Snowflake guildId, ProfileCallback callback);
 
+    // empty until its actually fetched
+    [[nodiscard]] QString applicationIconHash(Snowflake applicationId);
+
     void setUserNote(Snowflake userId, const QString &note);
 
     struct ForumThreadSearchResult
@@ -211,6 +214,11 @@ signals:
     void relationshipRemoved(const RelationshipPartial &event);
     void userNoteUpdated(const UserNoteUpdate &event);
     void userSettingsProtoUpdated(const UserSettingsProtoUpdate &event);
+    void settingsChanged();
+    void applicationIconResolved(Snowflake applicationId);
+    void presenceUpdated(const Presence &event);
+    void presencesReplaced(const QList<Presence> &presences);
+    void sessionsReplaced(const QList<UserSession> &sessions);
     void messageSendFailed(const QString &nonce, const QString &error);
     void guildLeaveFailed(Core::Snowflake guildId, const QString &error);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
@@ -240,6 +248,7 @@ private slots:
     void onGatewayGuildRoleCreate(const GuildRoleCreate &event);
     void onGatewayGuildRoleUpdate(const GuildRoleUpdate &event);
     void onGatewayGuildRoleDelete(const GuildRoleDelete &event);
+    void onGatewayUserSettingsProtoUpdate(const UserSettingsProtoUpdate &event);
 
 private:
     void fetchMessages(Snowflake channelId, QUrlQuery query, int limit, MessagesCallback callback);
@@ -287,6 +296,9 @@ private:
     QHash<Snowflake, PremiumTier> guildPremiumTiers;
     QSet<Snowflake> subscribedGuilds;
     QHash<QString, std::shared_ptr<UploadState>> activeUploads; // by nonce
+
+    QHash<Snowflake, QString> applicationIcons;
+    QSet<Snowflake> applicationIconRequests;
 
     Proto::PreloadedUserSettings settings;
     User me;

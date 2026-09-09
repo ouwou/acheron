@@ -165,6 +165,8 @@ set(PROJECT_SOURCES
     src/Core/ReadStateManager.cpp
     src/Core/MemberListManager.cpp
     src/Core/RelationshipManager.cpp
+    src/Core/Presence/PresenceManager.cpp
+    src/Core/Presence/ActivityFormat.cpp
     src/Core/MurmurHash3.cpp
     src/Core/EmojiSegmenter.cpp
     src/Core/Emoji/EmojiManager.cpp
@@ -188,6 +190,7 @@ set(PROJECT_SOURCES
     src/UI/SlowModeIndicator.cpp
     src/UI/ConnectionBanner.cpp
     src/UI/ElidedLabel.cpp
+    src/UI/StatusIndicator.cpp
     src/UI/ProxyLineEdit.cpp
     src/UI/ImageViewer.cpp
     src/UI/VideoFullscreenWindow.cpp
@@ -224,6 +227,7 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
+    src/UI/Dialogs/ActivityCard.cpp
     src/UI/MemberList/MemberListModel.cpp
     src/UI/MemberList/MemberListDelegate.cpp
     src/UI/MemberList/MemberListView.cpp

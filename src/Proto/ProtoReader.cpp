@@ -197,5 +197,21 @@ std::optional<uint64_t> readUInt64Value(ProtoReader &reader)
     return std::nullopt;
 }
 
+bool readBoolValue(ProtoReader &reader)
+{
+    bool result = false;
+    Tag tag;
+    while (reader.readTag(tag)) {
+        if (tag.fieldNumber == 1 && tag.wireType == WireType::VARINT) {
+            uint64_t value;
+            if (reader.readVarint(value))
+                result = value != 0;
+        } else {
+            reader.skipField(tag.wireType);
+        }
+    }
+    return result;
+}
+
 } // namespace Proto
 } // namespace Acheron

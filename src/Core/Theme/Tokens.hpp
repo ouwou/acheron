@@ -38,6 +38,12 @@ enum class Token {
     EmbedDefault,
     MentionText,
     MentionBg,
+    // presence
+    StatusOnline,
+    StatusIdle,
+    StatusDnd,
+    StatusOffline,
+    StatusStreaming,
 };
 
 struct TokenDescriptor

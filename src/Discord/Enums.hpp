@@ -172,6 +172,9 @@ enum class GatewayEvent {
     RELATIONSHIP_REMOVE,
     USER_NOTE_UPDATE,
     USER_SETTINGS_PROTO_UPDATE,
+    PRESENCE_UPDATE,
+    PRESENCES_REPLACE,
+    SESSIONS_REPLACE,
 };
 
 enum class RelationshipType {
@@ -227,10 +230,65 @@ inline GatewayEvent parseGatewayEvent(const QString &event)
         { "RELATIONSHIP_REMOVE", GatewayEvent::RELATIONSHIP_REMOVE },
         { "USER_NOTE_UPDATE", GatewayEvent::USER_NOTE_UPDATE },
         { "USER_SETTINGS_PROTO_UPDATE", GatewayEvent::USER_SETTINGS_PROTO_UPDATE },
+        { "PRESENCE_UPDATE", GatewayEvent::PRESENCE_UPDATE },
+        { "PRESENCES_REPLACE", GatewayEvent::PRESENCES_REPLACE },
+        { "SESSIONS_REPLACE", GatewayEvent::SESSIONS_REPLACE },
     };
 
     return events.value(event, GatewayEvent::UNKNOWN);
 };
+
+enum class StatusType {
+    UNKNOWN,
+    ONLINE,
+    IDLE,
+    DND,
+    OFFLINE,
+    INVISIBLE,
+};
+
+inline StatusType parseStatus(const QString &status)
+{
+    static const QHash<QString, StatusType> statuses = {
+        { "online", StatusType::ONLINE },
+        { "idle", StatusType::IDLE },
+        { "dnd", StatusType::DND },
+        { "offline", StatusType::OFFLINE },
+        { "invisible", StatusType::INVISIBLE },
+        { "unknown", StatusType::UNKNOWN },
+    };
+
+    return statuses.value(status, StatusType::OFFLINE);
+}
+
+enum class ActivityType {
+    PLAYING = 0,
+    STREAMING = 1,
+    LISTENING = 2,
+    WATCHING = 3,
+    CUSTOM = 4,
+    COMPETING = 5,
+    HANG = 6,
+};
+
+// which activity field is shown as the status text
+enum class StatusDisplayType {
+    NAME = 0,
+    STATE = 1,
+    DETAILS = 2,
+};
+
+enum class ActivityFlag {
+    INSTANCE = 1 << 0,
+    JOIN = 1 << 1,
+    SYNC = 1 << 4,
+    PLAY = 1 << 5,
+    PARTY_PRIVACY_FRIENDS = 1 << 6,
+    PARTY_PRIVACY_VOICE_CHANNEL = 1 << 7,
+    EMBEDDED = 1 << 8,
+    CONTEXTLESS = 1 << 9,
+};
+ACHERON_DECLARE_FLAGS(ActivityFlags, ActivityFlag)
 
 enum class ChannelType {
     GUILD_TEXT = 0,

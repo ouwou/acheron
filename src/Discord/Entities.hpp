@@ -55,6 +55,257 @@ struct User : Core::JsonUtils::JsonObject
     }
 };
 
+struct ActivityTimestamps : Core::JsonUtils::JsonObject
+{
+    // milliseconds
+    Field<qint64, true> start;
+    Field<qint64, true> end;
+
+    static ActivityTimestamps fromJson(const QJsonObject &obj)
+    {
+        ActivityTimestamps timestamps;
+        get(obj, "start", timestamps.start);
+        get(obj, "end", timestamps.end);
+        return timestamps;
+    }
+
+    bool operator==(const ActivityTimestamps &) const = default;
+};
+
+struct ActivityEmoji : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> name;
+    Field<Core::Snowflake, true, true> id;
+
+    static ActivityEmoji fromJson(const QJsonObject &obj)
+    {
+        ActivityEmoji emoji;
+        get(obj, "name", emoji.name);
+        get(obj, "id", emoji.id);
+        return emoji;
+    }
+
+    bool isUnicode() const { return !id.hasValue(); }
+
+    QString nameText() const { return name.hasValue() ? name.get() : QString(); }
+
+    QUrl stillImageUrl(int size) const
+    {
+        if (isUnicode())
+            return {};
+        return Cdn::emoji(*id, size, false);
+    }
+
+    bool operator==(const ActivityEmoji &) const = default;
+};
+
+struct ActivityParty : Core::JsonUtils::JsonObject
+{
+    int currentSize = 0;
+    int maxSize = 0;
+
+    static ActivityParty fromJson(const QJsonObject &obj)
+    {
+        ActivityParty party;
+
+        const QJsonArray size = obj.value("size").toArray();
+        if (size.size() >= 2) {
+            party.currentSize = size[0].toInt();
+            party.maxSize = size[1].toInt();
+        }
+
+        return party;
+    }
+
+    bool hasSize() const { return currentSize > 0; }
+
+    bool operator==(const ActivityParty &) const = default;
+};
+
+struct ActivityAssets : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> largeImage;
+    Field<QString, true> largeText;
+    Field<QString, true> smallImage;
+    Field<QString, true> smallText;
+
+    static ActivityAssets fromJson(const QJsonObject &obj)
+    {
+        ActivityAssets assets;
+        get(obj, "large_image", assets.largeImage);
+        get(obj, "large_text", assets.largeText);
+        get(obj, "small_image", assets.smallImage);
+        get(obj, "small_text", assets.smallText);
+        return assets;
+    }
+
+    bool operator==(const ActivityAssets &) const = default;
+};
+
+struct Activity : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> name;
+    Field<ActivityType, true> type;
+    Field<ActivityTimestamps, true> timestamps;
+    Field<Core::Snowflake, true> applicationId;
+    Field<StatusDisplayType, true, true> statusDisplayType;
+    Field<QString, true, true> details;
+    Field<QString, true, true> state;
+    Field<ActivityFlags, true> flags;
+    Field<ActivityEmoji, true, true> emoji;
+    Field<ActivityParty, true> party;
+    Field<ActivityAssets, true> assets;
+    Field<qint64, true> createdAt;
+
+    static Activity fromJson(const QJsonObject &obj)
+    {
+        Activity activity;
+        get(obj, "name", activity.name);
+        get(obj, "type", activity.type);
+        get(obj, "timestamps", activity.timestamps);
+        get(obj, "application_id", activity.applicationId);
+        get(obj, "status_display_type", activity.statusDisplayType);
+        get(obj, "details", activity.details);
+        get(obj, "state", activity.state);
+        get(obj, "flags", activity.flags);
+        get(obj, "emoji", activity.emoji);
+        get(obj, "party", activity.party);
+        get(obj, "assets", activity.assets);
+        get(obj, "created_at", activity.createdAt);
+        return activity;
+    }
+
+    ActivityType kind() const
+    {
+        return type.hasValue() ? type.get() : ActivityType::PLAYING;
+    }
+
+    bool isCustom() const { return kind() == ActivityType::CUSTOM; }
+
+    QString nameText() const { return name.hasValue() ? name.get() : QString(); }
+
+    QString detailsText() const { return details.hasValue() ? details.get() : QString(); }
+
+    QString stateText() const { return state.hasValue() ? state.get() : QString(); }
+
+    qint64 createdAtMs() const { return createdAt.hasValue() ? createdAt.get() : 0; }
+
+    qint64 startMs() const
+    {
+        if (timestamps.hasValue() && timestamps->start.hasValue())
+            return timestamps->start.get();
+        return createdAtMs();
+    }
+
+    qint64 endMs() const
+    {
+        if (timestamps.hasValue() && timestamps->end.hasValue())
+            return timestamps->end.get();
+        return 0;
+    }
+
+    bool operator==(const Activity &) const = default;
+
+    bool hasFlag(ActivityFlag flag) const
+    {
+        return flags.hasValue() && flags->testFlag(flag);
+    }
+};
+
+struct ClientStatus : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> desktop;
+    Field<QString, true> mobile;
+    Field<QString, true> web;
+    Field<QString, true> vr;
+
+    static ClientStatus fromJson(const QJsonObject &obj)
+    {
+        ClientStatus status;
+        get(obj, "desktop", status.desktop);
+        get(obj, "mobile", status.mobile);
+        get(obj, "web", status.web);
+        get(obj, "vr", status.vr);
+        return status;
+    }
+
+    bool isMobileOnly() const
+    {
+        auto isOnline = [](const auto &field) {
+            return field.hasValue() && field.get() == "online";
+        };
+        return isOnline(mobile) && !isOnline(desktop) && !isOnline(vr);
+    }
+};
+
+struct Presence : Core::JsonUtils::JsonObject
+{
+    // user might only hae an id
+    Field<User, true> user;
+    Field<Core::Snowflake, true> guildId;
+    Field<QString, true> status;
+    Field<QList<Activity>, true> activities;
+    Field<ClientStatus, true> clientStatus;
+
+    static Presence fromJson(const QJsonObject &obj)
+    {
+        Presence presence;
+        get(obj, "user", presence.user);
+        get(obj, "guild_id", presence.guildId);
+        get(obj, "status", presence.status);
+        get(obj, "activities", presence.activities);
+        get(obj, "client_status", presence.clientStatus);
+
+        if (!presence.user.hasValue() && obj.contains("user_id")) {
+            User user;
+            get(obj, "user_id", user.id);
+            presence.user = user;
+        }
+
+        return presence;
+    }
+
+    Core::Snowflake userId() const
+    {
+        if (user.hasValue() && user->id.hasValue())
+            return user->id.get();
+        return Core::Snowflake();
+    }
+
+    StatusType statusType() const
+    {
+        return parseStatus(status.hasValue() ? status.get() : QString());
+    }
+};
+
+struct UserSession : Core::JsonUtils::JsonObject
+{
+    Field<QString, true> sessionId;
+    Field<QString, true> status;
+    Field<QList<Activity>, true> activities;
+    Field<bool, true> active;
+
+    static UserSession fromJson(const QJsonObject &obj)
+    {
+        UserSession session;
+        get(obj, "session_id", session.sessionId);
+        get(obj, "status", session.status);
+        get(obj, "activities", session.activities);
+        get(obj, "active", session.active);
+        return session;
+    }
+
+    bool isAggregate() const
+    {
+        return sessionId.hasValue() && sessionId.get() == "all";
+    }
+
+    StatusType statusType() const
+    {
+        return parseStatus(status.hasValue() ? status.get() : QString());
+    }
+};
+
 struct Member : Core::JsonUtils::JsonObject
 {
     Field<User, true> user;
@@ -69,6 +320,7 @@ struct Member : Core::JsonUtils::JsonObject
     Field<bool, true> pending;
     Field<QDateTime, true, true> communicationDisabledUntil;
     Field<Core::Snowflake, true> userId; // supplemental
+    Field<Presence, true> presence;
 
     static Member fromJson(const QJsonObject &obj)
     {
@@ -85,6 +337,7 @@ struct Member : Core::JsonUtils::JsonObject
         get(obj, "pending", member.pending);
         get(obj, "communication_disabled_until", member.communicationDisabledUntil);
         get(obj, "user_id", member.userId);
+        get(obj, "presence", member.presence);
         return member;
     }
 };
@@ -406,6 +659,8 @@ struct GatewayGuild : Core::JsonUtils::JsonObject
     Field<QList<Role>, true> roles;
     Field<QList<Emoji>, true> emojis;
     Field<QList<Member>, true> members;
+    // only sometimes
+    Field<QList<Presence>, true> presences;
     Field<QDateTime, true> joinedAt;
     Field<bool, true> unavailable;
 
@@ -418,6 +673,7 @@ struct GatewayGuild : Core::JsonUtils::JsonObject
         get(obj, "roles", guild.roles);
         get(obj, "emojis", guild.emojis);
         get(obj, "members", guild.members);
+        get(obj, "presences", guild.presences);
         get(obj, "joined_at", guild.joinedAt);
         get(obj, "unavailable", guild.unavailable);
         return guild;

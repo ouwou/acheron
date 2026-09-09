@@ -1,6 +1,7 @@
 #include "MemberListManager.hpp"
 
 #include <algorithm>
+#include <optional>
 
 #include "MurmurHash3.hpp"
 
@@ -238,6 +239,36 @@ void MemberListManager::handleRoleDeleted(Snowflake guildId, Snowflake roleId)
     }
 }
 
+static bool sameGroups(const QList<Discord::GuildMemberListUpdate::Group> &a,
+                       const QList<Discord::GuildMemberListUpdate::Group> &b)
+{
+    if (a.size() != b.size())
+        return false;
+
+    for (int i = 0; i < a.size(); i++) {
+        if (a.at(i).id.get() != b.at(i).id.get() || a.at(i).count.get() != b.at(i).count.get())
+            return false;
+    }
+
+    return true;
+}
+
+static std::optional<QList<int>> inPlaceUpdateIndices(const Discord::GuildMemberListUpdate &update, const ListData &current)
+{
+    if (!update.groups->isEmpty() && !sameGroups(update.groups.get(), current.groups))
+        return std::nullopt;
+
+    QList<int> indices;
+    for (const auto &op : update.ops.get()) {
+        if (op.op.get() != "UPDATE" || op.index.isUndefined() ||
+            op.item.isUndefined())
+            return std::nullopt;
+        indices.append(op.index);
+    }
+
+    return indices;
+}
+
 void MemberListManager::handleMemberListUpdate(const Discord::GuildMemberListUpdate &update)
 {
     ML_LOG << "[ML] update guild:" << update.guildId.get()
@@ -253,17 +284,20 @@ void MemberListManager::handleMemberListUpdate(const Discord::GuildMemberListUpd
 
     ListData &ld = gs.lists[update.id];
 
+    const bool isActiveList = (update.guildId == activeGuildId && update.id == listId);
+
+    const auto updatedIndices = isActiveList ? inPlaceUpdateIndices(update, ld) : std::nullopt;
+    const bool inPlace = updatedIndices.has_value();
+
     if (!update.groups->isEmpty())
         ld.groups = update.groups;
-
-    bool isActiveList = (update.guildId == activeGuildId && update.id == listId);
 
     if (isActiveList) {
         awaitingResponse = false;
         responseTimer.stop();
     }
 
-    if (isActiveList)
+    if (isActiveList && !inPlace)
         emit listAboutToReset();
 
     for (const auto &op : update.ops.get()) {
@@ -296,8 +330,12 @@ void MemberListManager::handleMemberListUpdate(const Discord::GuildMemberListUpd
            << "isActive:" << isActiveList
            << "totalItemCount:" << (isActiveList ? totalItemCount() : -1);
 
-    if (isActiveList)
-        emit listReset();
+    if (isActiveList) {
+        if (inPlace)
+            emit itemsChanged(updatedIndices.value());
+        else
+            emit listReset();
+    }
 
     if (isActiveList && hasPendingRanges && pendingRanges != ranges)
         applyAndSendRanges(pendingRanges);
@@ -325,6 +363,23 @@ const MemberListItem *MemberListManager::itemAt(int index) const
     if (it != ld->items.constEnd())
         return &it.value();
     return nullptr;
+}
+
+QList<int> MemberListManager::indicesForUsers(const QSet<Snowflake> &userIds) const
+{
+    QList<int> indices;
+
+    const auto *ld = activeListData();
+    if (!ld || userIds.isEmpty())
+        return indices;
+
+    for (auto it = ld->items.constBegin(); it != ld->items.constEnd(); ++it) {
+        if (it.value().type == MemberListItem::Type::Member &&
+            userIds.contains(it.value().userId))
+            indices.append(it.key());
+    }
+
+    return indices;
 }
 
 bool MemberListManager::isLoaded(int index) const
@@ -448,6 +503,7 @@ MemberListItem MemberListManager::syncItemToListItem(
     } else if (!syncItem.member.isUndefined()) {
         listItem.type = MemberListItem::Type::Member;
         listItem.member = syncItem.member;
+        listItem.member.presence.undefine();
 
         if (!syncItem.member->user.isUndefined())
             listItem.userId = syncItem.member->user->id;

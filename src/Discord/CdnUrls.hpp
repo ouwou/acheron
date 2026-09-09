@@ -62,6 +62,17 @@ inline QUrl guildIcon(Core::Snowflake guildId, const QString &hash, int size = 6
                              QString::number(size)));
 }
 
+inline QUrl applicationIcon(Core::Snowflake applicationId, const QString &hash, int size = 128)
+{
+    if (hash.isEmpty())
+        return {};
+    return QUrl(QStringLiteral("https://cdn.discordapp.com/app-icons/%1/%2.%3?size=%4")
+                        .arg(QString::number(quint64(applicationId)),
+                             hash,
+                             assetExtension(hash),
+                             QString::number(size)));
+}
+
 inline QUrl channelIcon(Core::Snowflake channelId, const QString &hash, int size = 64)
 {
     if (hash.isEmpty())
@@ -98,6 +109,8 @@ bool isAnimatedEmojiUrl(const QUrl &url);
 QUrl stillEmojiUrl(const QUrl &animatedUrl);
 
 QUrl connectionIcon(const QString &type);
+
+QUrl activityAsset(Core::Snowflake applicationId, const QString &key, int size);
 
 bool isDiscordMediaUrl(const QUrl &url);
 bool isSigned(const QUrl &url);

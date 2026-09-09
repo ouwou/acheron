@@ -11,6 +11,7 @@
 
 #include "Core/Snowflake.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
+#include "Core/Presence/PresenceBadge.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -29,12 +30,15 @@ class VoiceStatusBar : public QWidget
 public:
     using NameResolver = std::function<QString(Core::Snowflake)>;
     using AvatarResolver = std::function<QUrl(Core::Snowflake)>;
+    using StatusResolver = std::function<Core::PresenceBadge(Core::Snowflake)>;
 
     explicit VoiceStatusBar(QWidget *parent = nullptr);
 
     void setVoiceManager(Core::Audio::VoiceManager *manager);
     void setNameResolver(NameResolver resolver);
     void setAvatarResolver(AvatarResolver resolver);
+    void setStatusResolver(StatusResolver resolver);
+    void refreshPresences(const QList<Core::Snowflake> &userIds);
     void setImageManager(Core::ImageManager *manager);
     void setAccount(Core::Snowflake accountId);
     void setChannelName(const QString &name);
@@ -59,6 +63,7 @@ private:
     Core::Snowflake accountId;
     NameResolver nameResolver;
     AvatarResolver avatarResolver;
+    StatusResolver statusResolver;
 
     QLabel *statusDot;
     QLabel *statusLabel;

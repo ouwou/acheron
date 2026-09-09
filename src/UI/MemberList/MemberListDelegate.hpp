@@ -2,6 +2,8 @@
 
 #include <QStyledItemDelegate>
 
+#include "MemberListModel.hpp"
+
 namespace Acheron {
 namespace UI {
 
@@ -21,7 +23,11 @@ private:
                     const QModelIndex &index) const;
     void paintMember(QPainter *painter, const QStyleOptionViewItem &option,
                      const QModelIndex &index) const;
+    void paintActivityLine(QPainter *painter, const QStyleOptionViewItem &option,
+                           const MemberActivity &activity, const QRect &lineRect) const;
     void paintPlaceholder(QPainter *painter, const QStyleOptionViewItem &option) const;
+
+    static QString activityIconName(Discord::ActivityType kind);
 };
 
 } // namespace UI

@@ -52,6 +52,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     forumManager = new ForumManager(client, channelRepo, readStateManager, this);
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
     relationshipManager = new RelationshipManager(this);
+    presenceManager = new PresenceManager(this);
     emojiManager = new EmojiManager(client, this, this);
     messageManager->setEmojiManager(emojiManager);
 #ifndef ACHERON_NO_VOICE
@@ -71,11 +72,15 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         account.displayName = ready.user->globalName;
         account.avatar = ready.user->avatar;
 
+        QList<Snowflake> guildIds;
+        guildIds.reserve(ready.guilds->size());
+
         Storage::Transaction txn(db);
         for (size_t i = 0; i < ready.guilds->size(); i++) {
             const auto &guild = ready.guilds->at(i);
             const QList<Discord::Member> *members = ready.mergedMembers.hasValue() ? &ready.mergedMembers->at(i) : nullptr;
             saveGuild(guild, members, ready.user->id.get(), db);
+            guildIds.append(guild.properties->id);
         }
 
         userManager->saveUser(ready.user);
@@ -107,6 +112,12 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         }
 
         txn.commit();
+
+        presenceManager->setSelfUserId(ready.user->id.get());
+        presenceManager->reset();
+        presenceManager->applyProtoStatus(client->getSettings());
+        if (ready.mergedPresences.hasValue())
+            presenceManager->loadMergedPresences(ready.mergedPresences.get(), guildIds);
 
         readStateManager->loadFromReady(
                 ready.readState.hasValue() ? ready.readState.get()
@@ -153,6 +164,14 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 
                 txn.commit();
 
+                if (data.mergedPresences.hasValue()) {
+                    QList<Snowflake> guildIds;
+                    guildIds.reserve(data.guilds->size());
+                    for (const auto &guild : data.guilds.get())
+                        guildIds.append(guild.id.get());
+                    presenceManager->loadMergedPresences(data.mergedPresences.get(), guildIds);
+                }
+
 #ifndef ACHERON_NO_VOICE
                 for (const auto &guild : data.guilds.get()) {
                     if (!guild.voiceStates.hasValue())
@@ -188,6 +207,13 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(client, &Discord::Client::ready, emojiManager, &EmojiManager::onReady);
     connect(client, &Discord::Client::guildEmojisUpdated, emojiManager, &EmojiManager::onGuildEmojisUpdated);
     connect(client, &Discord::Client::userSettingsProtoUpdated, emojiManager, &EmojiManager::onUserSettingsProtoUpdated);
+    connect(client, &Discord::Client::settingsChanged, this, [this]() { presenceManager->applyProtoStatus(client->getSettings()); });
+
+    connect(client, &Discord::Client::presenceUpdated, presenceManager, &PresenceManager::onPresenceUpdate);
+    connect(client, &Discord::Client::presencesReplaced, presenceManager, &PresenceManager::onPresencesReplace);
+    connect(client, &Discord::Client::sessionsReplaced, presenceManager, &PresenceManager::onSessionsReplace);
+    connect(client, &Discord::Client::guildCreated, presenceManager, &PresenceManager::onGuildCreated);
+    connect(client, &Discord::Client::guildMembersChunk, presenceManager, &PresenceManager::onGuildMembersChunk);
 
     connect(client, &Discord::Client::guildCreated, this, &ClientInstance::onGuildCreated);
     connect(client, &Discord::Client::guildDeleted, this, &ClientInstance::onGuildDeleted);
@@ -199,6 +225,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(client, &Discord::Client::guildRoleDeleted, this, &ClientInstance::onGuildRoleDeleted);
     connect(client, &Discord::Client::guildMembersChunk, this, &ClientInstance::onGuildMembersChunk);
     connect(client, &Discord::Client::guildMemberUpdated, this, &ClientInstance::onGuildMemberUpdate);
+    connect(client, &Discord::Client::guildMemberListUpdate, presenceManager, &PresenceManager::onGuildMemberListUpdate);
     connect(client, &Discord::Client::guildMemberListUpdate, memberListManager, &MemberListManager::handleMemberListUpdate);
     connect(client, &Discord::Client::guildMemberListUpdate, this, &ClientInstance::onGuildMemberListUpdate);
     connect(memberListManager, &MemberListManager::subscriptionRequested, client, &Discord::Client::subscribeToGuildChannel);
@@ -376,6 +403,8 @@ void ClientInstance::onGuildDeleted(const Discord::GuildDelete &event)
     Snowflake guildId = event.id.get();
 
     qCInfo(LogCore) << "Removed from guild:" << guildId;
+
+    presenceManager->onGuildRemoved(guildId);
 
     QList<Discord::Channel> channels = channelRepo.getChannelsForGuild(guildId);
 
@@ -887,6 +916,7 @@ void ClientInstance::onGuildMemberListUpdate(const Discord::GuildMemberListUpdat
             return;
         users.append(member.user.get());
         members.append(member);
+        members.last().presence.undefine();
     };
 
     for (const auto &op : update.ops.get()) {
@@ -1171,6 +1201,11 @@ ReadStateManager *ClientInstance::readState() const
 RelationshipManager *ClientInstance::relationships() const
 {
     return relationshipManager;
+}
+
+PresenceManager *ClientInstance::presences() const
+{
+    return presenceManager;
 }
 
 MemberListManager *ClientInstance::memberList() const

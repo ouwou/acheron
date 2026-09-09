@@ -5,9 +5,11 @@
 #include "ChannelFilterProxyModel.hpp"
 
 #include "Core/Theme/Icons.hpp"
+#include "UI/StatusIndicator.hpp"
 
 namespace Acheron {
 namespace UI {
+
 ChannelDelegate::ChannelDelegate(QAbstractProxyModel *proxyModel, QObject *parent)
     : QStyledItemDelegate(parent), proxyModel(proxyModel)
 {
@@ -407,6 +409,14 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
             painter->restore();
         }
 
+        if (node->dmRecipientId.isValid()) {
+            constexpr int statusDotSize = 6;
+            StatusIndicator::paintOnAvatar(
+                    *painter, avatarRect, statusDotSize,
+                    index.data(ChannelTreeModel::PresenceBadgeRole).value<Core::PresenceBadge>(),
+                    option.palette.color(QPalette::Base));
+        }
+
         bool muted = index.data(ChannelTreeModel::IsVoiceMutedRole).toBool();
         bool deafened = index.data(ChannelTreeModel::IsVoiceDeafenedRole).toBool();
         constexpr int statusIconSize = 14;
@@ -467,14 +477,21 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         return;
     }
 
-    // draw icon for Server and DMChannel
     if (node->type == ChannelNode::Type::Server || node->type == ChannelNode::Type::DMChannel) {
+        QRect iconRect = QRect(contentOpt.rect.left(),
+                               contentOpt.rect.top() + (contentOpt.rect.height() - iconSize) / 2,
+                               iconSize, iconSize);
+
         QPixmap icon = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
-        if (!icon.isNull()) {
-            QRect iconRect = QRect(contentOpt.rect.left(),
-                                   contentOpt.rect.top() + (contentOpt.rect.height() - iconSize) / 2,
-                                   iconSize, iconSize);
+        if (!icon.isNull())
             painter->drawPixmap(iconRect, icon);
+
+        if (node->type == ChannelNode::Type::DMChannel && node->dmRecipientId.isValid()) {
+            constexpr int statusDotSize = 8;
+            StatusIndicator::paintOnAvatar(
+                    *painter, iconRect, statusDotSize,
+                    index.data(ChannelTreeModel::PresenceBadgeRole).value<Core::PresenceBadge>(),
+                    option.palette.color(QPalette::Base));
         }
     }
 

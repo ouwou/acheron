@@ -4,6 +4,7 @@
 
 #include <Core/ClientInstance.hpp>
 #include <Core/ForumManager.hpp>
+#include <Core/Presence/PresenceBadge.hpp>
 #include <Core/ReadStateManager.hpp>
 #include <Core/Logging.hpp>
 #include <Discord/CdnUrls.hpp>
@@ -213,6 +214,20 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
     }
     if (role == OwnerIdRole)
         return static_cast<quint64>(node->ownerId);
+
+    if (role == PresenceBadgeRole) {
+        if ((node->type != ChannelNode::Type::DMChannel &&
+             node->type != ChannelNode::Type::VoiceParticipant) ||
+            !node->dmRecipientId.isValid())
+            return QVariant::fromValue(Core::PresenceBadge());
+
+        ChannelNode *accNode = getAccountNodeFor(node);
+        auto *instance = accNode ? session->client(accNode->id) : nullptr;
+        if (!instance)
+            return QVariant::fromValue(Core::PresenceBadge());
+
+        return QVariant::fromValue(instance->presences()->badge(node->dmRecipientId));
+    }
 
     if (role == ThreadJoinedRole) {
         if (node->type != ChannelNode::Type::Thread ||
@@ -1400,6 +1415,30 @@ void ChannelTreeModel::updateReadState(Snowflake channelId, Snowflake accountId)
     setSelfReadState(channelNode, computeNodeReadState(channelNode, instance));
     if (notifyIfReadStateChanged(channelNode, before))
         updateNodeAggregates(channelNode->parent);
+}
+
+void ChannelTreeModel::updatePresence(Snowflake accountId, const QList<Snowflake> &userIds)
+{
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode || userIds.isEmpty())
+        return;
+
+    const QSet<Snowflake> changed(userIds.cbegin(), userIds.cend());
+
+    std::function<void(ChannelNode *)> visit = [&](ChannelNode *node) {
+        if ((node->type == ChannelNode::Type::DMChannel ||
+             node->type == ChannelNode::Type::VoiceParticipant) &&
+            node->dmRecipientId.isValid() && changed.contains(node->dmRecipientId)) {
+            QModelIndex idx = indexForNode(node);
+            if (idx.isValid())
+                emit dataChanged(idx, idx, { PresenceBadgeRole });
+        }
+
+        for (const auto &child : node->children)
+            visit(child.get());
+    };
+
+    visit(accNode);
 }
 
 void ChannelTreeModel::updateForumBadge(Snowflake forumId, Snowflake accountId)

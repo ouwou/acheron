@@ -53,6 +53,7 @@ QString readString(ProtoReader &reader);
 std::optional<int64_t> readInt64Value(ProtoReader &reader);
 std::optional<QString> readStringValue(ProtoReader &reader);
 std::optional<uint64_t> readUInt64Value(ProtoReader &reader);
+bool readBoolValue(ProtoReader &reader);
 
 } // namespace Proto
 } // namespace Acheron

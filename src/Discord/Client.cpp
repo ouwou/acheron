@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QJsonObject>
+#include <QPointer>
 
 #include "Enums.hpp"
 #include "Core/Logging.hpp"
@@ -101,8 +102,10 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayRelationshipUpdate, this, &Client::relationshipUpdated);
     connect(gateway, &Gateway::gatewayRelationshipRemove, this, &Client::relationshipRemoved);
     connect(gateway, &Gateway::gatewayUserNoteUpdate, this, &Client::userNoteUpdated);
-    connect(gateway, &Gateway::gatewayUserSettingsProtoUpdate, this,
-            &Client::userSettingsProtoUpdated);
+    connect(gateway, &Gateway::gatewayUserSettingsProtoUpdate, this, &Client::onGatewayUserSettingsProtoUpdate);
+    connect(gateway, &Gateway::gatewayPresenceUpdate, this, &Client::presenceUpdated);
+    connect(gateway, &Gateway::gatewayPresencesReplace, this, &Client::presencesReplaced);
+    connect(gateway, &Gateway::gatewaySessionsReplace, this, &Client::sessionsReplaced);
     connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
         setState(Core::ConnectionState::Connecting);
         emit reconnecting(attempt, maxAttempts);
@@ -207,6 +210,43 @@ void Client::fetchUserProfile(Snowflake userId, Snowflake guildId, ProfileCallba
         UserProfile profile = UserProfile::fromJson(QJsonDocument::fromJson(response.body).object());
         callback({ profile });
     });
+}
+
+QString Client::applicationIconHash(Snowflake applicationId)
+{
+    if (!applicationId.isValid())
+        return {};
+
+    auto cached = applicationIcons.constFind(applicationId);
+    if (cached != applicationIcons.constEnd())
+        return cached.value();
+
+    if (applicationIconRequests.contains(applicationId))
+        return {};
+
+    applicationIconRequests.insert(applicationId);
+
+    QString endpoint = "/applications/" + QString::number(applicationId) + "/public";
+    QPointer<Client> self(this);
+    httpClient->get(endpoint, QUrlQuery(), [self, applicationId](const HttpResponse &response) {
+        if (!self)
+            return;
+
+        self->applicationIconRequests.remove(applicationId);
+
+        QString icon;
+        if (response.success)
+            icon = QJsonDocument::fromJson(response.body).object().value("icon").toString();
+        else
+            qCWarning(LogDiscord) << "Failed to fetch application" << applicationId << ":"
+                                  << response.error;
+
+        self->applicationIcons.insert(applicationId, icon);
+        if (!icon.isEmpty())
+            emit self->applicationIconResolved(applicationId);
+    });
+
+    return {};
 }
 
 void Client::refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback)
@@ -495,9 +535,7 @@ void Client::onGatewayReady(const Ready &data)
     for (const auto &guild : data.guilds.get())
         indexGuildMappings(guild);
 
-    const QByteArray binary = QByteArray::fromBase64(data.userSettingsProto->toUtf8());
-    Proto::ProtoReader reader(binary);
-    settings = Proto::PreloadedUserSettings::fromProto(reader);
+    settings = Proto::PreloadedUserSettings::fromBase64(data.userSettingsProto.get());
 
     if ((!settings.guildFolders.has_value() || settings.guildFolders->folders.isEmpty()) && data.userSettings.hasValue() && !data.userSettings->guildFolders->isEmpty())
         settings.guildFolders = guildFoldersFromLegacy(data.userSettings->guildFolders.get());
@@ -510,6 +548,25 @@ void Client::onGatewayReady(const Ready &data)
 void Client::onGatewayReadySupplemental(const ReadySupplemental &data)
 {
     emit readySupplemental(data);
+}
+
+void Client::onGatewayUserSettingsProtoUpdate(const UserSettingsProtoUpdate &event)
+{
+    if (event.type.get() == UserSettingsProtoType::PRELOADED) {
+        auto updated = Proto::PreloadedUserSettings::fromBase64(event.proto.get());
+
+        if (event.partial.hasValue() && event.partial.get()) {
+            settings.mergeFrom(updated);
+        } else {
+            if (!updated.guildFolders.has_value() || updated.guildFolders->folders.isEmpty())
+                updated.guildFolders = settings.guildFolders;
+            settings = updated;
+        }
+
+        emit settingsChanged();
+    }
+
+    emit userSettingsProtoUpdated(event);
 }
 
 void Client::onGatewayMessageCreate(const Message &msg)

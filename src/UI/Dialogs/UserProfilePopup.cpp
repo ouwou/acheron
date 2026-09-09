@@ -20,8 +20,13 @@
 
 #include <algorithm>
 
+#include <QDateTime>
+#include <QTimer>
+
 #include "Core/ClientInstance.hpp"
 #include "Core/ImageManager.hpp"
+#include "Core/Presence/ActivityFormat.hpp"
+#include "Core/Presence/PresenceManager.hpp"
 #include "Core/RelationshipManager.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Core/UserManager.hpp"
@@ -40,6 +45,10 @@ constexpr int AvatarOverlap = 60;
 constexpr int ContentSidePadding = 16;
 constexpr int ColumnSpacing = 20;
 constexpr int IdentityGap = 12;
+constexpr int StatusDotSize = 24;
+constexpr int CustomStatusEmojiSize = 16;
+constexpr int ActivityTickMs = 1000;
+constexpr int ActivityImageRequestSize = 160;
 constexpr int LeftRightColumnHeight = 260;
 
 class CroppedImageLabel : public QLabel
@@ -166,6 +175,7 @@ UserProfilePopup::UserProfilePopup(Core::ImageManager *images, Core::ClientInsta
 
     buildUi();
     renderFromCachedData();
+    renderPresence();
     loadCachedNote();
     requestProfile();
 
@@ -175,11 +185,18 @@ UserProfilePopup::UserProfilePopup(Core::ImageManager *images, Core::ClientInsta
                     if (id == this->userId)
                         renderFriendStatus();
                 });
+        connect(instance->presences(), &Core::PresenceManager::presencesChanged, this,
+                [this](const QList<Core::Snowflake> &userIds) {
+                    if (userIds.contains(this->userId))
+                        renderPresence();
+                });
         connect(instance->users(), &Core::UserManager::noteChanged, this,
                 [this](Core::Snowflake id) {
                     if (id == this->userId)
                         loadCachedNote();
                 });
+        connect(instance->discord(), &Discord::Client::applicationIconResolved, this,
+                [this](Core::Snowflake) { renderPresence(); });
         connect(instance, &QObject::destroyed, this, &QDialog::close);
     }
 }
@@ -272,6 +289,7 @@ QWidget *UserProfilePopup::buildHeader()
             renderFromProfile();
         else
             renderFromCachedData();
+        renderPresence();
     });
     nameRow->addStretch(1);
     nameRow->addWidget(viewToggle, 0, Qt::AlignVCenter);
@@ -280,6 +298,23 @@ QWidget *UserProfilePopup::buildHeader()
     handleLabel = new QLabel(identityRow);
     handleLabel->setStyleSheet(QStringLiteral("color: palette(placeholder-text); font-size: 13px;"));
     identityCol->addWidget(handleLabel);
+
+    customStatusRow = new QWidget(identityRow);
+    auto *customStatusLayout = new QHBoxLayout(customStatusRow);
+    customStatusLayout->setContentsMargins(0, 2, 0, 6);
+    customStatusLayout->setSpacing(5);
+    customStatusEmoji = new QLabel(customStatusRow);
+    customStatusEmoji->setFixedSize(CustomStatusEmojiSize, CustomStatusEmojiSize);
+    customStatusEmoji->setScaledContents(true);
+    customStatusLayout->addWidget(customStatusEmoji, 0, Qt::AlignVCenter);
+    customStatusLabel = new QLabel(customStatusRow);
+    customStatusLabel->setWordWrap(true);
+    customStatusLabel->setTextFormat(Qt::PlainText);
+    customStatusLabel->setStyleSheet(QStringLiteral("font-size: 12px;"));
+    customStatusLayout->addWidget(customStatusLabel, 1);
+    customStatusRow->setVisible(false);
+    identityCol->addWidget(customStatusRow);
+
     identityRowLayout->addLayout(identityCol);
 
     headerLayout->addWidget(identityRow);
@@ -292,6 +327,8 @@ QWidget *UserProfilePopup::buildHeader()
                                        .arg(AvatarSize / 2));
     avatarLabel->move(ContentSidePadding, BannerHeight - AvatarOverlap);
     avatarLabel->raise();
+
+    avatarStatusDot = attachStatusDot(headerWidget, avatarLabel->geometry(), StatusDotSize);
 
     return headerWidget;
 }
@@ -328,6 +365,14 @@ QWidget *UserProfilePopup::buildBody()
     bioLabel->setStyleSheet(QStringLiteral("font-size: 12px;"));
     bioLayout->addWidget(bioLabel);
     bioSection->setVisible(false);
+
+    activitySection = new QWidget(body);
+    activityLayout = new QVBoxLayout(activitySection);
+    activityLayout->setContentsMargins(0, 0, 0, 0);
+    activityLayout->setSpacing(10);
+    activitySection->setVisible(false);
+    leftCol->addWidget(activitySection);
+
     leftCol->addWidget(bioSection);
 
     auto buildInfoRow = [&](const QString &iconName, QLabel *&labelSlot, bool muted) {
@@ -475,6 +520,97 @@ void UserProfilePopup::showEvent(QShowEvent *event)
 {
     QDialog::showEvent(event);
     positionOverParent();
+    updateActivityTicker();
+}
+
+void UserProfilePopup::renderPresence()
+{
+    if (!instance)
+        return;
+
+    auto *presences = instance->presences();
+    const Core::Snowflake presenceGuild = guildView ? guildId : Core::Snowflake();
+
+    avatarStatusDot->setBadge(presences->badge(userId, presenceGuild));
+
+    const QList<Discord::Activity> all = presences->activities(userId, presenceGuild);
+
+    const Discord::Activity *custom = Core::ActivityFormat::custom(all);
+    if (custom != nullptr && !custom->stateText().isEmpty()) {
+        customStatusLabel->setText(custom->stateText());
+
+        const Discord::ActivityEmoji emoji = custom->emoji.hasValue() ? custom->emoji.get() : Discord::ActivityEmoji();
+
+        if (!emoji.isUnicode()) {
+            images->assign(customStatusEmoji, emoji.stillImageUrl(CustomStatusEmojiSize),
+                           QSize(CustomStatusEmojiSize, CustomStatusEmojiSize), accountId());
+            customStatusEmoji->setVisible(true);
+        } else {
+            disconnect(images, &Core::ImageManager::imageFetched, customStatusEmoji, nullptr);
+            customStatusEmoji->setPixmap(QPixmap());
+            customStatusEmoji->setText(emoji.nameText());
+            customStatusEmoji->setVisible(!emoji.nameText().isEmpty());
+        }
+
+        customStatusRow->setVisible(true);
+    } else {
+        customStatusRow->setVisible(false);
+    }
+
+    qDeleteAll(activityCards);
+    activityCards.clear();
+
+    for (const Discord::Activity &activity : all) {
+        if (activity.isCustom() || activity.kind() == Discord::ActivityType::HANG)
+            continue;
+
+        auto *card = new ActivityCard(activity, activityFallbackImage(activity), images, accountId(), activitySection);
+        activityLayout->addWidget(card);
+        activityCards.append(card);
+    }
+
+    activitySection->setVisible(!activityCards.isEmpty());
+    updateActivityTicker();
+}
+
+QUrl UserProfilePopup::activityFallbackImage(const Discord::Activity &activity)
+{
+    if (!instance || !activity.applicationId.hasValue())
+        return {};
+
+    const Core::Snowflake applicationId = activity.applicationId.get();
+    return Discord::Cdn::applicationIcon(applicationId,
+                                         instance->discord()->applicationIconHash(applicationId),
+                                         ActivityImageRequestSize);
+}
+
+void UserProfilePopup::updateActivityTicker()
+{
+    bool needsTicker = false;
+    for (ActivityCard *card : activityCards) {
+        if (card->hasTimer()) {
+            needsTicker = true;
+            break;
+        }
+    }
+
+    if (!needsTicker || !isVisible()) {
+        if (activityTicker)
+            activityTicker->stop();
+        return;
+    }
+
+    if (!activityTicker) {
+        activityTicker = new QTimer(this);
+        activityTicker->setInterval(ActivityTickMs);
+        connect(activityTicker, &QTimer::timeout, this, [this]() {
+            const qint64 now = QDateTime::currentMSecsSinceEpoch();
+            for (ActivityCard *card : activityCards)
+                card->tick(now);
+        });
+    }
+
+    activityTicker->start();
 }
 
 void UserProfilePopup::positionOverParent()
@@ -499,6 +635,13 @@ void UserProfilePopup::keyPressEvent(QKeyEvent *event)
         return;
     }
     QDialog::keyPressEvent(event);
+}
+
+void UserProfilePopup::hideEvent(QHideEvent *event)
+{
+    if (activityTicker)
+        activityTicker->stop();
+    QDialog::hideEvent(event);
 }
 
 void UserProfilePopup::closeEvent(QCloseEvent *event)
