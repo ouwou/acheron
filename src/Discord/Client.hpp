@@ -304,5 +304,12 @@ private:
     User me;
 };
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+inline uint qHash(Client::MessageLoadType type, uint seed = 0) noexcept
+{
+    return ::qHash(static_cast<int>(type), seed);
+}
+#endif
+
 } // namespace Discord
 } // namespace Acheron
