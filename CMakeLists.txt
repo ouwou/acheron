@@ -224,6 +224,7 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/TokenInputDialog.cpp
     src/UI/Dialogs/ProxyInputDialog.cpp
     src/UI/Dialogs/QRLoginDialog.cpp
+    src/UI/Dialogs/DirectLoginDialog.cpp
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
@@ -247,6 +248,7 @@ set(PROJECT_SOURCES
     src/Discord/Client.cpp
     src/Discord/Gateway.cpp
     src/Discord/RemoteAuthClient.cpp
+    src/Discord/LoginClient.cpp
     src/Discord/IngestThread.cpp
     src/Discord/HttpClient.cpp
     src/Discord/RequestWorker.cpp
