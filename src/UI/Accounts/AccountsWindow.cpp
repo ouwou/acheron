@@ -7,6 +7,7 @@
 #include "Core/TokenStore.hpp"
 #include "Core/TokenUtils.hpp"
 #include "Discord/CdnUrls.hpp"
+#include "UI/Dialogs/DirectLoginDialog.hpp"
 #include "UI/Dialogs/QRLoginDialog.hpp"
 
 namespace Acheron {
@@ -48,10 +49,12 @@ void AccountsWindow::setupUi()
 
     QHBoxLayout *btnLayout = new QHBoxLayout();
     QPushButton *addBtn = new QPushButton(tr("Add"), this);
+    QPushButton *loginBtn = new QPushButton(tr("Log in"), this);
     QPushButton *qrBtn = new QPushButton(tr("Log in with QR Code"), this);
     removeButton = new QPushButton(tr("Remove"), this);
     removeButton->setEnabled(false);
     btnLayout->addWidget(addBtn);
+    btnLayout->addWidget(loginBtn);
     btnLayout->addWidget(qrBtn);
     btnLayout->addWidget(removeButton);
     leftLayout->addLayout(btnLayout);
@@ -124,6 +127,7 @@ void AccountsWindow::setupUi()
     mainLayout->addWidget(splitter);
 
     connect(addBtn, &QPushButton::clicked, this, &AccountsWindow::onAddClicked);
+    connect(loginBtn, &QPushButton::clicked, this, &AccountsWindow::onLoginClicked);
     connect(qrBtn, &QPushButton::clicked, this, &AccountsWindow::onQrLoginClicked);
     connect(removeButton, &QPushButton::clicked, this, &AccountsWindow::onRemoveClicked);
 
@@ -222,6 +226,33 @@ void AccountsWindow::onAddClicked()
     acc.proxy = dlg.getProxy();
 
     // acc.avatar =
+
+    model->addAccount(acc);
+}
+
+void AccountsWindow::onLoginClicked()
+{
+    DirectLoginDialog dlg(session, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    QString token = dlg.getToken();
+    if (token.isEmpty())
+        return;
+
+    Snowflake userId = TokenUtils::getIdAndCheckToken(token);
+    if (!userId.isValid()) {
+        QMessageBox::warning(this, tr("Login Failed"), tr("Please try again."));
+        return;
+    }
+
+    AccountInfo acc;
+    acc.id = userId;
+    acc.token = token;
+    acc.username = dlg.getUsername().isEmpty() ? QStringLiteral("unknown") : dlg.getUsername();
+    acc.displayName = dlg.getDisplayName().isEmpty() ? acc.username : dlg.getDisplayName();
+    acc.avatar = dlg.getAvatar();
+    acc.proxy = dlg.getProxy();
 
     model->addAccount(acc);
 }
