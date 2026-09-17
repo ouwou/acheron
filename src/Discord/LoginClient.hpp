@@ -3,17 +3,10 @@
 #include <QObject>
 #include <QString>
 
-#include <curl/curl.h>
-
 #include "CaptchaResolver.hpp"
+#include "ClientIdentity.hpp"
+#include "HttpClient.hpp"
 #include "Core/ProxyConfig.hpp"
-
-#include <atomic>
-#include <optional>
-#include <thread>
-
-class QByteArray;
-class QJsonObject;
 
 namespace Acheron {
 namespace Discord {
@@ -27,80 +20,54 @@ enum class LoginError {
     AccountLocked,
     Suspended,
     RequiresVerification,
+    PasskeyOnly,
     Unknown,
+};
+
+enum class MfaMethod {
+    Totp,
+    Sms,
+    Backup,
 };
 
 struct MfaChallenge
 {
-    QString ticket;
-    QString loginInstanceId;
-    bool sms = false;
     bool totp = false;
+    bool sms = false;
     bool backup = false;
+    bool webauthn = false;
 };
 
 class LoginClient : public QObject
 {
     Q_OBJECT
 public:
-    explicit LoginClient(CaptchaResolver *captchaResolver = nullptr, QObject *parent = nullptr);
-    ~LoginClient();
+    explicit LoginClient(const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver = nullptr,
+                         QObject *parent = nullptr);
 
-    void startLogin(const QString &login, const QString &password, const Core::ProxyConfig &proxy);
-
-    void submitMfa(const QString &code, const QString &method);
-
-    void sendSmsCode();
-
-    void cancel();
+    void login(const QString &login, const QString &password);
+    void submitMfa(MfaMethod method, const QString &code);
+    void requestSmsCode();
+    [[nodiscard]] bool canRetryMfa() const { return !mfaTicket.isEmpty(); }
 
 signals:
     void mfaRequired(const MfaChallenge &challenge);
-    void authenticated(const QString &token, const QString &userId, const QString &username,
-                       const QString &displayName, const QString &avatar);
+    void authenticated(const QString &token);
     void failed(LoginError error);
     void smsSent(bool ok);
 
 private:
-    struct Response
-    {
-        long httpCode = 0;
-        QByteArray body;
-        bool ok = false;
-    };
+    void fetchFingerprintThen(std::function<void()> next);
+    void postLogin(const QString &login, const QString &password);
+    void handleLoginResponse(const HttpResponse &response);
+    void handleMfaResponse(const HttpResponse &response);
+    [[nodiscard]] std::optional<LoginError> commonFailure(const HttpResponse &response, const QJsonObject &root) const;
 
-    Response post(const QString &path, const QJsonObject &body, std::optional<CaptchaSolution> solution);
-    Response fetchProfile(const QString &token);
-
-    void performLogin(QString login, QString password, Core::ProxyConfig proxy,
-                      std::optional<CaptchaSolution> solution, int attempt);
-    void handleLoginResult(QString login, QString password, Core::ProxyConfig proxy,
-                           std::optional<CaptchaSolution> solution, int attempt, Response response,
-                           QString token, QString userId, QString username, QString displayName,
-                           QString avatar);
-
-    void performMfa(QString endpoint, QJsonObject body, std::optional<CaptchaSolution> solution,
-                    int attempt);
-    void handleMfaResult(std::optional<CaptchaSolution> solution, int attempt, Response response,
-                         QString token, QString userId, QString username, QString displayName,
-                         QString avatar);
-
-    void startSms();
-
-    void fail(LoginError error, bool terminal = true);
-    void finish(const QString &token, const QString &userId, const QString &username,
-                const QString &displayName, const QString &avatar);
-
-    CaptchaResolver *captchaResolver = nullptr;
-
-    Core::ProxyConfig proxy;
+    ClientIdentity identity;
+    HttpClient http;
+    bool haveFingerprint = false;
     QString mfaTicket;
     QString mfaLoginInstanceId;
-    QString mfaEndpoint;
-    QJsonObject mfaBody;
-
-    std::atomic<bool> done{ false };
-    std::thread worker;
 };
 
 } // namespace Discord

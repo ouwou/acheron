@@ -55,6 +55,9 @@ public:
         DELETE_, // thanks windows.h for the DELETE macro
     };
 
+    void setReferer(const QString &referer) { this->referer = referer; }
+    void setFingerprint(const QString &fingerprint) { this->fingerprint = fingerprint; }
+
     void get(const QString &endpoint, const QUrlQuery &query, HttpCallback callback);
     void post(const QString &endpoint, const QJsonObject &body, HttpCallback callback);
     void patch(const QString &endpoint, const QJsonObject &body, HttpCallback callback);
@@ -89,6 +92,8 @@ private:
     ClientIdentity &identity;
     Core::ProxyConfig proxy;
     CaptchaResolver *captchaResolver;
+    QString referer = "https://discord.com/channels/@me";
+    QString fingerprint;
 
     std::unique_ptr<RequestWorker> worker;
 

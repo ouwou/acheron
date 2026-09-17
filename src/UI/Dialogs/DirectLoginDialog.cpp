@@ -1,261 +1,259 @@
 #include "DirectLoginDialog.hpp"
 
 #include "Core/Session.hpp"
+#include "Core/Theme/Manager.hpp"
 #include "Discord/LoginClient.hpp"
+#include "UI/ProxyLineEdit.hpp"
 
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QStackedWidget>
-#include <QTimer>
 #include <QVBoxLayout>
 
 namespace Acheron {
 namespace UI {
 
+static QLabel *makeStatusLabel(QWidget *parent)
+{
+    QLabel *label = new QLabel(parent);
+    label->setWordWrap(true);
+    label->setAlignment(Qt::AlignCenter);
+    label->hide();
+    return label;
+}
+
+static QLabel *makeTitleLabel(int pointSizeDelta, QWidget *parent)
+{
+    QLabel *label = new QLabel(parent);
+    label->setWordWrap(true);
+    QFont font = label->font();
+    font.setPointSize(font.pointSize() + pointSizeDelta);
+    font.setBold(true);
+    label->setFont(font);
+    return label;
+}
+
 DirectLoginDialog::DirectLoginDialog(Core::Session *session, QWidget *parent)
-    : QDialog(parent), session(session)
+    : QDialog(parent), captchaResolver(session->getCaptchaResolver())
 {
     setWindowTitle(tr("Log in"));
     resize(400, 300);
 
     stack = new QStackedWidget(this);
-
-    loginPage = new QWidget(stack);
-    QVBoxLayout *loginLayout = new QVBoxLayout(loginPage);
-
-    QLabel *title = new QLabel(tr("Log into discord"), loginPage);
-    QFont titleFont = title->font();
-    titleFont.setPointSize(titleFont.pointSize() + 4);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    loginLayout->addWidget(title);
-
-    loginLayout->addSpacing(8);
-
-    QFormLayout *form = new QFormLayout();
-    loginEdit = new QLineEdit(loginPage);
-    loginEdit->setPlaceholderText(tr("example@gmail.com or phone number"));
-    passwordEdit = new QLineEdit(loginPage);
-    passwordEdit->setEchoMode(QLineEdit::Password);
-    proxyEdit = new ProxyLineEdit(loginPage);
-    form->addRow(tr("Email or phone number"), loginEdit);
-    form->addRow(tr("Password"), passwordEdit);
-    form->addRow(tr("Proxy (optional)"), proxyEdit);
-    loginLayout->addLayout(form);
-
-    loginStatus = new QLabel(loginPage);
-    loginStatus->setWordWrap(true);
-    loginStatus->setAlignment(Qt::AlignCenter);
-    loginStatus->setStyleSheet(QStringLiteral("color: red;"));
-    loginStatus->hide();
-    loginLayout->addWidget(loginStatus);
-
-    loginLayout->addStretch();
-
-    QHBoxLayout *loginButtons = new QHBoxLayout();
-    QPushButton *cancelButton = new QPushButton(tr("Cancel"), loginPage);
-    loginButton = new QPushButton(tr("Log in"), loginPage);
-    loginButton->setDefault(true);
-    loginButtons->addStretch();
-    loginButtons->addWidget(cancelButton);
-    loginButtons->addWidget(loginButton);
-    loginLayout->addLayout(loginButtons);
-
-    mfaPage = new QWidget(stack);
-    QVBoxLayout *mfaLayout = new QVBoxLayout(mfaPage);
-
-    mfaTitle = new QLabel(mfaPage);
-    mfaTitle->setWordWrap(true);
-    QFont mfaTitleFont = mfaTitle->font();
-    mfaTitleFont.setPointSize(mfaTitleFont.pointSize() + 2);
-    mfaTitleFont.setBold(true);
-    mfaTitle->setFont(mfaTitleFont);
-    mfaLayout->addWidget(mfaTitle);
-
-    mfaLayout->addSpacing(8);
-
-    mfaMethodCombo = new QComboBox(mfaPage);
-    mfaLayout->addWidget(mfaMethodCombo);
-
-    QHBoxLayout *codeLayout = new QHBoxLayout();
-    codeEdit = new QLineEdit(mfaPage);
-    codeEdit->setPlaceholderText(tr("6 digit code or backup code"));
-    smsButton = new QPushButton(tr("send code"), mfaPage);
-    codeLayout->addWidget(codeEdit);
-    codeLayout->addWidget(smsButton);
-    mfaLayout->addLayout(codeLayout);
-
-    mfaStatus = new QLabel(mfaPage);
-    mfaStatus->setWordWrap(true);
-    mfaStatus->setAlignment(Qt::AlignCenter);
-    mfaStatus->setStyleSheet(QStringLiteral("color: red;"));
-    mfaStatus->hide();
-    mfaLayout->addWidget(mfaStatus);
-
-    mfaLayout->addStretch();
-
-    QHBoxLayout *mfaButtons = new QHBoxLayout();
-    QPushButton *backButton = new QPushButton(tr("back"), mfaPage);
-    verifyButton = new QPushButton(tr("Verify"), mfaPage);
-    verifyButton->setDefault(true);
-    mfaButtons->addWidget(backButton);
-    mfaButtons->addStretch();
-    mfaButtons->addWidget(verifyButton);
-    mfaLayout->addLayout(mfaButtons);
-
+    loginPage = buildLoginPage();
+    mfaPage = buildMfaPage();
     stack->addWidget(loginPage);
     stack->addWidget(mfaPage);
     stack->setCurrentWidget(loginPage);
 
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
     mainLayout->addWidget(stack);
+}
 
-    client = new Discord::LoginClient(session->getCaptchaResolver(), this);
-    connect(client, &Discord::LoginClient::mfaRequired, this, &DirectLoginDialog::onMfaRequired);
-    connect(client, &Discord::LoginClient::authenticated, this, &DirectLoginDialog::onAuthenticated);
-    connect(client, &Discord::LoginClient::failed, this, &DirectLoginDialog::onFailed);
-    connect(client, &Discord::LoginClient::smsSent, this, &DirectLoginDialog::onSmsSent);
+QWidget *DirectLoginDialog::buildLoginPage()
+{
+    QWidget *page = new QWidget(stack);
+    QVBoxLayout *layout = new QVBoxLayout(page);
 
-    connect(loginButton, &QPushButton::clicked, this, &DirectLoginDialog::onLoginClicked);
+    QLabel *title = makeTitleLabel(4, page);
+    title->setText(tr("Log into Discord"));
+    layout->addWidget(title);
+    layout->addSpacing(8);
+
+    QFormLayout *form = new QFormLayout();
+    loginEdit = new QLineEdit(page);
+    loginEdit->setPlaceholderText(tr("example@gmail.com or phone number"));
+    passwordEdit = new QLineEdit(page);
+    passwordEdit->setEchoMode(QLineEdit::Password);
+    proxyEdit = new ProxyLineEdit(page);
+    form->addRow(tr("Email or phone number"), loginEdit);
+    form->addRow(tr("Password"), passwordEdit);
+    form->addRow(tr("Proxy (optional)"), proxyEdit);
+    layout->addLayout(form);
+
+    loginStatus = makeStatusLabel(page);
+    layout->addWidget(loginStatus);
+    layout->addStretch();
+
+    QHBoxLayout *buttons = new QHBoxLayout();
+    QPushButton *cancelButton = new QPushButton(tr("Cancel"), page);
+    loginButton = new QPushButton(tr("Log in"), page);
+    loginButton->setDefault(true);
+    buttons->addStretch();
+    buttons->addWidget(cancelButton);
+    buttons->addWidget(loginButton);
+    layout->addLayout(buttons);
+
     connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
-    connect(backButton, &QPushButton::clicked, this, [this]() {
-        stack->setCurrentWidget(loginPage);
-        loginStatus->hide();
-        mfaStatus->hide();
-        mfaSmsSent = false;
-        setBusy(false);
-        loginEdit->setFocus();
-    });
-    connect(smsButton, &QPushButton::clicked, this, &DirectLoginDialog::onSmsClicked);
+    connect(loginButton, &QPushButton::clicked, this, &DirectLoginDialog::onLoginClicked);
+
+    return page;
+}
+
+QWidget *DirectLoginDialog::buildMfaPage()
+{
+    QWidget *page = new QWidget(stack);
+    QVBoxLayout *layout = new QVBoxLayout(page);
+
+    mfaTitle = makeTitleLabel(2, page);
+    layout->addWidget(mfaTitle);
+    layout->addSpacing(8);
+
+    mfaMethodCombo = new QComboBox(page);
+    layout->addWidget(mfaMethodCombo);
+
+    QHBoxLayout *codeLayout = new QHBoxLayout();
+    codeEdit = new QLineEdit(page);
+    codeEdit->setPlaceholderText(tr("6 digit code or backup code"));
+    smsButton = new QPushButton(tr("Send code"), page);
+    codeLayout->addWidget(codeEdit);
+    codeLayout->addWidget(smsButton);
+    layout->addLayout(codeLayout);
+
+    mfaStatus = makeStatusLabel(page);
+    layout->addWidget(mfaStatus);
+    layout->addStretch();
+
+    QHBoxLayout *buttons = new QHBoxLayout();
+    backButton = new QPushButton(tr("Back"), page);
+    verifyButton = new QPushButton(tr("Verify"), page);
+    verifyButton->setDefault(true);
+    buttons->addWidget(backButton);
+    buttons->addStretch();
+    buttons->addWidget(verifyButton);
+    layout->addLayout(buttons);
+
+    connect(backButton, &QPushButton::clicked, this, &DirectLoginDialog::onBackClicked);
     connect(verifyButton, &QPushButton::clicked, this, &DirectLoginDialog::onVerifyClicked);
-    connect(loginEdit, &QLineEdit::returnPressed, this, &DirectLoginDialog::onLoginClicked);
-    connect(passwordEdit, &QLineEdit::returnPressed, this, &DirectLoginDialog::onLoginClicked);
-    connect(codeEdit, &QLineEdit::returnPressed, this, &DirectLoginDialog::onVerifyClicked);
+    connect(smsButton, &QPushButton::clicked, this, &DirectLoginDialog::onSmsClicked);
+    connect(mfaMethodCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, &DirectLoginDialog::onMfaMethodChanged);
+
+    return page;
 }
 
 void DirectLoginDialog::onLoginClicked()
 {
     const QString login = loginEdit->text().trimmed();
     if (login.isEmpty() || passwordEdit->text().isEmpty()) {
-        loginStatus->setText(tr("enter your email or phone number, and your password."));
-        loginStatus->show();
+        showStatus(loginStatus, tr("Enter your email or phone number, and your password."));
         return;
     }
 
     std::optional<Core::ProxyConfig> parsed = proxyEdit->parseOrWarn();
-    if (!parsed) {
-        loginStatus->setText(tr("That proxy address isn't valid."));
-        loginStatus->show();
+    if (!parsed)
         return;
-    }
-    proxy = *parsed;
+
+    ensureClient(*parsed);
 
     loginStatus->hide();
-    mfaStatus->hide();
-    mfaSmsSent = false;
-
     setBusy(true);
     loginButton->setText(tr("Logging in..."));
-    client->startLogin(login, passwordEdit->text(), proxy);
+    client->login(login, passwordEdit->text());
+}
+
+// a new client would lose the cookies and fingerprint from the previous attempt
+void DirectLoginDialog::ensureClient(const Core::ProxyConfig &wanted)
+{
+    if (client && proxy == wanted)
+        return;
+
+    delete client;
+    proxy = wanted;
+    client = new Discord::LoginClient(proxy, captchaResolver, this);
+    connect(client, &Discord::LoginClient::mfaRequired, this, &DirectLoginDialog::onMfaRequired);
+    connect(client, &Discord::LoginClient::authenticated, this, &DirectLoginDialog::onAuthenticated);
+    connect(client, &Discord::LoginClient::failed, this, &DirectLoginDialog::onFailed);
+    connect(client, &Discord::LoginClient::smsSent, this, &DirectLoginDialog::onSmsSent);
+}
+
+void DirectLoginDialog::onBackClicked()
+{
+    stack->setCurrentWidget(loginPage);
+    mfaStatus->hide();
+    loginEdit->setFocus();
 }
 
 void DirectLoginDialog::onMfaRequired(const Discord::MfaChallenge &challenge)
 {
-    mfaSmsSent = false;
+    setBusy(false);
 
-    mfaMethodCombo->clear();
-    if (challenge.totp)
-        mfaMethodCombo->addItem(tr("authenticator app"), QStringLiteral("totp"));
-    if (challenge.sms)
-        mfaMethodCombo->addItem(tr("text message"), QStringLiteral("sms"));
-    if (challenge.backup)
-        mfaMethodCombo->addItem(tr("backup code"), QStringLiteral("backup"));
-
-    mfaMethodCombo->setVisible(mfaMethodCombo->count() > 1);
-    smsButton->setVisible(challenge.sms);
+    codeEdit->clear();
+    mfaStatus->hide();
 
     if (challenge.sms && !challenge.totp && !challenge.backup)
-        mfaTitle->setText(tr("enter the verification code sent to your phone."));
+        mfaTitle->setText(tr("Enter the verification code sent to your phone."));
     else
-        mfaTitle->setText(tr("enter your two-factor authentication code."));
+        mfaTitle->setText(tr("Enter your two-factor authentication code."));
 
-    mfaStatus->hide();
-    codeEdit->clear();
-    verifyButton->setEnabled(true);
-    smsButton->setEnabled(true);
+    {
+        QSignalBlocker blocker(mfaMethodCombo);
+        mfaMethodCombo->clear();
+        if (challenge.totp)
+            mfaMethodCombo->addItem(tr("Authenticator app"), static_cast<int>(Discord::MfaMethod::Totp));
+        if (challenge.backup)
+            mfaMethodCombo->addItem(tr("Backup code"), static_cast<int>(Discord::MfaMethod::Backup));
+        if (challenge.sms)
+            mfaMethodCombo->addItem(tr("Text message"), static_cast<int>(Discord::MfaMethod::Sms));
+    }
+    mfaMethodCombo->setVisible(mfaMethodCombo->count() > 1);
+    onMfaMethodChanged();
 
     stack->setCurrentWidget(mfaPage);
-    loginButton->setText(tr("Log in"));
-    loginButton->setEnabled(true);
     codeEdit->setFocus();
+}
+
+void DirectLoginDialog::onMfaMethodChanged()
+{
+    if (mfaMethodCombo->count() == 0)
+        return;
+
+    smsButton->setVisible(currentMfaMethod() == Discord::MfaMethod::Sms);
 }
 
 void DirectLoginDialog::onSmsClicked()
 {
-    mfaStatus->hide();
-    smsButton->setEnabled(false);
-    mfaStatus->setText(tr("Requesting a code."));
-    mfaStatus->show();
-    client->sendSmsCode();
+    setBusy(true);
+    showStatus(mfaStatus, tr("Requesting a code."), false);
+    client->requestSmsCode();
 }
 
 void DirectLoginDialog::onSmsSent(bool ok)
 {
-    smsButton->setEnabled(true);
-    if (ok) {
-        mfaSmsSent = true;
-        mfaStatus->setText(
-                tr("Code sent to your phone. Enter it below; it expires within a few minutes."));
-        mfaStatus->setStyleSheet(QStringLiteral("color: inherit;"));
-    } else {
-        mfaStatus->setText(tr("Could not request a code/failed to request a code, check your connection and try again."));
-        mfaStatus->setStyleSheet(QStringLiteral("color: red;"));
-    }
-    mfaStatus->show();
+    setBusy(false);
+    if (ok)
+        showStatus(mfaStatus, tr("Code sent to your phone. Enter it below; it expires within a few minutes."), false);
+    else
+        showStatus(mfaStatus, tr("Failed to request a code, check your connection and try again."));
 }
 
 void DirectLoginDialog::onVerifyClicked()
 {
-    if (mfaMethodCombo->currentData().toString() == QLatin1String("sms") && !mfaSmsSent) {
-        mfaStatus->setText(tr("Request a code first — click \"Send code\"."));
-        mfaStatus->setStyleSheet(QStringLiteral("color: red;"));
-        mfaStatus->show();
-        return;
-    }
-
     const QString code = codeEdit->text().trimmed();
     if (code.isEmpty()) {
-        mfaStatus->setText(tr("Enter your verification code."));
-        mfaStatus->setStyleSheet(QStringLiteral("color: red;"));
-        mfaStatus->show();
+        showStatus(mfaStatus, tr("Enter your verification code."));
         return;
     }
 
     mfaStatus->hide();
     setBusy(true);
     verifyButton->setText(tr("Verifying..."));
-    client->submitMfa(code, mfaMethodCombo->currentData().toString());
+    client->submitMfa(currentMfaMethod(), code);
 }
 
-void DirectLoginDialog::onAuthenticated(const QString &token, const QString &userId,
-                                        const QString &username, const QString &displayName,
-                                        const QString &avatar)
+void DirectLoginDialog::onAuthenticated(const QString &t)
 {
-    this->token = token;
-    this->userId = userId;
-    this->username = username;
-    this->displayName = displayName;
-    this->avatar = avatar;
+    token = t;
     accept();
 }
 
 void DirectLoginDialog::onFailed(Discord::LoginError error)
 {
+    setBusy(false);
+
     QString message;
     switch (error) {
     case Discord::LoginError::Network:
@@ -277,50 +275,66 @@ void DirectLoginDialog::onFailed(Discord::LoginError error)
         message = tr("This account is disabled. Enable it on discord.com and try again.");
         break;
     case Discord::LoginError::Suspended:
-        message = tr("This account has been suspended."); 
+        message = tr("This account has been suspended.");
         break;
     case Discord::LoginError::RequiresVerification:
-    message = tr("Discord wants to verify your login. Check your email or messages, follow the link, and try logging in again.");
+        message = tr("Discord wants to verify your login. Check your email or messages, follow the link, and try logging in again.");
+        break;
+    case Discord::LoginError::PasskeyOnly:
+        message = tr("This account only allows passkeys or security keys for two-factor authentication, which aren't supported here. Log in with a token or QR code instead.");
         break;
     case Discord::LoginError::Unknown:
         message = tr("Login failed. Please try again. (This login error has not been properly handled)");
         break;
     }
 
-    loginButton->setText(tr("Log in"));
-    verifyButton->setText(tr("Verify"));
-
-    if (error == Discord::LoginError::InvalidMfaCode) {
-        setBusy(false);
-        mfaStatus->setText(message);
-        mfaStatus->show();
-        codeEdit->setFocus();
-        codeEdit->selectAll();
+    if (stack->currentWidget() == mfaPage && client->canRetryMfa()) {
+        showStatus(mfaStatus, message);
+        if (error == Discord::LoginError::InvalidMfaCode) {
+            codeEdit->setFocus();
+            codeEdit->selectAll();
+        }
         return;
     }
 
+    stack->setCurrentWidget(loginPage);
+    showStatus(loginStatus, message);
     if (error == Discord::LoginError::InvalidCredentials) {
-        setBusy(false);
-        loginStatus->setText(message);
-        loginStatus->show();
         passwordEdit->setFocus();
         passwordEdit->selectAll();
-        return;
     }
+}
 
-    QLabel *status = (stack->currentWidget() == mfaPage) ? mfaStatus : loginStatus;
-    status->setText(message);
-    status->show();
+Discord::MfaMethod DirectLoginDialog::currentMfaMethod() const
+{
+    return static_cast<Discord::MfaMethod>(mfaMethodCombo->currentData().toInt());
+}
+
+void DirectLoginDialog::showStatus(QLabel *label, const QString &text, bool error)
+{
+    const QColor errorColor = Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError);
+    label->setStyleSheet(error ? QStringLiteral("color: %1;").arg(errorColor.name()) : QString());
+    label->setText(text);
+    label->show();
 }
 
 void DirectLoginDialog::setBusy(bool busy)
 {
-    loginButton->setEnabled(!busy);
-    verifyButton->setEnabled(!busy);
-    smsButton->setEnabled(!busy);
+    if (!busy) {
+        loginButton->setText(tr("Log in"));
+        verifyButton->setText(tr("Verify"));
+    }
+
     loginEdit->setEnabled(!busy);
     passwordEdit->setEnabled(!busy);
+    proxyEdit->setEnabled(!busy);
+    loginButton->setEnabled(!busy);
+
+    mfaMethodCombo->setEnabled(!busy);
     codeEdit->setEnabled(!busy);
+    smsButton->setEnabled(!busy);
+    backButton->setEnabled(!busy);
+    verifyButton->setEnabled(!busy);
 }
 
 } // namespace UI

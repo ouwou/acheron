@@ -207,27 +207,7 @@ void AccountsWindow::onAddClicked()
         return;
     }
 
-    QString token = dlg.getToken();
-    if (token.isEmpty())
-        return;
-
-    Snowflake userId = TokenUtils::getIdAndCheckToken(token);
-    if (!userId.isValid()) {
-        // todo: complain
-        return;
-    }
-
-    AccountInfo acc;
-    acc.id = userId;
-
-    acc.displayName = "unknown";
-    acc.username = "unknown";
-    acc.token = token;
-    acc.proxy = dlg.getProxy();
-
-    // acc.avatar =
-
-    model->addAccount(acc);
+    addAccountWithToken(dlg.getToken(), {}, dlg.getProxy());
 }
 
 void AccountsWindow::onLoginClicked()
@@ -236,25 +216,7 @@ void AccountsWindow::onLoginClicked()
     if (dlg.exec() != QDialog::Accepted)
         return;
 
-    QString token = dlg.getToken();
-    if (token.isEmpty())
-        return;
-
-    Snowflake userId = TokenUtils::getIdAndCheckToken(token);
-    if (!userId.isValid()) {
-        QMessageBox::warning(this, tr("Login Failed"), tr("Please try again."));
-        return;
-    }
-
-    AccountInfo acc;
-    acc.id = userId;
-    acc.token = token;
-    acc.username = dlg.getUsername().isEmpty() ? QStringLiteral("unknown") : dlg.getUsername();
-    acc.displayName = dlg.getDisplayName().isEmpty() ? acc.username : dlg.getDisplayName();
-    acc.avatar = dlg.getAvatar();
-    acc.proxy = dlg.getProxy();
-
-    model->addAccount(acc);
+    addAccountWithToken(dlg.getToken(), {}, dlg.getProxy());
 }
 
 void AccountsWindow::onQrLoginClicked()
@@ -269,7 +231,12 @@ void AccountsWindow::onQrLoginClicked()
     if (dlg.exec() != QDialog::Accepted)
         return;
 
-    QString token = dlg.getToken();
+    addAccountWithToken(dlg.getToken(), dlg.getUsername(), proxyDlg.getProxy());
+}
+
+void AccountsWindow::addAccountWithToken(const QString &token, const QString &username,
+                                         const Core::ProxyConfig &proxy)
+{
     if (token.isEmpty())
         return;
 
@@ -282,9 +249,9 @@ void AccountsWindow::onQrLoginClicked()
     AccountInfo acc;
     acc.id = userId;
     acc.token = token;
-    acc.username = dlg.getUsername().isEmpty() ? QStringLiteral("unknown") : dlg.getUsername();
+    acc.username = username.isEmpty() ? "unknown" : username;
     acc.displayName = acc.username;
-    acc.proxy = proxyDlg.getProxy();
+    acc.proxy = proxy;
 
     model->addAccount(acc);
 }

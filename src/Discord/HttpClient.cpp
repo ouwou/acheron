@@ -128,6 +128,8 @@ void HttpClient::executeRequest(Method method, const QString &url, const QByteAr
     descriptor.url = url.toStdString();
     descriptor.body = data;
     descriptor.multipart = false;
+    descriptor.referer = referer;
+    descriptor.fingerprint = fingerprint;
     descriptor.callback = std::move(callback);
     worker->submit(std::move(descriptor));
 }
@@ -141,6 +143,8 @@ void HttpClient::executeMultipartRequest(const QString &url, const QByteArray &j
     descriptor.body = jsonData;
     descriptor.multipart = true;
     descriptor.files = files;
+    descriptor.referer = referer;
+    descriptor.fingerprint = fingerprint;
     descriptor.callback = std::move(callback);
     worker->submit(std::move(descriptor));
 }
