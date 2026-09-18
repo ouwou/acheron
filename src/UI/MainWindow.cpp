@@ -61,6 +61,12 @@ namespace Acheron {
 namespace UI {
 
 namespace {
+constexpr int LeftPaneIndex = 0;
+constexpr int CenterPaneIndex = 1;
+constexpr int MemberPaneIndex = 2;
+constexpr int DefaultChannelListWidth = 240;
+constexpr int DefaultMemberListWidth = 200;
+
 QString guildChannelKey(Core::Snowflake accountId, Core::Snowflake guildId)
 {
     return QStringLiteral("%1:%2")
@@ -543,7 +549,76 @@ void MainWindow::setMemberListVisible(bool visible)
 
 void MainWindow::updateMemberListVisibility()
 {
-    memberListView->setVisible(memberListWanted && viewMode == ViewMode::TextChannel);
+    const bool applicable = memberListWanted && viewMode == ViewMode::TextChannel;
+    memberListView->setVisible(applicable);
+    if (memberListToggle)
+        memberListToggle->setEnabled(applicable);
+    if (applicable)
+        applyPaneCollapsed(MemberPaneIndex, memberListHidden, memberListRestoreWidth, DefaultMemberListWidth);
+}
+
+void MainWindow::setChannelListHidden(bool hidden)
+{
+    channelListHidden = hidden;
+    applyPaneCollapsed(LeftPaneIndex, hidden, channelListRestoreWidth, DefaultChannelListWidth);
+    syncPaneToggleActions();
+}
+
+void MainWindow::setMemberListHidden(bool hidden)
+{
+    memberListHidden = hidden;
+    updateMemberListVisibility();
+    syncPaneToggleActions();
+}
+
+void MainWindow::applyPaneCollapsed(int index, bool collapsed, int &restoreWidth, int defaultWidth)
+{
+    QList<int> sizes = mainSplitter->sizes();
+    if (index >= sizes.size())
+        return;
+
+    if (collapsed) {
+        if (sizes[index] > 0)
+            restoreWidth = sizes[index];
+        sizes[CenterPaneIndex] += sizes[index];
+        sizes[index] = 0;
+    } else {
+        if (sizes[index] > 0)
+            return;
+        const int width = restoreWidth > 0 ? restoreWidth : defaultWidth;
+        sizes[CenterPaneIndex] = qMax(0, sizes[CenterPaneIndex] - width);
+        sizes[index] = width;
+    }
+    mainSplitter->setSizes(sizes);
+}
+
+void MainWindow::onSplitterMoved()
+{
+    const QList<int> sizes = mainSplitter->sizes();
+
+    channelListHidden = sizes.value(LeftPaneIndex) == 0;
+    if (!channelListHidden)
+        channelListRestoreWidth = sizes.value(LeftPaneIndex);
+
+    if (memberListView->isVisible()) {
+        memberListHidden = sizes.value(MemberPaneIndex) == 0;
+        if (!memberListHidden)
+            memberListRestoreWidth = sizes.value(MemberPaneIndex);
+    }
+
+    syncPaneToggleActions();
+}
+
+void MainWindow::syncPaneToggleActions()
+{
+    if (channelListToggle) {
+        QSignalBlocker blocker(channelListToggle);
+        channelListToggle->setChecked(!channelListHidden);
+    }
+    if (memberListToggle) {
+        QSignalBlocker blocker(memberListToggle);
+        memberListToggle->setChecked(!memberListHidden);
+    }
 }
 
 TabEntry MainWindow::makeTabEntry(ChannelNode *node, ChannelNode *accountNode) const
@@ -1100,13 +1175,14 @@ void MainWindow::setupUi()
     mainSplitter->addWidget(rightSideWidget);
     mainSplitter->addWidget(memberListView);
 
-    mainSplitter->setCollapsible(0, false);
-    mainSplitter->setCollapsible(2, false);
+    mainSplitter->setCollapsible(LeftPaneIndex, true);
+    mainSplitter->setCollapsible(MemberPaneIndex, true);
     mainSplitter->setStretchFactor(0, 0);
     mainSplitter->setStretchFactor(1, 1);
     mainSplitter->setStretchFactor(2, 0);
     memberListView->setMinimumWidth(140);
     memberListView->setMaximumWidth(400);
+    connect(mainSplitter, &QSplitter::splitterMoved, this, &MainWindow::onSplitterMoved);
 
     memberListView->hide();
 
@@ -1500,13 +1576,18 @@ void MainWindow::setChannelListMode(ChannelListMode mode)
     if (old)
         old->deleteLater();
 
-    mainSplitter->setCollapsible(0, false);
+    mainSplitter->setCollapsible(LeftPaneIndex, true);
     mainSplitter->setStretchFactor(0, 0);
     if (splitterSizes.size() == mainSplitter->count()) {
         const int delta = (mode == ChannelListMode::Classic) ? ServerRailDelegate::RailWidth : -ServerRailDelegate::RailWidth;
-        splitterSizes[0] = qMax(0, splitterSizes[0] + delta);
-        if (splitterSizes.size() > 1)
-            splitterSizes[1] = qMax(0, splitterSizes[1] - delta);
+        if (channelListHidden) {
+            if (channelListRestoreWidth > 0)
+                channelListRestoreWidth = qMax(0, channelListRestoreWidth + delta);
+        } else {
+            splitterSizes[0] = qMax(0, splitterSizes[0] + delta);
+            if (splitterSizes.size() > 1)
+                splitterSizes[1] = qMax(0, splitterSizes[1] - delta);
+        }
         mainSplitter->setSizes(splitterSizes);
     }
 
@@ -2043,6 +2124,10 @@ void MainWindow::saveWindowState()
     settings.setValue("layout/geometry", saveGeometry());
     if (mainSplitter)
         settings.setValue("layout/splitter", mainSplitter->saveState());
+    settings.setValue("layout/channelListHidden", channelListHidden);
+    settings.setValue("layout/memberListHidden", memberListHidden);
+    settings.setValue("layout/channelListWidth", channelListRestoreWidth);
+    settings.setValue("layout/memberListWidth", memberListRestoreWidth);
 
     const QList<TabEntry> all = tabBar->tabEntries();
     int activeIndex = tabBar->activeTabIndex();
@@ -2115,6 +2200,15 @@ void MainWindow::restoreWindowState()
     if (mainSplitter && settings.contains("layout/splitter"))
         mainSplitter->restoreState(settings.value("layout/splitter").toByteArray());
 
+    channelListHidden = settings.value("layout/channelListHidden", false).toBool();
+    memberListHidden = settings.value("layout/memberListHidden", false).toBool();
+    channelListRestoreWidth = settings.value("layout/channelListWidth", 0).toInt();
+    memberListRestoreWidth = settings.value("layout/memberListWidth", 0).toInt();
+
+    if (channelListHidden)
+        applyPaneCollapsed(LeftPaneIndex, true, channelListRestoreWidth, DefaultChannelListWidth);
+    syncPaneToggleActions();
+
     const auto toSet = [](const QStringList &list) {
         return QSet<QString>(list.cbegin(), list.cend());
     };
@@ -2177,6 +2271,21 @@ void MainWindow::setupMenu()
     auto *settingsAction = new QAction(tr("&Settings"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
+
+    viewMenu->addSeparator();
+
+    channelListToggle = viewMenu->addAction(tr("Channel &List"));
+    channelListToggle->setCheckable(true);
+    channelListToggle->setChecked(!channelListHidden);
+    channelListToggle->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+    connect(channelListToggle, &QAction::toggled, this, [this](bool checked) { setChannelListHidden(!checked); });
+
+    memberListToggle = viewMenu->addAction(tr("&Member List"));
+    memberListToggle->setCheckable(true);
+    memberListToggle->setChecked(!memberListHidden);
+    memberListToggle->setEnabled(false);
+    memberListToggle->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
+    connect(memberListToggle, &QAction::toggled, this, [this](bool checked) { setMemberListHidden(!checked); });
 
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect
     auto *debugReconnect = new QAction(this);

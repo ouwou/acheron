@@ -4,8 +4,11 @@
 #include <QSqlQuery>
 #include <QSqlError>
 
+#include <optional>
+
 #include "DatabaseManager.hpp"
 #include "Core/AccountInfo.hpp"
+#include "Discord/ClientIdentity.hpp"
 
 namespace Acheron {
 namespace Storage {
@@ -22,6 +25,9 @@ public:
     void updateDisplayOrder(quint64 id, int order);
     void updateAutoConnect(quint64 id, bool autoConnect);
     void updateProxy(quint64 id, const Core::ProxyConfig &proxy);
+    std::optional<Discord::HeartbeatSession> getHeartbeatSession(quint64 id);
+    void updateHeartbeatSession(quint64 id, const Discord::HeartbeatSession &session);
+    void clearHeartbeatSession(quint64 id);
 };
 
 } // namespace Storage

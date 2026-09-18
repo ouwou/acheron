@@ -51,10 +51,19 @@ struct StatusSettings
     void mergeFrom(const StatusSettings &other);
 };
 
+struct LocalizationSettings
+{
+    std::optional<QString> locale;
+
+    static LocalizationSettings fromProto(ProtoReader &reader);
+    void mergeFrom(const LocalizationSettings &other);
+};
+
 struct PreloadedUserSettings
 {
     std::optional<GuildFolders> guildFolders;
     std::optional<StatusSettings> status;
+    std::optional<LocalizationSettings> localization;
 
     static PreloadedUserSettings fromProto(ProtoReader &reader);
     static PreloadedUserSettings fromBase64(const QString &base64);

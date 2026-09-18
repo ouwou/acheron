@@ -32,8 +32,11 @@ struct MediaHit
     QString filename;
     qint64 fileSizeBytes = -1;
 
+    QUrl linkUrl;
+
     [[nodiscard]] bool isImage() const { return !imageUrl.isEmpty(); }
     [[nodiscard]] bool isFile() const { return !fileUrl.isEmpty(); }
+    [[nodiscard]] bool hasLink() const { return !linkUrl.isEmpty() && !linkUrl.isLocalFile(); }
 };
 
 static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLayout::HitRegion &region,
@@ -41,11 +44,12 @@ static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLa
 {
     using Kind = ChatLayout::HitRegion::Kind;
     MediaHit hit;
-    auto embedImage = [&hit](const QUrl &url, const QPixmap &pixmap) {
-        hit.imageUrl = url;
+    auto embedImage = [&hit](const QUrl &proxyUrl, const QUrl &originalUrl, const QPixmap &pixmap) {
+        hit.imageUrl = proxyUrl;
         hit.preview = pixmap;
-        hit.fileUrl = url;
-        hit.filename = QFileInfo(url.path()).fileName();
+        hit.fileUrl = proxyUrl;
+        hit.filename = QFileInfo(proxyUrl.path()).fileName();
+        hit.linkUrl = originalUrl;
     };
 
     switch (region.kind) {
@@ -65,6 +69,7 @@ static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLa
         hit.fileUrl = att.originalUrl;
         hit.filename = att.filename;
         hit.fileSizeBytes = att.fileSizeBytes;
+        hit.linkUrl = att.originalUrl;
         break;
     }
     case Kind::EmbedThumbnail: {
@@ -72,15 +77,17 @@ static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLa
             break;
         const EmbedData &embed = resolved.ctx.embeds[region.index];
         if (!embed.thumbnail.isNull())
-            embedImage(embed.thumbnailUrl, embed.thumbnail);
+            embedImage(embed.thumbnailUrl, embed.thumbnailOriginalUrl, embed.thumbnail);
         break;
     }
     case Kind::EmbedImage: {
         if (region.index < 0 || region.index >= resolved.ctx.embeds.size())
             break;
         const EmbedData &embed = resolved.ctx.embeds[region.index];
-        if (region.subIndex >= 0 && region.subIndex < embed.images.size())
-            embedImage(embed.images[region.subIndex].url, embed.images[region.subIndex].pixmap);
+        if (region.subIndex >= 0 && region.subIndex < embed.images.size()) {
+            const EmbedImageData &image = embed.images[region.subIndex];
+            embedImage(image.url, image.originalUrl, image.pixmap);
+        }
         break;
     }
     default:
@@ -115,6 +122,11 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     jumpToPresentBar = new JumpToPresentBar(this);
     jumpToPresentBar->setVisible(false);
     connect(jumpToPresentBar, &JumpToPresentBar::clicked, this, &ChatView::jumpToPresent);
+
+    actionBar = new MessageActionBar(viewport());
+    connect(actionBar, &MessageActionBar::shiftHeldChanged, this, &ChatView::updateHoveredMessage);
+    connect(actionBar, &MessageActionBar::triggered, this, &ChatView::onActionBarTriggered);
+    connect(actionBar, &MessageActionBar::moreRequested, this, &ChatView::onActionBarMoreRequested);
 
     auto *highlightFade = new QVariantAnimation(this);
     highlightFade->setDuration(1000);
@@ -182,6 +194,12 @@ void ChatView::resizeEvent(QResizeEvent *event)
     positionJumpToPresentBar();
 }
 
+void ChatView::updateGeometries()
+{
+    QListView::updateGeometries();
+    updateHoveredMessage();
+}
+
 void ChatView::paintEvent(QPaintEvent *event)
 {
     video->setPaintDamage(event->rect());
@@ -201,6 +219,7 @@ void ChatView::hideEvent(QHideEvent *event)
 {
     animator->setViewVisible(false);
     QListView::hideEvent(event);
+    updateHoveredMessage();
 }
 
 void ChatView::mousePressEvent(QMouseEvent *event)
@@ -239,6 +258,11 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
         video->updateDrag(pos);
         return;
     }
+
+    actionBar->setShiftHeld(event->modifiers().testFlag(Qt::ShiftModifier));
+    releaseHoverHold(event->globalPos());
+    if (hoveredMessage != messageUnderCursor(event->globalPos()))
+        updateHoveredMessage();
 
     QModelIndex idx = indexAt(pos);
 
@@ -496,8 +520,19 @@ void ChatView::leaveEvent(QEvent *event)
     QListView::leaveEvent(event);
 }
 
+void ChatView::wheelEvent(QWheelEvent *event)
+{
+    hoverHeldAt.reset();
+    QListView::wheelEvent(event);
+}
+
 bool ChatView::viewportEvent(QEvent *event)
 {
+    if (event->type() == QEvent::Leave) {
+        releaseHoverHold(QCursor::pos());
+        updateHoveredMessage();
+    }
+
     if (event->type() == QEvent::ToolTip) {
         auto *helpEvent = static_cast<QHelpEvent *>(event);
         QModelIndex idx = indexAt(helpEvent->pos());
@@ -639,6 +674,7 @@ void ChatView::setAtBottom(bool value)
 void ChatView::onScrollBarValueChanged(int)
 {
     updateScrollState();
+    updateHoveredMessage();
 
     if (underMouse())
         video->refreshHoverAt(viewport()->mapFromGlobal(QCursor::pos()));
@@ -750,6 +786,154 @@ void ChatView::updateJumpToPresentBar()
     jumpToPresentBar->setVisible(show);
 }
 
+bool ChatView::canShowActionBar(const QModelIndex &index) const
+{
+    return index.isValid() &&
+           index.row() != editingRow() &&
+           !index.data(ChatModel::IsPendingRole).toBool() &&
+           !index.data(ChatModel::IsErroredRole).toBool();
+}
+
+bool ChatView::canDeleteMessage(const QModelIndex &index) const
+{
+    Core::Snowflake authorId = index.data(ChatModel::UserIdRole).toULongLong();
+    return authorId == currentUserId || canManageMessages;
+}
+
+QModelIndex ChatView::messageUnderCursor(const QPoint &globalPos) const
+{
+    if (!isVisible())
+        return {};
+
+    if (QApplication::activePopupWidget() || hoverHeldAt)
+        return hoveredMessage;
+    if (QApplication::activeModalWidget())
+        return {};
+
+    QWidget *under = QApplication::widgetAt(globalPos);
+    if (!under || !viewport()->isAncestorOf(under))
+        return {};
+    if (actionBar->isAncestorOf(under))
+        return hoveredMessage;
+    return indexAt(viewport()->mapFromGlobal(globalPos));
+}
+
+QPoint ChatView::actionBarPosition(const QModelIndex &index) const
+{
+    constexpr int AboveHeader = 16;
+    constexpr int AboveLine = 25;
+    constexpr int RightInset = 14;
+
+    const ChatLayout::MessageLayout layout = ChatLayout::resolveLayout(this, index).layout;
+    int top = layout.textRect.top() - AboveLine;
+    if (layout.hasReply)
+        top = layout.replyRect.top() - AboveLine;
+    else if (layout.showHeader)
+        top = layout.avatarRect.top() - AboveHeader;
+
+    const QRect bounds = viewport()->rect();
+    const QSize size = actionBar->size();
+    const int left = qMax(bounds.left(), layout.rowRect.right() + 1 - RightInset - size.width());
+    top = qMax(bounds.top(), qMin(top, bounds.bottom() + 1 - size.height()));
+    return QPoint(left, top);
+}
+
+void ChatView::updateHoveredMessage()
+{
+    if (!actionBar)
+        return;
+
+    const QModelIndex hovered = messageUnderCursor(QCursor::pos());
+    if (hoveredMessage != hovered) {
+        update(hoveredMessage);
+        hoveredMessage = hovered;
+        update(hoveredMessage);
+    }
+
+    if (!canShowActionBar(hovered)) {
+        actionBarMessageId = Core::Snowflake::Invalid;
+        actionBar->hide();
+        return;
+    }
+
+    actionBarMessageId = hovered.data(ChatModel::MessageIdRole).toULongLong();
+    actionBar->setCanDelete(canDeleteMessage(hovered));
+    actionBar->adjustSize();
+    actionBar->move(actionBarPosition(hovered));
+    actionBar->show();
+    actionBar->raise();
+}
+
+void ChatView::addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId)
+{
+    QAction *menuAction = menu.addAction(MessageActionBar::label(action));
+    connect(menuAction, &QAction::triggered, this, [this, action, messageId]() {
+        triggerMessageAction(action, messageId);
+    });
+}
+
+void ChatView::triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    switch (action) {
+    case MessageActionBar::Action::CopyId:
+        copyMessageId(messageId);
+        break;
+    case MessageActionBar::Action::CopyLink:
+        copyMessageLink(messageId);
+        break;
+    case MessageActionBar::Action::Reply:
+        emit replyToMessageRequested(chatModel->getActiveChannelId(), messageId);
+        break;
+    case MessageActionBar::Action::Delete:
+        emit deleteMessageRequested(chatModel->getActiveChannelId(), messageId);
+        break;
+    }
+}
+
+void ChatView::onActionBarTriggered(MessageActionBar::Action action)
+{
+    triggerMessageAction(action, actionBarMessageId);
+}
+
+void ChatView::onActionBarMoreRequested(const QPoint &buttonTopLeft)
+{
+    using Action = MessageActionBar::Action;
+    constexpr int MenuGap = 4;
+
+    QMenu menu(this);
+
+    menu.setAttribute(Qt::WA_NoMouseReplay);
+    addMessageAction(menu, Action::Reply, actionBarMessageId);
+    addMessageAction(menu, Action::CopyLink, actionBarMessageId);
+    if (canDeleteMessage(hoveredMessage))
+        addMessageAction(menu, Action::Delete, actionBarMessageId);
+    menu.addSeparator();
+    addMessageAction(menu, Action::CopyId, actionBarMessageId);
+
+    actionBar->setMoreButtonDown(true);
+
+    execMessageMenu(menu, buttonTopLeft - QPoint(menu.sizeHint().width() + MenuGap, 0));
+    actionBar->setMoreButtonDown(false);
+}
+
+void ChatView::execMessageMenu(QMenu &menu, const QPoint &globalPos)
+{
+    hoverHeldAt = QCursor::pos();
+    menu.exec(globalPos);
+    hoverHeldAt = QCursor::pos();
+    updateHoveredMessage();
+}
+
+void ChatView::releaseHoverHold(const QPoint &globalPos)
+{
+    if (hoverHeldAt && *hoverHeldAt != globalPos && !QApplication::activePopupWidget())
+        hoverHeldAt.reset();
+}
+
 JumpToPresentBar::JumpToPresentBar(QWidget *parent) : QWidget(parent)
 {
     setObjectName("jumpToPresentBar");
@@ -855,9 +1039,11 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
             saveMedia(hit.fileUrl, hit.filename);
         });
     }
-    if (region && !region->url.isEmpty() && !region->url.startsWith(QLatin1String("acheron://"))) {
-        QString linkUrl = region->url;
-        QAction *copyLinkAction = menu.addAction(tr("Copy Link"));
+    QString linkUrl = region ? region->url : QString();
+    if (hit.hasLink())
+        linkUrl = hit.linkUrl.toString(QUrl::FullyEncoded);
+    if (!linkUrl.isEmpty() && !linkUrl.startsWith(QLatin1String("acheron://"))) {
+        QAction *copyLinkAction = menu.addAction(hit.isImage() ? tr("Copy Image Link") : tr("Copy Link"));
         connect(copyLinkAction, &QAction::triggered, this, [linkUrl]() {
             QGuiApplication::clipboard()->setText(linkUrl);
         });
@@ -879,10 +1065,7 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
-    QAction *replyAction = menu.addAction(tr("Reply"));
-    connect(replyAction, &QAction::triggered, this, [this, channelId, messageId]() {
-        emit replyToMessageRequested(channelId, messageId);
-    });
+    addMessageAction(menu, MessageActionBar::Action::Reply, messageId);
 
     if (isOwnMessage && !index.data(ChatModel::IsSystemMessageRole).toBool() &&
         !index.data(ChatModel::IsForwardedRole).toBool()) {
@@ -892,12 +1075,8 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
         });
     }
 
-    if (isOwnMessage || canManageMessages) {
-        QAction *deleteAction = menu.addAction(tr("Delete Message"));
-        connect(deleteAction, &QAction::triggered, this, [this, channelId, messageId]() {
-            emit deleteMessageRequested(channelId, messageId);
-        });
-    }
+    if (canDeleteMessage(index))
+        addMessageAction(menu, MessageActionBar::Action::Delete, messageId);
 
     menu.addSeparator();
 
@@ -924,18 +1103,10 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     }
 
     menu.addSeparator();
-    QAction *copyMessageLinkAction = menu.addAction(tr("Copy Message Link"));
-    connect(copyMessageLinkAction, &QAction::triggered, this, [chatModel, channelId, messageId]() {
-        Discord::ChannelLink link{ chatModel->getActiveGuildId(), channelId, messageId };
-        QGuiApplication::clipboard()->setText(link.toUrl());
-    });
+    addMessageAction(menu, MessageActionBar::Action::CopyLink, messageId);
+    addMessageAction(menu, MessageActionBar::Action::CopyId, messageId);
 
-    QAction *copyIdAction = menu.addAction(tr("Copy Message ID"));
-    connect(copyIdAction, &QAction::triggered, this, [messageId]() {
-        QGuiApplication::clipboard()->setText(QString::number(quint64(messageId)));
-    });
-
-    menu.exec(event->globalPos());
+    execMessageMenu(menu, event->globalPos());
 }
 
 void ChatView::keyPressEvent(QKeyEvent *event)
@@ -1023,6 +1194,21 @@ void ChatView::copyMessageContent(const QModelIndex &index)
     QString content = index.data(ChatModel::ContentRole).toString();
     if (!content.isEmpty())
         QGuiApplication::clipboard()->setText(content);
+}
+
+void ChatView::copyMessageId(Core::Snowflake messageId)
+{
+    QGuiApplication::clipboard()->setText(QString::number(quint64(messageId)));
+}
+
+void ChatView::copyMessageLink(Core::Snowflake messageId)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    Discord::ChannelLink link{ chatModel->getActiveGuildId(), chatModel->getActiveChannelId(), messageId };
+    QGuiApplication::clipboard()->setText(link.toUrl());
 }
 
 void ChatView::copyImage(const QUrl &proxyUrl, const QPixmap &preview)

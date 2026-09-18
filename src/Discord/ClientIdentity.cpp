@@ -1,23 +1,91 @@
 #include "ClientIdentity.hpp"
 #include "CurlUtils.hpp"
 
+#include <QDateTime>
 #include <QMutexLocker>
 #include <QUuid>
 
 namespace Acheron {
 namespace Discord {
 
+namespace {
+constexpr qint64 HeartbeatSessionIdleMs = 30 * 60 * 1000;
+
+bool isExpired(const HeartbeatSession &session, qint64 nowMs)
+{
+    return nowMs - session.lastUsedAtMs >= HeartbeatSessionIdleMs;
+}
+} // namespace
+
 ClientIdentity::ClientIdentity()
 {
     launchId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     launchSignature = generateLaunchSignature();
-    regenerateClientHeartbeatSessionId();
 }
 
-void ClientIdentity::regenerateClientHeartbeatSessionId()
+QString ClientIdentity::clientLaunchId() const
+{
+    return launchId;
+}
+
+std::optional<HeartbeatSession> ClientIdentity::heartbeatSession() const
 {
     QMutexLocker locker(&mutex);
-    clientHeartbeatSessionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    if (!clientHeartbeatSession || isExpired(*clientHeartbeatSession, QDateTime::currentMSecsSinceEpoch()))
+        return std::nullopt;
+    return clientHeartbeatSession;
+}
+
+void ClientIdentity::restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored)
+{
+    QMutexLocker locker(&mutex);
+    clientHeartbeatSession = stored;
+}
+
+HeartbeatSessionUpdate ClientIdentity::touchHeartbeatSession()
+{
+    QMutexLocker locker(&mutex);
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    bool expired = !clientHeartbeatSession || isExpired(*clientHeartbeatSession, now);
+
+    if (!appFocused && !rtcConnected) {
+        if (expired)
+            clientHeartbeatSession.reset();
+
+        return HeartbeatSessionUpdate::Unchanged;
+    }
+
+    if (expired) {
+        HeartbeatSession session;
+        session.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        session.createdAtMs = now;
+        session.lastUsedAtMs = now;
+        clientHeartbeatSession = session;
+        return HeartbeatSessionUpdate::Created;
+    }
+
+    clientHeartbeatSession->lastUsedAtMs = now;
+    return HeartbeatSessionUpdate::Touched;
+}
+
+void ClientIdentity::setDiscordLocale(const QString &newLocale)
+{
+    QMutexLocker locker(&mutex);
+    if (!newLocale.isEmpty())
+        locale = newLocale;
+}
+
+QString ClientIdentity::discordLocale() const
+{
+    QMutexLocker locker(&mutex);
+    return locale;
+}
+
+void ClientIdentity::setActivity(bool focused, bool newRtcConnected)
+{
+    QMutexLocker locker(&mutex);
+    appFocused = focused;
+    rtcConnected = newRtcConnected;
 }
 
 QString ClientIdentity::generateLaunchSignature()
@@ -49,7 +117,7 @@ ClientProperties ClientIdentity::buildClientProperties(
     properties.os = props.os;
     properties.browser = props.browser;
     properties.device = "";
-    properties.systemLocale = "en-US";
+    properties.systemLocale = CurlUtils::getSystemLocale();
     properties.hasClientMods = false;
     properties.browserUserAgent = userAgent;
     properties.browserVersion = props.browserVersion;
@@ -63,7 +131,7 @@ ClientProperties ClientIdentity::buildClientProperties(
     properties.clientEventSource = nullptr;
     properties.clientLaunchId = launchId;
     properties.launchSignature = launchSignature;
-    properties.clientAppState = params.clientAppState;
+    properties.clientAppState = appFocused ? "focused" : "unfocused";
 
     if (params.isFastConnect.has_value())
         properties.isFastConnect = params.isFastConnect.value();
@@ -71,8 +139,10 @@ ClientProperties ClientIdentity::buildClientProperties(
     if (params.gatewayConnectReasons.has_value())
         properties.gatewayConnectReasons = params.gatewayConnectReasons.value();
 
-    if (params.includeClientHeartbeatSessionId)
-        properties.clientHeartbeatSessionId = clientHeartbeatSessionId;
+    if (params.includeClientHeartbeatSessionId &&
+        clientHeartbeatSession &&
+        !isExpired(*clientHeartbeatSession, QDateTime::currentMSecsSinceEpoch()))
+        properties.clientHeartbeatSessionId = clientHeartbeatSession->id;
 
     return properties;
 }

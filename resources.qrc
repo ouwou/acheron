@@ -12,6 +12,7 @@
         <file>resources/icons/lucide/chart-column.svg</file>
         <file>resources/icons/lucide/chevron-right.svg</file>
         <file>resources/icons/lucide/compass.svg</file>
+        <file>resources/icons/lucide/ellipsis.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
         <file>resources/icons/lucide/file-audio.svg</file>
         <file>resources/icons/lucide/file-text.svg</file>
@@ -23,6 +24,7 @@
         <file>resources/icons/lucide/hash.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
+        <file>resources/icons/lucide/link.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/maximize.svg</file>
         <file>resources/icons/lucide/megaphone.svg</file>
@@ -38,9 +40,11 @@
         <file>resources/icons/lucide/pin.svg</file>
         <file>resources/icons/lucide/play.svg</file>
         <file>resources/icons/lucide/radio.svg</file>
+        <file>resources/icons/lucide/reply.svg</file>
         <file>resources/icons/lucide/rss.svg</file>
         <file>resources/icons/lucide/shield-alert.svg</file>
         <file>resources/icons/lucide/spool.svg</file>
+        <file>resources/icons/lucide/trash-2.svg</file>
         <file>resources/icons/lucide/triangle-alert.svg</file>
         <file>resources/icons/lucide/user-minus.svg</file>
         <file>resources/icons/lucide/user-plus.svg</file>

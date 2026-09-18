@@ -202,6 +202,8 @@ CURL *RequestWorker::buildEasyHandle(TransferContext *ctx)
     } else {
         if (!token.isEmpty())
             headers = curl_slist_append(headers, ("Authorization: " + token).toUtf8().constData());
+        std::string sToken = token.toStdString();
+        headers = curl_slist_append(headers, ("Authorization: " + sToken).c_str());
         if (!desc.multipart && !desc.body.isEmpty())
             headers = curl_slist_append(headers, "Content-Type: application/json");
 

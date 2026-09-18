@@ -29,9 +29,19 @@ void AccountRepository::saveAccount(const Core::AccountInfo &acc)
 
     QSqlQuery query(db);
     query.prepare(R"(
-            INSERT OR REPLACE INTO accounts
+            INSERT INTO accounts
             (id, username, display_name, avatar, gateway_url, rest_url, cdn_url, display_order, auto_connect, proxy_url)
             VALUES (:id, :username, :display_name, :avatar, :gateway_url, :rest_url, :cdn_url, :display_order, :auto_connect, :proxy_url)
+            ON CONFLICT(id) DO UPDATE SET
+                username = excluded.username,
+                display_name = excluded.display_name,
+                avatar = excluded.avatar,
+                gateway_url = excluded.gateway_url,
+                rest_url = excluded.rest_url,
+                cdn_url = excluded.cdn_url,
+                display_order = excluded.display_order,
+                auto_connect = excluded.auto_connect,
+                proxy_url = excluded.proxy_url
         )");
 
     query.bindValue(":id", static_cast<qint64>(acc.id));
@@ -156,6 +166,71 @@ void AccountRepository::updateProxy(quint64 id, const Core::ProxyConfig &proxy)
 
     if (!query.exec())
         qCWarning(LogDB) << "AccountRepository: Update proxy failed:" << query.lastError().text();
+}
+
+std::optional<Discord::HeartbeatSession> AccountRepository::getHeartbeatSession(quint64 id)
+{
+    QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
+    QSqlQuery query(db);
+
+    query.prepare(R"(
+            SELECT heartbeat_session_id, heartbeat_session_created_at, heartbeat_session_last_used_at
+            FROM accounts WHERE id = :id
+        )");
+    query.bindValue(":id", static_cast<qint64>(id));
+
+    if (!query.exec()) {
+        qCWarning(LogDB) << "AccountRepository: Get heartbeat session failed:" << query.lastError().text();
+        return std::nullopt;
+    }
+
+    if (!query.next() || query.value(0).isNull())
+        return std::nullopt;
+
+    Discord::HeartbeatSession session;
+    session.id = query.value(0).toString();
+    session.createdAtMs = query.value(1).toLongLong();
+    session.lastUsedAtMs = query.value(2).toLongLong();
+    return session;
+}
+
+void AccountRepository::updateHeartbeatSession(quint64 id, const Discord::HeartbeatSession &session)
+{
+    QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
+    QSqlQuery query(db);
+
+    query.prepare(R"(
+            UPDATE accounts SET
+                heartbeat_session_id = :session_id,
+                heartbeat_session_created_at = :created_at,
+                heartbeat_session_last_used_at = :last_used_at
+            WHERE id = :id
+        )");
+    query.bindValue(":session_id", session.id);
+    query.bindValue(":created_at", session.createdAtMs);
+    query.bindValue(":last_used_at", session.lastUsedAtMs);
+    query.bindValue(":id", static_cast<qint64>(id));
+
+    if (!query.exec())
+        qCWarning(LogDB) << "AccountRepository: Update heartbeat session failed:" << query.lastError().text();
+}
+
+void AccountRepository::clearHeartbeatSession(quint64 id)
+{
+    QSqlDatabase db = QSqlDatabase::database(DatabaseManager::PERSISTENT_CONN_NAME);
+    QSqlQuery query(db);
+
+    query.prepare(R"(
+            UPDATE accounts SET
+                heartbeat_session_id = NULL,
+                heartbeat_session_created_at = NULL,
+                heartbeat_session_last_used_at = NULL
+            WHERE id = :id
+        )");
+    query.bindValue(":id", static_cast<qint64>(id));
+
+    if (!query.exec())
+        qCWarning(LogDB) << "AccountRepository: Clear heartbeat session failed:" << query.lastError().text();
 }
 
 void AccountRepository::updateAutoConnect(quint64 id, bool autoConnect)

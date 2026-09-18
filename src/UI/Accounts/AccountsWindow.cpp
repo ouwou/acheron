@@ -345,6 +345,7 @@ void AccountsWindow::onSetTokenRequested(int row)
                               tr("Failed to save the token."));
         return;
     }
+    Storage::AccountRepository().clearHeartbeatSession(info->id);
 
     QString followup;
     if (info->state == ConnectionState::Connected)

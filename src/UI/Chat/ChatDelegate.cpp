@@ -35,6 +35,15 @@ static void drawHighlightFlash(QPainter *painter, const QStyleOptionViewItem &op
     painter->fillRect(rect, flash);
 }
 
+static void drawHoverHighlight(QPainter *painter, const QStyleOptionViewItem &option, const ChatView *view, int row, const QRect &rect)
+{
+    if (!view || view->hoveredMessageRowAtPaint() != row)
+        return;
+    QColor tint = option.palette.text().color();
+    tint.setAlpha(14);
+    painter->fillRect(rect, tint);
+}
+
 static QColor bodyTextColor(const QStyleOptionViewItem &option, const QModelIndex &index)
 {
     if (index.data(ChatModel::IsErroredRole).toBool())
@@ -107,6 +116,7 @@ bool ChatDelegate::paintBodyTextOnly(QPainter *painter, const QStyleOptionViewIt
     if (!doc)
         return false;
 
+    drawHoverHighlight(painter, option, chatView, index.row(), damage);
     drawHighlightFlash(painter, option, chatView, index.row(), damage);
     drawBodyDocument(painter, doc, textRect, damage.translated(-textRect.topLeft()), option, index, chatView);
     return true;
@@ -286,6 +296,10 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (animator)
         animator->beginRow(index.row(), option.rect, layout.textRect);
 
+    QRect messageRect = option.rect;
+    if (layout.hasSeparator)
+        messageRect.setTop(layout.separatorRect.bottom() + 1);
+    drawHoverHighlight(painter, option, chatView, index.row(), messageRect);
     drawHighlightFlash(painter, option, chatView, index.row(), option.rect);
 
     const QString username = index.data(ChatModel::UsernameRole).toString();

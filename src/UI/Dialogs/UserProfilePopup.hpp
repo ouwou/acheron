@@ -50,6 +50,7 @@ private:
     void renderFromCachedData();
     void renderFromProfile();
     void renderBannerAndBio();
+    void renderPronouns();
     void renderBadges();
     void renderConnections();
     void renderMutualServers();
@@ -95,6 +96,7 @@ private:
 
     QLabel *displayNameLabel = nullptr;
     QLabel *handleLabel = nullptr;
+    QLabel *pronounsLabel = nullptr;
     QLabel *botBadgeLabel = nullptr;
 
     QWidget *badgesRow = nullptr;

@@ -216,6 +216,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/EmojiTextObject.cpp
     src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
+    src/UI/Chat/MessageActionBar.cpp
     src/UI/Forum/ForumPostModel.cpp
     src/UI/Forum/ForumPostDelegate.cpp
     src/UI/Forum/ForumBrowser.cpp

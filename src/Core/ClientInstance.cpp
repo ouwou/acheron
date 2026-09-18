@@ -32,6 +32,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
       memberRepo(info.id)
 {
     client = new Discord::Client(info.token, info.gatewayUrl, info.restUrl, info.proxy, captchaResolver, this);
+    connect(client, &Discord::Client::heartbeatSessionChanged, this, &ClientInstance::onHeartbeatSessionChanged);
+    client->restoreHeartbeatSession(accountRepo.getHeartbeatSession(info.id));
 
     Storage::DatabaseManager::instance().openCacheDatabase(info.id);
 
@@ -57,6 +59,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     messageManager->setEmojiManager(emojiManager);
 #ifndef ACHERON_NO_VOICE
     voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
+    connect(voiceManager, &Audio::VoiceManager::voiceConnected, this, &ClientInstance::onVoiceConnected);
+    connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
 #endif
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
@@ -296,6 +300,21 @@ ClientInstance::ClientInstance(const AccountInfo &info,
                 voiceManager->handleVoiceServerUpdate(event);
             });
 #endif
+}
+
+void ClientInstance::onVoiceConnected()
+{
+    client->setVoiceConnected(true);
+}
+
+void ClientInstance::onVoiceDisconnected()
+{
+    client->setVoiceConnected(false);
+}
+
+void ClientInstance::onHeartbeatSessionChanged(const Discord::HeartbeatSession &session)
+{
+    accountRepo.updateHeartbeatSession(account.id, session);
 }
 
 void ClientInstance::saveGuild(const Discord::GatewayGuild &guild, const QList<Discord::Member> *members, Snowflake myId, QSqlDatabase &db)

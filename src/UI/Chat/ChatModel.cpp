@@ -520,6 +520,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             if (shouldMerge) {
                 EmbedImageData imageData;
                 imageData.url = QUrl(*embed.image->proxyUrl);
+                imageData.originalUrl = QUrl(*embed.image->url);
                 QSize origSize;
                 if (embed.image->width.hasValue() && embed.image->height.hasValue())
                     origSize = QSize(*embed.image->width, *embed.image->height);
@@ -606,6 +607,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     embed.thumbnail->width > 0) {
                     hasAnything = true;
                     data.thumbnailUrl = QUrl(*embed.thumbnail->proxyUrl);
+                    data.thumbnailOriginalUrl = QUrl(*embed.thumbnail->url);
                     QSize origSize;
                     if (embed.thumbnail->width.hasValue() && embed.thumbnail->height.hasValue())
                         origSize = QSize(*embed.thumbnail->width, *embed.thumbnail->height);
@@ -626,6 +628,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 if (hasImage) {
                     EmbedImageData imageData;
                     imageData.url = QUrl(*embed.image->proxyUrl);
+                    imageData.originalUrl = QUrl(*embed.image->url);
                     QSize origSize;
                     if (embed.image->width.hasValue() && embed.image->height.hasValue())
                         origSize = QSize(*embed.image->width, *embed.image->height);

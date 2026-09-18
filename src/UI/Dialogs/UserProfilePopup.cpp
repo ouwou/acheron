@@ -295,9 +295,25 @@ QWidget *UserProfilePopup::buildHeader()
     nameRow->addWidget(viewToggle, 0, Qt::AlignVCenter);
     identityCol->addLayout(nameRow);
 
+    const QString handleStyle = "color: palette(placeholder-text); font-size: 13px;";
+
+    auto *handleRow = new QHBoxLayout;
+    handleRow->setContentsMargins(0, 0, 0, 0);
+    handleRow->setSpacing(6);
+
     handleLabel = new QLabel(identityRow);
-    handleLabel->setStyleSheet(QStringLiteral("color: palette(placeholder-text); font-size: 13px;"));
-    identityCol->addWidget(handleLabel);
+    handleLabel->setStyleSheet(handleStyle);
+    handleRow->addWidget(handleLabel, 0);
+
+    pronounsLabel = new QLabel(identityRow);
+    pronounsLabel->setTextFormat(Qt::PlainText);
+    pronounsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pronounsLabel->setStyleSheet(handleStyle);
+    pronounsLabel->setVisible(false);
+    handleRow->addWidget(pronounsLabel, 0);
+
+    handleRow->addStretch(1);
+    identityCol->addLayout(handleRow);
 
     customStatusRow = new QWidget(identityRow);
     auto *customStatusLayout = new QHBoxLayout(customStatusRow);
@@ -708,6 +724,7 @@ void UserProfilePopup::renderFromProfile()
         return;
 
     renderBannerAndBio();
+    renderPronouns();
     renderBadges();
     renderFromCachedData();
     renderConnections();
@@ -741,6 +758,18 @@ void UserProfilePopup::renderBannerAndBio()
         bioLabel->setText(bio);
         bioSection->setVisible(true);
     }
+}
+
+void UserProfilePopup::renderPronouns()
+{
+    QString pronouns;
+    if (guildView && profile.guildMemberProfile.hasValue() && !profile.guildMemberProfile.get().pronouns.get().isEmpty())
+        pronouns = profile.guildMemberProfile.get().pronouns.get();
+    else if (!profile.userProfile.get().pronouns.get().isEmpty())
+        pronouns = profile.userProfile.get().pronouns.get();
+
+    pronounsLabel->setText("• " + pronouns);
+    pronounsLabel->setVisible(!pronouns.isEmpty());
 }
 
 void UserProfilePopup::renderBadges()

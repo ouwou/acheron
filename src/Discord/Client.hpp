@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimer>
 #include <QUrlQuery>
 
 #include <optional>
@@ -135,6 +136,9 @@ public:
     void ackBulk(const QList<AckEntry> &entries);
 
     void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
+    void setVoiceConnected(bool connected);
+
+    void restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored);
 
     void leaveGuild(Snowflake guildId);
 
@@ -226,9 +230,11 @@ signals:
     void reconnecting(int attempt, int maxAttempts);
     void errorOccurred(const QString &errorStr);
     void authenticationFailed();
+    void heartbeatSessionChanged(const HeartbeatSession &session);
 
 private slots:
     void onConnected();
+    void onHeartbeatSessionTimer();
     void onDisconnected(CloseCode code, const QString &reason);
 
     void onGatewayReady(const Ready &data);
@@ -253,6 +259,9 @@ private slots:
 private:
     void fetchMessages(Snowflake channelId, QUrlQuery query, int limit, MessagesCallback callback);
     void indexGuildMappings(const GatewayGuild &guild);
+    void applyDiscordLocale();
+    void updateActiveState();
+    void syncHeartbeatSession();
     void removeGuildMappings(Snowflake guildId);
 
     struct UploadState
@@ -302,6 +311,10 @@ private:
 
     Proto::PreloadedUserSettings settings;
     User me;
+
+    bool appFocused = true;
+    bool voiceConnected = false;
+    QTimer *heartbeatSessionTimer;
 };
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)

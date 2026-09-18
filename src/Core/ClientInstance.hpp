@@ -19,6 +19,7 @@ class QSqlDatabase;
 #include "RelationshipManager.hpp"
 #include "UserManager.hpp"
 #include "PermissionManager.hpp"
+#include "Storage/AccountRepository.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -134,6 +135,9 @@ private slots:
     void onMessageCreated(const Discord::Message &msg);
     void handleAckRequest(Snowflake channelId, Snowflake messageId);
     void handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs);
+    void onVoiceConnected();
+    void onVoiceDisconnected();
+    void onHeartbeatSessionChanged(const Discord::HeartbeatSession &session);
     bool isMessageMentioningMe(const Discord::Message &msg) const;
 
 private:
@@ -166,6 +170,7 @@ private:
 #endif
 
     Storage::RoleRepository roleRepo;
+    Storage::AccountRepository accountRepo;
     Storage::GuildRepository guildRepo;
     Storage::ChannelRepository channelRepo;
     Storage::MemberRepository memberRepo;

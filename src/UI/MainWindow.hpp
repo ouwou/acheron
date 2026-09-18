@@ -66,6 +66,7 @@ private slots:
     void onNewPostRequested();
     void onTypingStart(const Discord::TypingStart &event);
     void onChannelPermissionsChanged(Core::Snowflake channelId);
+    void onSplitterMoved();
 
 private:
     void switchActiveInstance(Core::ClientInstance *instance);
@@ -128,6 +129,10 @@ private:
     void setViewMode(ViewMode mode);
     void setMemberListVisible(bool visible);
     void updateMemberListVisibility();
+    void setChannelListHidden(bool hidden);
+    void setMemberListHidden(bool hidden);
+    void applyPaneCollapsed(int index, bool collapsed, int &restoreWidth, int defaultWidth);
+    void syncPaneToggleActions();
     void openForumChannel(Core::ClientInstance *instance, Core::Snowflake forumId, Core::Snowflake guildId);
     void applyChannelChrome(Core::ClientInstance *instance, Core::Snowflake channelId, const QString &name, bool isDm, Core::Snowflake guildId);
     void switchChatChannel(Core::Snowflake channelId, Core::Snowflake guildId);
@@ -204,6 +209,13 @@ private:
 
     QSet<Core::Snowflake> instancesSignalsConnected;
     QSplitter *mainSplitter = nullptr;
+
+    bool channelListHidden = false;
+    bool memberListHidden = false;
+    int channelListRestoreWidth = 0;
+    int memberListRestoreWidth = 0;
+    QAction *channelListToggle = nullptr;
+    QAction *memberListToggle = nullptr;
 
     // restored-but-not-yet-activated channel. gotta wait for READY
     std::optional<TabEntry> pendingActiveEntry;

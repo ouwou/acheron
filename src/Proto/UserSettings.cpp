@@ -251,6 +251,35 @@ StatusSettings StatusSettings::fromProto(ProtoReader &reader)
     return settings;
 }
 
+LocalizationSettings LocalizationSettings::fromProto(ProtoReader &reader)
+{
+    LocalizationSettings settings;
+    Tag tag;
+
+    while (reader.readTag(tag)) {
+        switch (tag.fieldNumber) {
+        // optional google.protobuf.StringValue locale
+        case 1: {
+            if (tag.wireType == WireType::LENGTH_DELIMITED) {
+                QByteArray nested;
+                if (reader.readLengthDelimited(nested)) {
+                    ProtoReader nestedReader(nested);
+                    settings.locale = readStringValue(nestedReader);
+                }
+            } else {
+                reader.skipField(tag.wireType);
+            }
+            break;
+        }
+        default:
+            reader.skipField(tag.wireType);
+            break;
+        }
+    }
+
+    return settings;
+}
+
 PreloadedUserSettings PreloadedUserSettings::fromProto(ProtoReader &reader)
 {
     PreloadedUserSettings settings;
@@ -265,6 +294,19 @@ PreloadedUserSettings PreloadedUserSettings::fromProto(ProtoReader &reader)
                 if (reader.readLengthDelimited(nested)) {
                     ProtoReader nestedReader(nested);
                     settings.status = StatusSettings::fromProto(nestedReader);
+                }
+            } else {
+                reader.skipField(tag.wireType);
+            }
+            break;
+        }
+        // optional LocalizationSettings localization
+        case 12: {
+            if (tag.wireType == WireType::LENGTH_DELIMITED) {
+                QByteArray nested;
+                if (reader.readLengthDelimited(nested)) {
+                    ProtoReader nestedReader(nested);
+                    settings.localization = LocalizationSettings::fromProto(nestedReader);
                 }
             } else {
                 reader.skipField(tag.wireType);
@@ -311,10 +353,23 @@ void StatusSettings::mergeFrom(const StatusSettings &other)
         statusExpiresAtMs = other.statusExpiresAtMs;
 }
 
+void LocalizationSettings::mergeFrom(const LocalizationSettings &other)
+{
+    if (other.locale.has_value())
+        locale = other.locale;
+}
+
 void PreloadedUserSettings::mergeFrom(const PreloadedUserSettings &other)
 {
     if (other.guildFolders.has_value())
         guildFolders = other.guildFolders;
+
+    if (other.localization.has_value()) {
+        if (localization.has_value())
+            localization->mergeFrom(other.localization.value());
+        else
+            localization = other.localization;
+    }
 
     if (!other.status.has_value())
         return;

@@ -6,12 +6,15 @@
 #include <curl/curl.h>
 
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <thread>
 
 #include "Core/ProxyConfig.hpp"
 #include "Enums.hpp"
 #include "IngestThread.hpp"
 #include "Inbound.hpp"
+#include "Outbound.hpp"
 #include "Events.hpp"
 
 namespace Acheron {
@@ -43,6 +46,10 @@ public:
     void requestForumUnreads(Core::Snowflake guildId, Core::Snowflake forumId,
                              const QList<QPair<Core::Snowflake, Core::Snowflake>> &threads);
     void sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf);
+
+    // for the qos heartbeat
+    void setActiveState(bool focused, bool rtcConnected);
+    void sendUpdateTimeSpentSessionId();
 
     // Debug: simulate a server RECONNECT opcode
     void debugForceReconnect();
@@ -159,6 +166,8 @@ private:
     void networkLoop();
     void runConnection();
     void heartbeatLoop();
+    void sendHeartbeat();
+    QoSPayload consumeQoSPayload();
 
     // join network and heartbeat threads, destroy ingest thread
     void teardown();
@@ -188,6 +197,11 @@ private:
     std::mutex heartbeatMutex;
     std::condition_variable heartbeatCv;
     std::thread heartbeatThread;
+
+    std::mutex qosMutex;
+    std::optional<QoSPayload> currentQoS;
+    std::optional<QoSPayload> upcomingQoS;
+    std::atomic<bool> sessionEstablished{ false };
 
     QString sessionId;
     QString resumeGatewayUrl;

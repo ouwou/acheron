@@ -125,6 +125,7 @@ private:
     void connectToVoiceServer(const QString &endpoint, const QString &token);
     void stopVoiceThread();
     void populateParticipantsFromCache();
+    IAudioBackend *backend() const;
 
 private:
     Snowflake accountId;
@@ -176,7 +177,7 @@ private:
     AudioPipeline *audioPipeline = nullptr;
     unsigned int voiceGeneration = 0;
 
-    std::unique_ptr<IAudioBackend> audioBackend;
+    mutable std::unique_ptr<IAudioBackend> audioBackend;
 };
 
 } // namespace Audio

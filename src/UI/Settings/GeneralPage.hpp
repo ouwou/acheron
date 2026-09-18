@@ -3,6 +3,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QComboBox;
 
 namespace Acheron {
 namespace UI {
@@ -19,6 +20,7 @@ signals:
 private:
     QCheckBox *inMemoryCacheCheckbox;
     QCheckBox *animateEmojiCheckbox;
+    QComboBox *fontEngineCombo = nullptr;
 };
 
 } // namespace UI

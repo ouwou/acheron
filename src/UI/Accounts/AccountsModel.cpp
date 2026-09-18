@@ -112,6 +112,7 @@ void AccountsModel::addAccount(const AccountInfo &account)
 
     AccountRepository repo;
     repo.saveAccount(newAccount);
+    repo.clearHeartbeatSession(newAccount.id);
     session->getImageManager()->setAccountProxy(newAccount.id, newAccount.proxy);
 
     // Don't keep the token in the in-memory model

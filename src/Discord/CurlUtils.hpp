@@ -31,6 +31,7 @@ QString getCertificatePath();
 QString getUserAgent();
 QString getImpersonateTarget();
 UserAgentProps getUserAgentProps();
+QString getSystemLocale();
 
 void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done);
 int getBuildNumber();

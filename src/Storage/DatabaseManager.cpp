@@ -138,6 +138,12 @@ void DatabaseManager::setupPersistentTables()
 
     if (!columnExists(db, "accounts", "proxy_url"))
         query.exec("ALTER TABLE accounts ADD COLUMN proxy_url TEXT");
+
+    if (!columnExists(db, "accounts", "heartbeat_session_id")) {
+        query.exec("ALTER TABLE accounts ADD COLUMN heartbeat_session_id TEXT");
+        query.exec("ALTER TABLE accounts ADD COLUMN heartbeat_session_created_at INTEGER");
+        query.exec("ALTER TABLE accounts ADD COLUMN heartbeat_session_last_used_at INTEGER");
+    }
 }
 
 void DatabaseManager::setupCacheTables(const QString &connName)

@@ -9,6 +9,7 @@
 
 #include <QtGlobal>
 #include <QFontDatabase>
+#include <QSettings>
 
 #ifndef ACHERON_NO_VOICE
 #include <dave/dave.h>
@@ -49,6 +50,16 @@ static void DaveLogSink(discord::dave::LoggingSeverity severity, const char *fil
 }
 #endif
 
+static void applyFontEngineSetting()
+{
+#ifdef Q_OS_WINDOWS
+    if (qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        return;
+    if (QSettings().value("general/font_engine", "directwrite").toString() == "freetype")
+        qputenv("QT_QPA_PLATFORM", "windows:fontengine=freetype");
+#endif
+}
+
 int main(int argc, char *argv[])
 {
     using namespace Acheron;
@@ -60,9 +71,11 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
 
+    QApplication::setOrganizationName("ouwou");
+    QApplication::setApplicationName("Acheron");
+    applyFontEngineSetting();
+
     App app(argc, argv);
-    app.setOrganizationName("ouwou");
-    app.setApplicationName("Acheron");
     app.setDesktopFileName("io.github.ouwou.acheron");
     app.setStyle("Fusion");
 

@@ -2,6 +2,7 @@
 
 #include "ClientIdentity.hpp"
 #include "Core/Logging.hpp"
+#include "Core/NetworkRequest.hpp"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -24,7 +25,7 @@ namespace CurlUtils {
 static int cachedBuildNumber = 0;
 static bool buildNumberFetchInFlight = false;
 static std::vector<std::function<void()>> buildNumberWaiters;
-static constexpr int fallbackBuildNumber = 482285;
+static constexpr int fallbackBuildNumber = 600539;
 static constexpr int BUILD_NUMBER_TIMEOUT_MS = 10000;
 
 static void resolveBuildNumberWaiters()
@@ -51,7 +52,7 @@ void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done)
 
     qCInfo(LogNetwork) << "Fetching Discord build number...";
 
-    QNetworkRequest request(QUrl("https://discord.com/app"));
+    QNetworkRequest request = Core::networkRequest(QUrl("https://discord.com/app"));
     request.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
     request.setTransferTimeout(BUILD_NUMBER_TIMEOUT_MS);
 
@@ -78,7 +79,7 @@ void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done)
         QString sentryPath = sentryMatch.captured(0);
         QString sentryUrl = "https://discord.com" + sentryPath;
 
-        QNetworkRequest sentryRequest(sentryUrl);
+        QNetworkRequest sentryRequest = Core::networkRequest(QUrl(sentryUrl));
         sentryRequest.setHeader(QNetworkRequest::UserAgentHeader, getUserAgent());
         sentryRequest.setTransferTimeout(BUILD_NUMBER_TIMEOUT_MS);
 
@@ -138,6 +139,17 @@ UserAgentProps getUserAgentProps()
     return { "Windows", "Chrome", "142.0.0.0", "10" };
 }
 
+QString getSystemLocale()
+{
+    static const QString locale = [] {
+        QString name = QLocale::system().name();
+        if (name.isEmpty() || name == "C")
+            return QString("en-US");
+        return name.replace('_', '-');
+    }();
+    return locale;
+}
+
 void applyCommonOptions(CURL *curl)
 {
     static const QString certPath = getCertificatePath();
@@ -173,10 +185,9 @@ void applyProxy(CURL *curl, const Core::ProxyConfig &proxy)
 void appendDiscordHeaders(curl_slist **headers, const ClientIdentity &identity, const QString &referer)
 {
     static const QString tz = QString::fromUtf8(QTimeZone::systemTimeZoneId());
-    static const QString locale = QLocale::system().name();
+    const QString locale = identity.discordLocale();
 
     ClientPropertiesBuildParams params;
-    params.clientAppState = "focused";
     params.includeClientHeartbeatSessionId = true;
     QString superProperties = QJsonDocument(identity.buildClientProperties(params).toJson())
                                       .toJson(QJsonDocument::Compact)

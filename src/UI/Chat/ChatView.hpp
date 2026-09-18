@@ -4,8 +4,11 @@
 #include <QClipboard>
 #include <QGuiApplication>
 
+#include <optional>
+
 #include "ChatLayout.hpp"
 #include "ChatModel.hpp"
+#include "MessageActionBar.hpp"
 #include "Core/Snowflake.hpp"
 
 namespace Acheron {
@@ -64,6 +67,7 @@ public:
     int hoveredRowAtPaint() const { return hoveredRow; }
     int hoveredCharIndexAtPaint() const { return hoveredChar; }
     bool replyBarHoveredAtPaint() const { return hoveredReplyBar; }
+    int hoveredMessageRowAtPaint() const { return hoveredMessage.isValid() ? hoveredMessage.row() : -1; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
 
     // jump flash
@@ -96,6 +100,7 @@ protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void clearSelection();
     void leaveEvent(QEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void showEvent(QShowEvent *event) override;
@@ -103,6 +108,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void updateGeometries() override;
 
 signals:
     void historyRequested();
@@ -138,10 +144,14 @@ private slots:
     void onRowsAboutToBeInserted(const QModelIndex &parent, int start, int end);
     void onRowsInserted(const QModelIndex &parent, int start, int end);
     void onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight);
+    void onActionBarTriggered(MessageActionBar::Action action);
+    void onActionBarMoreRequested(const QPoint &buttonTopLeft);
 
 private:
     void copySelectedText();
     void copyMessageContent(const QModelIndex &index);
+    static void copyMessageId(Core::Snowflake messageId);
+    void copyMessageLink(Core::Snowflake messageId);
     void copyImage(const QUrl &proxyUrl, const QPixmap &preview);
     void saveMedia(const QUrl &url, const QString &filename);
     void startInlineEdit(const QModelIndex &index);
@@ -154,6 +164,15 @@ private:
     void maybeRequestFuture();
     void positionJumpToPresentBar();
     void updateJumpToPresentBar();
+    bool canShowActionBar(const QModelIndex &index) const;
+    bool canDeleteMessage(const QModelIndex &index) const;
+    QModelIndex messageUnderCursor(const QPoint &globalPos) const;
+    QPoint actionBarPosition(const QModelIndex &index) const;
+    void updateHoveredMessage();
+    void addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId);
+    void triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId);
+    void execMessageMenu(QMenu &menu, const QPoint &globalPos);
+    void releaseHoverHold(const QPoint &globalPos);
 
     InlineVideoController *video = nullptr;
     EmojiAnimator *animator = nullptr;
@@ -164,6 +183,10 @@ private:
     QModelIndex currentEditingIndex;
 
     JumpToPresentBar *jumpToPresentBar = nullptr;
+    MessageActionBar *actionBar = nullptr;
+    QPersistentModelIndex hoveredMessage;
+    std::optional<QPoint> hoverHeldAt;
+    Core::Snowflake actionBarMessageId = Core::Snowflake::Invalid;
     Core::Snowflake pendingJumpMessageId = Core::Snowflake::Invalid;
     Core::Snowflake highlightedMessageId = Core::Snowflake::Invalid;
     qreal highlightAlpha = 0.0;

@@ -15,6 +15,11 @@ QString hex(const QColor &c)
 {
     return c.name(QColor::HexRgb);
 }
+
+QString rgba(const QColor &c, int alpha)
+{
+    return QStringLiteral("rgba(%1, %2, %3, %4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
+}
 } // namespace
 
 QString buildStyleSheet()
@@ -22,6 +27,8 @@ QString buildStyleSheet()
     const Manager &m = Manager::instance();
 
     const QColor baseBg = m.color(Token::BaseBg);
+    const QColor buttonBg = m.color(Token::ButtonBg);
+    const QColor primaryText = m.color(Token::PrimaryText);
     const QColor tooltipBg = m.color(Token::TooltipBg);
     const QColor tooltipText = m.color(Token::TooltipText);
     const QColor divider = m.color(Token::Divider);
@@ -57,6 +64,19 @@ QString buildStyleSheet()
     qss += QStringLiteral("#EmojiAutocompletePopup QListView {"
                           "  background: transparent;"
                           "  border: none; }");
+
+    qss += QStringLiteral("#MessageActionBar {"
+                          "  background-color: %1;"
+                          "  border: 1px solid %2;"
+                          "  border-radius: 8px;"
+                          "  padding: 2px; }"
+                          "#MessageActionBar QToolButton {"
+                          "  background: transparent;"
+                          "  border: none;"
+                          "  border-radius: 6px; }"
+                          "#MessageActionBar QToolButton:hover { background-color: %3; }"
+                          "#MessageActionBar QToolButton:pressed { background-color: %4; }")
+                   .arg(hex(buttonBg), hex(divider), rgba(primaryText, 24), rgba(primaryText, 40));
 
     return qss;
 }

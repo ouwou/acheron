@@ -1,6 +1,7 @@
 #include "Client.hpp"
 
 #include <QDebug>
+#include <QGuiApplication>
 #include <QJsonObject>
 #include <QPointer>
 
@@ -53,10 +54,21 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
                const Core::ProxyConfig &proxy, CaptchaResolver *captchaResolver, QObject *parent)
     : QObject(parent), token(token), baseUrl(baseUrl), proxyConfig(proxy)
 {
-    identity.regenerateClientHeartbeatSessionId();
-
     gateway = new Gateway(token, gatewayUrl, identity, proxy, this);
     httpClient = new HttpClient(baseUrl, token, identity, proxy, captchaResolver, this);
+
+    heartbeatSessionTimer = new QTimer(this);
+    heartbeatSessionTimer->setInterval(15 * 60 * 1000);
+    connect(heartbeatSessionTimer, &QTimer::timeout, this, &Client::onHeartbeatSessionTimer);
+
+    appFocused = !qGuiApp || qGuiApp->applicationState() == Qt::ApplicationActive;
+    if (qGuiApp) {
+        connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
+            appFocused = state == Qt::ApplicationActive;
+            updateActiveState();
+        });
+    }
+    updateActiveState();
 
     connect(gateway, &Gateway::connected, this, &Client::onConnected);
     connect(gateway, &Gateway::disconnected, this, &Client::onDisconnected);
@@ -540,6 +552,8 @@ void Client::onGatewayReady(const Ready &data)
     if ((!settings.guildFolders.has_value() || settings.guildFolders->folders.isEmpty()) && data.userSettings.hasValue() && !data.userSettings->guildFolders->isEmpty())
         settings.guildFolders = guildFoldersFromLegacy(data.userSettings->guildFolders.get());
 
+    applyDiscordLocale();
+
     me = data.user;
 
     emit ready(data);
@@ -563,10 +577,17 @@ void Client::onGatewayUserSettingsProtoUpdate(const UserSettingsProtoUpdate &eve
             settings = updated;
         }
 
+        applyDiscordLocale();
         emit settingsChanged();
     }
 
     emit userSettingsProtoUpdated(event);
+}
+
+void Client::applyDiscordLocale()
+{
+    if (settings.localization.has_value() && settings.localization->locale.has_value())
+        identity.setDiscordLocale(settings.localization->locale.value());
 }
 
 void Client::onGatewayMessageCreate(const Message &msg)
@@ -1017,6 +1038,52 @@ void Client::leaveGuild(Snowflake guildId)
 void Client::debugForceReconnect()
 {
     gateway->debugForceReconnect();
+}
+
+void Client::setVoiceConnected(bool connected)
+{
+    if (voiceConnected == connected)
+        return;
+    voiceConnected = connected;
+    updateActiveState();
+}
+
+void Client::updateActiveState()
+{
+    identity.setActivity(appFocused, voiceConnected);
+    gateway->setActiveState(appFocused, voiceConnected);
+    syncHeartbeatSession();
+
+    if (appFocused || voiceConnected) {
+        if (!heartbeatSessionTimer->isActive())
+            heartbeatSessionTimer->start();
+    } else {
+        heartbeatSessionTimer->stop();
+    }
+}
+
+void Client::restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored)
+{
+    identity.restoreHeartbeatSession(stored);
+    syncHeartbeatSession();
+}
+
+void Client::onHeartbeatSessionTimer()
+{
+    syncHeartbeatSession();
+}
+
+void Client::syncHeartbeatSession()
+{
+    HeartbeatSessionUpdate update = identity.touchHeartbeatSession();
+    if (update == HeartbeatSessionUpdate::Unchanged)
+        return;
+
+    if (std::optional<HeartbeatSession> session = identity.heartbeatSession())
+        emit heartbeatSessionChanged(*session);
+
+    if (update == HeartbeatSessionUpdate::Created)
+        gateway->sendUpdateTimeSpentSessionId();
 }
 
 void Client::ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed)

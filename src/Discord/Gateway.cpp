@@ -14,6 +14,7 @@
 
 #include <QUrl>
 
+#include <algorithm>
 #include <cstdlib>
 
 namespace Acheron {
@@ -314,8 +315,11 @@ void Gateway::handleReady(const Inbound &data)
         resumeGatewayUrl = msg.resumeGatewayUrl.get();
     canResume = !sessionId.isEmpty();
     reconnectAttempts = 0;
+    sessionEstablished = true;
 
     emit gatewayReady(msg);
+
+    sendUpdateTimeSpentSessionId();
 }
 
 void Gateway::handleReadySupplemental(const Inbound &data)
@@ -692,8 +696,7 @@ void Gateway::handleHello(const Inbound &data)
 void Gateway::identify()
 {
     ClientPropertiesBuildParams params;
-    params.clientAppState = "focused";
-    params.includeClientHeartbeatSessionId = false;
+    params.includeClientHeartbeatSessionId = true;
     params.isFastConnect = false;
     params.gatewayConnectReasons = "AppSkeleton";
     ClientProperties properties = identity.buildClientProperties(params);
@@ -897,6 +900,7 @@ void Gateway::runConnection()
         }
 
         // Clean up current connection
+        sessionEstablished = false;
         {
             std::lock_guard lock(curlMutex);
             curl_easy_cleanup(curl);
@@ -943,13 +947,7 @@ void Gateway::heartbeatLoop()
         }
         heartbeatAckReceived = false;
 
-        QoSHeartbeat heartbeat;
-        heartbeat.seq = lastReceivedSequence;
-        heartbeat.qos->ver = 27;
-        heartbeat.qos->active = true;
-        heartbeat.qos->reasons = { "foregrounded" };
-
-        sendPayload(heartbeat.toJson());
+        sendHeartbeat();
 
         {
             std::unique_lock lock(heartbeatMutex);
@@ -960,6 +958,85 @@ void Gateway::heartbeatLoop()
                 break;
         }
     }
+}
+
+void Gateway::sendHeartbeat()
+{
+    QoSHeartbeat heartbeat;
+    heartbeat.seq = lastReceivedSequence;
+    heartbeat.qos = consumeQoSPayload();
+    sendPayload(heartbeat.toJson());
+}
+
+void Gateway::sendUpdateTimeSpentSessionId()
+{
+    if (!sessionEstablished)
+        return;
+
+    auto session = identity.heartbeatSession();
+
+    if (!session)
+        return;
+
+    UpdateTimeSpentSessionId payload;
+    payload.initializationTimestamp = session->createdAtMs;
+    payload.sessionId = session->id;
+    payload.clientLaunchId = identity.clientLaunchId();
+    sendPayload(payload.toJson());
+    sendHeartbeat();
+}
+
+static QoSPayload makeQoSPayload(const QList<QString> &reasons)
+{
+    QoSPayload payload;
+    payload.ver = 30;
+    payload.active = !reasons.isEmpty();
+    payload.reasons = reasons;
+    return payload;
+}
+
+QoSPayload Gateway::consumeQoSPayload()
+{
+    std::lock_guard lock(qosMutex);
+    QoSPayload payload = currentQoS.value_or(makeQoSPayload({}));
+    if (upcomingQoS.has_value())
+        currentQoS = *upcomingQoS;
+    upcomingQoS.reset();
+    return payload;
+}
+
+void Gateway::setActiveState(bool focused, bool rtcConnected)
+{
+    QList<QString> reasons;
+    if (focused)
+        reasons.append("foregrounded");
+    if (rtcConnected)
+        reasons.append("rtc_connected");
+    QoSPayload state = makeQoSPayload(reasons);
+
+    // this is awkward but it mimics what discord does
+    bool sendNow = false;
+    {
+        std::lock_guard lock(qosMutex);
+        bool wasInactive = !currentQoS.has_value() || !currentQoS->active.get();
+        if (!currentQoS.has_value())
+            currentQoS = state;
+        if (state.active.get()) {
+            QList<QString> merged = currentQoS->reasons.get();
+            for (const QString &reason : reasons)
+                if (!merged.contains(reason))
+                    merged.append(reason);
+            std::sort(merged.begin(), merged.end());
+
+            currentQoS->active = true;
+            currentQoS->reasons = merged;
+            sendNow = wasInactive && sessionEstablished;
+        }
+        upcomingQoS = state;
+    }
+
+    if (sendNow)
+        sendHeartbeat();
 }
 
 void Gateway::debugForceReconnect()
@@ -976,6 +1053,7 @@ void Gateway::resume()
     resumeMsg.sessionId = sessionId;
     resumeMsg.seq = lastReceivedSequence.load();
     sendPayload(resumeMsg.toJson());
+    sessionEstablished = true;
 }
 
 bool Gateway::isFatalCloseCode(CloseCode code) const

@@ -12,14 +12,22 @@ namespace Core {
 namespace Audio {
 
 VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObject *parent)
-    : QObject(parent), accountId(accountId), proxy(proxy), audioBackend(IAudioBackend::create())
+    : QObject(parent), accountId(accountId), proxy(proxy)
 {
-    connect(audioBackend.get(), &IAudioBackend::devicesChanged, this, &VoiceManager::onDevicesChanged);
 }
 
 VoiceManager::~VoiceManager()
 {
     stopVoiceThread();
+}
+
+IAudioBackend *VoiceManager::backend() const
+{
+    if (!audioBackend) {
+        audioBackend = IAudioBackend::create();
+        connect(audioBackend.get(), &IAudioBackend::devicesChanged, this, &VoiceManager::onDevicesChanged);
+    }
+    return audioBackend.get();
 }
 
 void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
@@ -314,14 +322,14 @@ QList<AudioDeviceInfo> VoiceManager::availableInputDevices() const
 {
     if (voiceThread)
         return cachedInputDevices;
-    return audioBackend->availableInputDevices();
+    return backend()->availableInputDevices();
 }
 
 QList<AudioDeviceInfo> VoiceManager::availableOutputDevices() const
 {
     if (voiceThread)
         return cachedOutputDevices;
-    return audioBackend->availableOutputDevices();
+    return backend()->availableOutputDevices();
 }
 
 void VoiceManager::setInputDevice(const QByteArray &deviceId)
@@ -472,12 +480,12 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
     }
     voiceClient->seedConnectedUsers(channelUsers);
 
-    cachedInputDevices = audioBackend->availableInputDevices();
-    cachedOutputDevices = audioBackend->availableOutputDevices();
+    cachedInputDevices = backend()->availableInputDevices();
+    cachedOutputDevices = backend()->availableOutputDevices();
 
     voiceClient->moveToThread(voiceThread);
     audioPipeline->moveToThread(voiceThread);
-    audioBackend->moveToThread(voiceThread);
+    backend()->moveToThread(voiceThread);
 
     connect(voiceClient, &Discord::Voice::VoiceClient::audioReceived, audioPipeline, &AudioPipeline::onAudioReceived);
 
@@ -592,14 +600,14 @@ void VoiceManager::stopVoiceThread()
 
     AudioPipeline *ap = audioPipeline;
     Discord::Voice::VoiceClient *vc = voiceClient;
-    IAudioBackend *backend = audioBackend.get();
+    IAudioBackend *audio = backend();
     QThread *mainThread = thread();
-    QMetaObject::invokeMethod(audioPipeline, [ap, vc, backend, mainThread]() {
+    QMetaObject::invokeMethod(audioPipeline, [ap, vc, audio, mainThread]() {
         ap->stop();
         vc->stop();
         ap->moveToThread(mainThread);
         vc->moveToThread(mainThread);
-        backend->moveToThread(mainThread); }, Qt::BlockingQueuedConnection);
+        audio->moveToThread(mainThread); }, Qt::BlockingQueuedConnection);
 
     voiceThread->quit();
     if (!voiceThread->wait(5000)) {
@@ -651,7 +659,7 @@ void VoiceManager::onVoiceClientConnected()
     bool capturing = !selfMute && !selfDeaf;
     QByteArray inputId = currentInputDeviceId;
     QByteArray outputId = currentOutputDeviceId;
-    IAudioBackend *backend = audioBackend.get();
+    IAudioBackend *audio = backend();
     int application = cachedOpusApplication;
     int bitrate = cachedOpusBitrate;
     int complexity = cachedOpusComplexity;
@@ -660,7 +668,7 @@ void VoiceManager::onVoiceClientConnected()
     int plp = cachedOpusPacketLossPercent;
     bool ns = cachedNoiseSuppression;
     bool nsVad = cachedUseRnnoiseVad;
-    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, backend, capturing, inputId, outputId,
+    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, audio, capturing, inputId, outputId,
                                               application, bitrate, complexity, signalType, fec, plp, ns, nsVad]() {
         p->setOpusApplication(application);
         p->setOpusBitrate(bitrate);
@@ -670,7 +678,7 @@ void VoiceManager::onVoiceClientConnected()
         p->setOpusPacketLossPercent(plp);
         p->setNoiseSuppressionEnabled(ns);
         p->setUseRnnoiseVad(nsVad);
-        p->start(backend, capturing);
+        p->start(audio, capturing);
         if (!inputId.isEmpty())
             p->setInputDevice(inputId);
         if (!outputId.isEmpty())

@@ -73,6 +73,23 @@ struct QoSHeartbeatData : Core::JsonUtils::JsonObject
 };
 using QoSHeartbeat = Outbound<OpCode::QOS_HEARTBEAT, QoSHeartbeatData>;
 
+struct UpdateTimeSpentSessionIdData : Core::JsonUtils::JsonObject
+{
+    Field<qint64> initializationTimestamp;
+    Field<QString> sessionId;
+    Field<QString> clientLaunchId;
+
+    QJsonObject toJson() const
+    {
+        QJsonObject obj;
+        insert(obj, "initialization_timestamp", initializationTimestamp);
+        insert(obj, "session_id", sessionId);
+        insert(obj, "client_launch_id", clientLaunchId);
+        return obj;
+    }
+};
+using UpdateTimeSpentSessionId = Outbound<OpCode::UPDATE_TIME_SPENT_SESSION_ID, UpdateTimeSpentSessionIdData>;
+
 struct GuildSubscriptionsBulkData : Core::JsonUtils::JsonObject
 {
     struct SubscriptionData : Core::JsonUtils::JsonObject

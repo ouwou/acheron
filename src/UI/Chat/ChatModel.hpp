@@ -50,6 +50,7 @@ struct EmbedFieldData
 struct EmbedImageData
 {
     QUrl url;
+    QUrl originalUrl;
     QPixmap pixmap;
     QSize displaySize;
 };
@@ -132,6 +133,7 @@ struct EmbedData
     QPixmap footerIcon;
 
     QUrl thumbnailUrl;
+    QUrl thumbnailOriginalUrl;
     QPixmap thumbnail;
     QSize thumbnailSize;
 
