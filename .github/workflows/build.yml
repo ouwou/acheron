@@ -482,6 +482,8 @@ jobs:
         run: cmake --build build --parallel $(nproc)
 
       - name: Test
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/ffmpeg/lib
         run: ctest --test-dir build --output-on-failure
 
       - name: Build AppDir
