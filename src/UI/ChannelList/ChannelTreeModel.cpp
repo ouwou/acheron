@@ -1,6 +1,7 @@
 #include "ChannelTreeModel.hpp"
 
 #include <functional>
+#include <utility>
 
 #include <Core/ClientInstance.hpp>
 #include <Core/ForumManager.hpp>
@@ -324,6 +325,7 @@ void ChannelTreeModel::removeAccount(Snowflake accountId)
         endRemoveRows();
     }
     accountVoiceChannels.remove(accountId);
+    publishTotalMentionCount();
 }
 
 void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
@@ -471,6 +473,7 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
     }
 
     refreshReadStates(accNode, instance);
+    publishTotalMentionCount();
 }
 
 ChannelNode *ChannelTreeModel::getAccountNodeFor(ChannelNode *node)
@@ -1042,8 +1045,7 @@ void ChannelTreeModel::addGuild(const Discord::GatewayGuild &guild, Snowflake ac
 
         insertChildAt(parentNode, existingRow, std::move(guildNode));
 
-        if (parentNode->type == ChannelNode::Type::Folder)
-            updateNodeAggregates(parentNode);
+        updateNodeAggregates(parentNode);
         return;
     }
 
@@ -1645,6 +1647,20 @@ void ChannelTreeModel::updateNodeAggregates(ChannelNode *node)
         if (!notifyIfReadStateChanged(node, before))
             return;
     }
+    publishTotalMentionCount();
+}
+
+void ChannelTreeModel::publishTotalMentionCount()
+{
+    int total = 0;
+    for (const auto &account : root->children)
+        total += account->mentionCount;
+
+    if (total == publishedMentionCount)
+        return;
+
+    int previous = std::exchange(publishedMentionCount, total);
+    emit totalMentionCountChanged(total, previous);
 }
 
 void ChannelTreeModel::emitDataChangedRecursive(const QModelIndex &index)

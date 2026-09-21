@@ -67,6 +67,7 @@ private slots:
     void onTypingStart(const Discord::TypingStart &event);
     void onChannelPermissionsChanged(Core::Snowflake channelId);
     void onSplitterMoved();
+    void onTotalMentionCountChanged(int count, int previousCount);
 
 private:
     void switchActiveInstance(Core::ClientInstance *instance);

@@ -100,6 +100,9 @@ public:
     QModelIndex folderIndex(Snowflake accountId, Snowflake folderId);
     QModelIndex dmHeaderIndex(Snowflake accountId);
 
+signals:
+    void totalMentionCountChanged(int count, int previousCount);
+
 private:
     static void collectMarkableChannels(ChannelNode *node,
                                         QList<QPair<Snowflake, Snowflake>> &out);
@@ -110,6 +113,7 @@ private:
     void refreshReadStates(ChannelNode *node, Core::ClientInstance *instance);
     bool notifyIfReadStateChanged(ChannelNode *node, const Core::ChannelReadState &before);
     void updateNodeAggregates(ChannelNode *node);
+    void publishTotalMentionCount();
     std::unique_ptr<ChannelNode> createGuildNode(const Discord::GatewayGuild &guild, Core::ClientInstance *instance);
     static std::unique_ptr<ChannelNode> makeThreadNode(const Discord::Channel &thread);
     ChannelNode *insertThreadNode(const Discord::Channel &thread, Snowflake accountId, bool temporary = false);
@@ -130,6 +134,7 @@ private:
     std::unique_ptr<ChannelNode> root;
     QHash<Snowflake, ChannelNode *> accountNodes;
     QHash<Snowflake, Snowflake> accountVoiceChannels;
+    int publishedMentionCount = 0;
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
 
     Snowflake temporaryThreadId;

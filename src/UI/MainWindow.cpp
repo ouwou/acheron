@@ -1,5 +1,6 @@
 #include "MainWindow.hpp"
 
+#include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QMessageBox>
@@ -151,6 +152,9 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 
     connect(typingTracker, &TypingTracker::typersChanged, this,
             [this]() { typingIndicator->setTypers(typingTracker->getActiveTypers()); });
+
+    connect(channelTreeModel, &ChannelTreeModel::totalMentionCountChanged, this,
+            &MainWindow::onTotalMentionCountChanged);
 
     connect(session, &Session::ready, this, [this](const Discord::Ready &ready) {
         channelTreeModel->populateFromReady(ready);
@@ -2004,6 +2008,15 @@ void MainWindow::refreshTabReadStates()
         }
         tabBar->updateChannelReadState(entry.channelId, state.isUnread, state.mentionCount);
     }
+}
+
+void MainWindow::onTotalMentionCountChanged(int count, int previousCount)
+{
+    const QString appName = QGuiApplication::applicationDisplayName();
+    setWindowTitle(count > 0 ? QStringLiteral("(%1) %2").arg(count).arg(appName) : appName);
+
+    if (previousCount == 0 && count > 0)
+        QApplication::alert(this);
 }
 
 namespace {
