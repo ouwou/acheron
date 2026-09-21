@@ -18,7 +18,7 @@ ServerRailView::ServerRailView(QWidget *parent)
     setFocusPolicy(Qt::NoFocus);
     setUniformItemSizes(true);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setFrameShape(QFrame::NoFrame);
     setMouseTracking(true);
 }
