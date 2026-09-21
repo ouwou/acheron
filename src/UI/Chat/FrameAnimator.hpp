@@ -23,15 +23,22 @@ namespace UI {
 
 class ChatView;
 
-class EmojiAnimator : public QObject
+enum class AnimatedKind {
+    Emoji,
+    Sticker,
+};
+
+class FrameAnimator : public QObject
 {
     Q_OBJECT
 public:
-    explicit EmojiAnimator(ChatView *view);
+    explicit FrameAnimator(ChatView *view);
 
     void setCache(Core::AnimatedImageCache *cache);
-    void setEnabled(bool enabled);
-    [[nodiscard]] bool isEnabled() const { return enabled; }
+    void setEmojiEnabled(bool enabled);
+    [[nodiscard]] bool emojiEnabled() const { return animateEmoji; }
+    void setStickersEnabled(bool enabled);
+    [[nodiscard]] bool stickersEnabled() const { return animateStickers; }
     void setViewVisible(bool visible);
 
     void attachModel(QAbstractItemModel *model);
@@ -43,7 +50,10 @@ public:
     void beginRow(int row, const QRect &rowRect, const QRect &bodyTextRect);
     void endRow();
 
-    [[nodiscard]] QPixmap frame(const QUrl &url, const QSize &size, Core::Snowflake accountId, const QRect &viewportRect);
+    [[nodiscard]] QPixmap frame(const QUrl &url, const QSize &size, Core::Snowflake accountId, const QRect &viewportRect,
+                                AnimatedKind kind = AnimatedKind::Emoji);
+    // null while decoding, and the view repaints once that finishes
+    [[nodiscard]] Core::AnimatedFramesPtr framesOnceDecoded(const QUrl &url, const QSize &size, Core::Snowflake accountId);
 
     struct BodyRepaint
     {
@@ -53,6 +63,14 @@ public:
 
     [[nodiscard]] std::optional<BodyRepaint> bodyOnlyRepaint(int row, const QRect &rowRect) const;
 
+    struct StickerRepaint
+    {
+        QRect rect;
+        QPixmap frame;
+    };
+
+    [[nodiscard]] std::optional<QList<StickerRepaint>> stickerOnlyRepaint(int row, const QRect &rowRect) const;
+
 private:
     using Key = Core::ImageRequestKey;
 
@@ -61,6 +79,7 @@ private:
         Key key;
         QRect rectInRow;
         bool inBody = false;
+        AnimatedKind kind = AnimatedKind::Emoji;
     };
 
     struct Row
@@ -76,12 +95,13 @@ private:
         Row data;
     };
 
-    struct VisibleEmoji
+    struct VisibleAnimation
     {
         Core::AnimatedFramesPtr frames;
         int frameIndex = 0;
     };
 
+    void applySetting(bool &setting, bool value);
     [[nodiscard]] bool running() const;
     [[nodiscard]] qint64 now() const;
     [[nodiscard]] int currentFrame(const Core::AnimatedFrames &frames) const;
@@ -97,7 +117,8 @@ private:
     QPointer<QAbstractItemModel> boundModel;
 
     QHash<int, Row> rows;
-    QHash<Key, VisibleEmoji> visible;
+    QHash<Key, VisibleAnimation> visible;
+    QSet<Key> awaitedDecodes;
     QRegion damage;
     std::optional<Recording> recording;
 
@@ -106,7 +127,8 @@ private:
     std::optional<qint64> runningSince;
     QTimer timer;
 
-    bool enabled = true;
+    bool animateEmoji = true;
+    bool animateStickers = true;
     bool focused = true;
     bool viewVisible = false;
     bool wasRunning = false;

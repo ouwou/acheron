@@ -62,10 +62,12 @@ public:
     [[nodiscard]] QNetworkAccessManager *networkManagerFor(Snowflake accountId) const;
 
     [[nodiscard]] bool isCached(const QUrl &url, const QSize &size);
+    [[nodiscard]] bool isUnavailable(const ImageRequestKey &key) const;
     [[nodiscard]] QString rawDownloadPath(const QUrl &url, const QSize &size) const;
     void assign(QLabel *label, const QUrl &url, const QSize &size, Snowflake accountId);
     QPixmap get(const QUrl &url, const QSize &size, Snowflake accountId, PinGroup pin = PinGroup::None);
     QPixmap getIfCached(const QUrl &url, const QSize &size);
+    void downloadToCache(const QUrl &url, const QSize &size, Snowflake accountId);
     [[nodiscard]] QPixmap placeholder(const QSize &size);
 
     void unpinGroup(PinGroup group);
@@ -78,10 +80,17 @@ public:
 
 signals:
     void imageFetched(const QUrl &url, const QSize &size, const QPixmap &pixmap);
+    void rawDownloadReady(const QUrl &url, const QSize &size);
+    void imageUnavailable(const QUrl &url, const QSize &size);
 
 private:
     QPixmap getImpl(const QUrl &url, const QSize &size, PinGroup pin, bool fetchIfNeeded, Snowflake accountId);
-    void request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId);
+    enum class FetchPurpose {
+        Pixmap,
+        DownloadOnly,
+    };
+
+    void request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId, FetchPurpose purpose = FetchPurpose::Pixmap);
     [[nodiscard]] QString getCachePath(const QUrl &url, const QSize &size) const;
     [[nodiscard]] bool recentlyFailed(const ImageRequestKey &key) const;
     void fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin, QNetworkAccessManager *nam);
@@ -94,7 +103,9 @@ private:
     QElapsedTimer uptime;
 
     QSet<ImageRequestKey> requests;
+    QSet<ImageRequestKey> downloadOnlyRequests;
     QHash<ImageRequestKey, qint64> failedAtMs;
+    QSet<ImageRequestKey> undecodable;
     QHash<QSize, QPixmap> placeholders;
     QHash<ImageRequestKey, PinGroup> pendingPins;
     QCache<ImageRequestKey, QPixmap> cache;

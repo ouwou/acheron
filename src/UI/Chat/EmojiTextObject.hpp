@@ -16,14 +16,14 @@ class ImageManager;
 
 namespace UI {
 
-class EmojiAnimator;
+class FrameAnimator;
 
 class EmojiTextObject : public QObject, public QTextObjectInterface
 {
     Q_OBJECT
     Q_INTERFACES(QTextObjectInterface)
 public:
-    EmojiTextObject(Core::ImageManager *imageManager, EmojiAnimator *animator, QObject *parent = nullptr);
+    EmojiTextObject(Core::ImageManager *imageManager, FrameAnimator *animator, QObject *parent = nullptr);
 
     void install(QTextDocument &doc);
     void setAccountId(Core::Snowflake id) { accountId = id; }
@@ -43,7 +43,7 @@ private:
     const ImageSource &source(const QString &name);
 
     Core::ImageManager *imageManager;
-    EmojiAnimator *animator;
+    FrameAnimator *animator;
     Core::Snowflake accountId;
     QHash<QString, ImageSource> sources;
 };

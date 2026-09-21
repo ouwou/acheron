@@ -11,7 +11,7 @@
 #include "Chat/ChatModel.hpp"
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
-#include "Chat/EmojiAnimator.hpp"
+#include "Chat/FrameAnimator.hpp"
 #include "Chat/InlineVideoController.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
@@ -1224,8 +1224,12 @@ void MainWindow::setupUi()
 
     chatView->setModel(chatModel);
     chatView->setImageManager(session->getImageManager());
-    chatView->emojiAnimator()->setCache(session->getAnimatedImageCache());
-    chatView->emojiAnimator()->setEnabled(QSettings().value("chat/animate_emoji", true).toBool());
+    Core::AnimatedImageCache *animatedImages = session->getAnimatedImageCache();
+    animatedImages->setCacheLimitMiB(QSettings().value("chat/animation_cache_mb", Core::AnimatedImageCache::CacheLimit.fallback).toInt());
+    animatedImages->setAnimationLimitMiB(QSettings().value("chat/animation_max_mb", Core::AnimatedImageCache::AnimationLimit.fallback).toInt());
+    chatView->frameAnimator()->setCache(animatedImages);
+    chatView->frameAnimator()->setEmojiEnabled(QSettings().value("chat/animate_emoji", true).toBool());
+    chatView->frameAnimator()->setStickersEnabled(QSettings().value("chat/animate_stickers", true).toBool());
     chatView->setItemDelegate(new ChatDelegate(session->getImageManager(), chatView));
     chatView->setIconSize(QSize(24, 24));
     chatView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -2316,8 +2320,15 @@ void MainWindow::openSettingsWindow()
             setChannelListMode(classic ? ChannelListMode::Classic : ChannelListMode::Tree);
         });
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
-            chatView->emojiAnimator()->setEnabled(enabled);
+            chatView->frameAnimator()->setEmojiEnabled(enabled);
         });
+        connect(settingsWindow, &SettingsWindow::animateStickersChanged, this, [this](bool enabled) {
+            chatView->frameAnimator()->setStickersEnabled(enabled);
+        });
+        connect(settingsWindow, &SettingsWindow::animationCacheLimitChanged, session->getAnimatedImageCache(),
+                &Core::AnimatedImageCache::setCacheLimitMiB);
+        connect(settingsWindow, &SettingsWindow::animationSizeLimitChanged, session->getAnimatedImageCache(),
+                &Core::AnimatedImageCache::setAnimationLimitMiB);
     }
 
     settingsWindow->show();

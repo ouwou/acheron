@@ -1,8 +1,12 @@
 #include "CdnUrls.hpp"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QHash>
 #include <QUrlQuery>
+
+#include <algorithm>
+#include <array>
 
 namespace Acheron {
 namespace Discord {
@@ -23,7 +27,71 @@ qint64 expiryEpochSecs(const QUrl &url)
     return ok ? seconds : 0;
 }
 
+constexpr std::array OfficialClientAssetSizes = { 16, 20, 22, 24, 28, 32, 40, 44, 48, 56, 60, 64, 80, 96, 100, 128,
+                                                  160, 240, 256, 300, 320, 480, 512, 600, 640, 1024, 1280, 1536, 2048, 3072, 4096 };
+
+QUrl mediaProxySticker(Core::Snowflake stickerId, const QString &extension, int assetPx, const QString &extraQuery = {})
+{
+    return QUrl(QStringLiteral("https://media.discordapp.net/stickers/%1.%2?size=%3%4")
+                        .arg(QString::number(quint64(stickerId)), extension, QString::number(assetPx), extraQuery));
+}
+
 } // namespace
+
+Core::Snowflake stickerIdFromUrl(const QUrl &url)
+{
+    if (!isStickerUrl(url))
+        return {};
+
+    bool ok = false;
+    const quint64 id = QFileInfo(url.path()).completeBaseName().toULongLong(&ok);
+    return ok ? Core::Snowflake(id) : Core::Snowflake();
+}
+
+int stickerAssetPx(int logicalPx, qreal devicePixelRatio)
+{
+    const int wanted = qRound(logicalPx * std::min<qreal>(2.0, devicePixelRatio));
+    const auto roundedUp = std::find_if(OfficialClientAssetSizes.begin(), OfficialClientAssetSizes.end(),
+                                        [wanted](int size) { return wanted <= size; });
+    return roundedUp != OfficialClientAssetSizes.end() ? *roundedUp : OfficialClientAssetSizes.back();
+}
+
+QUrl stickerStill(Core::Snowflake stickerId, StickerFormatType format, int assetPx)
+{
+    if (!stickerId.isValid())
+        return {};
+
+    switch (format) {
+    case StickerFormatType::LOTTIE:
+        return {};
+    case StickerFormatType::APNG: {
+        const QString flattenToFirstFrame = "&passthrough=false";
+        return mediaProxySticker(stickerId, "png", assetPx, flattenToFirstFrame);
+    }
+    case StickerFormatType::PNG:
+    case StickerFormatType::GIF:
+        break;
+    }
+    return mediaProxySticker(stickerId, "webp", assetPx, "&quality=lossless");
+}
+
+QUrl stickerAnimated(Core::Snowflake stickerId, StickerFormatType format, int assetPx)
+{
+    if (!stickerId.isValid())
+        return {};
+
+    switch (format) {
+    case StickerFormatType::APNG:
+        return mediaProxySticker(stickerId, "png", assetPx);
+    case StickerFormatType::GIF:
+        return mediaProxySticker(stickerId, "gif", assetPx);
+    case StickerFormatType::LOTTIE:
+        return QUrl(QStringLiteral("https://discord.com/stickers/%1.json").arg(QString::number(quint64(stickerId))));
+    case StickerFormatType::PNG:
+        break;
+    }
+    return {};
+}
 
 bool isDiscordMediaUrl(const QUrl &url)
 {

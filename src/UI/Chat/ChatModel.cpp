@@ -2,6 +2,7 @@
 
 #include <QImageReader>
 
+#include <algorithm>
 #include <cmath>
 
 #include "Core/Markdown/Parser.hpp"
@@ -73,6 +74,11 @@ static EmbedType embedTypeFromString(const QString &typeStr)
 ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
     : QAbstractListModel(parent), imageManager(imageManager)
 {
+    connect(imageManager, &Core::ImageManager::imageUnavailable, this, [this](const QUrl &url) {
+        if (Discord::Cdn::isStickerUrl(url))
+            refreshRowsShowingSticker(url);
+    });
+
     connect(imageManager, &Core::ImageManager::imageFetched, this,
             [this](const QUrl &url, const QSize &size, const QPixmap &pixmap) {
                 // avatar pending requests
@@ -126,6 +132,11 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                             emit dataChanged(idx, idx, { ReactionsRole, CachedSizeRole });
                         }
                     }
+                    return;
+                }
+
+                if (Discord::Cdn::isStickerUrl(url)) {
+                    refreshRowsShowingSticker(url);
                     return;
                 }
 
@@ -194,6 +205,23 @@ ChatModel::ChatModel(Core::ImageManager *imageManager, QObject *parent)
                     }
                 }
             });
+}
+
+void ChatModel::refreshRowsShowingSticker(const QUrl &stickerUrl)
+{
+    const Snowflake stickerId = Discord::Cdn::stickerIdFromUrl(stickerUrl);
+    for (int row = 0; row < messages.size(); ++row) {
+        const auto &stickers = messages[row].contentMessage().stickerItems;
+        if (!stickers.hasValue())
+            continue;
+        const bool shown = std::any_of(stickers->cbegin(), stickers->cend(), [stickerId](const Discord::StickerItem &sticker) {
+            return sticker.id.get() == stickerId;
+        });
+        if (shown) {
+            const QModelIndex idx = index(row, 0);
+            emit dataChanged(idx, idx, { StickersRole });
+        }
+    }
 }
 
 void ChatModel::setAvatarUrlResolver(AvatarUrlResolver resolver)
@@ -486,6 +514,27 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             result.append(data);
         }
 
+        return QVariant::fromValue(result);
+    }
+    case StickersRole: {
+        const Discord::Message &visible = msg.contentMessage();
+        if (!visible.stickerItems.hasValue() || visible.stickerItems->isEmpty())
+            return QVariant();
+
+        const QSize displaySize(StickerData::DisplayPx, StickerData::DisplayPx);
+        const int assetPx = Discord::Cdn::stickerAssetPx(StickerData::DisplayPx, qApp->devicePixelRatio());
+        QList<StickerData> result;
+        for (const auto &sticker : *visible.stickerItems) {
+            StickerData data;
+            data.id = sticker.id;
+            data.name = sticker.name;
+            data.stillUrl = Discord::Cdn::stickerStill(sticker.id.get(), sticker.formatType.get(), assetPx);
+            data.animatedUrl = Discord::Cdn::stickerAnimated(sticker.id.get(), sticker.formatType.get(), assetPx);
+            if (data.hasRasterStill())
+                data.still = pixmapOrNullWhileLoading(data.stillUrl, displaySize);
+            data.unavailable = imageManager->isUnavailable({ data.hasRasterStill() ? data.stillUrl : data.animatedUrl, displaySize });
+            result.append(data);
+        }
         return QVariant::fromValue(result);
     }
     case EmbedsRole: {
@@ -833,7 +882,10 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         reply.state = ReplyData::State::Present;
         reply.referencedMessageId = ref->id;
         reply.authorId = ref->author->id;
-        reply.contentSnippet = ref->contentMessage().content;
+        const Discord::Message &refVisible = ref->contentMessage();
+        reply.contentSnippet = refVisible.content;
+        if (reply.contentSnippet.isEmpty() && refVisible.stickerItems.hasValue() && !refVisible.stickerItems->isEmpty())
+            reply.contentSnippet = tr("Click to see sticker");
 
         reply.authorColor = resolveAuthorColor(ref->author.get());
         reply.authorName = resolveAuthorName(ref->author.get());
@@ -1135,6 +1187,13 @@ QPixmap ChatModel::localPixmap(const QUrl &url, const QSize &displaySize) const
         pixmap.setDevicePixelRatio(qApp->devicePixelRatio());
     localPixmapCache.insert(url, pixmap);
     return pixmap;
+}
+
+QPixmap ChatModel::pixmapOrNullWhileLoading(const QUrl &url, const QSize &displaySize) const
+{
+    const QPixmap pixmap = suppressImageFetch ? imageManager->getIfCached(url, displaySize)
+                                              : imageManager->get(url, displaySize, currentAccountId);
+    return imageManager->isCached(url, displaySize) ? pixmap : QPixmap();
 }
 
 QPixmap ChatModel::previewPixmap(Snowflake attachmentId, const QImage &image,

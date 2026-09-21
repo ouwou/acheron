@@ -3,11 +3,12 @@
 #include "ChatModel.hpp"
 #include "ChatLayout.hpp"
 #include "ChatView.hpp"
+#include "Core/LottieDecoder.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
 #include "Core/Media/Player.hpp"
 #include "Core/Media/PlayerPool.hpp"
-#include "UI/Chat/EmojiAnimator.hpp"
+#include "UI/Chat/FrameAnimator.hpp"
 #include "UI/Chat/EmojiTextObject.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
@@ -22,7 +23,7 @@ namespace UI {
 
 ChatDelegate::ChatDelegate(Core::ImageManager *imageManager, ChatView *view)
     : QStyledItemDelegate(view),
-      emojiHandler(new EmojiTextObject(imageManager, view->emojiAnimator(), this))
+      emojiHandler(new EmojiTextObject(imageManager, view->frameAnimator(), this))
 {
 }
 
@@ -120,6 +121,58 @@ bool ChatDelegate::paintBodyTextOnly(QPainter *painter, const QStyleOptionViewIt
     drawHighlightFlash(painter, option, chatView, index.row(), damage);
     drawBodyDocument(painter, doc, textRect, damage.translated(-textRect.topLeft()), option, index, chatView);
     return true;
+}
+
+static void drawSticker(QPainter *painter, const QRect &rect, const QPixmap &pixmap)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter->drawPixmap(VideoControls::fitRect(pixmap.size(), rect), pixmap);
+    painter->restore();
+}
+
+static void drawUnplayableSticker(QPainter *painter, const QStyleOptionViewItem &option, const QRect &rect, const QString &name)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(QPen(option.palette.mid().color(), 1));
+    painter->setBrush(option.palette.alternateBase());
+    painter->drawRoundedRect(rect, 8, 8);
+
+    painter->setFont(option.font);
+    painter->setPen(option.palette.placeholderText().color());
+    const QRect textRect = rect.adjusted(8, 8, -8, -8);
+    painter->drawText(textRect, Qt::AlignCenter | Qt::TextWordWrap, ChatDelegate::tr("Sticker: %1").arg(name));
+    painter->restore();
+}
+
+struct ResolvedSticker
+{
+    QPixmap pixmap;
+    bool unplayable = false;
+};
+
+static ResolvedSticker resolveSticker(const StickerData &sticker, const QRect &rect, FrameAnimator *animator, Snowflake accountId)
+{
+    if (sticker.unavailable || (!sticker.hasRasterStill() && !Core::Lottie::isSupported()))
+        return { {}, true };
+
+    QPixmap frame;
+    if (animator && sticker.isAnimated())
+        frame = animator->frame(sticker.animatedUrl, rect.size(), accountId, rect, AnimatedKind::Sticker);
+    if (!frame.isNull())
+        return { frame };
+    if (sticker.hasRasterStill())
+        return { sticker.still };
+    if (!animator)
+        return {};
+
+    const Core::AnimatedFramesPtr decoded = animator->framesOnceDecoded(sticker.animatedUrl, rect.size(), accountId);
+    if (!decoded)
+        return {};
+    if (decoded->frames.isEmpty())
+        return { {}, true };
+    return { decoded->frames.first() };
 }
 
 static void drawSystemMessageIcon(QPainter *painter, const QStyleOptionViewItem &option, Discord::MessageType type, const QRect &rect)
@@ -264,7 +317,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     const auto *chatView = qobject_cast<const ChatView *>(option.widget);
     const InlineVideoController *video = chatView ? chatView->videoController() : nullptr;
-    EmojiAnimator *animator = chatView ? chatView->emojiAnimator() : nullptr;
+    FrameAnimator *animator = chatView ? chatView->frameAnimator() : nullptr;
 
     if (animator && !animator->intersectsPaintDamage(option.rect)) {
         painter->restore();
@@ -285,6 +338,18 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (animator && chatModel) {
         const auto repaint = animator->bodyOnlyRepaint(index.row(), option.rect);
         if (repaint && paintBodyTextOnly(painter, option, index, chatModel, chatView, repaint->textRect, repaint->damage)) {
+            painter->restore();
+            return;
+        }
+    }
+
+    if (animator) {
+        if (const auto stickers = animator->stickerOnlyRepaint(index.row(), option.rect)) {
+            for (const auto &sticker : *stickers) {
+                drawHoverHighlight(painter, option, chatView, index.row(), sticker.rect);
+                drawHighlightFlash(painter, option, chatView, index.row(), sticker.rect);
+                drawSticker(painter, sticker.rect, sticker.frame);
+            }
             painter->restore();
             return;
         }
@@ -849,6 +914,15 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                         footerFm.ascent();
             painter->drawText(footerX, textY, footerText);
         }
+    }
+
+    for (const auto &stickerLayout : layout.stickerLayouts) {
+        const StickerData &sticker = ctx.stickers[stickerLayout.stickerIndex];
+        const ResolvedSticker resolved = resolveSticker(sticker, stickerLayout.rect, animator, chatModel->getAccountId());
+        if (resolved.unplayable)
+            drawUnplayableSticker(painter, option, stickerLayout.rect, sticker.name);
+        else if (!resolved.pixmap.isNull())
+            drawSticker(painter, stickerLayout.rect, resolved.pixmap);
     }
 
     if (!layout.forwardOriginRect.isNull() && !ctx.forwardOrigin.text.isEmpty()) {

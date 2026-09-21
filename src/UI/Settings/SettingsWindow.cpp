@@ -36,6 +36,9 @@ void SettingsWindow::setupUi()
     auto *general = new GeneralPage(this);
     addPage(tr("General"), general);
     connect(general, &GeneralPage::animateEmojiChanged, this, &SettingsWindow::animateEmojiChanged);
+    connect(general, &GeneralPage::animateStickersChanged, this, &SettingsWindow::animateStickersChanged);
+    connect(general, &GeneralPage::animationCacheLimitChanged, this, &SettingsWindow::animationCacheLimitChanged);
+    connect(general, &GeneralPage::animationSizeLimitChanged, this, &SettingsWindow::animationSizeLimitChanged);
 
     auto *appearance = new AppearancePage(this);
     addPage(tr("Appearance"), appearance);

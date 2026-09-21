@@ -866,6 +866,22 @@ struct ReactionCountDetails : Core::JsonUtils::JsonObject
     }
 };
 
+struct StickerItem : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> id;
+    Field<QString> name;
+    Field<StickerFormatType> formatType;
+
+    static StickerItem fromJson(const QJsonObject &obj)
+    {
+        StickerItem sticker;
+        get(obj, "id", sticker.id);
+        get(obj, "name", sticker.name);
+        get(obj, "format_type", sticker.formatType);
+        return sticker;
+    }
+};
+
 struct Reaction : Core::JsonUtils::JsonObject
 {
     Field<Emoji> emoji;
@@ -946,6 +962,7 @@ struct Message : Core::JsonUtils::JsonObject
     Field<QList<Core::Snowflake>, true> mentionRoles;
     Field<bool, true> mentionEveryone;
     Field<QList<Reaction>, true> reactions;
+    Field<QList<StickerItem>, true> stickerItems;
 
     Field<MessageReference, true> messageReference;
 
@@ -966,6 +983,7 @@ struct Message : Core::JsonUtils::JsonObject
     QString parsedContentCached;
     QString embedsJson;
     QString reactionsJson;
+    QString stickersJson;
     QString snapshotJson;
 
     // sent
@@ -992,6 +1010,14 @@ struct Message : Core::JsonUtils::JsonObject
         snapshotJson = QString::fromUtf8(QJsonDocument(snapshotObj).toJson(QJsonDocument::Compact));
     }
 
+    static QString compactArrayJson(const QJsonObject &obj, const QString &key)
+    {
+        const auto found = obj.constFind(key);
+        if (found == obj.constEnd())
+            return {};
+        return QString::fromUtf8(QJsonDocument(found.value().toArray()).toJson(QJsonDocument::Compact));
+    }
+
     static Message fromJson(const QJsonObject &obj)
     {
         Message message;
@@ -1014,6 +1040,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "mention_roles", message.mentionRoles);
         get(obj, "mention_everyone", message.mentionEveryone);
         get(obj, "reactions", message.reactions);
+        get(obj, "sticker_items", message.stickerItems);
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
@@ -1033,15 +1060,9 @@ struct Message : Core::JsonUtils::JsonObject
             }
         }
 
-        if (obj.contains("embeds")) {
-            QJsonDocument doc(obj.value("embeds").toArray());
-            message.embedsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
-        }
-
-        if (obj.contains("reactions")) {
-            QJsonDocument doc(obj.value("reactions").toArray());
-            message.reactionsJson = QString::fromUtf8(doc.toJson(QJsonDocument::Compact));
-        }
+        message.embedsJson = compactArrayJson(obj, "embeds");
+        message.reactionsJson = compactArrayJson(obj, "reactions");
+        message.stickersJson = compactArrayJson(obj, "sticker_items");
 
         return message;
     }
@@ -1086,6 +1107,11 @@ struct Message : Core::JsonUtils::JsonObject
         if (present.contains(QStringLiteral("reactions"))) {
             reactions = update.reactions;
             reactionsJson = update.reactionsJson;
+        }
+
+        if (present.contains(QStringLiteral("sticker_items"))) {
+            stickerItems = update.stickerItems;
+            stickersJson = update.stickersJson;
         }
     }
 };

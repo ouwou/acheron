@@ -9,6 +9,7 @@ Alternative Discord client made in C++ with Qt 6 (+ Qt 5 compatible)
 Current features:
 * Not Electron
 * No, not Tauri either
+* Feature tuning for low memory usage
 * Cross-platform support (Win 7+, Linux, macOS)
 * Voice support (E2EE & noise suppression)
 * Multi-account support
@@ -27,9 +28,9 @@ Current features:
 * Threads
 * Forums
 * QR code login
+* Animated emojis
 
 Planned features:
-* Animated emojis
 * Server management
 * Notifications
 * Sounds
@@ -48,6 +49,7 @@ Latest nightly Windows build: https://nightly.link/ouwou/acheron/workflows/build
 * zlib (either via Qt ZlibPrivate or system)
 * QtKeychain
 * emoji-segmenter (vendored)
+* rlottie (optional, Lottie stickers)
 * libsodium (optional, voice support)
 * libopus (optional, voice support)
 * libdave (optional, voice support, vendored)

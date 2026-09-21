@@ -112,6 +112,21 @@ struct ReactionData
     QColor burstTintColor;
 };
 
+struct StickerData
+{
+    static constexpr int DisplayPx = 160;
+
+    Core::Snowflake id;
+    QString name;
+    QUrl stillUrl;
+    QUrl animatedUrl;
+    QPixmap still;
+    bool unavailable = false;
+
+    [[nodiscard]] bool isAnimated() const { return animatedUrl.isValid(); }
+    [[nodiscard]] bool hasRasterStill() const { return stillUrl.isValid(); }
+};
+
 struct EmbedData
 {
     EmbedType type = EmbedType::Rich; // should this be default idk
@@ -222,6 +237,7 @@ public:
         MessageTypeRole,
         IsForwardedRole,
         ForwardOriginRole,
+        StickersRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -291,8 +307,10 @@ private:
     QColor resolveAuthorColor(const Discord::User &author) const;
     ForwardOriginData forwardOrigin(const Discord::Message &msg) const;
     QPixmap localPixmap(const QUrl &url, const QSize &displaySize) const;
+    QPixmap pixmapOrNullWhileLoading(const QUrl &url, const QSize &displaySize) const;
     QPixmap previewPixmap(Snowflake attachmentId, const QImage &image, const QSize &displaySize) const;
     void prunePreviewCaches(const Discord::Message &msg);
+    void refreshRowsShowingSticker(const QUrl &stickerUrl);
 
     Core::ImageManager *imageManager;
     QVector<Discord::Message> messages;
@@ -350,5 +368,7 @@ Q_DECLARE_METATYPE(Acheron::EmbedFieldData)
 Q_DECLARE_METATYPE(Acheron::EmbedImageData)
 Q_DECLARE_METATYPE(Acheron::EmbedData)
 Q_DECLARE_METATYPE(QList<Acheron::EmbedData>)
+Q_DECLARE_METATYPE(Acheron::StickerData)
+Q_DECLARE_METATYPE(QList<Acheron::StickerData>)
 Q_DECLARE_METATYPE(Acheron::ReactionData)
 Q_DECLARE_METATYPE(QList<Acheron::ReactionData>)

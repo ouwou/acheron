@@ -14,6 +14,9 @@ public:
 signals:
     void channelListModeChanged(bool classic);
     void animateEmojiChanged(bool enabled);
+    void animateStickersChanged(bool enabled);
+    void animationCacheLimitChanged(int megabytes);
+    void animationSizeLimitChanged(int megabytes);
 
 private:
     void setupUi();

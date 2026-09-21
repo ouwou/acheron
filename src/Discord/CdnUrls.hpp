@@ -4,6 +4,7 @@
 #include <QUrl>
 
 #include "Core/Snowflake.hpp"
+#include "Discord/Enums.hpp"
 
 namespace Acheron {
 namespace Discord {
@@ -107,6 +108,18 @@ inline bool isEmojiUrl(const QUrl &url)
 
 bool isAnimatedEmojiUrl(const QUrl &url);
 QUrl stillEmojiUrl(const QUrl &animatedUrl);
+
+inline bool isStickerUrl(const QUrl &url)
+{
+    return url.path().startsWith(u"/stickers/") && (url.host() == u"media.discordapp.net" || url.host() == u"discord.com");
+}
+
+Core::Snowflake stickerIdFromUrl(const QUrl &url);
+[[nodiscard]] int stickerAssetPx(int logicalPx, qreal devicePixelRatio);
+// empty for lottie
+QUrl stickerStill(Core::Snowflake stickerId, StickerFormatType format, int assetPx);
+// empty for a plain png
+QUrl stickerAnimated(Core::Snowflake stickerId, StickerFormatType format, int assetPx);
 
 QUrl connectionIcon(const QString &type);
 

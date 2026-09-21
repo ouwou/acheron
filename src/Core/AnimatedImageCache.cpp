@@ -1,26 +1,56 @@
 #include "AnimatedImageCache.hpp"
 
+#include <QBuffer>
+#include <QFile>
 #include <QGuiApplication>
 #include <QImageReader>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 
+#include "ApngDecoder.hpp"
 #include "Logging.hpp"
+#include "LottieDecoder.hpp"
 
 namespace Acheron {
 namespace Core {
 
 namespace {
 
-constexpr int MaxFrames = 200;
-constexpr qsizetype MaxBytesPerAnimation = 8 * 1024 * 1024;
-constexpr int MaxCacheKiB = 48 * 1024;
+constexpr int MaxFrames = 300;
+constexpr int KiBPerMiB = 1024;
+constexpr qsizetype BytesPerMiB = 1024 * 1024;
+constexpr double MinBudgetScale = 0.5;
 
 int normalizedDelay(int delayMs)
 {
     if (delayMs <= 10)
         return 100;
     return std::max(delayMs, 20);
+}
+
+std::optional<QSize> frameSizeWithinBudget(const QSize &wanted, int frameCount, qsizetype byteBudget)
+{
+    if (frameCount > MaxFrames || wanted.isEmpty())
+        return std::nullopt;
+
+    const double wantedBytes = double(frameCount) * wanted.width() * wanted.height() * 4;
+    if (wantedBytes <= double(byteBudget))
+        return wanted;
+
+    const double scale = std::sqrt(double(byteBudget) / wantedBytes);
+    if (scale < MinBudgetScale)
+        return std::nullopt;
+    return QSize(std::max(1, int(wanted.width() * scale)), std::max(1, int(wanted.height() * scale)));
+}
+
+QImage scaledFrame(const QImage &source, const QSize &size)
+{
+    QImage frame = source.size() == size ? source : source.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    if (frame.format() != QImage::Format_ARGB32_Premultiplied)
+        frame = frame.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    return frame;
 }
 
 } // namespace
@@ -37,9 +67,21 @@ AnimatedImageCache::AnimatedImageCache(ImageManager *imageManager, QObject *pare
     : QObject(parent), imageManager(imageManager)
 {
     decodePool.setMaxThreadCount(1);
-    cache.setMaxCost(MaxCacheKiB);
-    connect(imageManager, &ImageManager::imageFetched, this,
-            [this](const QUrl &url, const QSize &size, const QPixmap &) { onImageFetched(url, size); });
+    setCacheLimitMiB(CacheLimit.fallback);
+    connect(imageManager, &ImageManager::rawDownloadReady, this, &AnimatedImageCache::onRawDownloadReady);
+}
+
+static_assert(AnimatedImageCache::AnimationLimit.max <= AnimatedImageCache::CacheLimit.min,
+              "QCache deletes an entry that costs more than the whole cache, and it would be decoded again on every paint");
+
+void AnimatedImageCache::setCacheLimitMiB(int mib)
+{
+    cache.setMaxCost(std::clamp(mib, CacheLimit.min, CacheLimit.max) * KiBPerMiB);
+}
+
+void AnimatedImageCache::setAnimationLimitMiB(int mib)
+{
+    animationLimitMiB = std::clamp(mib, AnimationLimit.min, AnimationLimit.max);
 }
 
 AnimatedImageCache::~AnimatedImageCache()
@@ -57,14 +99,15 @@ AnimatedFramesPtr AnimatedImageCache::get(const QUrl &url, const QSize &logicalS
         return nullptr;
 
     wanted.insert(key);
-    imageManager->get(url, logicalSize, accountId);
     const QString path = imageManager->rawDownloadPath(url, logicalSize);
-    if (!path.isEmpty())
+    if (path.isEmpty())
+        imageManager->downloadToCache(url, logicalSize, accountId);
+    else
         decode(key, path);
     return nullptr;
 }
 
-void AnimatedImageCache::onImageFetched(const QUrl &url, const QSize &size)
+void AnimatedImageCache::onRawDownloadReady(const QUrl &url, const QSize &size)
 {
     const ImageRequestKey key{ url, size };
     if (!wanted.contains(key) || decoding.contains(key))
@@ -81,50 +124,115 @@ void AnimatedImageCache::decode(const ImageRequestKey &key, const QString &path)
     decoding.insert(key);
 
     const qreal dpr = qGuiApp->devicePixelRatio();
-    const QSize physicalSize = key.size * dpr;
+    const DecodeTarget target{ key.size * dpr, animationLimitMiB * BytesPerMiB };
 
     // newest first
     // clang-format off
-    decodePool.start([this, key, path, physicalSize, dpr]() {
-        const Decoded decoded = decodeFrames(path, physicalSize);
+    decodePool.start([this, key, path, target, dpr]() {
+        const Decoded decoded = decodeFrames(path, target);
         QMetaObject::invokeMethod(this, [this, key, decoded, dpr]() { publish(key, decoded, dpr); }, Qt::QueuedConnection);
     }, ++newestFirstPriority);
     // clang-format on
 }
 
-AnimatedImageCache::Decoded AnimatedImageCache::decodeFrames(const QString &path, const QSize &physicalSize)
+AnimatedImageCache::Decoded AnimatedImageCache::decodeFrames(const QString &path, const DecodeTarget &target)
 {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    const QByteArray data = file.readAll();
+
+    if (Lottie::looksLikeLottie(data))
+        return decodeLottie(data, target);
+
+    if (const auto apng = Apng::Reader::open(data))
+        return decodeApng(*apng, target);
+
+    return decodeWithImageReader(data, target);
+}
+
+AnimatedImageCache::Decoded AnimatedImageCache::decodeApng(Apng::Reader &apng, const DecodeTarget &target)
+{
+    const auto frameSize = frameSizeWithinBudget(apng.canvasSize().scaled(target.physicalSize, Qt::KeepAspectRatio), apng.frameCount(), target.byteBudget);
+    if (!frameSize) {
+        qCDebug(LogCore) << "APNG exceeds frame budget, rendering static";
+        return {};
+    }
+
     Decoded out;
+    QImage canvas;
+    int delayMs = 0;
+    while (apng.next(canvas, delayMs)) {
+        out.frames.append(scaledFrame(canvas, *frameSize));
+        out.delaysMs.append(normalizedDelay(delayMs));
+    }
+    return out;
+}
 
-    QImageReader reader(path);
+AnimatedImageCache::Decoded AnimatedImageCache::decodeLottie(const QByteArray &data, const DecodeTarget &target)
+{
+    const auto animation = Lottie::Animation::fromJson(data);
+    if (!animation)
+        return {};
+
+    const auto budgetedSize = frameSizeWithinBudget(target.physicalSize, animation->frameCount(), target.byteBudget);
+    if (!budgetedSize)
+        qCDebug(LogCore) << "Lottie animation exceeds frame budget, rendering static";
+    const int frameCount = budgetedSize ? animation->frameCount() : 1;
+    const QSize frameSize = budgetedSize.value_or(target.physicalSize);
+
+    Decoded out;
+    for (int frame = 0; frame < frameCount; ++frame) {
+        out.frames.append(animation->render(frame, frameSize));
+        out.delaysMs.append(animation->frameDelayMs());
+    }
+    return out;
+}
+
+AnimatedImageCache::Decoded AnimatedImageCache::decodeWithImageReader(const QByteArray &data, const DecodeTarget &target)
+{
+    QBuffer buffer;
+    buffer.setData(data);
+    buffer.open(QIODevice::ReadOnly);
+
+    QImageReader reader(&buffer);
     if (!reader.canRead() || !reader.supportsAnimation())
-        return out;
+        return {};
 
+    const int declaredFrames = reader.imageCount();
+    const bool frameCountKnown = declaredFrames > 0;
+
+    Decoded out;
+    QSize frameSize;
     qsizetype bytes = 0;
     for (;;) {
-        QImage frame = reader.read();
-        if (frame.isNull())
+        const QImage source = reader.read();
+        if (source.isNull())
             break;
 
         const int delay = reader.nextImageDelay();
 
-        if (frame.size() != physicalSize)
-            frame = frame.scaled(physicalSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        if (frame.format() != QImage::Format_ARGB32_Premultiplied)
-            frame = frame.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        if (out.frames.isEmpty()) {
+            const QSize wantedSize = source.size().scaled(target.physicalSize, Qt::KeepAspectRatio);
+            const auto budgetedSize = frameCountKnown ? frameSizeWithinBudget(wantedSize, declaredFrames, target.byteBudget) : wantedSize;
+            if (!budgetedSize) {
+                qCDebug(LogCore) << "Animated image exceeds frame budget, rendering static";
+                return {};
+            }
+            frameSize = *budgetedSize;
+        }
+
+        const QImage frame = scaledFrame(source, frameSize);
 
         bytes += frame.sizeInBytes();
-        if (bytes > MaxBytesPerAnimation || out.frames.size() >= MaxFrames) {
+        if (bytes > target.byteBudget || out.frames.size() >= MaxFrames) {
             qCDebug(LogCore) << "Animated image exceeds frame budget, rendering static";
-            return Decoded{};
+            return {};
         }
 
         out.frames.append(frame);
         out.delaysMs.append(normalizedDelay(delay));
     }
-
-    if (out.frames.size() <= 1)
-        return Decoded{};
     return out;
 }
 

@@ -31,9 +31,9 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     QSqlQuery qMsg(db);
     qMsg.prepare(R"(
         INSERT OR REPLACE INTO messages
-		(id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, reactions, deleted,
+		(id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, reactions, stickers, deleted,
 		 referenced_message_id, reference_type, reference_channel_id, reference_guild_id, snapshot, context_only)
-		VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, :reactions, 0,
+		VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, :reactions, :stickers, 0,
 		        :ref_msg_id, :ref_type, :ref_channel_id, :ref_guild_id, :snapshot, 0)
     )");
 
@@ -58,6 +58,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
         qMsg.bindValue(":flags", static_cast<qint64>(message.flags.get()));
         qMsg.bindValue(":embeds", message.embedsJson.isEmpty() ? QVariant() : message.embedsJson);
         qMsg.bindValue(":reactions", message.reactionsJson.isEmpty() ? QVariant() : message.reactionsJson);
+        qMsg.bindValue(":stickers", message.stickersJson.isEmpty() ? QVariant() : message.stickersJson);
 
         if (message.referencedMessage) {
             qMsg.bindValue(":ref_msg_id", static_cast<qint64>(message.referencedMessage->id.get()));
@@ -108,9 +109,9 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
         QSqlQuery qRef(db);
         qRef.prepare(R"(
             INSERT OR IGNORE INTO messages
-            (id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, deleted,
+            (id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, stickers, deleted,
              reference_type, snapshot, context_only)
-            VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, 0,
+            VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, :stickers, 0,
                     :ref_type, :snapshot, 1)
         )");
 
@@ -124,6 +125,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
             qRef.bindValue(":type", static_cast<qint64>(ref.type.get()));
             qRef.bindValue(":flags", static_cast<qint64>(ref.flags.get()));
             qRef.bindValue(":embeds", ref.embedsJson.isEmpty() ? QVariant() : ref.embedsJson);
+            qRef.bindValue(":stickers", ref.stickersJson.isEmpty() ? QVariant() : ref.stickersJson);
 
             qRef.bindValue(":ref_type", ref.messageReference.hasValue() && ref.messageReference->type.hasValue()
                                                 ? QVariant(static_cast<int>(ref.messageReference->type.get()))
@@ -208,7 +210,8 @@ std::optional<Discord::Message> MessageRepository::getMessage(Core::Snowflake me
 			   m.referenced_message_id,
 			   rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds,
 			   ru.id, ru.username, ru.global_name, ru.avatar, ru.bot,
-			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot
+			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot,
+			   m.stickers, rm.stickers
 		FROM messages m
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
@@ -237,7 +240,8 @@ QList<Discord::Message> MessageRepository::getMessagesInRange(Core::Snowflake ch
 			   m.referenced_message_id,
 			   rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds,
 			   ru.id, ru.username, ru.global_name, ru.avatar, ru.bot,
-			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot
+			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot,
+			   m.stickers, rm.stickers
 		FROM messages m
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
@@ -263,6 +267,39 @@ QList<Discord::Message> MessageRepository::getMessagesInRange(Core::Snowflake ch
     return messages;
 }
 
+template <typename Entity>
+static QList<Entity> parseEntityArray(const QString &json)
+{
+    QList<Entity> entities;
+    for (const QJsonValue &val : QJsonDocument::fromJson(json.toUtf8()).array())
+        entities.append(Entity::fromJson(val.toObject()));
+    return entities;
+}
+
+static void readEmbeds(Discord::Message &message, const QString &embedsJson)
+{
+    if (embedsJson.isEmpty())
+        return;
+    message.embedsJson = embedsJson;
+    message.embeds = parseEntityArray<Discord::Embed>(embedsJson);
+}
+
+static void readReactions(Discord::Message &message, const QString &reactionsJson)
+{
+    if (reactionsJson.isEmpty())
+        return;
+    message.reactionsJson = reactionsJson;
+    message.reactions = parseEntityArray<Discord::Reaction>(reactionsJson);
+}
+
+static void readStickers(Discord::Message &message, const QString &stickersJson)
+{
+    if (stickersJson.isEmpty())
+        return;
+    message.stickersJson = stickersJson;
+    message.stickerItems = parseEntityArray<Discord::StickerItem>(stickersJson);
+}
+
 Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
 {
     // Columns 0-8: m.id, m.channel_id, m.author_id, m.content, m.timestamp, m.edited_timestamp, m.type, m.flags, m.embeds
@@ -272,6 +309,7 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
     // Columns 16-24: rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds
     // Columns 25-29: ru.id, ru.username, ru.global_name, ru.avatar, ru.bot
     // Columns 30-35: m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot
+    // Columns 36-37: m.stickers, rm.stickers
 
     Discord::Message message;
     message.id = static_cast<Core::Snowflake>(q.value(0).toLongLong());
@@ -282,29 +320,9 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
     message.type = static_cast<Discord::MessageType>(q.value(6).toLongLong());
     message.flags = static_cast<Discord::MessageFlags>(static_cast<int>(q.value(7).toLongLong()));
 
-    QString embedsJson = q.value(8).toString();
-    if (!embedsJson.isEmpty()) {
-        message.embedsJson = embedsJson;
-        QJsonDocument doc = QJsonDocument::fromJson(embedsJson.toUtf8());
-        if (doc.isArray()) {
-            QList<Discord::Embed> embedList;
-            for (const QJsonValue &val : doc.array())
-                embedList.append(Discord::Embed::fromJson(val.toObject()));
-            message.embeds = embedList;
-        }
-    }
-
-    QString reactionsJson = q.value(9).toString();
-    if (!reactionsJson.isEmpty()) {
-        message.reactionsJson = reactionsJson;
-        QJsonDocument doc = QJsonDocument::fromJson(reactionsJson.toUtf8());
-        if (doc.isArray()) {
-            QList<Discord::Reaction> reactionList;
-            for (const QJsonValue &val : doc.array())
-                reactionList.append(Discord::Reaction::fromJson(val.toObject()));
-            message.reactions = reactionList;
-        }
-    }
+    readEmbeds(message, q.value(8).toString());
+    readReactions(message, q.value(9).toString());
+    readStickers(message, q.value(36).toString());
 
     message.author->id = static_cast<Core::Snowflake>(q.value(10).toLongLong());
     message.author->username = q.value(11).toString();
@@ -340,17 +358,8 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
             refMsg->type = static_cast<Discord::MessageType>(q.value(22).toLongLong());
             refMsg->flags = static_cast<Discord::MessageFlags>(static_cast<int>(q.value(23).toLongLong()));
 
-            QString refEmbedsJson = q.value(24).toString();
-            if (!refEmbedsJson.isEmpty()) {
-                refMsg->embedsJson = refEmbedsJson;
-                QJsonDocument doc = QJsonDocument::fromJson(refEmbedsJson.toUtf8());
-                if (doc.isArray()) {
-                    QList<Discord::Embed> embedList;
-                    for (const QJsonValue &val : doc.array())
-                        embedList.append(Discord::Embed::fromJson(val.toObject()));
-                    refMsg->embeds = embedList;
-                }
-            }
+            readEmbeds(*refMsg, q.value(24).toString());
+            readStickers(*refMsg, q.value(37).toString());
 
             if (!q.value(25).isNull()) {
                 refMsg->author->id = static_cast<Core::Snowflake>(q.value(25).toLongLong());

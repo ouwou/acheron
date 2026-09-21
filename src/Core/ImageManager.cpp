@@ -35,7 +35,12 @@ bool ImageManager::isCached(const QUrl &url, const QSize &size)
     if (pinnedImages.contains(k) || cache.contains(k))
         return true;
 
-    return !rawDownloadPath(url, size).isEmpty();
+    return !undecodable.contains(k) && !rawDownloadPath(url, size).isEmpty();
+}
+
+bool ImageManager::isUnavailable(const ImageRequestKey &key) const
+{
+    return undecodable.contains(key) || recentlyFailed(key);
 }
 
 QString ImageManager::rawDownloadPath(const QUrl &url, const QSize &size) const
@@ -110,6 +115,9 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
         return pixmap;
     }
 
+    if (undecodable.contains(k))
+        return placeholder(size);
+
     if (requests.contains(k) || recentlyFailed(k)) {
         if (fetchIfNeeded)
             request(url, size, pin, accountId);
@@ -142,6 +150,10 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
             }
             return pixmap;
         }
+
+        qCWarning(LogCore) << "Cached download is not a decodable image:" << url;
+        undecodable.insert(k);
+        return placeholder(size);
     }
 
     if (fetchIfNeeded) {
@@ -176,7 +188,12 @@ bool ImageManager::recentlyFailed(const ImageRequestKey &key) const
     return it != failedAtMs.constEnd() && uptime.elapsed() - it.value() < FailedFetchRetryMs;
 }
 
-void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId)
+void ImageManager::downloadToCache(const QUrl &url, const QSize &size, Snowflake accountId)
+{
+    request(url, size, PinGroup::None, accountId, FetchPurpose::DownloadOnly);
+}
+
+void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId, FetchPurpose purpose)
 {
     QNetworkAccessManager *nam = networkManagerFor(accountId);
     if (!nam) {
@@ -189,6 +206,9 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
         return;
 
     if (requests.contains(k)) {
+        if (purpose == FetchPurpose::Pixmap)
+            downloadOnlyRequests.remove(k);
+
         // promote
         if (pin != PinGroup::None) {
             auto it = pendingPins.find(k);
@@ -199,6 +219,8 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
     }
 
     requests.insert(k);
+    if (purpose == FetchPurpose::DownloadOnly)
+        downloadOnlyRequests.insert(k);
     if (pin != PinGroup::None)
         pendingPins.insert(k, pin);
 
@@ -210,7 +232,9 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
     qreal dpr = qApp->devicePixelRatio();
     const bool deviceScaled = scalesToDevicePixels(url);
 
-    QUrl fetchUrl = isDiscordProxyUrl(url) ? buildOptimizedUrl(url, size, dpr) : url;
+    // the format override in the optimized query would break an animated sticker
+    const bool optimizable = isDiscordProxyUrl(url) && !Discord::Cdn::isStickerUrl(url);
+    QUrl fetchUrl = optimizable ? buildOptimizedUrl(url, size, dpr) : url;
     QNetworkReply *reply = nam->get(networkRequest(fetchUrl));
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr]() {
@@ -221,8 +245,10 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
         if (reply->error() != QNetworkReply::NoError) {
             qCWarning(LogCore) << "Failed to fetch image:" << reply->errorString();
             requests.remove(k);
+            downloadOnlyRequests.remove(k);
             failedAtMs.insert(k, uptime.elapsed());
             reply->deleteLater();
+            emit imageUnavailable(url, size);
             return;
         }
         failedAtMs.remove(k);
@@ -238,8 +264,10 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
             file.close();
         }
 
+        const bool pixmapWanted = !downloadOnlyRequests.remove(k);
+
         QPixmap pixmap;
-        if (pixmap.loadFromData(data)) {
+        if (pixmapWanted && pixmap.loadFromData(data)) {
             if (deviceScaled) {
                 QSize physicalSize(qRound(size.width() * dpr), qRound(size.height() * dpr));
                 if (pixmap.size() != physicalSize)
@@ -261,7 +289,13 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
             emit imageFetched(url, size, pixmap);
         } else {
             requests.remove(k);
+            if (pixmapWanted) {
+                qCWarning(LogCore) << "Fetched image is not decodable:" << url;
+                undecodable.insert(k);
+                emit imageUnavailable(url, size);
+            }
         }
+        emit rawDownloadReady(url, size);
     });
 }
 

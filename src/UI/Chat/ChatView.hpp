@@ -14,7 +14,7 @@
 namespace Acheron {
 namespace UI {
 
-class EmojiAnimator;
+class FrameAnimator;
 class ImageViewer;
 class InlineVideoController;
 struct ChatCursor
@@ -75,7 +75,7 @@ public:
     qreal highlightOpacity() const { return highlightAlpha; }
 
     [[nodiscard]] InlineVideoController *videoController() const { return video; }
-    [[nodiscard]] EmojiAnimator *emojiAnimator() const { return animator; }
+    [[nodiscard]] FrameAnimator *frameAnimator() const { return animator; }
 
     static constexpr int InlineEditMinHeight = 60;
 
@@ -175,7 +175,7 @@ private:
     void releaseHoverHold(const QPoint &globalPos);
 
     InlineVideoController *video = nullptr;
-    EmojiAnimator *animator = nullptr;
+    FrameAnimator *animator = nullptr;
     Core::ImageManager *imageManager = nullptr;
 
     QTextEdit *inlineEditWidget = nullptr;

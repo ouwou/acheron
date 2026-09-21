@@ -1,12 +1,17 @@
 cmake_minimum_required(VERSION 3.16)
 
 option(USE_VCPKG "Use bundled vcpkg toolchain" ON)
+option(ENABLE_LOTTIE "Build with rlottie for Lottie sticker playback" ON)
 
 # Must happen before project()
 if(USE_VCPKG AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     set(CMAKE_TOOLCHAIN_FILE
         "${CMAKE_CURRENT_SOURCE_DIR}/vendor/vcpkg/scripts/buildsystems/vcpkg.cmake"
         CACHE STRING "Vcpkg toolchain file")
+endif()
+
+if(ENABLE_LOTTIE)
+    list(APPEND VCPKG_MANIFEST_FEATURES "lottie")
 endif()
 
 project(acheron LANGUAGES CXX)
@@ -145,6 +150,8 @@ include(rnnoise.cmake)
 
 include(ffmpeg.cmake)
 
+include(lottie.cmake)
+
 set(PROJECT_SOURCES
     resources.qrc
     src/main.cpp
@@ -158,6 +165,8 @@ set(PROJECT_SOURCES
     src/Core/ForumManager.cpp
     src/Core/ImageManager.cpp
     src/Core/AnimatedImageCache.cpp
+    src/Core/ApngDecoder.cpp
+    src/Core/LottieDecoder.cpp
     src/Core/UserManager.cpp
     src/Core/TypingTracker.cpp
     src/Core/PermissionManager.cpp
@@ -212,7 +221,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatView.cpp
     src/UI/Chat/ChatLayout.cpp
     src/UI/Chat/InlineVideoController.cpp
-    src/UI/Chat/EmojiAnimator.cpp
+    src/UI/Chat/FrameAnimator.cpp
     src/UI/Chat/EmojiTextObject.cpp
     src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
@@ -343,6 +352,14 @@ if(BUILD_TESTS)
     target_link_libraries(TestProxy PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Test)
     target_include_directories(TestProxy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME ProxyTests COMMAND TestProxy)
+
+    if(TARGET ffmpeg)
+        qt_add_executable(TestApng tests/tst_Apng.cpp src/Core/ApngDecoder.cpp)
+        target_link_libraries(TestApng PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg)
+        target_compile_definitions(TestApng PRIVATE ACHERON_HAVE_FFMPEG)
+        target_include_directories(TestApng PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        add_test(NAME ApngTests COMMAND TestApng)
+    endif()
 endif()
 
 qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${PROJECT_NAME})
@@ -358,7 +375,11 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        foreach(test_target TestMarkdown TestUnicodeEmoji TestFrecency TestProto TestProxy)
+        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestFrecency TestProto TestProxy)
+        if(TARGET TestApng)
+            list(APPEND _msvc_test_targets TestApng)
+        endif()
+        foreach(test_target ${_msvc_test_targets})
             target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
             target_compile_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
             target_compile_options(${test_target} PRIVATE /utf-8)
@@ -415,6 +436,10 @@ endif()
 if(TARGET ffmpeg)
     target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_FFMPEG)
+endif()
+if(TARGET lottie)
+    target_link_libraries(${PROJECT_NAME} PRIVATE lottie)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_RLOTTIE)
 endif()
 if(TARGET Qt::ZlibPrivate)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt::ZlibPrivate)

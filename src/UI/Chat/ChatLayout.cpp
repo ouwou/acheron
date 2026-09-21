@@ -879,6 +879,27 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         totalHeight += layout.embedsTotalHeight;
     }
 
+    layout.stickersTop = layout.embedsTop + layout.embedsTotalHeight;
+    layout.stickersTotalHeight = 0;
+
+    if (!ctx.stickers.isEmpty()) {
+        int currentX = textLeft;
+        int currentY = layout.stickersTop + stickerTopMargin();
+        const int maxX = textLeft + textWidth;
+
+        for (int i = 0; i < ctx.stickers.size(); ++i) {
+            if (currentX + stickerSize() > maxX && currentX > textLeft) {
+                currentX = textLeft;
+                currentY += stickerSize() + stickerSpacing();
+            }
+            layout.stickerLayouts.append({ i, QRect(currentX, currentY, stickerSize(), stickerSize()) });
+            currentX += stickerSize() + stickerSpacing();
+        }
+
+        layout.stickersTotalHeight = currentY + stickerSize() - layout.stickersTop;
+        totalHeight += layout.stickersTotalHeight;
+    }
+
     int forwardOriginHeight = 0;
     if (!ctx.forwardOrigin.text.isEmpty()) {
         QFontMetrics originFm(forwardOriginFont(ctx.font));
@@ -889,7 +910,7 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
                                    textWidth);
         int originRowHeight = std::max(originFm.height(),
                                        iconSpace > 0 ? forwardOriginIconSize() : 0);
-        layout.forwardOriginRect = QRect(textLeft, layout.embedsTop + layout.embedsTotalHeight,
+        layout.forwardOriginRect = QRect(textLeft, layout.stickersTop + layout.stickersTotalHeight,
                                          originWidth, originRowHeight);
         forwardOriginHeight = originRowHeight + padding() / 2;
         totalHeight += forwardOriginHeight;
@@ -899,7 +920,7 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
                           .arg(QString::number(static_cast<quint64>(ctx.forwardOrigin.channelId))) });
     }
 
-    layout.reactionsTop = layout.embedsTop + layout.embedsTotalHeight + forwardOriginHeight;
+    layout.reactionsTop = layout.stickersTop + layout.stickersTotalHeight + forwardOriginHeight;
     layout.reactionsTotalHeight = 0;
 
     if (!ctx.reactions.isEmpty()) {
@@ -1012,6 +1033,9 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         }
         layout.hitRegions.append({ HitRegion::Kind::AttachmentAudio, barRect, al.index, -1, {} });
     }
+
+    for (const auto &sl : layout.stickerLayouts)
+        layout.hitRegions.append({ HitRegion::Kind::Sticker, sl.rect, sl.stickerIndex, -1, {} });
 
     for (const auto &rl : layout.reactionLayouts)
         layout.hitRegions.append({ HitRegion::Kind::Reaction, rl.pillRect, rl.reactionIndex, -1, {} });
@@ -1177,6 +1201,7 @@ LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QR
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
     ctx.attachments = index.data(ChatModel::AttachmentsRole).value<QList<AttachmentData>>();
     ctx.embeds = index.data(ChatModel::EmbedsRole).value<QList<EmbedData>>();
+    ctx.stickers = index.data(ChatModel::StickersRole).value<QList<StickerData>>();
     ctx.reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
     ctx.isSystemMessage = index.data(ChatModel::IsSystemMessageRole).toBool();
     ctx.messageType = static_cast<Discord::MessageType>(index.data(ChatModel::MessageTypeRole).toInt());

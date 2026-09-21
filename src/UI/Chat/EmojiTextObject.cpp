@@ -6,7 +6,7 @@
 
 #include "Core/ImageManager.hpp"
 #include "Discord/CdnUrls.hpp"
-#include "UI/Chat/EmojiAnimator.hpp"
+#include "UI/Chat/FrameAnimator.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -25,7 +25,7 @@ QPixmap resourcePixmap(QTextDocument *doc, const QUrl &url)
 
 } // namespace
 
-EmojiTextObject::EmojiTextObject(Core::ImageManager *imageManager, EmojiAnimator *animator, QObject *parent)
+EmojiTextObject::EmojiTextObject(Core::ImageManager *imageManager, FrameAnimator *animator, QObject *parent)
     : QObject(parent), imageManager(imageManager), animator(animator)
 {
 }
@@ -70,7 +70,7 @@ void EmojiTextObject::drawObject(QPainter *painter, const QRectF &rect, QTextDoc
     QPixmap pixmap;
     if (src.isEmoji) {
         const QSize declaredSize(qRound(imageFormat.width()), qRound(imageFormat.height()));
-        const bool animate = src.isAnimatedEmoji && animator->isEnabled();
+        const bool animate = src.isAnimatedEmoji && animator->emojiEnabled();
         if (animate)
             pixmap = animator->frame(src.url, declaredSize, accountId, painter->transform().mapRect(target));
         if (pixmap.isNull())

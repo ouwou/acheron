@@ -448,6 +448,13 @@ enum class MessageReferenceType {
     FORWARD = 1,
 };
 
+enum class StickerFormatType {
+    PNG = 1,
+    APNG = 2,
+    LOTTIE = 3,
+    GIF = 4,
+};
+
 enum class MessageFlag {
     CROSSPOSTED = 1 << 0,
     IS_CROSSPOST = 1 << 1,

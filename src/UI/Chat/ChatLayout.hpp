@@ -108,6 +108,18 @@ constexpr int reactionTopMargin() noexcept
 {
     return 4;
 }
+constexpr int stickerSize() noexcept
+{
+    return StickerData::DisplayPx;
+}
+constexpr int stickerSpacing() noexcept
+{
+    return 8;
+}
+constexpr int stickerTopMargin() noexcept
+{
+    return 4;
+}
 constexpr int forwardOriginIconSize() noexcept
 {
     return 16;
@@ -185,6 +197,12 @@ struct AttachmentLayout
     int index;
 };
 
+struct StickerLayout
+{
+    int stickerIndex;
+    QRect rect;
+};
+
 struct HitRegion
 {
     enum class Kind {
@@ -204,6 +222,7 @@ struct HitRegion
         EmbedFieldName,
         EmbedFieldValue,
         Reaction,
+        Sticker,
 
         TextLink,
         TextCursor,
@@ -245,6 +264,10 @@ struct MessageLayout
     QList<EmbedLayout> embedLayouts;
     int embedsTotalHeight;
 
+    int stickersTop;
+    QList<StickerLayout> stickerLayouts;
+    int stickersTotalHeight;
+
     QRect forwardOriginRect;
 
     int reactionsTop;
@@ -268,6 +291,7 @@ struct LayoutContext
     QString htmlContent;
     QList<AttachmentData> attachments;
     QList<EmbedData> embeds;
+    QList<StickerData> stickers;
     QList<ReactionData> reactions;
     ReplyData replyData;
     ForwardOriginData forwardOrigin;

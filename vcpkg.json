@@ -15,6 +15,14 @@
       "platform": "windows"
     }
   ],
+  "features": {
+    "lottie": {
+      "description": "Lottie sticker playback (ENABLE_LOTTIE)",
+      "dependencies": [
+        "rlottie"
+      ]
+    }
+  },
   "builtin-baseline": "16c71a39e5a0fc0bdb3fad03beef8f38ee00ee3b",
   "vcpkg-configuration": {
     "overlay-ports": [

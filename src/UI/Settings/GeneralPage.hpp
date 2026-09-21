@@ -16,10 +16,14 @@ public:
 
 signals:
     void animateEmojiChanged(bool enabled);
+    void animateStickersChanged(bool enabled);
+    void animationCacheLimitChanged(int megabytes);
+    void animationSizeLimitChanged(int megabytes);
 
 private:
     QCheckBox *inMemoryCacheCheckbox;
     QCheckBox *animateEmojiCheckbox;
+    QCheckBox *animateStickersCheckbox;
     QComboBox *fontEngineCombo = nullptr;
 };
 

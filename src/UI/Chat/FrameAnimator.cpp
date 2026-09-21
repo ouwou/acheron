@@ -1,4 +1,4 @@
-#include "UI/Chat/EmojiAnimator.hpp"
+#include "UI/Chat/FrameAnimator.hpp"
 
 #include <QAbstractItemModel>
 #include <QGuiApplication>
@@ -17,13 +17,13 @@ constexpr int MinTickMs = 15;
 constexpr int MaxTickMs = 1000;
 } // namespace
 
-EmojiAnimator::EmojiAnimator(ChatView *chatView)
+FrameAnimator::FrameAnimator(ChatView *chatView)
     : QObject(chatView), view(chatView)
 {
     clock.start();
     timer.setSingleShot(true);
     timer.setTimerType(Qt::CoarseTimer);
-    connect(&timer, &QTimer::timeout, this, &EmojiAnimator::onTick);
+    connect(&timer, &QTimer::timeout, this, &FrameAnimator::onTick);
 
     focused = qGuiApp->applicationState() == Qt::ApplicationActive;
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
@@ -32,25 +32,35 @@ EmojiAnimator::EmojiAnimator(ChatView *chatView)
     });
 }
 
-void EmojiAnimator::setCache(Core::AnimatedImageCache *animatedCache)
+void FrameAnimator::setCache(Core::AnimatedImageCache *animatedCache)
 {
     cache = animatedCache;
-    connect(cache, &Core::AnimatedImageCache::framesReady, this, &EmojiAnimator::onFramesReady);
+    connect(cache, &Core::AnimatedImageCache::framesReady, this, &FrameAnimator::onFramesReady);
     updateRunning();
 }
 
-void EmojiAnimator::setEnabled(bool value)
+void FrameAnimator::setEmojiEnabled(bool value)
 {
-    if (enabled == value)
+    applySetting(animateEmoji, value);
+}
+
+void FrameAnimator::setStickersEnabled(bool value)
+{
+    applySetting(animateStickers, value);
+}
+
+void FrameAnimator::applySetting(bool &setting, bool value)
+{
+    if (setting == value)
         return;
-    enabled = value;
-    if (!enabled)
+    setting = value;
+    if (!setting)
         visible.clear();
     updateRunning();
     view->viewport()->update();
 }
 
-void EmojiAnimator::setViewVisible(bool value)
+void FrameAnimator::setViewVisible(bool value)
 {
     if (viewVisible == value)
         return;
@@ -58,7 +68,7 @@ void EmojiAnimator::setViewVisible(bool value)
     updateRunning();
 }
 
-void EmojiAnimator::attachModel(QAbstractItemModel *model)
+void FrameAnimator::attachModel(QAbstractItemModel *model)
 {
     if (boundModel == model)
         return;
@@ -72,10 +82,10 @@ void EmojiAnimator::attachModel(QAbstractItemModel *model)
     if (!model)
         return;
 
-    connect(model, &QAbstractItemModel::modelReset, this, &EmojiAnimator::reset);
-    connect(model, &QAbstractItemModel::rowsInserted, this, &EmojiAnimator::invalidateRects);
-    connect(model, &QAbstractItemModel::rowsRemoved, this, &EmojiAnimator::invalidateRects);
-    connect(model, &QAbstractItemModel::layoutChanged, this, &EmojiAnimator::invalidateRects);
+    connect(model, &QAbstractItemModel::modelReset, this, &FrameAnimator::reset);
+    connect(model, &QAbstractItemModel::rowsInserted, this, &FrameAnimator::invalidateRects);
+    connect(model, &QAbstractItemModel::rowsRemoved, this, &FrameAnimator::invalidateRects);
+    connect(model, &QAbstractItemModel::layoutChanged, this, &FrameAnimator::invalidateRects);
     connect(model, &QAbstractItemModel::dataChanged, this,
             [this](const QModelIndex &topLeft, const QModelIndex &bottomRight) {
                 for (int row = topLeft.row(); row <= bottomRight.row(); ++row)
@@ -83,24 +93,25 @@ void EmojiAnimator::attachModel(QAbstractItemModel *model)
             });
 }
 
-void EmojiAnimator::reset()
+void FrameAnimator::reset()
 {
     rows.clear();
     visible.clear();
+    awaitedDecodes.clear();
 }
 
-bool EmojiAnimator::intersectsPaintDamage(const QRect &rowRect) const
+bool FrameAnimator::intersectsPaintDamage(const QRect &rowRect) const
 {
     return damage.isEmpty() || damage.intersects(rowRect);
 }
 
-void EmojiAnimator::beginRow(int row, const QRect &rowRect, const QRect &bodyTextRect)
+void FrameAnimator::beginRow(int row, const QRect &rowRect, const QRect &bodyTextRect)
 {
     const QPoint origin = rowRect.topLeft();
     recording = Recording{ row, origin, Row{ {}, bodyTextRect.translated(-origin) } };
 }
 
-void EmojiAnimator::endRow()
+void FrameAnimator::endRow()
 {
     const auto finished = std::exchange(recording, std::nullopt);
     if (!finished)
@@ -112,9 +123,10 @@ void EmojiAnimator::endRow()
         rows.insert(finished->row, finished->data);
 }
 
-QPixmap EmojiAnimator::frame(const QUrl &url, const QSize &size, Core::Snowflake accountId, const QRect &viewportRect)
+QPixmap FrameAnimator::frame(const QUrl &url, const QSize &size, Core::Snowflake accountId, const QRect &viewportRect, AnimatedKind kind)
 {
-    if (!enabled || !cache)
+    const bool animates = kind == AnimatedKind::Sticker ? animateStickers : animateEmoji;
+    if (!animates || !cache)
         return {};
 
     const Key key{ url, size };
@@ -131,13 +143,24 @@ QPixmap EmojiAnimator::frame(const QUrl &url, const QSize &size, Core::Snowflake
     if (recording) {
         const QRect rectInRow = viewportRect.translated(-recording->origin);
         const bool inBody = recording->data.bodyTextRectInRow.contains(rectInRow);
-        recording->data.instances.append({ key, rectInRow, inBody });
+        recording->data.instances.append({ key, rectInRow, inBody, kind });
     }
 
     return it->frames ? it->frames->frames[it->frameIndex] : QPixmap();
 }
 
-std::optional<EmojiAnimator::BodyRepaint> EmojiAnimator::bodyOnlyRepaint(int row, const QRect &rowRect) const
+Core::AnimatedFramesPtr FrameAnimator::framesOnceDecoded(const QUrl &url, const QSize &size, Core::Snowflake accountId)
+{
+    if (!cache)
+        return nullptr;
+
+    const Core::AnimatedFramesPtr frames = cache->get(url, size, accountId);
+    if (!frames)
+        awaitedDecodes.insert({ url, size });
+    return frames;
+}
+
+std::optional<FrameAnimator::BodyRepaint> FrameAnimator::bodyOnlyRepaint(int row, const QRect &rowRect) const
 {
     if (damage.isEmpty())
         return std::nullopt;
@@ -161,22 +184,58 @@ std::optional<EmojiAnimator::BodyRepaint> EmojiAnimator::bodyOnlyRepaint(int row
     return BodyRepaint{ it->bodyTextRectInRow.translated(rowRect.topLeft()), rowDamage.boundingRect() };
 }
 
-bool EmojiAnimator::running() const
+std::optional<QList<FrameAnimator::StickerRepaint>> FrameAnimator::stickerOnlyRepaint(int row, const QRect &rowRect) const
 {
-    return enabled && focused && viewVisible && cache;
+    if (damage.isEmpty())
+        return std::nullopt;
+
+    auto it = rows.constFind(row);
+    if (it == rows.constEnd())
+        return std::nullopt;
+
+    const QRegion rowDamage = damage.intersected(rowRect);
+    if (rowDamage.isEmpty())
+        return std::nullopt;
+
+    QRegion covered;
+    QList<StickerRepaint> repaints;
+    for (const Instance &instance : it->instances) {
+        if (instance.kind != AnimatedKind::Sticker)
+            continue;
+
+        const QRect rect = instance.rectInRow.translated(rowRect.topLeft());
+        if (!rowDamage.intersects(rect))
+            continue;
+
+        const auto shown = visible.constFind(instance.key);
+        if (shown == visible.constEnd() || !shown->frames)
+            return std::nullopt;
+
+        covered += rect;
+        repaints.append({ rect, shown->frames->frames[shown->frameIndex] });
+    }
+    if (repaints.isEmpty() || !rowDamage.subtracted(covered).isEmpty())
+        return std::nullopt;
+
+    return repaints;
 }
 
-qint64 EmojiAnimator::now() const
+bool FrameAnimator::running() const
+{
+    return (animateEmoji || animateStickers) && focused && viewVisible && cache;
+}
+
+qint64 FrameAnimator::now() const
 {
     return animatedMs + (runningSince ? clock.elapsed() - *runningSince : 0);
 }
 
-int EmojiAnimator::currentFrame(const Core::AnimatedFrames &frames) const
+int FrameAnimator::currentFrame(const Core::AnimatedFrames &frames) const
 {
     return frames.frameAt(frames.isStatic() ? 0 : now() % frames.loopMs());
 }
 
-void EmojiAnimator::updateRunning()
+void FrameAnimator::updateRunning()
 {
     const bool run = running();
     if (run == wasRunning)
@@ -194,7 +253,7 @@ void EmojiAnimator::updateRunning()
     }
 }
 
-void EmojiAnimator::scheduleTick(int delayMs)
+void FrameAnimator::scheduleTick(int delayMs)
 {
     if (!running())
         return;
@@ -203,7 +262,7 @@ void EmojiAnimator::scheduleTick(int delayMs)
     timer.start(delayMs);
 }
 
-void EmojiAnimator::pruneOffscreenRows()
+void FrameAnimator::pruneOffscreenRows()
 {
     const QRect viewportRect = view->viewport()->rect();
     const int rowCount = view->model() ? view->model()->rowCount() : 0;
@@ -229,7 +288,7 @@ void EmojiAnimator::pruneOffscreenRows()
     }
 }
 
-QRegion EmojiAnimator::regionFor(const QSet<Key> &keys) const
+QRegion FrameAnimator::regionFor(const QSet<Key> &keys) const
 {
     QRegion region;
     for (auto it = rows.constBegin(); it != rows.constEnd(); ++it) {
@@ -242,7 +301,7 @@ QRegion EmojiAnimator::regionFor(const QSet<Key> &keys) const
     return region;
 }
 
-void EmojiAnimator::onTick()
+void FrameAnimator::onTick()
 {
     if (!running())
         return;
@@ -254,7 +313,7 @@ void EmojiAnimator::onTick()
     qint64 nextDelay = std::numeric_limits<qint64>::max();
 
     for (auto it = visible.begin(); it != visible.end(); ++it) {
-        VisibleEmoji &entry = it.value();
+        VisibleAnimation &entry = it.value();
         if (!entry.frames)
             continue;
 
@@ -274,9 +333,12 @@ void EmojiAnimator::onTick()
         timer.start(int(std::clamp<qint64>(nextDelay, MinTickMs, MaxTickMs)));
 }
 
-void EmojiAnimator::onFramesReady(const QUrl &url, const QSize &size, const Core::AnimatedFramesPtr &frames)
+void FrameAnimator::onFramesReady(const QUrl &url, const QSize &size, const Core::AnimatedFramesPtr &frames)
 {
     const Key key{ url, size };
+    if (awaitedDecodes.remove(key))
+        view->viewport()->update();
+
     auto it = visible.find(key);
     if (it == visible.end())
         return;

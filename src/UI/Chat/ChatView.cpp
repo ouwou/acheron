@@ -12,7 +12,7 @@
 #include "Core/Theme/Manager.hpp"
 #include "Core/TimeUtils.hpp"
 #include "Discord/ChannelLink.hpp"
-#include "UI/Chat/EmojiAnimator.hpp"
+#include "UI/Chat/FrameAnimator.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
@@ -90,6 +90,13 @@ static MediaHit mediaAt(const ChatLayout::ResolvedLayout &resolved, const ChatLa
         }
         break;
     }
+    case Kind::Sticker: {
+        if (region.index < 0 || region.index >= resolved.ctx.stickers.size())
+            break;
+        const StickerData &sticker = resolved.ctx.stickers[region.index];
+        hit.linkUrl = sticker.isAnimated() ? sticker.animatedUrl : sticker.stillUrl;
+        break;
+    }
     default:
         break;
     }
@@ -117,7 +124,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     inlineEditWidget->installEventFilter(this);
 
     video = new InlineVideoController(this);
-    animator = new EmojiAnimator(this);
+    animator = new FrameAnimator(this);
 
     jumpToPresentBar = new JumpToPresentBar(this);
     jumpToPresentBar->setVisible(false);
@@ -315,7 +322,7 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
         if (region->kind == ChatLayout::HitRegion::Kind::TextCursor) {
             shape = Qt::IBeamCursor;
             charPos = ChatLayout::hitTestCharIndex(resolved, pos);
-        } else {
+        } else if (region->kind != ChatLayout::HitRegion::Kind::Sticker) {
             shape = Qt::PointingHandCursor;
         }
     }
@@ -487,6 +494,7 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     case Kind::EmbedDescription:
     case Kind::EmbedFieldName:
     case Kind::EmbedFieldValue:
+    case Kind::Sticker:
         break;
     }
 
@@ -536,10 +544,16 @@ bool ChatView::viewportEvent(QEvent *event)
     if (event->type() == QEvent::ToolTip) {
         auto *helpEvent = static_cast<QHelpEvent *>(event);
         QModelIndex idx = indexAt(helpEvent->pos());
+        const ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
+
+        const auto region = ChatLayout::hitTest(resolved, helpEvent->pos());
+        if (region && region->kind == ChatLayout::HitRegion::Kind::Sticker) {
+            QToolTip::showText(helpEvent->globalPos(), resolved.ctx.stickers[region->index].name, viewport(), region->rect);
+            return true;
+        }
 
         QDateTime editedTime = idx.data(ChatModel::EditedTimestampRole).toDateTime();
         if (editedTime.isValid()) {
-            ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
             auto markerRect = ChatLayout::editedMarkerRectAt(resolved, helpEvent->pos());
             if (markerRect) {
                 QToolTip::showText(helpEvent->globalPos(),
@@ -1043,7 +1057,10 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     if (hit.hasLink())
         linkUrl = hit.linkUrl.toString(QUrl::FullyEncoded);
     if (!linkUrl.isEmpty() && !linkUrl.startsWith(QLatin1String("acheron://"))) {
-        QAction *copyLinkAction = menu.addAction(hit.isImage() ? tr("Copy Image Link") : tr("Copy Link"));
+        const bool onSticker = region && region->kind == ChatLayout::HitRegion::Kind::Sticker;
+        const QString copyLinkLabel = onSticker ? tr("Copy Sticker Link") : hit.isImage() ? tr("Copy Image Link")
+                                                                                          : tr("Copy Link");
+        QAction *copyLinkAction = menu.addAction(copyLinkLabel);
         connect(copyLinkAction, &QAction::triggered, this, [linkUrl]() {
             QGuiApplication::clipboard()->setText(linkUrl);
         });
