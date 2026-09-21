@@ -682,12 +682,7 @@ void UserProfilePopup::renderFromCachedData()
         bannerLabel->setPalette(pal);
     }
 
-    QString avatarHash = resolvedAvatarHash();
-    Core::Snowflake owner = resolvedGuildAvatarOwner();
-    QUrl url = owner.isValid()
-                       ? Discord::Cdn::guildMemberAvatar(guildId, userId, avatarHash, 256)
-                       : Discord::Cdn::userAvatar(userId, avatarHash, 256);
-    images->assign(avatarLabel, url, QSize(AvatarSize, AvatarSize), accountId());
+    images->assign(avatarLabel, resolvedAvatarUrl(256), QSize(AvatarSize, AvatarSize), accountId());
 
     discordJoinLabel->setText(tr("Joined Discord on %1").arg(formatDate(userId.toDateTime())));
 
@@ -1073,10 +1068,11 @@ QString UserProfilePopup::tagHandle() const
 
 QString UserProfilePopup::resolvedDisplayName() const
 {
-    if (guildView && guildId.isValid() && instance) {
-        QString n = instance->users()->getDisplayName(userId, guildId);
-        if (!n.isEmpty())
-            return n;
+    bool showingMainProfileFromGuild = guildId.isValid() && !guildView;
+    if (instance && !showingMainProfileFromGuild) {
+        QString nick = instance->users()->getNickname(userId, guildId);
+        if (!nick.isEmpty())
+            return nick;
     }
     if (auto u = cachedUser())
         return u->getDisplayName();
@@ -1085,26 +1081,21 @@ QString UserProfilePopup::resolvedDisplayName() const
     return tr("Unknown User");
 }
 
-QString UserProfilePopup::resolvedAvatarHash() const
+QUrl UserProfilePopup::resolvedAvatarUrl(int size) const
 {
+    QString memberHash;
     if (guildView) {
-        if (auto m = cachedMember(); m && m->avatar.hasValue() && !m->avatar.get().isEmpty())
-            return m->avatar.get();
+        if (auto m = cachedMember())
+            memberHash = m->avatar.valueOr();
     }
-    if (auto u = cachedUser(); u && u->avatar.hasValue() && !u->avatar.get().isEmpty())
-        return u->avatar.get();
-    if (hasProfile && profile.user.get().avatar.hasValue() && !profile.user.get().avatar.get().isEmpty())
-        return profile.user.get().avatar.get();
-    return {};
-}
 
-Core::Snowflake UserProfilePopup::resolvedGuildAvatarOwner() const
-{
-    if (guildView) {
-        if (auto m = cachedMember(); m && m->avatar.hasValue() && !m->avatar.get().isEmpty())
-            return guildId;
-    }
-    return Core::Snowflake::Invalid;
+    QString userHash;
+    if (auto u = cachedUser())
+        userHash = u->avatar.valueOr();
+    if (userHash.isEmpty() && hasProfile)
+        userHash = profile.user.get().avatar.valueOr();
+
+    return Discord::Cdn::effectiveAvatar(guildId, userId, memberHash, userHash, size);
 }
 
 int UserProfilePopup::resolvedAccentColor() const

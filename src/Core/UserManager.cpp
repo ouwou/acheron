@@ -1,6 +1,8 @@
 #include "UserManager.hpp"
 
 #include "Logging.hpp"
+#include "RelationshipManager.hpp"
+#include "Discord/CdnUrls.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -53,19 +55,53 @@ std::optional<QList<Snowflake>> UserManager::getMemberRoles(Snowflake guildId, S
     return dbMember->roles.hasValue() ? dbMember->roles.get() : QList<Snowflake>{};
 }
 
+void UserManager::setRelationshipManager(RelationshipManager *manager)
+{
+    relationshipManager = manager;
+}
+
+QString UserManager::getNickname(Snowflake userId, Snowflake guildId)
+{
+    if (!guildId.isValid())
+        return relationshipManager ? relationshipManager->getNickname(userId) : QString();
+
+    auto member = getMember(guildId, userId);
+    return member ? member->nick.valueOr() : QString();
+}
+
 QString UserManager::getDisplayName(Snowflake userId, Snowflake guildId)
 {
     auto user = getUser(userId);
     if (!user)
         return tr("Unknown User");
 
-    if (guildId.isValid()) {
-        auto member = getMember(guildId, userId);
-        if (member && member->nick.hasValue())
-            return member->nick;
-    }
+    QString nick = getNickname(userId, guildId);
+    return nick.isEmpty() ? user->getDisplayName() : nick;
+}
 
-    return user->getDisplayName();
+QString UserManager::getAuthorDisplayName(const Discord::User &author, Snowflake guildId)
+{
+    Snowflake authorId = author.id.get();
+    QString nick = getNickname(authorId, guildId);
+    if (!nick.isEmpty())
+        return nick;
+
+    if (!author.bot.valueOr(false)) {
+        if (auto cached = getUser(authorId))
+            return cached->getDisplayName();
+    }
+    return author.getDisplayName();
+}
+
+QUrl UserManager::getAvatarUrl(const Discord::User &user, Snowflake guildId, int size)
+{
+    Snowflake userId = user.id.get();
+    QString memberHash;
+    if (guildId.isValid()) {
+        if (auto member = getMember(guildId, userId))
+            memberHash = member->avatar.valueOr();
+    }
+    return Discord::Cdn::effectiveAvatar(guildId, userId, memberHash, user.avatar.get(), size);
 }
 
 void UserManager::saveUser(const Discord::User &user)

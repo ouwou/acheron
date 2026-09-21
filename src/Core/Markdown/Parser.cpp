@@ -148,7 +148,8 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
         if (node.type == "user") {
             QString displayName;
             if (userResolver)
-                displayName = userResolver(node.content);
+                displayName = userResolver(Snowflake(node.content.toULongLong()),
+                                           Snowflake(node.attributes["sourceChannelId"].toULongLong()));
             else
                 displayName = node.content;
 
@@ -503,6 +504,7 @@ void Parser::setupDefaultRules()
         AstNode node;
         node.type = "user";
         node.content = match.captured(1);
+        node.attributes["sourceChannelId"] = state.customState.value("channelId");
         return node;
     };
     // .html handled in toHtml() because of user resolution

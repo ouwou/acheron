@@ -243,10 +243,10 @@ public:
     void setAccount(Snowflake accountId);
     [[nodiscard]] Snowflake getAccountId() const { return currentAccountId; }
 
-    using AvatarUrlResolver = std::function<QUrl(const Discord::User &)>;
+    using AvatarUrlResolver = std::function<QUrl(const Discord::User &author, Snowflake guildId)>;
     void setAvatarUrlResolver(AvatarUrlResolver resolver);
 
-    using DisplayNameResolver = std::function<QString(Snowflake userId, Snowflake guildId)>;
+    using DisplayNameResolver = std::function<QString(const Discord::User &author, Snowflake guildId)>;
     void setDisplayNameResolver(DisplayNameResolver resolver);
 
     using RoleColorResolver = std::function<QColor(Snowflake userId, Snowflake guildId)>;

@@ -26,6 +26,12 @@ std::optional<Discord::Relationship> RelationshipManager::getRelationship(Snowfl
     return it.value();
 }
 
+QString RelationshipManager::getNickname(Snowflake userId) const
+{
+    auto it = store.constFind(userId);
+    return it != store.constEnd() ? it.value().nickname.valueOr() : QString();
+}
+
 bool RelationshipManager::isFriend(Snowflake userId) const
 {
     auto it = store.constFind(userId);

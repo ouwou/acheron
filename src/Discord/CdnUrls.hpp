@@ -45,6 +45,14 @@ inline QUrl guildMemberAvatar(Core::Snowflake guildId, Core::Snowflake userId,
                              QString::number(size)));
 }
 
+inline QUrl effectiveAvatar(Core::Snowflake guildId, Core::Snowflake userId,
+                            const QString &memberHash, const QString &userHash, int size = 128)
+{
+    if (guildId.isValid() && !memberHash.isEmpty())
+        return guildMemberAvatar(guildId, userId, memberHash, size);
+    return userAvatar(userId, userHash, size);
+}
+
 inline QUrl userBanner(Core::Snowflake userId, const QString &hash, int size = 600)
 {
     if (hash.isEmpty())

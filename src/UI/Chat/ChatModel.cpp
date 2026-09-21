@@ -252,7 +252,7 @@ void ChatModel::setGuildInfoResolver(GuildInfoResolver resolver)
 QString ChatModel::resolveAuthorName(const Discord::User &author) const
 {
     if (displayNameResolver) {
-        QString name = displayNameResolver(author.id.get(), currentGuildId);
+        QString name = displayNameResolver(author, currentGuildId);
         if (!name.isEmpty())
             return name;
     }
@@ -326,7 +326,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         if (!avatarUrlResolver)
             return imageManager->placeholder(desiredSize);
 
-        QUrl url = avatarUrlResolver(msg.author.get());
+        QUrl url = avatarUrlResolver(msg.author.get(), currentGuildId);
         return avatarTracker.fetch(imageManager, url, desiredSize, index, currentAccountId, Core::PinGroup::ChatView);
     }
     case TimestampRole:
@@ -1271,7 +1271,7 @@ void ChatModel::refreshUsersInView(const QList<Snowflake> &userIds)
 
         if (refreshAll || userIds.contains(authorId)) {
             QModelIndex idx = index(row, 0);
-            emit dataChanged(idx, idx, { UsernameRole, UsernameColorRole });
+            emit dataChanged(idx, idx, { UsernameRole, UsernameColorRole, AvatarRole });
         }
     }
 }

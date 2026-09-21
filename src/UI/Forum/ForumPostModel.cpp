@@ -312,7 +312,7 @@ QString ForumPostModel::authorName(Snowflake threadId) const
         return {};
     const Discord::User &author = msg->author.get();
     if (displayNameResolver) {
-        QString name = displayNameResolver(author.id.get(), currentGuildId);
+        QString name = displayNameResolver(author, currentGuildId);
         if (!name.isEmpty())
             return name;
     }

@@ -22,6 +22,8 @@ public:
 
     [[nodiscard]] std::optional<Discord::Relationship> getRelationship(Snowflake userId) const;
 
+    [[nodiscard]] QString getNickname(Snowflake userId) const;
+
     [[nodiscard]] bool isFriend(Snowflake userId) const;
     [[nodiscard]] bool isBlockedOrIgnored(Snowflake userId) const;
 

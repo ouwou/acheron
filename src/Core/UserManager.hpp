@@ -3,6 +3,7 @@
 #include <QCache>
 #include <QObject>
 #include <QHash>
+#include <QUrl>
 #include <optional>
 
 #include "Snowflake.hpp"
@@ -12,6 +13,8 @@
 
 namespace Acheron {
 namespace Core {
+
+class RelationshipManager;
 
 struct MemberKey
 {
@@ -41,7 +44,12 @@ public:
 
     [[nodiscard]] std::optional<QList<Snowflake>> getMemberRoles(Snowflake guildId, Snowflake userId);
 
+    void setRelationshipManager(RelationshipManager *manager);
+
+    [[nodiscard]] QString getNickname(Snowflake userId, Snowflake guildId);
     [[nodiscard]] QString getDisplayName(Snowflake userId, Snowflake guildId = Snowflake::Invalid);
+    [[nodiscard]] QString getAuthorDisplayName(const Discord::User &author, Snowflake guildId);
+    [[nodiscard]] QUrl getAvatarUrl(const Discord::User &user, Snowflake guildId, int size);
 
     void saveUser(const Discord::User &user);
     void saveUsers(const QList<Discord::User> &users);
@@ -63,6 +71,8 @@ private:
     QCache<MemberKey, Discord::Member> memberCache;
 
     QHash<Snowflake, QString> notes;
+
+    RelationshipManager *relationshipManager = nullptr;
 
     Storage::UserRepository userRepo;
     Storage::MemberRepository memberRepo;

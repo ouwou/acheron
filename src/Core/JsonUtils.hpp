@@ -154,6 +154,8 @@ protected:
         [[nodiscard]] bool isNull() const { return IsNullable && state == State::Null; }
         [[nodiscard]] bool hasValue() const { return state == State::Value; }
 
+        [[nodiscard]] T valueOr(const T &fallback = T()) const { return hasValue() ? value : fallback; }
+
         T &get() { return value; }
         const T &get() const { return value; }
         T &operator*() { return value; }

@@ -52,7 +52,7 @@ struct MarkdownRule
     QualityFn quality = nullptr;
 };
 
-using UserResolverFn = std::function<QString(const QString &userId)>;
+using UserResolverFn = std::function<QString(Snowflake userId, Snowflake sourceChannelId)>;
 using ChannelResolverFn = std::function<QString(const QString &channelId)>;
 
 struct ChannelLinkRef

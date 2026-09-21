@@ -20,6 +20,8 @@
 namespace Acheron {
 namespace UI {
 
+constexpr static int VoiceParticipantAvatarPx = 32;
+
 static bool isChannelPrivate(const Discord::Channel &channel, Core::Snowflake guildId)
 {
     if (!channel.permissionOverwrites.hasValue())
@@ -33,7 +35,7 @@ static bool isChannelPrivate(const Discord::Channel &channel, Core::Snowflake gu
     return false;
 }
 
-static QString getDMDisplayName(const Discord::Channel &channel, Storage::UserRepository &userRepo)
+static QString getDMDisplayName(const Discord::Channel &channel, Core::UserManager *users)
 {
     if (channel.name.hasValue() && !channel.name->isEmpty())
         return channel.name.get();
@@ -41,13 +43,14 @@ static QString getDMDisplayName(const Discord::Channel &channel, Storage::UserRe
     QStringList names;
 
     if (channel.recipients.hasValue()) {
-        for (const auto &user : channel.recipients.get())
-            names.append(user.getDisplayName());
+        for (const auto &user : channel.recipients.get()) {
+            QString friendNickname = users->getNickname(user.id.get(), Core::Snowflake::Invalid);
+            names.append(friendNickname.isEmpty() ? user.getDisplayName() : friendNickname);
+        }
     } else if (channel.recipientIds.hasValue()) {
         for (const auto &userId : channel.recipientIds.get()) {
-            auto userOpt = userRepo.getUser(userId);
-            if (userOpt.has_value())
-                names.append(userOpt->getDisplayName());
+            if (users->getUser(userId))
+                names.append(users->getDisplayName(userId));
         }
     }
 
@@ -175,10 +178,9 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
 
         if (node->type == ChannelNode::Type::VoiceParticipant &&
             node->dmRecipientId.isValid()) {
-            const QSize desiredSize(32, 32);
-            QUrl avatarUrl = Discord::Cdn::userAvatar(node->dmRecipientId, node->dmAvatarHash,
-                                                      desiredSize.width());
-            return avatarTracker.fetch(session->getImageManager(), avatarUrl, desiredSize, index,
+            const QSize desiredSize(VoiceParticipantAvatarPx, VoiceParticipantAvatarPx);
+            return avatarTracker.fetch(session->getImageManager(),
+                                       node->voiceParticipantAvatarUrl, desiredSize, index,
                                        avatarAccountId, Core::PinGroup::ChannelList);
         }
 
@@ -432,7 +434,7 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
             auto dmNode = std::make_unique<ChannelNode>();
             dmNode->id = channel.id;
             dmNode->type = ChannelNode::Type::DMChannel;
-            dmNode->name = getDMDisplayName(channel, userRepo);
+            dmNode->name = getDMDisplayName(channel, instance->users());
             dmNode->lastMessageId = channel.lastMessageId.hasValue()
                                             ? channel.lastMessageId.get()
                                             : channel.id.get();
@@ -1145,12 +1147,16 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         if (findChannelTreeNode(channel.id, dmHeader))
             return;
 
+        auto *instance = session->client(accountId);
+        if (!instance)
+            return;
+
         Storage::UserRepository userRepo(accountId);
 
         auto dmNode = std::make_unique<ChannelNode>();
         dmNode->id = channel.id;
         dmNode->type = ChannelNode::Type::DMChannel;
-        dmNode->name = getDMDisplayName(channel, userRepo);
+        dmNode->name = getDMDisplayName(channel, instance->users());
         dmNode->lastMessageId = channel.lastMessageId.hasValue()
                                         ? channel.lastMessageId.get()
                                         : channel.id.get();
@@ -1766,12 +1772,11 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
         Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
 
         QString displayName;
-        QString avatarHash;
+        QUrl avatarUrl = Discord::Cdn::defaultUserAvatar(userId, VoiceParticipantAvatarPx);
         auto user = instance->users()->getUser(userId);
         if (user) {
             displayName = instance->users()->getDisplayName(userId, guildId);
-            if (user->avatar.hasValue())
-                avatarHash = user->avatar.get();
+            avatarUrl = instance->users()->getAvatarUrl(*user, guildId, VoiceParticipantAvatarPx);
         }
         if (displayName.isEmpty())
             displayName = QString::number(static_cast<quint64>(userId));
@@ -1793,7 +1798,7 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
         participantNode->type = ChannelNode::Type::VoiceParticipant;
         participantNode->name = displayName;
         participantNode->dmRecipientId = userId;
-        participantNode->dmAvatarHash = avatarHash;
+        participantNode->voiceParticipantAvatarUrl = avatarUrl;
         participantNode->parent = channelNode;
 
         beginInsertRows(channelIndex, insertRow, insertRow);

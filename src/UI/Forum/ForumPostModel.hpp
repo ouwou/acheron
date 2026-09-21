@@ -20,6 +20,7 @@ namespace Acheron {
 namespace Discord {
 struct Message;
 struct Channel;
+struct User;
 } // namespace Discord
 
 namespace Core {
@@ -64,7 +65,7 @@ public:
 
     explicit ForumPostModel(Core::ImageManager *imageManager, QObject *parent = nullptr);
 
-    using DisplayNameResolver = std::function<QString(Snowflake, Snowflake)>;
+    using DisplayNameResolver = std::function<QString(const Discord::User &author, Snowflake guildId)>;
     using RoleColorResolver = std::function<QColor(Snowflake, Snowflake)>;
     void setManager(Core::ForumManager *manager);
     void setAccount(Snowflake accountId);

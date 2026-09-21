@@ -342,6 +342,19 @@ struct Member : Core::JsonUtils::JsonObject
     }
 };
 
+struct MentionedUser : User
+{
+    Field<Member, true> member;
+
+    static MentionedUser fromJson(const QJsonObject &obj)
+    {
+        MentionedUser mentioned;
+        static_cast<User &>(mentioned) = User::fromJson(obj);
+        get(obj, "member", mentioned.member);
+        return mentioned;
+    }
+};
+
 struct Role : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;
@@ -967,7 +980,8 @@ struct Message : Core::JsonUtils::JsonObject
     Field<MessageFlags> flags;
     Field<QList<Attachment>, true> attachments;
     Field<QList<Embed>, true> embeds;
-    Field<QList<User>, true> mentions;
+    Field<Member, true> member;
+    Field<QList<MentionedUser>, true> mentions;
     Field<QList<Core::Snowflake>, true> mentionRoles;
     Field<bool, true> mentionEveryone;
     Field<QList<Reaction>, true> reactions;
@@ -1045,6 +1059,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "flags", message.flags);
         get(obj, "attachments", message.attachments);
         get(obj, "embeds", message.embeds);
+        get(obj, "member", message.member);
         get(obj, "mentions", message.mentions);
         get(obj, "mention_roles", message.mentionRoles);
         get(obj, "mention_everyone", message.mentionEveryone);

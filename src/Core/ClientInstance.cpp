@@ -54,6 +54,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     forumManager = new ForumManager(client, channelRepo, readStateManager, this);
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
     relationshipManager = new RelationshipManager(this);
+    userManager->setRelationshipManager(relationshipManager);
     presenceManager = new PresenceManager(this);
     emojiManager = new EmojiManager(client, this, this);
     messageManager->setEmojiManager(emojiManager);
@@ -230,6 +231,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(client, &Discord::Client::guildMemberListUpdate, this, &ClientInstance::onGuildMemberListUpdate);
     connect(memberListManager, &MemberListManager::subscriptionRequested, client, &Discord::Client::subscribeToGuildChannel);
     connect(messageManager, &MessageManager::messagesReceived, this, &ClientInstance::onMessagesReceived);
+    connect(messageManager, &MessageManager::membersLearnedFromMessage, this, &ClientInstance::membersUpdated);
 
     connect(client, &Discord::Client::messageAcked, readStateManager, &ReadStateManager::onMessageAck);
     connect(client, &Discord::Client::userGuildSettingsUpdated, readStateManager, &ReadStateManager::onUserGuildSettingsUpdate);

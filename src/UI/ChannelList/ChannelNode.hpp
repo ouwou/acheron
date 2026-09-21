@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QUrl>
 
 #include <memory>
 #include <vector>
@@ -51,6 +52,7 @@ struct ChannelNode
     QList<Core::Snowflake> recipientIds;
     QString dmAvatarHash;
     Core::Snowflake dmRecipientId;
+    QUrl voiceParticipantAvatarUrl;
     Core::Snowflake lastMessageId;
     bool isPrivate = false;
     int voiceParticipantCount = 0;

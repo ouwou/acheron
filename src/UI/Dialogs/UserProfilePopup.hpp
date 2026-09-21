@@ -71,8 +71,7 @@ private:
 
     QString tagHandle() const;
     QString resolvedDisplayName() const;
-    QString resolvedAvatarHash() const;
-    Core::Snowflake resolvedGuildAvatarOwner() const;
+    QUrl resolvedAvatarUrl(int size) const;
     int resolvedAccentColor() const;
     bool isBot() const;
 

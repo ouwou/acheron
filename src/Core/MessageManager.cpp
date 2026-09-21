@@ -6,6 +6,8 @@
 #include <QJsonDocument>
 #include <QUrl>
 
+#include <functional>
+
 #include "Discord/Client.hpp"
 #include "Emoji/EmojiManager.hpp"
 #include "Markdown/Parser.hpp"
@@ -15,9 +17,8 @@
 namespace Acheron {
 namespace Core {
 
-static QString resolveUserJoinMessage(const Discord::Message &msg)
+static QString resolveUserJoinMessage(const Discord::Message &msg, const QString &author)
 {
-    QString author = msg.author->getDisplayName();
     qint64 ms = msg.timestamp->toMSecsSinceEpoch();
     switch (ms % 13) {
     case 0:
@@ -51,14 +52,13 @@ static QString resolveUserJoinMessage(const Discord::Message &msg)
     }
 }
 
-static QString resolveSystemMessageContent(const Discord::Message &msg)
+static QString resolveSystemMessageContent(const Discord::Message &msg, const std::function<QString()> &authorName)
 {
-    QString author = msg.author->getDisplayName();
     switch (static_cast<Discord::MessageType>(msg.type.get())) {
     case Discord::MessageType::CALL:
-        return author + QStringLiteral(" started a call.");
+        return authorName() + QStringLiteral(" started a call.");
     case Discord::MessageType::USER_JOIN:
-        return resolveUserJoinMessage(msg);
+        return resolveUserJoinMessage(msg, authorName());
     default:
         return msg.content;
     }
@@ -70,9 +70,8 @@ MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
 {
     messageCache.setMaxCost(1'000);
 
-    parser->setUserResolver([this](const QString &userId) {
-        Snowflake id(userId.toULongLong());
-        return this->userManager->getDisplayName(id);
+    parser->setUserResolver([this](Snowflake userId, Snowflake sourceChannelId) {
+        return this->userManager->getDisplayName(userId, this->client->getGuildIdForChannel(sourceChannelId));
     });
 
     // connect(client, &Discord::Client::messagesReceived, this, &MessageManager::onApiMessagesReceived);
@@ -83,7 +82,10 @@ MessageManager::~MessageManager() {}
 
 void MessageManager::parseMessageContent(Discord::Message &msg)
 {
-    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg), msg.channelId);
+    auto authorName = [&] {
+        return userManager->getAuthorDisplayName(msg.author.get(), client->getGuildIdForChannel(msg.channelId));
+    };
+    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg, authorName), msg.channelId);
 
     if (msg.type.hasValue() && msg.type.get() == Discord::MessageType::THREAD_STARTER_MESSAGE &&
         msg.referencedMessage && msg.referencedMessage->content.hasValue() &&
@@ -294,14 +296,57 @@ static QList<Snowflake> idsOf(const QList<Discord::Message> &messages)
     return ids;
 }
 
+static bool sameNickAvatarAndRoles(const Discord::Member &a, const Discord::Member &b)
+{
+    return a.nick.valueOr() == b.nick.valueOr() &&
+           a.avatar.valueOr() == b.avatar.valueOr() &&
+           a.roles.valueOr() == b.roles.valueOr();
+}
+
+void MessageManager::cacheGatewayMembers(const Discord::Message &msg)
+{
+    if (!msg.guildId.hasValue())
+        return;
+    Snowflake guildId = msg.guildId.get();
+    QList<Snowflake> changedUserIds;
+
+    auto cache = [&](const Discord::User &user, Discord::Member member) {
+        Snowflake userId = user.id.get();
+        auto known = userManager->getMember(guildId, userId);
+        if (known && sameNickAvatarAndRoles(*known, member))
+            return;
+        member.user = user;
+        userManager->saveMemberWithUser(guildId, member);
+        changedUserIds.append(userId);
+    };
+
+    if (msg.member.hasValue() && msg.author.hasValue())
+        cache(msg.author.get(), msg.member.get());
+
+    if (msg.mentions.hasValue()) {
+        for (const auto &mentioned : msg.mentions.get())
+            if (mentioned.member.hasValue())
+                cache(mentioned, mentioned.member.get());
+    }
+
+    if (!changedUserIds.isEmpty())
+        emit membersLearnedFromMessage(guildId, changedUserIds);
+}
+
 void MessageManager::onMessageCreated(const Discord::Message &message)
 {
+    if (message.guildId.hasValue())
+        client->registerChannelGuild(message.channelId, message.guildId.get());
+
+    cacheGatewayMembers(message);
     onApiMessagesReceived({ message }, Discord::Client::MessageLoadType::Created,
                           message.channelId);
 }
 
 void MessageManager::onMessageUpdated(const Discord::Message &message)
 {
+    cacheGatewayMembers(message);
+
     Discord::Message merged;
     bool haveBaseline = false;
 

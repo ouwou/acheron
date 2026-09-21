@@ -36,6 +36,7 @@
 #include "Core/TypingTracker.hpp"
 #include "Core/Logging.hpp"
 #include "Core/ReadStateManager.hpp"
+#include "Core/RelationshipManager.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Discord/Events.hpp"
 #include "TypingIndicator.hpp"
@@ -97,14 +98,16 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
     accountsModel = new AccountsModel(session, this);
     serverRailModel = new ServerRailModel(session, channelTreeModel, this);
 
-    chatModel->setAvatarUrlResolver([](const Discord::User &user) -> QUrl {
-        return Discord::Cdn::userAvatar(user.id.get(), user.avatar.get(), 64);
+    chatModel->setAvatarUrlResolver([this](const Discord::User &author, Snowflake guildId) -> QUrl {
+        if (!currentInstance)
+            return Discord::Cdn::userAvatar(author.id.get(), author.avatar.get(), 64);
+        return currentInstance->users()->getAvatarUrl(author, guildId, 64);
     });
 
-    chatModel->setDisplayNameResolver([this](Snowflake userId, Snowflake guildId) -> QString {
+    chatModel->setDisplayNameResolver([this](const Discord::User &author, Snowflake guildId) -> QString {
         if (!currentInstance)
             return QString();
-        return currentInstance->users()->getDisplayName(userId, guildId);
+        return currentInstance->users()->getAuthorDisplayName(author, guildId);
     });
 
     chatModel->setRoleColorResolver(
@@ -405,6 +408,7 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
     disconnect(currentInstance->permissions(), nullptr, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+    disconnect(currentInstance->relationships(), nullptr, this, nullptr);
     disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
     disconnect(currentInstance->forums(), nullptr, this, nullptr);
 
@@ -428,6 +432,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+        disconnect(currentInstance->relationships(), nullptr, this, nullptr);
         disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
     }
@@ -499,6 +504,9 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
                 chatModel->refreshUsersInView(userIds);
                 forumModel->refreshAuthors();
             });
+
+    connect(currentInstance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
+            [this](Snowflake userId) { chatModel->refreshUsersInView({ userId }); });
 
 #ifndef ACHERON_NO_VOICE
     updateVoiceStatusLabel();
@@ -1102,13 +1110,10 @@ void MainWindow::setupUi()
     threadPaneLayout->addWidget(messageInput, 0);
 
     forumModel = new ForumPostModel(session->getImageManager(), this);
-    forumModel->setDisplayNameResolver([this](Snowflake userId, Snowflake guildId) -> QString {
-        if (!currentInstance || !guildId.isValid())
+    forumModel->setDisplayNameResolver([this](const Discord::User &author, Snowflake guildId) -> QString {
+        if (!currentInstance)
             return QString();
-        auto member = currentInstance->users()->getMember(guildId, userId);
-        if (member && member->nick.hasValue())
-            return member->nick.get();
-        return QString();
+        return currentInstance->users()->getAuthorDisplayName(author, guildId);
     });
     forumModel->setRoleColorResolver([this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
     forumBrowser = new ForumBrowser(rightSideWidget);
@@ -1873,13 +1878,13 @@ void MainWindow::updateVoiceStatusLabel()
                 return QString::number(userId);
             return um->getDisplayName(userId, vGuildId);
         });
-        voiceStatusBar->setAvatarResolver([um](Core::Snowflake userId) -> QUrl {
+        voiceStatusBar->setAvatarResolver([um, vGuildId](Core::Snowflake userId) -> QUrl {
             if (!um)
                 return {};
             auto user = um->getUser(userId);
             if (!user)
                 return {};
-            return Discord::Cdn::userAvatar(userId, user->avatar.get(), 32);
+            return um->getAvatarUrl(*user, vGuildId, 32);
         });
 
         QPointer<Core::PresenceManager> pm = voiceInstance->presences();
@@ -2436,8 +2441,8 @@ void MainWindow::refreshGuildRoleData(Snowflake guildId)
 namespace {
 
 QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake accountId,
-                             Snowflake userId, const QString &displayName, const QString &username,
-                             const QString &avatarHash)
+                             const QString &displayName, const QString &username,
+                             const QUrl &avatarUrl)
 {
     auto *header = new QWidget(parent);
     auto *layout = new QHBoxLayout(header);
@@ -2447,8 +2452,7 @@ QWidget *buildUserMenuHeader(QMenu *parent, Core::Session *session, Snowflake ac
     constexpr QSize avatarSize(64, 64);
     auto *avatar = new QLabel(header);
     avatar->setFixedSize(avatarSize);
-    QUrl url = Discord::Cdn::userAvatar(userId, avatarHash, 128);
-    session->getImageManager()->assign(avatar, url, avatarSize, accountId);
+    session->getImageManager()->assign(avatar, avatarUrl, avatarSize, accountId);
 
     layout->addWidget(avatar);
 
@@ -2495,10 +2499,11 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
         auto user = instance->users()->getUser(userId);
         QString displayName = instance->users()->getDisplayName(userId, guildId);
         QString username = (user && user->username.hasValue()) ? user->username.get() : QString();
-        QString avatarHash = (user && user->avatar.hasValue()) ? user->avatar.get() : QString();
+        QUrl avatarUrl = user ? instance->users()->getAvatarUrl(*user, guildId, 128)
+                              : Discord::Cdn::defaultUserAvatar(userId, 128);
 
-        auto *header = buildUserMenuHeader(&menu, session, instance->accountId(), userId,
-                                           displayName, username, avatarHash);
+        auto *header = buildUserMenuHeader(&menu, session, instance->accountId(),
+                                           displayName, username, avatarUrl);
         auto *headerAction = new QWidgetAction(&menu);
         headerAction->setDefaultWidget(header);
         menu.addAction(headerAction);

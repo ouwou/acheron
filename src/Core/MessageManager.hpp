@@ -59,6 +59,7 @@ signals:
     void messagesReceived(const MessageRequestResult &result);
     void messageErrored(const QString &nonce);
     void messageDeleted(Core::Snowflake channelId, Core::Snowflake messageId);
+    void membersLearnedFromMessage(Core::Snowflake guildId, const QList<Core::Snowflake> &userIds);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
 
 public slots:
@@ -85,6 +86,7 @@ private:
                                                                      const MessageSegments::Run &run,
                                                                      int from, int to);
     void emitReactionUpdate(Discord::Message &msg);
+    void cacheGatewayMembers(const Discord::Message &msg);
     void parseMessageContent(Discord::Message &msg);
     QString inlineHtml(const QString &content, Snowflake channelId) const;
 
