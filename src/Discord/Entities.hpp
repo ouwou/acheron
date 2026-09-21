@@ -481,6 +481,8 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<Core::Snowflake, true> ownerId;
     Field<int, true> rateLimitPerUser;
     Field<int, true> userLimit;
+    Field<bool, true> isMessageRequest;
+    Field<bool, true> isSpam;
 
     // forum/thread specific
     Field<ThreadMetadata, true> threadMetadata;
@@ -513,6 +515,8 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "owner_id", channel.ownerId);
         get(obj, "rate_limit_per_user", channel.rateLimitPerUser);
         get(obj, "user_limit", channel.userLimit);
+        get(obj, "is_message_request", channel.isMessageRequest);
+        get(obj, "is_spam", channel.isSpam);
         get(obj, "thread_metadata", channel.threadMetadata);
         get(obj, "member", channel.member);
         get(obj, "available_tags", channel.availableTags);
@@ -548,6 +552,11 @@ struct Channel : Core::JsonUtils::JsonObject
     bool isThread() const { return type.hasValue() && isThreadType(type.get()); }
 
     bool isVoice() const { return type.hasValue() && isVoiceType(type.get()); }
+
+    bool isPendingMessageRequest() const
+    {
+        return (isMessageRequest.hasValue() && isMessageRequest.get()) || (isSpam.hasValue() && isSpam.get());
+    }
 };
 
 struct Emoji : Core::JsonUtils::JsonObject

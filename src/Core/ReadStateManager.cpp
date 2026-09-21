@@ -67,6 +67,7 @@ void ReadStateManager::loadFromReady(const QList<Discord::ReadStateEntry> &readS
     channelGuildMap.clear();
     resourceChannels.clear();
     voiceChannels.clear();
+    messageRequestChannels.clear();
     ackIdAtSelect.clear();
     outgoingAcks.clear();
 
@@ -149,6 +150,9 @@ ChannelReadState ReadStateManager::computeDMReadState(Snowflake channelId) const
 {
     ChannelReadState result;
     result.isMuted = isChannelMuted(channelId);
+    if (messageRequestChannels.contains(channelId))
+        return result;
+
     result.mentionCount = getMentionCount(channelId);
     result.isUnread = isChannelUnread(channelId, getChannelLastMessageId(channelId), Snowflake::Invalid);
     result.countsForGuildUnread = result.isUnread && !result.isMuted;
@@ -458,6 +462,19 @@ void ReadStateManager::registerChannel(const Discord::Channel &channel, Snowflak
         resourceChannels.insert(channelId);
     else
         resourceChannels.remove(channelId);
+}
+
+void ReadStateManager::registerPrivateChannel(const Discord::Channel &channel)
+{
+    Snowflake channelId = channel.id.get();
+
+    if (channel.isPendingMessageRequest())
+        messageRequestChannels.insert(channelId);
+    else
+        messageRequestChannels.remove(channelId);
+
+    if (channel.lastMessageId.hasValue())
+        updateChannelLastMessageId(channelId, channel.lastMessageId.get());
 }
 
 void ReadStateManager::removeGuild(Snowflake guildId)

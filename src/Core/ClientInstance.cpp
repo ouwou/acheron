@@ -138,12 +138,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         forumManager->loadFromReady(ready.guilds.get());
 
         if (ready.privateChannels.hasValue()) {
-            for (const auto &channel : ready.privateChannels.get()) {
-                Snowflake lastMsg = channel.lastMessageId.hasValue()
-                                            ? channel.lastMessageId.get()
-                                            : channel.id.get();
-                readStateManager->updateChannelLastMessageId(channel.id.get(), lastMsg);
-            }
+            for (const auto &channel : ready.privateChannels.get())
+                readStateManager->registerPrivateChannel(channel);
         }
 
         emit detailsUpdated(account);
@@ -488,10 +484,7 @@ void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
     txn.commit();
 
     if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
-        Snowflake lastMsg = channel.lastMessageId.hasValue()
-                                    ? channel.lastMessageId.get()
-                                    : channelId;
-        readStateManager->updateChannelLastMessageId(channelId, lastMsg);
+        readStateManager->registerPrivateChannel(channel);
     } else {
         if (channel.guildId.hasValue())
             readStateManager->registerChannel(channel, channel.guildId.get());
@@ -531,6 +524,9 @@ void ClientInstance::onChannelUpdated(const Discord::ChannelUpdate &event)
 
     if (channel.guildId.hasValue()) {
         readStateManager->registerChannel(channel, channel.guildId.get());
+        emit readStateChanged(channelId);
+    } else if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
+        readStateManager->registerPrivateChannel(channel);
         emit readStateChanged(channelId);
     }
 

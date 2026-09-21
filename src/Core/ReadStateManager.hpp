@@ -32,6 +32,7 @@ public:
                           bool isCommunity);
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
     void registerChannel(const Discord::Channel &channel, Snowflake guildId);
+    void registerPrivateChannel(const Discord::Channel &channel);
     void removeGuild(Snowflake guildId);
 
     [[nodiscard]] ChannelReadState computeChannelReadState(Snowflake channelId, Snowflake guildId, Snowflake parentId) const;
@@ -124,6 +125,7 @@ private:
     QHash<Snowflake, Snowflake> channelGuildMap;
     QSet<Snowflake> resourceChannels;
     QSet<Snowflake> voiceChannels;
+    QSet<Snowflake> messageRequestChannels;
     bool useNewNotifications = false;
 
     Snowflake activeChannelId;

@@ -1833,7 +1833,8 @@ void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflak
 void ChannelTreeModel::collectMarkableChannels(ChannelNode *node,
                                                QList<QPair<Snowflake, Snowflake>> &out)
 {
-    if (node->opensChat() && node->lastMessageId.isValid())
+    bool isEmptyDM = node->type == ChannelNode::Type::DMChannel && node->lastMessageId == node->id;
+    if (node->opensChat() && node->lastMessageId.isValid() && !isEmptyDM)
         out.append({ node->id, node->lastMessageId });
     for (auto &child : node->children)
         collectMarkableChannels(child.get(), out);
