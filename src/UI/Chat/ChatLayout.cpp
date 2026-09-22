@@ -776,8 +776,8 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
         textTop = ctx.rowTop + separatorOffset;
         if (ctx.showHeader)
             textTop += blockTopPadding() - capDrop + fm.height();
-        else
-            textTop += 0;
+        else if (ctx.isSystemMessage)
+            textTop += blockTopPadding();
     }
 
     layout.textRect = QRect(textLeft, textTop, textWidth, layout.textHeight);
@@ -793,6 +793,8 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
     } else if (ctx.showHeader) {
         int contentHeight = blockTopPadding() - capDrop + fm.height() + layout.textHeight + padding() / 2;
         totalHeight = contentHeight;
+    } else if (ctx.isSystemMessage) {
+        totalHeight = blockTopPadding() + layout.textHeight + padding() / 2;
     } else {
         totalHeight = layout.textHeight + padding() / 2;
     }
