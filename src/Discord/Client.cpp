@@ -312,15 +312,16 @@ void Client::openDmChannel(Snowflake userId, DmChannelCallback callback)
     QJsonObject payload;
     payload["recipients"] = QJsonArray{ QString::number(userId) };
 
-    httpClient->post("/users/@me/channels", payload, [userId, callback](const HttpResponse &response) {
-        if (!response.success) {
-            qCWarning(LogDiscord) << "Failed to open DM with user" << userId << ":" << response.error;
-            callback(Core::Result<ChannelCreate>::makeError(response.error));
-            return;
-        }
+    httpClient->post("/users/@me/channels", payload, ContextProperties::empty(),
+                     [userId, callback](const HttpResponse &response) {
+                         if (!response.success) {
+                             qCWarning(LogDiscord) << "Failed to open DM with user" << userId << ":" << response.error;
+                             callback(Core::Result<ChannelCreate>::makeError(response.error));
+                             return;
+                         }
 
-        callback(Core::Result<ChannelCreate>::makeOk(ChannelCreate::fromJson(QJsonDocument::fromJson(response.body).object())));
-    });
+                         callback(Core::Result<ChannelCreate>::makeOk(ChannelCreate::fromJson(QJsonDocument::fromJson(response.body).object())));
+                     });
 }
 
 namespace {
@@ -763,13 +764,14 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
             withFiles["attachments"] = attachmentsJson;
 
             QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
-            httpClient->post(endpoint, withFiles, [this, nonce](const HttpResponse &response) {
-                if (!response.success) {
-                    qCWarning(LogDiscord) << "Failed to send message:" << response.error
-                                          << "Status:" << response.statusCode;
-                    emit messageSendFailed(nonce, response.error);
-                }
-            });
+            httpClient->post(endpoint, withFiles, ContextProperties::location("chat_input"),
+                             [this, nonce](const HttpResponse &response) {
+                                 if (!response.success) {
+                                     qCWarning(LogDiscord) << "Failed to send message:" << response.error
+                                                           << "Status:" << response.statusCode;
+                                     emit messageSendFailed(nonce, response.error);
+                                 }
+                             });
         };
         state->onFailed = [this, nonce](const QString &error) {
             emit messageSendFailed(nonce, error);
@@ -785,16 +787,17 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
     }
 
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
-    httpClient->post(endpoint, payload, [this, channelId, nonce](const HttpResponse &response) {
-        if (!response.success) {
-            qCWarning(LogDiscord) << "Failed to send message:" << response.error
-                                  << "Status:" << response.statusCode;
-            emit messageSendFailed(nonce, response.error);
-            return;
-        }
+    httpClient->post(endpoint, payload, ContextProperties::location("chat_input"),
+                     [this, channelId, nonce](const HttpResponse &response) {
+                         if (!response.success) {
+                             qCWarning(LogDiscord) << "Failed to send message:" << response.error
+                                                   << "Status:" << response.statusCode;
+                             emit messageSendFailed(nonce, response.error);
+                             return;
+                         }
 
-        qCInfo(LogDiscord) << "Message sent successfully to channel" << channelId;
-    });
+                         qCInfo(LogDiscord) << "Message sent successfully to channel" << channelId;
+                     });
 }
 
 void Client::uploadAttachmentsAndSend(const std::shared_ptr<UploadState> &state)

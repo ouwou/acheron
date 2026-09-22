@@ -37,6 +37,14 @@ void HttpClient::post(const QString &endpoint, const QJsonObject &body, HttpCall
     executeRequest(Method::POST, url, data, callback);
 }
 
+void HttpClient::post(const QString &endpoint, const QJsonObject &body, const ContextProperties &context,
+                      HttpCallback callback)
+{
+    QString url = baseUrl + endpoint;
+    QByteArray data = QJsonDocument(body).toJson(QJsonDocument::Compact);
+    executeRequest(Method::POST, url, data, callback, context.toHeaderValue());
+}
+
 void HttpClient::patch(const QString &endpoint, const QJsonObject &body, HttpCallback callback)
 {
     QString url = baseUrl + endpoint;
@@ -121,7 +129,7 @@ void HttpClient::submitExternalPut(RequestDescriptor &descriptor,
 }
 
 void HttpClient::executeRequest(Method method, const QString &url, const QByteArray &data,
-                                HttpCallback callback)
+                                HttpCallback callback, const QByteArray &contextProperties)
 {
     RequestDescriptor descriptor;
     descriptor.method = method;
@@ -130,6 +138,7 @@ void HttpClient::executeRequest(Method method, const QString &url, const QByteAr
     descriptor.multipart = false;
     descriptor.referer = referer;
     descriptor.fingerprint = fingerprint;
+    descriptor.contextProperties = contextProperties;
     descriptor.callback = std::move(callback);
     worker->submit(std::move(descriptor));
 }

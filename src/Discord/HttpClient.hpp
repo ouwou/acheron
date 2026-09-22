@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "CaptchaResolver.hpp"
+#include "ContextProperties.hpp"
 #include "Core/ProxyConfig.hpp"
 
 namespace Acheron {
@@ -60,6 +61,7 @@ public:
 
     void get(const QString &endpoint, const QUrlQuery &query, HttpCallback callback);
     void post(const QString &endpoint, const QJsonObject &body, HttpCallback callback);
+    void post(const QString &endpoint, const QJsonObject &body, const ContextProperties &context, HttpCallback callback);
     void patch(const QString &endpoint, const QJsonObject &body, HttpCallback callback);
     void put(const QString &endpoint, const QJsonObject &body, HttpCallback callback);
     void delete_(const QString &endpoint, HttpCallback callback);
@@ -78,7 +80,7 @@ public:
 
 private:
     void executeRequest(Method method, const QString &url, const QByteArray &data,
-                        HttpCallback callback);
+                        HttpCallback callback, const QByteArray &contextProperties = {});
     void executeMultipartRequest(const QString &url, const QByteArray &jsonData,
                                  const QList<FileUpload> &files, HttpCallback callback);
     void submitExternalPut(RequestDescriptor &descriptor,

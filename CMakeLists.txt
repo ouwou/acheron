@@ -265,6 +265,7 @@ set(PROJECT_SOURCES
     src/Discord/CurlUtils.cpp
     src/Discord/CdnUrls.cpp
     src/Discord/ClientIdentity.cpp
+    src/Discord/ContextProperties.cpp
     src/Proto/ProtoReader.cpp
     src/Proto/ProtoWriter.cpp
     src/Proto/UserSettings.cpp

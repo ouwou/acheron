@@ -40,6 +40,7 @@ struct RequestDescriptor
     QList<FileUpload> files; // multipart
     QString referer;
     QString fingerprint;
+    QByteArray contextProperties;
     HttpCallback callback;
     std::function<void(qint64 sent, qint64 total)> progressCallback; // worker thread!
     std::shared_ptr<std::atomic<bool>> cancelFlag;

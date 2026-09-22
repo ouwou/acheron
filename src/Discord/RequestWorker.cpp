@@ -204,6 +204,8 @@ CURL *RequestWorker::buildEasyHandle(TransferContext *ctx)
             headers = curl_slist_append(headers, ("Authorization: " + token).toUtf8().constData());
         if (!desc.multipart && !desc.body.isEmpty())
             headers = curl_slist_append(headers, "Content-Type: application/json");
+        if (!desc.contextProperties.isEmpty())
+            headers = curl_slist_append(headers, ("X-Context-Properties: " + desc.contextProperties).constData());
 
         CurlUtils::appendDiscordHeaders(&headers, identity, desc.referer);
         if (!desc.fingerprint.isEmpty())
