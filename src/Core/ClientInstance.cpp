@@ -1142,24 +1142,86 @@ void ClientInstance::handleAckRequest(Snowflake channelId, Snowflake messageId)
 
 void ClientInstance::handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs)
 {
-    QList<Discord::Client::AckEntry> entries;
-    entries.reserve(pairs.size());
     for (const auto &[channelId, messageId] : pairs)
-        entries.append({ channelId, messageId, 0 });
+        queuedBulkAcks.append({ channelId, messageId, 0 });
 
+    if (!bulkAckInFlight)
+        sendNextBulkAckBatch();
+}
+
+void ClientInstance::sendNextBulkAckBatch()
+{
     constexpr int maxPerRequest = 100;
-    int chunk = 0;
-    for (int i = 0; i < entries.size(); i += maxPerRequest) {
-        auto batch = entries.mid(i, maxPerRequest);
-        if (chunk == 0) {
-            client->ackBulk(batch);
-        } else {
-            QTimer::singleShot(chunk * 1000, this, [this, batch]() {
-                client->ackBulk(batch);
-            });
+    constexpr int delayBetweenRequestsMs = 1000;
+
+    bulkAckInFlight = !queuedBulkAcks.isEmpty();
+    if (!bulkAckInFlight)
+        return;
+
+    const auto batch = queuedBulkAcks.mid(0, maxPerRequest);
+    queuedBulkAcks.erase(queuedBulkAcks.begin(), queuedBulkAcks.begin() + batch.size());
+
+    client->ackBulk(batch, [this](bool success) {
+        if (!success) {
+            queuedBulkAcks.clear();
+            bulkAckInFlight = false;
+            return;
         }
-        ++chunk;
+        QTimer::singleShot(delayBetweenRequestsMs, this, [this]() { sendNextBulkAckBatch(); });
+    });
+}
+
+QList<Snowflake> ClientInstance::markableChannelIds(Snowflake guildId, Snowflake categoryId)
+{
+    QList<Snowflake> ids;
+    QSet<Snowflake> viewableParents;
+
+    for (const auto &channel : channelRepo.getChannelsForGuild(guildId)) {
+        if (!channel.type.hasValue() || channel.isThread() ||
+            channel.type.get() == Discord::ChannelType::GUILD_CATEGORY)
+            continue;
+        if (categoryId.isValid() && (!channel.parentId.hasValue() || channel.parentId.get() != categoryId))
+            continue;
+
+        Snowflake channelId = channel.id.get();
+        if (!permissionManager->hasChannelPermission(account.id, channelId, Discord::Permission::VIEW_CHANNEL))
+            continue;
+        if (channel.isVoice() &&
+            !permissionManager->hasChannelPermission(account.id, channelId, Discord::Permission::CONNECT))
+            continue;
+
+        ids.append(channelId);
+        viewableParents.insert(channelId);
+
+        if (isForumParent(channelId))
+            for (const auto &post : forumManager->joinedPosts(channelId))
+                ids.append(post.id.get());
     }
+
+    for (auto thread = threadCache.constBegin(); thread != threadCache.constEnd(); ++thread) {
+        if (!thread->parentId.hasValue() || !viewableParents.contains(thread->parentId.get()))
+            continue;
+
+        bool activeJoined = joinedThreads.contains(thread.key()) && !thread->isArchived();
+        if (activeJoined || readStateManager->getMentionCount(thread.key()) > 0)
+            ids.append(thread.key());
+    }
+
+    return ids;
+}
+
+void ClientInstance::markGuildsAsRead(const QList<Snowflake> &guildIds)
+{
+    QList<Snowflake> channelIds;
+    for (Snowflake guildId : guildIds)
+        channelIds += markableChannelIds(guildId, Snowflake::Invalid);
+
+    readStateManager->markChannelsAsRead(channelIds);
+}
+
+void ClientInstance::markCategoryAsRead(Snowflake guildId, Snowflake categoryId)
+{
+    readStateManager->markChannelsAsRead(markableChannelIds(guildId, categoryId));
 }
 
 ClientInstance::~ClientInstance()

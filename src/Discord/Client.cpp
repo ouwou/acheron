@@ -1103,7 +1103,7 @@ void Client::ackMessage(Snowflake channelId, Snowflake messageId, int flags, int
     });
 }
 
-void Client::ackBulk(const QList<AckEntry> &entries)
+void Client::ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished)
 {
     QJsonArray readStates;
     for (const auto &entry : entries) {
@@ -1116,9 +1116,10 @@ void Client::ackBulk(const QList<AckEntry> &entries)
 
     QJsonObject payload;
     payload["read_states"] = readStates;
-    httpClient->post("/read-states/ack-bulk", payload, [this](const HttpResponse &response) {
+    httpClient->post("/read-states/ack-bulk", payload, [onFinished = std::move(onFinished)](const HttpResponse &response) {
         if (!response.success)
             qCWarning(LogDiscord) << "Failed to bulk ack:" << response.error;
+        onFinished(response.success);
     });
 }
 

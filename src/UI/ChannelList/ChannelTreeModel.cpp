@@ -1851,22 +1851,20 @@ void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflak
     }
 }
 
-void ChannelTreeModel::collectMarkableChannels(ChannelNode *node,
-                                               QList<QPair<Snowflake, Snowflake>> &out)
+void ChannelTreeModel::collectMarkableChannelIds(ChannelNode *node, QList<Snowflake> &out)
 {
-    bool isEmptyDM = node->type == ChannelNode::Type::DMChannel && node->lastMessageId == node->id;
-    if (node->opensChat() && node->lastMessageId.isValid() && !isEmptyDM)
-        out.append({ node->id, node->lastMessageId });
+    if (node->opensChat())
+        out.append(node->id);
     for (auto &child : node->children)
-        collectMarkableChannels(child.get(), out);
+        collectMarkableChannelIds(child.get(), out);
 }
 
-QList<QPair<Snowflake, Snowflake>> ChannelTreeModel::getMarkableChannels(const QModelIndex &index)
+QList<Snowflake> ChannelTreeModel::getMarkableChannelIds(const QModelIndex &index)
 {
-    QList<QPair<Snowflake, Snowflake>> result;
+    QList<Snowflake> result;
     ChannelNode *node = nodeFromIndex(index);
     if (node)
-        collectMarkableChannels(node, result);
+        collectMarkableChannelIds(node, result);
     return result;
 }
 

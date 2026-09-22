@@ -67,6 +67,7 @@ void ReadStateManager::loadFromReady(const QList<Discord::ReadStateEntry> &readS
     channelGuildMap.clear();
     resourceChannels.clear();
     voiceChannels.clear();
+    forumChannels.clear();
     messageRequestChannels.clear();
     ackIdAtSelect.clear();
     outgoingAcks.clear();
@@ -245,13 +246,8 @@ bool ReadStateManager::isChannelUnread(Snowflake channelId, Snowflake channelLas
 
 bool ReadStateManager::hasUnreadOrMentions(Snowflake channelId) const
 {
-    return hasUnreadOrMentions(channelId, getChannelLastMessageId(channelId));
-}
-
-bool ReadStateManager::hasUnreadOrMentions(Snowflake channelId, Snowflake lastMessageId) const
-{
     return getMentionCount(channelId) > 0 ||
-           isChannelUnread(channelId, lastMessageId, guildForChannel(channelId));
+           isChannelUnread(channelId, getChannelLastMessageId(channelId), guildForChannel(channelId));
 }
 
 bool ReadStateManager::hasBeenRead(Snowflake channelId) const
@@ -456,6 +452,14 @@ void ReadStateManager::registerChannel(const Discord::Channel &channel, Snowflak
     else
         voiceChannels.remove(channelId);
 
+    bool isForum = channel.type.hasValue() &&
+                   (channel.type.get() == Discord::ChannelType::GUILD_FORUM ||
+                    channel.type.get() == Discord::ChannelType::GUILD_MEDIA);
+    if (isForum)
+        forumChannels.insert(channelId);
+    else
+        forumChannels.remove(channelId);
+
     if (!channel.flags.hasValue())
         return;
     if (channel.flags->testFlag(Discord::ChannelFlag::IS_GUILD_RESOURCE_CHANNEL))
@@ -488,6 +492,7 @@ void ReadStateManager::removeGuild(Snowflake guildId)
         channelGuildMap.remove(channelId);
         resourceChannels.remove(channelId);
         voiceChannels.remove(channelId);
+        forumChannels.remove(channelId);
         outgoingAcks.remove(channelId);
         if (activeChannelId == channelId)
             activeChannelId = Snowflake();
@@ -670,22 +675,38 @@ void ReadStateManager::tryAckActiveChannel()
 
 void ReadStateManager::markChannelAsRead(Snowflake channelId, Snowflake lastMessageId)
 {
-    if (!lastMessageId.isValid() || !hasUnreadOrMentions(channelId, lastMessageId))
+    if (!lastMessageId.isValid() || !hasUnreadOrMentions(channelId))
         return;
 
     ack(channelId, lastMessageId, true);
 }
 
-void ReadStateManager::markChannelsAsRead(
-        const QList<QPair<Snowflake, Snowflake>> &channelMessagePairs)
+Snowflake ReadStateManager::markAsReadMessageId(Snowflake channelId) const
+{
+    if (forumChannels.contains(channelId))
+        return Snowflake::fromUnixMs(QDateTime::currentMSecsSinceEpoch());
+    return getChannelLastMessageId(channelId);
+}
+
+void ReadStateManager::markChannelsAsRead(const QList<Snowflake> &channelIds)
 {
     QList<QPair<Snowflake, Snowflake>> toAck;
-    for (const auto &[channelId, messageId] : channelMessagePairs) {
-        if (!messageId.isValid() || !hasUnreadOrMentions(channelId, messageId))
+    for (Snowflake channelId : channelIds) {
+        if (!forumChannels.contains(channelId) && !hasUnreadOrMentions(channelId))
             continue;
+        Snowflake messageId = markAsReadMessageId(channelId);
+        if (messageId.isValid())
+            toAck.append({ channelId, messageId });
+    }
+
+    if (toAck.size() == 1) {
+        ack(toAck.first().first, toAck.first().second, true);
+        return;
+    }
+
+    for (const auto &[channelId, messageId] : toAck) {
         outgoingAcks.remove(channelId);
         ackLocally(channelId, messageId);
-        toAck.append({ channelId, messageId });
     }
 
     if (!toAck.isEmpty())

@@ -66,7 +66,7 @@ public:
     void setActiveChannel(Snowflake channelId);
     void setActiveChannelAtBottom(bool atBottom);
     void markChannelAsRead(Snowflake channelId, Snowflake lastMessageId);
-    void markChannelsAsRead(const QList<QPair<Snowflake, Snowflake>> &channelMessagePairs);
+    void markChannelsAsRead(const QList<Snowflake> &channelIds);
     void handleMessageCreated(Snowflake channelId, Snowflake messageId, bool fromSelf, bool isMention);
 
     void updateChannelLastMessageId(Snowflake channelId, Snowflake messageId);
@@ -83,7 +83,7 @@ signals:
 
 private:
     Discord::ReadStateEntry &entryFor(Snowflake channelId);
-    [[nodiscard]] bool hasUnreadOrMentions(Snowflake channelId, Snowflake lastMessageId) const;
+    [[nodiscard]] Snowflake markAsReadMessageId(Snowflake channelId) const;
     void ackLocally(Snowflake channelId, Snowflake messageId);
     void ack(Snowflake channelId, Snowflake messageId, bool immediate);
     void flushOutgoingAck(Snowflake channelId);
@@ -125,6 +125,7 @@ private:
     QHash<Snowflake, Snowflake> channelGuildMap;
     QSet<Snowflake> resourceChannels;
     QSet<Snowflake> voiceChannels;
+    QSet<Snowflake> forumChannels;
     QSet<Snowflake> messageRequestChannels;
     bool useNewNotifications = false;
 

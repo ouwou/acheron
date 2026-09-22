@@ -1844,11 +1844,30 @@ void MainWindow::markIndexAsRead(Snowflake accountId, const QModelIndex &sourceI
     if (!instance || !sourceIndex.isValid())
         return;
 
-    const auto pairs = channelTreeModel->getMarkableChannels(sourceIndex);
-    if (pairs.size() == 1)
-        instance->readState()->markChannelAsRead(pairs.first().first, pairs.first().second);
-    else if (!pairs.isEmpty())
-        instance->readState()->markChannelsAsRead(pairs);
+    ChannelNode *node = channelTreeModel->nodeFromIndex(sourceIndex);
+    if (!node)
+        return;
+
+    switch (node->type) {
+    case ChannelNode::Type::Server:
+        instance->markGuildsAsRead({ node->id });
+        break;
+    case ChannelNode::Type::Folder: {
+        QList<Snowflake> guildIds;
+        for (const auto &child : node->children)
+            if (child->type == ChannelNode::Type::Server)
+                guildIds.append(child->id);
+        instance->markGuildsAsRead(guildIds);
+        break;
+    }
+    case ChannelNode::Type::Category:
+        if (ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node))
+            instance->markCategoryAsRead(guildNode->id, node->id);
+        break;
+    default:
+        instance->readState()->markChannelsAsRead(channelTreeModel->getMarkableChannelIds(sourceIndex));
+        break;
+    }
 }
 
 void MainWindow::recordLastViewedChannel(Snowflake accountId, Snowflake guildId, Snowflake channelId)

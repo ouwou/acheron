@@ -133,7 +133,7 @@ public:
     };
 
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
-    void ackBulk(const QList<AckEntry> &entries);
+    void ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished);
 
     void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
     void setVoiceConnected(bool connected);

@@ -91,7 +91,7 @@ public:
     void toggleCollapsed(const QModelIndex &index);
     void setCollapsed(const QModelIndex &index, bool collapsed);
 
-    QList<QPair<Snowflake, Snowflake>> getMarkableChannels(const QModelIndex &index);
+    QList<Snowflake> getMarkableChannelIds(const QModelIndex &index);
     ChannelNode *findChannelTreeNode(Snowflake channelId);
     ChannelNode *findChannelTreeNode(Snowflake channelId, Snowflake accountId);
     QModelIndex indexForNode(ChannelNode *node) const;
@@ -104,8 +104,7 @@ signals:
     void totalMentionCountChanged(int count, int previousCount);
 
 private:
-    static void collectMarkableChannels(ChannelNode *node,
-                                        QList<QPair<Snowflake, Snowflake>> &out);
+    static void collectMarkableChannelIds(ChannelNode *node, QList<Snowflake> &out);
     static Core::ChannelReadState computeNodeReadState(ChannelNode *node, Core::ClientInstance *instance);
     static Core::ChannelReadState shownReadState(const ChannelNode *node);
     static void setSelfReadState(ChannelNode *node, const Core::ChannelReadState &state);

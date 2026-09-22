@@ -68,6 +68,9 @@ public:
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
 
+    void markGuildsAsRead(const QList<Snowflake> &guildIds);
+    void markCategoryAsRead(Snowflake guildId, Snowflake categoryId);
+
     struct ThreadListPage
     {
         QList<Discord::Channel> threads;
@@ -152,6 +155,8 @@ private:
     void cacheThread(const Discord::Channel &thread, Snowflake guildId);
     void ingestThread(const Discord::Channel &thread, Snowflake guildId);
     void fetchThreadListAttempt(Snowflake channelId, bool archived, int offset, int attempt, const ThreadListPageCallback &callback);
+    [[nodiscard]] QList<Snowflake> markableChannelIds(Snowflake guildId, Snowflake categoryId);
+    void sendNextBulkAckBatch();
 
     AccountInfo account;
 
@@ -186,6 +191,9 @@ private:
     QSet<Snowflake> joinedThreads;
     QHash<Snowflake, Discord::Channel> threadCache;
     QHash<Snowflake, bool> forumParentCache;
+
+    QList<Discord::Client::AckEntry> queuedBulkAcks;
+    bool bulkAckInFlight = false;
 };
 
 } // namespace Core
