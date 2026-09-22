@@ -1346,6 +1346,25 @@ std::optional<Snowflake> ClientInstance::findDmChannelWithUser(Snowflake userId)
     return channelRepo.findDmChannelWithUser(userId);
 }
 
+void ClientInstance::openDmChannel(Snowflake userId, DmChannelCallback callback)
+{
+    if (auto existing = findDmChannelWithUser(userId)) {
+        callback(Result<Snowflake>::makeOk(*existing));
+        return;
+    }
+
+    client->openDmChannel(userId, [this, callback](const Result<Discord::ChannelCreate> &res) {
+        if (!res.success()) {
+            callback(Result<Snowflake>::makeError(res.error));
+            return;
+        }
+
+        // idempotent so its ok
+        onChannelCreated(*res.value);
+        callback(Result<Snowflake>::makeOk(res.value->channel.get().id.get()));
+    });
+}
+
 int ClientInstance::getChannelRateLimit(Snowflake channelId)
 {
     auto channelOpt = getChannel(channelId);

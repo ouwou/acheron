@@ -64,6 +64,8 @@ public:
     [[nodiscard]] std::optional<Discord::Guild> getGuild(Snowflake guildId);
     [[nodiscard]] std::optional<Discord::Channel> getChannel(Snowflake channelId);
     [[nodiscard]] std::optional<Snowflake> findDmChannelWithUser(Snowflake userId);
+    using DmChannelCallback = std::function<void(const Result<Snowflake> &)>;
+    void openDmChannel(Snowflake userId, DmChannelCallback callback);
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;

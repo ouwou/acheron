@@ -307,6 +307,22 @@ void Client::setUserNote(Snowflake userId, const QString &note)
     });
 }
 
+void Client::openDmChannel(Snowflake userId, DmChannelCallback callback)
+{
+    QJsonObject payload;
+    payload["recipients"] = QJsonArray{ QString::number(userId) };
+
+    httpClient->post("/users/@me/channels", payload, [userId, callback](const HttpResponse &response) {
+        if (!response.success) {
+            qCWarning(LogDiscord) << "Failed to open DM with user" << userId << ":" << response.error;
+            callback(Core::Result<ChannelCreate>::makeError(response.error));
+            return;
+        }
+
+        callback(Core::Result<ChannelCreate>::makeOk(ChannelCreate::fromJson(QJsonDocument::fromJson(response.body).object())));
+    });
+}
+
 namespace {
 
 template <typename ResultT, typename ParseExtra>

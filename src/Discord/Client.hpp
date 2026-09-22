@@ -67,6 +67,9 @@ public:
 
     void setUserNote(Snowflake userId, const QString &note);
 
+    using DmChannelCallback = std::function<void(const Core::Result<ChannelCreate> &)>;
+    void openDmChannel(Snowflake userId, DmChannelCallback callback);
+
     struct ForumThreadSearchResult
     {
         QList<Channel> threads;

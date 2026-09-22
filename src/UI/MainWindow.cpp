@@ -2555,17 +2555,16 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
     });
 
     QAction *openDmAction = menu.addAction(tr("Open DM"));
-    std::optional<Snowflake> dmChannelId;
-    if (instance)
-        dmChannelId = instance->findDmChannelWithUser(userId);
-    if (dmChannelId.has_value()) {
-        connect(openDmAction, &QAction::triggered, this,
-                [this, accountId = instance->accountId(), channelId = *dmChannelId]() {
-                    selectChannelInTree(accountId, channelId);
-                });
-    } else {
-        openDmAction->setEnabled(false);
-    }
+    openDmAction->setEnabled(instance && userId != instance->accountId());
+    connect(openDmAction, &QAction::triggered, this, [this, instanceGuard, userId]() {
+        if (!instanceGuard)
+            return;
+        Snowflake accountId = instanceGuard->accountId();
+        instanceGuard->openDmChannel(userId, [this, accountId](const Core::Result<Snowflake> &res) {
+            if (res.success())
+                selectChannelInTree(accountId, *res.value);
+        });
+    });
 
     if (guildId.isValid() && instance) {
         QMenu *rolesMenu = menu.addMenu(tr("Roles"));
