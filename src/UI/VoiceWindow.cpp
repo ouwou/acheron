@@ -283,6 +283,7 @@ VoiceWindow::VoiceWindow(QWidget *parent)
 {
     setWindowTitle(tr("Voice Settings"));
     setAttribute(Qt::WA_DeleteOnClose, false);
+    setAttribute(Qt::WA_QuitOnClose, false);
     setupUi();
 }
 

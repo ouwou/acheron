@@ -23,6 +23,11 @@ VoiceStatusBar::VoiceStatusBar(QWidget *parent) : QWidget(parent)
     });
 }
 
+VoiceStatusBar::~VoiceStatusBar()
+{
+    delete voiceWindow;
+}
+
 void VoiceStatusBar::setupUi()
 {
     setFixedHeight(32);
@@ -217,7 +222,7 @@ void VoiceStatusBar::mousePressEvent(QMouseEvent *event)
 
 void VoiceStatusBar::toggleVoiceWindow()
 {
-    if (voiceWindow && voiceWindow->isVisible())
+    if (voiceWindow && voiceWindow->isVisible() && !voiceWindow->isMinimized())
         voiceWindow->close();
     else
         showVoiceWindow();
@@ -226,11 +231,12 @@ void VoiceStatusBar::toggleVoiceWindow()
 void VoiceStatusBar::showVoiceWindow()
 {
     if (!voiceWindow) {
-        voiceWindow = new VoiceWindow(window());
+        voiceWindow = new VoiceWindow();
         connect(voiceWindow, &VoiceWindow::userProfileRequested, this, &VoiceStatusBar::userProfileRequested);
         configureVoiceWindow();
     }
 
+    voiceWindow->setWindowState(voiceWindow->windowState() & ~Qt::WindowMinimized);
     voiceWindow->show();
     voiceWindow->raise();
     voiceWindow->activateWindow();

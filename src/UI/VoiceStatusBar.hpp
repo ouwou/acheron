@@ -33,6 +33,7 @@ public:
     using StatusResolver = std::function<Core::PresenceBadge(Core::Snowflake)>;
 
     explicit VoiceStatusBar(QWidget *parent = nullptr);
+    ~VoiceStatusBar() override;
 
     void setVoiceManager(Core::Audio::VoiceManager *manager);
     void setNameResolver(NameResolver resolver);
