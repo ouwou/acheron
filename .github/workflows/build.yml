@@ -320,8 +320,10 @@ jobs:
           Copy-Item "openssl-bin/*.dll" $out -Force
 
           # Drop build leftovers, and the plugins the app can never reach: main.cpp
-          # forces the Fusion style and Storage only ever opens QSQLITE
-          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
+          # forces the Fusion style and Storage only ever opens QSQLITE. The .exp
+          # (and its .lib) exist because static ffmpeg marks its API dllexport, so
+          # the linker writes an import library for the exe.
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/*.exp","$out/styles","$out/generic" `
             -Recurse -ErrorAction SilentlyContinue
           Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
 
