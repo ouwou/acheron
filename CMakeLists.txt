@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 option(USE_VCPKG "Use bundled vcpkg toolchain" ON)
 option(ENABLE_LOTTIE "Build with rlottie for Lottie sticker playback" ON)
+option(FFMPEG_FROM_VCPKG "Build ffmpeg from source through vcpkg and link it statically" OFF)
 
 # Must happen before project()
 if(USE_VCPKG AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -12,6 +13,9 @@ endif()
 
 if(ENABLE_LOTTIE)
     list(APPEND VCPKG_MANIFEST_FEATURES "lottie")
+endif()
+if(FFMPEG_FROM_VCPKG)
+    list(APPEND VCPKG_MANIFEST_FEATURES "ffmpeg")
 endif()
 
 project(acheron LANGUAGES CXX)

@@ -243,7 +243,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: build/vcpkg_installed
-          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+          # Keyed apart from the Qt6 jobs: this one also holds the from-source ffmpeg,
+          # and restoring their cache would rebuild it on every run.
+          key: vcpkg-x64-windows-static-md-ffmpeg-${{ hashFiles('vcpkg.json') }}
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -252,25 +254,6 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
-
-      # ENABLE_FFMPEG defaults on and fails configure when ffmpeg is missing, so the
-      # Qt5 job installs it too. That also keeps the video player covered under Qt5
-      # rather than leaving it compiled only by the Qt6 jobs.
-      - name: Install ffmpeg
-        shell: pwsh
-        run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_WINDOWS_BUILD }}.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-
-          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne "${{ env.FFMPEG_WINDOWS_SHA256 }}") {
-            throw "ffmpeg archive hash mismatch: expected ${{ env.FFMPEG_WINDOWS_SHA256 }}, got $actual"
-          }
-
-          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract -Force
-
-          $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
-          Move-Item -Path $inner.FullName -Destination ffmpeg
 
       - name: Fetch OpenSSL 1.1 (Qt5 runtime TLS)
         shell: pwsh
@@ -288,18 +271,23 @@ jobs:
             ForEach-Object { Copy-Item $_.FullName openssl-bin -Force }
           if (-not (Test-Path openssl-bin/libssl-1_1-x64.dll)) { throw "OpenSSL 1.1 x64 DLLs not found in archive" }
 
+      # No prebuilt ffmpeg here: the BtbN DLLs are Windows 10 binaries. Their avcodec
+      # imports SetThreadDescription (1607+) and WaitOnAddress (8+), and since the
+      # exe links avcodec directly, bundling it stops this artifact from even
+      # starting on Windows 7. FFMPEG_FROM_VCPKG builds ffmpeg from source instead
+      # and links it statically.
       - name: Configure
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
-          $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
             -DCMAKE_BUILD_TYPE=MinSizeRel `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
             -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
-            -DBUILD_TESTS=ON
+            -DBUILD_TESTS=ON `
+            -DFFMPEG_FROM_VCPKG=ON
 
       - name: Build
         run: cmake --build build --config MinSizeRel --parallel
@@ -336,6 +324,9 @@ jobs:
           Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
             -Recurse -ErrorAction SilentlyContinue
           Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
+
+      - name: Check Windows 7 loadability
+        run: python .github/check_win7_imports.py acheron-windows-qt5-MinSizeRel
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7

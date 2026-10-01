@@ -16,6 +16,23 @@
     }
   ],
   "features": {
+    "ffmpeg": {
+      "description": "Static ffmpeg built from source (FFMPEG_FROM_VCPKG), for targets the prebuilt ffmpeg DLLs do not run on",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
+            "avcodec",
+            "avformat",
+            "openssl",
+            "swresample",
+            "swscale",
+            "zlib"
+          ]
+        }
+      ]
+    },
     "lottie": {
       "description": "Lottie sticker playback (ENABLE_LOTTIE)",
       "dependencies": [

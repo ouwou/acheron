@@ -17,10 +17,41 @@ set(FFMPEG_COMPONENTS avcodec avformat avutil swscale swresample)
 # one) is accepted here and only fails much later on MediaDecoder's #error.
 set(FFMPEG_MIN_AVUTIL_VERSION 57.28.100)
 
-# Deliberately no find_package(FFMPEG). Upstream ffmpeg ships pkg-config files,
-# not a CMake config package, so find_package can only ever match some third
-# party's Find module. Qt6 bundles one, and it reports bare library names like
-# "avcodec.lib" rather than absolute paths, which the linker cannot resolve.
+# Deliberately no find_package(FFMPEG) outside the vcpkg route. Upstream ffmpeg
+# ships pkg-config files, not a CMake config package, so find_package can only ever
+# match some third party's Find module. Qt6 bundles one, and it reports bare library
+# names like "avcodec.lib" rather than absolute paths, which the linker cannot resolve.
+
+# 0. the manifest's `ffmpeg` feature: a static, from-source build. This is what the
+#    Windows 7 artifact uses, because the prebuilt Windows DLLs import Windows 10
+#    APIs. Static ffmpeg needs its own dependencies on the link line (OpenSSL, zlib,
+#    bcrypt, ...), and only the Find module vcpkg generates beside the build knows
+#    that list, so the module path is pinned to it for the lookup.
+if(FFMPEG_FROM_VCPKG)
+    set(_ffmpeg_vcpkg_module_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/ffmpeg")
+    if(NOT EXISTS "${_ffmpeg_vcpkg_module_dir}/FindFFMPEG.cmake")
+        message(FATAL_ERROR
+            "FFMPEG_FROM_VCPKG is on but vcpkg did not install ffmpeg (looked in "
+            "${_ffmpeg_vcpkg_module_dir}). It needs the bundled vcpkg toolchain (USE_VCPKG=ON).")
+    endif()
+
+    set(_ffmpeg_saved_module_path "${CMAKE_MODULE_PATH}")
+    set(CMAKE_MODULE_PATH "${_ffmpeg_vcpkg_module_dir}")
+    find_package(FFMPEG MODULE REQUIRED)
+    set(CMAKE_MODULE_PATH "${_ffmpeg_saved_module_path}")
+
+    if(FFMPEG_libavutil_VERSION VERSION_LESS FFMPEG_MIN_AVUTIL_VERSION)
+        message(FATAL_ERROR
+            "vcpkg's ffmpeg is libavutil ${FFMPEG_libavutil_VERSION}, but video playback needs "
+            "${FFMPEG_MIN_AVUTIL_VERSION} or newer (ffmpeg 5.1).")
+    endif()
+
+    add_library(ffmpeg INTERFACE)
+    target_include_directories(ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(ffmpeg INTERFACE ${FFMPEG_LIBRARIES})
+    message(STATUS "Using static ffmpeg from vcpkg")
+    return()
+endif()
 
 # 1. pkg-config, which is how Linux and homebrew present it. Skipped under MSVC:
 #    pkg-config emits Unix toolchain flags like -lavcodec, so an MSYS2 or vcpkg
