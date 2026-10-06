@@ -542,4 +542,8 @@ if(UNIX AND NOT APPLE)
     install(FILES resources/desktop/io.github.ouwou.acheron.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
     )
+    install(FILES acheron.svg
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+        RENAME io.github.ouwou.acheron.svg
+    )
 endif()
