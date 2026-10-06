@@ -350,9 +350,12 @@ GuildSettingsPage *GuildSettingsWindow::pageFor(GuildSettingsSection section)
     case GuildSettingsSection::Stickers:
         page = new GuildStickersPage(instance, images, guildId, stack);
         break;
-    case GuildSettingsSection::Members:
-        page = new GuildMembersPage(instance, images, guildId, stack);
+    case GuildSettingsSection::Members: {
+        auto *members = new GuildMembersPage(instance, images, guildId, stack);
+        connect(members, &GuildMembersPage::linkActivated, this, &GuildSettingsWindow::linkActivated);
+        page = members;
         break;
+    }
     case GuildSettingsSection::Roles:
         page = new GuildRolesPage(instance, images, guildId, stack);
         break;

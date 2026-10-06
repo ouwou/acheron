@@ -135,6 +135,7 @@ public slots:
     void onFutureRequestFinished(bool loadedMore);
     void editLastOwnMessage();
     void jumpToMessage(Core::Snowflake messageId);
+    void openLink(const QString &url);
     void jumpToPresent();
 
 private slots:

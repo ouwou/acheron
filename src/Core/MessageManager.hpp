@@ -45,6 +45,9 @@ public:
     void setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver);
     void setEmojiManager(EmojiManager *manager);
 
+    [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;
+    [[nodiscard]] QString profileBioHtml(const QString &bio) const;
+
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
     void requestLoadFuture(Snowflake channelId, Snowflake afterId);

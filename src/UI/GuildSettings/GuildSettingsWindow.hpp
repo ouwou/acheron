@@ -31,6 +31,9 @@ public:
 
     void openSection(GuildSettingsSection section);
 
+signals:
+    void linkActivated(const QString &url);
+
 protected:
     void closeEvent(QCloseEvent *event) override;
 

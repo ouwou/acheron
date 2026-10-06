@@ -563,6 +563,7 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<Core::Snowflake> id;
     Field<ChannelType> type;
     Field<QString, true, true> name;
+    Field<QString, true, true> topic;
     Field<int, true> position;
     Field<Core::Snowflake, true> guildId;
     Field<Core::Snowflake, true, true> parentId;
@@ -597,6 +598,7 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "id", channel.id);
         get(obj, "type", channel.type);
         get(obj, "name", channel.name);
+        get(obj, "topic", channel.topic);
         get(obj, "position", channel.position);
         get(obj, "guild_id", channel.guildId);
         get(obj, "parent_id", channel.parentId);

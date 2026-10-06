@@ -70,7 +70,7 @@ void EmojiTextObject::drawObject(QPainter *painter, const QRectF &rect, QTextDoc
     QPixmap pixmap;
     if (src.isEmoji) {
         const QSize declaredSize(qRound(imageFormat.width()), qRound(imageFormat.height()));
-        const bool animate = src.isAnimatedEmoji && animator->emojiEnabled();
+        const bool animate = animator && src.isAnimatedEmoji && animator->emojiEnabled();
         if (animate)
             pixmap = animator->frame(src.url, declaredSize, accountId, painter->transform().mapRect(target));
         if (pixmap.isNull())

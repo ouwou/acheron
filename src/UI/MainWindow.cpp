@@ -45,7 +45,9 @@
 #include "TypingIndicator.hpp"
 #include "SlowModeIndicator.hpp"
 #include "ConnectionBanner.hpp"
+#include "ChannelTopicLine.hpp"
 #include "BrowserCaptchaResolver.hpp"
+#include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
 #include "Discord/CdnUrls.hpp"
@@ -339,6 +341,7 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
 
     // voice channels cannot hold threads
     setThreadBrowserTarget(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId));
+    showChannelTopic(instance, channelId);
 
     if (isDm) {
         messageInput->setEnabled(true);
@@ -770,13 +773,22 @@ void MainWindow::openGuildSettings(Snowflake accountId, Snowflake guildId, Guild
         return;
 
     QPointer<GuildSettingsWindow> &window = guildSettingsWindows[qMakePair(accountId, guildId)];
-    if (!window)
+    if (!window) {
         window = new GuildSettingsWindow(session->getImageManager(), instance, guildId);
+        connect(window, &GuildSettingsWindow::linkActivated, chatView, &ChatView::openLink);
+    }
     window->openSection(section);
     window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
     window->show();
     window->raise();
     window->activateWindow();
+}
+
+void MainWindow::showUserProfile(Core::ClientInstance *instance, Snowflake userId, Snowflake guildId)
+{
+    auto *popup = new UserProfilePopup(session->getImageManager(), instance, userId, guildId, this);
+    connect(popup, &UserProfilePopup::linkActivated, chatView, &ChatView::openLink);
+    popup->show();
 }
 
 void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
@@ -832,6 +844,8 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                     return;
                 if (instance != currentInstance)
                     return;
+
+                showChannelTopic(instance, ch.id.get());
 
                 int rateLimit = ch.rateLimitPerUser.hasValue() ? ch.rateLimitPerUser.get() : 0;
                 Snowflake userId = instance->accountId();
@@ -1018,8 +1032,7 @@ void MainWindow::setupUi()
                 ClientInstance *instance = session->client(accountId);
                 if (!instance)
                     return;
-                (new UserProfilePopup(session->getImageManager(), instance, userId, instance->voiceGuildId(), this))
-                        ->show();
+                showUserProfile(instance, userId, instance->voiceGuildId());
             });
 #endif
 
@@ -1077,7 +1090,9 @@ void MainWindow::setupUi()
     auto *channelToolbarLayout = new QHBoxLayout(channelToolbar);
     channelToolbarLayout->setContentsMargins(8, 3, 8, 3);
     channelToolbarLayout->setSpacing(4);
-    channelToolbarLayout->addStretch(1);
+    channelTopicLine = new ChannelTopicLine(session->getImageManager(), channelToolbar);
+    connect(channelTopicLine, &ChannelTopicLine::clicked, this, &MainWindow::openChannelTopicPopup);
+    channelToolbarLayout->addWidget(channelTopicLine, 1);
     channelToolbarLayout->addWidget(threadBrowserButton, 0);
     channelToolbar->setStyleSheet(
             "#channelToolbar { border-bottom: 1px solid rgba(128, 128, 128, 0.25); }");
@@ -1189,6 +1204,7 @@ void MainWindow::setupUi()
         chatView->viewport()->update();
         channelTree->viewport()->update();
         memberListView->viewport()->update();
+        refreshChannelTopic();
     });
 
     connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::metricsChanged, this, [this]() {
@@ -1197,6 +1213,7 @@ void MainWindow::setupUi()
         chatView->doItemsLayout();
         channelTree->viewport()->update();
         memberListView->viewport()->update();
+        refreshChannelTopic();
     });
 
     connect(memberListView, &QWidget::customContextMenuRequested, this,
@@ -2593,8 +2610,7 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
 
     QAction *profileAction = menu.addAction(tr("Profile"));
     connect(profileAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {
-        (new UserProfilePopup(session->getImageManager(), instanceGuard, userId, guildId, this))
-                ->show();
+        showUserProfile(instanceGuard, userId, guildId);
     });
 
     QAction *mentionAction = menu.addAction(tr("Mention"));
@@ -2666,6 +2682,38 @@ void MainWindow::selectChannelInTree(Snowflake accountId, Snowflake channelId)
     QModelIndex proxyIndex = channelFilterProxy->mapFromSource(sourceIndex);
     if (proxyIndex.isValid())
         channelTree->setCurrentIndex(proxyIndex);
+}
+
+void MainWindow::showChannelTopic(Core::ClientInstance *instance, Core::Snowflake channelId)
+{
+    channelTopicChannelId = channelId;
+    const auto channel = instance->getChannel(channelId);
+    const QString singleLineTopic = channel ? channel->topic.valueOr(QString()).simplified() : QString();
+    channelTopicLine->setTopicHtml(singleLineTopic.isEmpty() ? QString() : instance->messages()->channelTopicHtml(singleLineTopic, channelId), instance->accountId());
+}
+
+void MainWindow::refreshChannelTopic()
+{
+    if (currentInstance && channelTopicChannelId.isValid())
+        showChannelTopic(currentInstance, channelTopicChannelId);
+}
+
+void MainWindow::openChannelTopicPopup()
+{
+    if (!currentInstance)
+        return;
+    const auto channel = currentInstance->getChannel(channelTopicChannelId);
+    const QString topic = channel ? channel->topic.valueOr(QString()) : QString();
+    if (topic.trimmed().isEmpty())
+        return;
+
+    auto *popup = new ChannelTopicPopup(channel->name.valueOr(QString()), currentInstance->messages()->channelTopicHtml(topic, channelTopicChannelId), session->getImageManager(), currentInstance->accountId(), this);
+    popup->setAttribute(Qt::WA_DeleteOnClose);
+    connect(popup, &ChannelTopicPopup::linkActivated, this, [this, popup](const QString &url) {
+        popup->close();
+        chatView->openLink(url);
+    });
+    popup->open();
 }
 
 void MainWindow::setThreadBrowserTarget(Core::Snowflake channelId)

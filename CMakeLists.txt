@@ -204,6 +204,7 @@ set(PROJECT_SOURCES
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
     src/UI/ConnectionBanner.cpp
+    src/UI/ChannelTopicLine.cpp
     src/UI/ElidedLabel.cpp
     src/UI/StatusIndicator.cpp
     src/UI/ProxyLineEdit.cpp
@@ -246,6 +247,8 @@ set(PROJECT_SOURCES
     src/UI/Chat/InlineVideoController.cpp
     src/UI/Chat/FrameAnimator.cpp
     src/UI/Chat/EmojiTextObject.cpp
+    src/UI/Chat/MessageTextDocument.cpp
+    src/UI/Chat/MessageTextBrowser.cpp
     src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
     src/UI/Chat/MessageActionBar.cpp
@@ -259,6 +262,7 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/QRLoginDialog.cpp
     src/UI/Dialogs/DirectLoginDialog.cpp
     src/UI/Dialogs/BasePopup.cpp
+    src/UI/Dialogs/ChannelTopicPopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
     src/UI/Dialogs/ActivityCard.cpp

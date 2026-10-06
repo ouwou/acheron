@@ -25,6 +25,7 @@
 
 #include "Core/ClientInstance.hpp"
 #include "Core/ImageManager.hpp"
+#include "Core/MessageManager.hpp"
 #include "Core/Presence/ActivityFormat.hpp"
 #include "Core/Presence/PresenceManager.hpp"
 #include "Core/RelationshipManager.hpp"
@@ -32,6 +33,7 @@
 #include "Core/UserManager.hpp"
 #include "Discord/CdnUrls.hpp"
 #include "Discord/Client.hpp"
+#include "UI/Chat/MessageTextBrowser.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -47,6 +49,7 @@ constexpr int ColumnSpacing = 20;
 constexpr int IdentityGap = 12;
 constexpr int StatusDotSize = 24;
 constexpr int CustomStatusEmojiSize = 16;
+constexpr int BioFontPx = 12;
 constexpr int ActivityTickMs = 1000;
 constexpr int ActivityImageRequestSize = 160;
 constexpr int LeftRightColumnHeight = 260;
@@ -374,12 +377,13 @@ QWidget *UserProfilePopup::buildBody()
     bioHeading->setText(sectionHeading(tr("About Me"), headingColor));
     bioHeading->setTextFormat(Qt::RichText);
     bioLayout->addWidget(bioHeading);
-    bioLabel = new QLabel(bioSection);
-    bioLabel->setTextFormat(Qt::PlainText);
-    bioLabel->setWordWrap(true);
-    bioLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    bioLabel->setStyleSheet(QStringLiteral("font-size: 12px;"));
-    bioLayout->addWidget(bioLabel);
+    bioView = new MessageTextBrowser(images, accountId(), bioSection);
+    QFont bioFont = bioView->font();
+    bioFont.setPixelSize(BioFontPx);
+    bioView->setFont(bioFont);
+    bioView->fitHeightToDocument();
+    connect(bioView, &MessageTextBrowser::linkActivated, this, &UserProfilePopup::linkActivated);
+    bioLayout->addWidget(bioView);
     bioSection->setVisible(false);
 
     activitySection = new QWidget(body);
@@ -750,7 +754,7 @@ void UserProfilePopup::renderBannerAndBio()
     if (bio.isEmpty()) {
         bioSection->setVisible(false);
     } else {
-        bioLabel->setText(bio);
+        bioView->setMessageHtml(instance ? instance->messages()->profileBioHtml(bio) : bio.toHtmlEscaped(), bioView->viewport()->width());
         bioSection->setVisible(true);
     }
 }

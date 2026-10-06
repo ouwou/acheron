@@ -34,6 +34,9 @@ public:
     GuildMembersPage(Core::ClientInstance *instance, Core::ImageManager *images, Core::Snowflake guildId, QWidget *parent = nullptr);
     ~GuildMembersPage() override;
 
+signals:
+    void linkActivated(const QString &url);
+
 protected:
     void load() override;
     void updatePermissions() override;

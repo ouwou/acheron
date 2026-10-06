@@ -1042,8 +1042,11 @@ void GuildMembersPage::showContextMenu(const QPoint &pos)
 
 void GuildMembersPage::openProfile(Core::Snowflake userId)
 {
-    if (instance)
-        (new UserProfilePopup(images, instance, userId, guildId, this))->show();
+    if (!instance)
+        return;
+    auto *popup = new UserProfilePopup(images, instance, userId, guildId, this);
+    connect(popup, &UserProfilePopup::linkActivated, this, &GuildMembersPage::linkActivated);
+    popup->show();
 }
 
 void GuildMembersPage::openPruneDialog()

@@ -343,6 +343,34 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
     QListView::mouseMoveEvent(event);
 }
 
+void ChatView::openLink(const QString &url)
+{
+    if (url.isEmpty())
+        return;
+
+    const QLatin1String channelMention("acheron://channel/");
+    if (url.startsWith(channelMention)) {
+        bool ok = false;
+        quint64 id = url.mid(channelMention.size()).toULongLong(&ok);
+        if (ok)
+            emit channelMentionClicked(Core::Snowflake(id));
+        return;
+    }
+
+    if (auto link = Discord::ChannelLink::parse(url)) {
+        if (link->messageId.isValid())
+            emit messageLinkClicked(link->channelId, link->messageId);
+        else
+            emit channelMentionClicked(link->channelId);
+        return;
+    }
+
+    auto *confirm = new ConfirmPopup(tr("External Link"), QString(tr("Are you sure you want to open <b>%1</b>?")).arg(url), tr("Open Link"), this);
+    confirm->setAttribute(Qt::WA_DeleteOnClose);
+    connect(confirm, &QDialog::accepted, this, [url]() { QDesktopServices::openUrl(QUrl(url)); });
+    confirm->open();
+}
+
 void ChatView::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton) {
@@ -368,23 +396,6 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     }
 
     using Kind = ChatLayout::HitRegion::Kind;
-
-    auto openExternalLink = [this](const QString &url) {
-        if (url.isEmpty())
-            return;
-        if (auto link = Discord::ChannelLink::parse(url)) {
-            if (link->messageId.isValid())
-                emit messageLinkClicked(link->channelId, link->messageId);
-            else
-                emit channelMentionClicked(link->channelId);
-            return;
-        }
-        ConfirmPopup dialog(tr("External Link"),
-                            QString(tr("Are you sure you want to open <b>%1</b>?")).arg(url),
-                            tr("Open Link"), this);
-        if (dialog.exec() == QDialog::Accepted)
-            QDesktopServices::openUrl(QUrl(url));
-    };
 
     auto openImage = [this, chatModel](const MediaHit &hit) {
         auto *viewer = new ImageViewer(imageManager, chatModel->getAccountId(), window());
@@ -445,7 +456,7 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         if (hit.isImage())
             openImage(hit);
         else
-            openExternalLink(region->url);
+            openLink(region->url);
         break;
     }
 
@@ -461,26 +472,19 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         if (target.isValid())
             video->release(target, idx, pos);
         else
-            openExternalLink(region->url);
+            openLink(region->url);
         break;
     }
 
     case Kind::EmbedAuthor:
     case Kind::EmbedTitle:
     case Kind::EmbedLink:
-        openExternalLink(region->url);
+        openLink(region->url);
         break;
 
     case Kind::ForwardOrigin:
     case Kind::TextLink:
-        if (region->url.startsWith("acheron://channel/")) {
-            bool ok = false;
-            quint64 id = region->url.mid(18).toULongLong(&ok);
-            if (ok)
-                emit channelMentionClicked(Core::Snowflake(id));
-        } else {
-            openExternalLink(region->url);
-        }
+        openLink(region->url);
         break;
 
     case Kind::ReplyBar:

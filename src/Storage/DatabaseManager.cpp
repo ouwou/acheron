@@ -197,6 +197,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "available_tags" TEXT,
 	        "default_sort_order" INTEGER,
 	        "flags" INTEGER,
+	        "topic" TEXT,
 	        PRIMARY KEY("id")
         );
     )");

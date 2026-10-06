@@ -43,6 +43,7 @@ struct ChannelNode;
 class TypingIndicator;
 class SlowModeIndicator;
 class ConnectionBanner;
+class ChannelTopicLine;
 class GuildSettingsWindow;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
@@ -108,6 +109,10 @@ public:
     void applyChannelIndent();
 
 private:
+    void showChannelTopic(Core::ClientInstance *instance, Core::Snowflake channelId);
+    void refreshChannelTopic();
+    void openChannelTopicPopup();
+    void showUserProfile(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId);
     QWidget *buildLeftSide();
     void onRailAccountHomeSelected(Core::Snowflake accountId);
     void onRailAccountHomeClicked(Core::Snowflake accountId);
@@ -182,6 +187,8 @@ private:
     TabBar *tabBar;
     QWidget *channelToolbar = nullptr;
     QToolButton *threadBrowserButton = nullptr;
+    ChannelTopicLine *channelTopicLine = nullptr;
+    Core::Snowflake channelTopicChannelId = Core::Snowflake::Invalid;
     ThreadBrowserPopup *threadBrowser = nullptr;
     Core::Snowflake threadBrowserChannelId = Core::Snowflake::Invalid;
 

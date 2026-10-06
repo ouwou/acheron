@@ -47,6 +47,8 @@ static Discord::Channel readChannelFromQuery(const QSqlQuery &q)
         channel.defaultSortOrder = q.value(11).toInt();
     if (!q.value(12).isNull())
         channel.flags = Discord::ChannelFlags::fromInt(q.value(12).toInt());
+    if (!q.value(13).isNull())
+        channel.topic = q.value(13).toString();
     return channel;
 }
 
@@ -71,8 +73,8 @@ void ChannelRepository::saveChannel(const Discord::Channel &channel, QSqlDatabas
 
     q.prepare(R"(
 		INSERT OR REPLACE INTO channels
-		(id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags)
-		VALUES (:id, :type, :position, :name, :guild_id, :parent_id, :last_message_id, :icon, :owner_id, :rate_limit_per_user, :available_tags, :default_sort_order, :flags)
+		(id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags, topic)
+		VALUES (:id, :type, :position, :name, :guild_id, :parent_id, :last_message_id, :icon, :owner_id, :rate_limit_per_user, :available_tags, :default_sort_order, :flags, :topic)
     )");
 
     q.bindValue(":id", static_cast<qint64>(channel.id.get()));
@@ -91,6 +93,8 @@ void ChannelRepository::saveChannel(const Discord::Channel &channel, QSqlDatabas
     q.bindValue(":flags", channel.flags.hasValue()
                                   ? QVariant(static_cast<qint64>(channel.flags.get()))
                                   : QVariant());
+
+    bindOptional(q, ":topic", channel.topic);
 
     execLogged(q, "ChannelRepository: Save");
 }
@@ -264,7 +268,7 @@ std::optional<Discord::Channel> ChannelRepository::getChannel(Core::Snowflake ch
     auto db = getDb();
     QSqlQuery q(db);
     q.prepare(R"(
-        SELECT id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags
+        SELECT id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags, topic
         FROM channels WHERE id = :id
     )");
     q.bindValue(":id", static_cast<qint64>(channelId));
@@ -310,7 +314,7 @@ QList<Discord::Channel> ChannelRepository::getChannelsForGuild(Core::Snowflake g
     QSqlQuery q(db);
 
     q.prepare(R"(
-        SELECT id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags
+        SELECT id, type, position, name, guild_id, parent_id, last_message_id, icon, owner_id, rate_limit_per_user, available_tags, default_sort_order, flags, topic
         FROM channels WHERE guild_id = :guild_id
     )");
     q.bindValue(":guild_id", static_cast<qint64>(guildId));

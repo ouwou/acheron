@@ -26,6 +26,8 @@ class ImageManager;
 } // namespace Core
 namespace UI {
 
+class MessageTextBrowser;
+
 class UserProfilePopup : public QDialog
 {
     Q_OBJECT
@@ -34,6 +36,9 @@ public:
                      Core::Snowflake userId, Core::Snowflake guildId,
                      QWidget *parent = nullptr);
     ~UserProfilePopup() override;
+
+signals:
+    void linkActivated(const QString &url);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -101,7 +106,7 @@ private:
     QWidget *badgesRow = nullptr;
 
     QWidget *bioSection = nullptr;
-    QLabel *bioLabel = nullptr;
+    MessageTextBrowser *bioView = nullptr;
 
     QWidget *customStatusRow = nullptr;
     QLabel *customStatusEmoji = nullptr;

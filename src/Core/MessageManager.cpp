@@ -98,6 +98,9 @@ void MessageManager::parseMessageContent(Discord::Message &msg)
         msg.snapshotMessage->parsedContentCached = inlineHtml(msg.snapshotMessage->content.get(), msg.channelId);
 }
 
+static const QSet<QString> OfficialTopicExcludedRules = { QStringLiteral("inlineCode"), QStringLiteral("br") };
+static const QSet<QString> OfficialBioExcludedRules = { QStringLiteral("br"), QStringLiteral("user"), QStringLiteral("link") };
+
 static Markdown::ParseState inlineParseState(Snowflake channelId)
 {
     Markdown::ParseState state;
@@ -110,6 +113,20 @@ QString MessageManager::inlineHtml(const QString &content, Snowflake channelId) 
 {
     auto ast = parser->parse(content, inlineParseState(channelId));
     return parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
+}
+
+QString MessageManager::channelTopicHtml(const QString &topic, Snowflake channelId) const
+{
+    Markdown::ParseState state = inlineParseState(channelId);
+    state.excludedRules = OfficialTopicExcludedRules;
+    return parser->toHtml(parser->parse(topic, state));
+}
+
+QString MessageManager::profileBioHtml(const QString &bio) const
+{
+    Markdown::ParseState state = inlineParseState(Snowflake::Invalid);
+    state.excludedRules = OfficialBioExcludedRules;
+    return parser->toHtml(parser->parse(bio, state));
 }
 
 void MessageManager::setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver)
