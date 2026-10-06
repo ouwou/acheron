@@ -13,6 +13,13 @@ using Discord::ActivityType;
 
 namespace {
 
+bool sameCard(const Activity &a, const Activity &b)
+{
+    if (a.applicationId.hasValue() && b.applicationId.hasValue() && a.applicationId.get() == b.applicationId.get())
+        return true;
+    return a.name.hasValue() && b.name.hasValue() && a.name.get() == b.name.get();
+}
+
 int sortRank(const Activity &activity)
 {
     switch (activity.kind()) {
@@ -97,6 +104,20 @@ const Activity *custom(const QList<Activity> &activities)
             return &activity;
     }
     return nullptr;
+}
+
+QList<Activity> profileCardActivities(const QList<Activity> &sorted)
+{
+    QList<Activity> cards;
+    for (const Activity &activity : sorted) {
+        if (activity.isCustom() || activity.kind() == ActivityType::HANG)
+            continue;
+
+        const bool alreadyShown = std::any_of(cards.cbegin(), cards.cend(), [&activity](const Activity &shown) { return sameCard(shown, activity); });
+        if (!alreadyShown)
+            cards.append(activity);
+    }
+    return cards;
 }
 
 QString secondaryText(const Activity &activity)

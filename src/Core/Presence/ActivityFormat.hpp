@@ -17,6 +17,8 @@ QList<Discord::Activity> sortAndFilter(const QList<Discord::Activity> &activitie
 const Discord::Activity *primary(const QList<Discord::Activity> &sorted);
 const Discord::Activity *custom(const QList<Discord::Activity> &activities);
 
+QList<Discord::Activity> profileCardActivities(const QList<Discord::Activity> &sorted);
+
 // bare status text
 QString secondaryText(const Discord::Activity &activity);
 

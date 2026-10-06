@@ -580,10 +580,7 @@ void UserProfilePopup::renderPresence()
     qDeleteAll(activityCards);
     activityCards.clear();
 
-    for (const Discord::Activity &activity : all) {
-        if (activity.isCustom() || activity.kind() == Discord::ActivityType::HANG)
-            continue;
-
+    for (const Discord::Activity &activity : Core::ActivityFormat::profileCardActivities(all)) {
         auto *card = new ActivityCard(activity, activityFallbackImage(activity), images, accountId(), activitySection);
         activityLayout->addWidget(card);
         activityCards.append(card);
