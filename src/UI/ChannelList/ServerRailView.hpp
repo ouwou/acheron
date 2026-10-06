@@ -8,12 +8,15 @@
 namespace Acheron {
 namespace UI {
 
+class MentionJumpIndicator;
+
 class ServerRailView : public QListView
 {
     Q_OBJECT
 public:
     explicit ServerRailView(QWidget *parent = nullptr);
 
+    void setModel(QAbstractItemModel *model) override;
     void setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider);
 
 signals:
@@ -31,6 +34,7 @@ protected:
 
 private:
     GuildSettingsAccess::SectionsProvider guildSettingsProvider;
+    MentionJumpIndicator *mentionJump = nullptr;
 };
 
 } // namespace UI

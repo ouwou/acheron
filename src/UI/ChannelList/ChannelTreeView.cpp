@@ -1,6 +1,7 @@
 #include "ChannelTreeView.hpp"
 #include "ChannelFilterProxyModel.hpp"
 #include "ChannelTreeModel.hpp"
+#include "MentionJumpIndicator.hpp"
 
 #include <QClipboard>
 #include <QContextMenuEvent>
@@ -28,8 +29,29 @@ ChannelTreeView::ChannelTreeView(QWidget *parent)
 void ChannelTreeView::setModel(QAbstractItemModel *m)
 {
     QTreeView::setModel(m);
-    if (m)
-        connect(m, &QAbstractItemModel::rowsInserted, this, &ChannelTreeView::onRowsInserted);
+    delete mentionJump;
+    mentionJump = nullptr;
+    if (!m)
+        return;
+
+    connect(m, &QAbstractItemModel::rowsInserted, this, &ChannelTreeView::onRowsInserted);
+    mentionJump = new MentionJumpIndicator(
+            this,
+            [this](const QModelIndex &row) { return indexAbove(row); },
+            [this](const QModelIndex &row) { return indexBelow(row); },
+            [this](const QModelIndex &row) { return rowHasUnshownMentions(row); });
+}
+
+void ChannelTreeView::setMentionJumpEnabled(bool enabled)
+{
+    if (mentionJump)
+        mentionJump->setEnabled(enabled);
+}
+
+bool ChannelTreeView::rowHasUnshownMentions(const QModelIndex &row) const
+{
+    const bool childRowsShowTheirOwn = isExpanded(row) && model()->hasChildren(row);
+    return row.data(childRowsShowTheirOwn ? ChannelTreeModel::OwnMentionCountRole : ChannelTreeModel::MentionCountRole).toInt() > 0;
 }
 
 void ChannelTreeView::onRowsInserted(const QModelIndex &parent, int first, int last)

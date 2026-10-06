@@ -200,6 +200,8 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return node->isUnread;
     if (role == MentionCountRole)
         return node->mentionCount;
+    if (role == OwnMentionCountRole)
+        return node->self.mentionCount;
     if (role == IsMutedRole)
         return node->isMuted;
     if (role == CollapsedRole)

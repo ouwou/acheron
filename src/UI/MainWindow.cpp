@@ -1250,6 +1250,7 @@ void MainWindow::setupUi()
     memberListView->hide();
 
     channelTree->setModel(channelFilterProxy);
+    channelTree->setMentionJumpEnabled(channelListMode == ChannelListMode::Tree);
     channelTree->setHeaderHidden(true);
     channelTree->setIndentation(0);
     channelDelegate = new ChannelDelegate(channelFilterProxy, channelTree);
@@ -1628,6 +1629,7 @@ void MainWindow::setChannelListMode(ChannelListMode mode)
         return;
     channelListMode = mode;
     QSettings().setValue("ui/channelListMode", mode == ChannelListMode::Classic ? "classic" : "tree");
+    channelTree->setMentionJumpEnabled(mode == ChannelListMode::Tree);
     applyChannelIndent();
 
     QList<int> splitterSizes = mainSplitter ? mainSplitter->sizes() : QList<int>();

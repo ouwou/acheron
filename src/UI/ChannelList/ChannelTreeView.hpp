@@ -9,6 +9,8 @@
 namespace Acheron {
 namespace UI {
 
+class MentionJumpIndicator;
+
 class ChannelTreeView : public QTreeView
 {
     Q_OBJECT
@@ -21,6 +23,7 @@ public:
     void setAccountVoiceChannel(Core::Snowflake accountId, Core::Snowflake channelId);
     [[nodiscard]] bool isAccountInVoice(Core::Snowflake accountId) const;
     void setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider);
+    void setMentionJumpEnabled(bool enabled);
 
 signals:
     void markAsReadRequested(const QModelIndex &proxyIndex);
@@ -46,7 +49,10 @@ private:
 
     Core::Snowflake findAccountIdForIndex(const QModelIndex &sourceIndex) const;
 
+    [[nodiscard]] bool rowHasUnshownMentions(const QModelIndex &row) const;
+
     QHash<Core::Snowflake, Core::Snowflake> accountVoiceChannels; // accountId -> channelId
+    MentionJumpIndicator *mentionJump = nullptr;
     GuildSettingsAccess::SectionsProvider guildSettingsProvider;
 };
 

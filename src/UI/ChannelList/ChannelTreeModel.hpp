@@ -47,6 +47,7 @@ public:
         ThreadJoinedRole = Qt::UserRole + 14,
         OwnerIdRole = Qt::UserRole + 15,
         PresenceBadgeRole = Qt::UserRole + 16,
+        OwnMentionCountRole = Qt::UserRole + 17,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;

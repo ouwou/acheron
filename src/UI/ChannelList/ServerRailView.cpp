@@ -1,5 +1,6 @@
 #include "ServerRailView.hpp"
 
+#include "MentionJumpIndicator.hpp"
 #include "ServerRailModel.hpp"
 
 #include <QClipboard>
@@ -21,6 +22,24 @@ ServerRailView::ServerRailView(QWidget *parent)
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setFrameShape(QFrame::NoFrame);
     setMouseTracking(true);
+}
+
+void ServerRailView::setModel(QAbstractItemModel *model)
+{
+    QListView::setModel(model);
+    delete mentionJump;
+    mentionJump = nullptr;
+    if (!model)
+        return;
+
+    mentionJump = new MentionJumpIndicator(
+            this,
+            [](const QModelIndex &row) { return row.sibling(row.row() - 1, 0); },
+            [](const QModelIndex &row) { return row.sibling(row.row() + 1, 0); },
+            [](const QModelIndex &row) {
+                const bool childRowsShowTheirOwn = row.data(ServerRailModel::IsExpandedRole).toBool();
+                return !childRowsShowTheirOwn && row.data(ServerRailModel::MentionCountRole).toInt() > 0;
+            });
 }
 
 void ServerRailView::setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider)
