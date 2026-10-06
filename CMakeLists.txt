@@ -272,6 +272,7 @@ set(PROJECT_SOURCES
     src/UI/MemberList/MemberListView.cpp
     src/UI/Input/MessageInput.cpp
     src/UI/Input/EmojiAutocompletePopup.cpp
+    src/UI/Input/TextEdgeNavigation.cpp
     src/UI/Input/AttachmentPreviewPanel.cpp
     src/Storage/DatabaseManager.cpp
     src/Storage/BaseRepository.cpp

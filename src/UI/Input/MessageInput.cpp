@@ -1,5 +1,6 @@
 #include "MessageInput.hpp"
 #include "AttachmentPreviewPanel.hpp"
+#include "TextEdgeNavigation.hpp"
 
 #include "Core/Emoji/UnicodeEmojiIndex.hpp"
 #include "Core/Theme/Icons.hpp"
@@ -46,6 +47,8 @@ void ChatTextEdit::keyPressEvent(QKeyEvent *e)
         emit editLastMessageRequested();
         return;
     }
+    if (moveCursorToTextEdgeFromOuterLine(this, e))
+        return;
     QTextEdit::keyPressEvent(e);
 }
 

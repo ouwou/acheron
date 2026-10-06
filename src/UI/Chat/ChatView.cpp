@@ -17,6 +17,7 @@
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
 #include "UI/ImageViewer.hpp"
+#include "UI/Input/TextEdgeNavigation.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -1374,6 +1375,8 @@ bool ChatView::eventFilter(QObject *obj, QEvent *event)
             cancelInlineEdit();
             return true;
         }
+        if (moveCursorToTextEdgeFromOuterLine(inlineEditWidget, keyEvent))
+            return true;
     }
     return QListView::eventFilter(obj, event);
 }
