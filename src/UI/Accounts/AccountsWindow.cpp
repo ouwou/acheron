@@ -153,6 +153,8 @@ void AccountsWindow::setupUi()
             model->setAutoConnect(idx.row(), checked);
     });
 
+    connect(session, &Session::connectFailed, this, &AccountsWindow::onConnectFailed);
+
     connect(proxyApplyButton, &QPushButton::clicked, this, &AccountsWindow::onProxyApplyClicked);
     connect(proxyEdit, &QLineEdit::returnPressed, this, &AccountsWindow::onProxyApplyClicked);
 }
@@ -253,7 +255,17 @@ void AccountsWindow::addAccountWithToken(const QString &token, const QString &us
     acc.displayName = acc.username;
     acc.proxy = proxy;
 
-    model->addAccount(acc);
+    Result<void> added = model->addAccount(acc);
+    if (!added.success())
+        QMessageBox::critical(this, tr("Token Save Failed"), tr("The account wasn't added because its token couldn't be saved.") + "\n\n" + added.error);
+}
+
+void AccountsWindow::onConnectFailed(Snowflake, const QString &reason)
+{
+    if (!isVisible())
+        return;
+
+    QMessageBox::warning(this, tr("Connect Failed"), reason);
 }
 
 void AccountsWindow::onContextMenuRequested(const QPoint &pos)
@@ -340,9 +352,9 @@ void AccountsWindow::onSetTokenRequested(int row)
         return;
     }
 
-    if (!TokenStore::saveToken(info->id, newToken)) {
-        QMessageBox::critical(this, tr("Token Save Failed"),
-                              tr("Failed to save the token."));
+    Result<void> saved = TokenStore::saveToken(info->id, newToken);
+    if (!saved.success()) {
+        QMessageBox::critical(this, tr("Token Save Failed"), tr("Failed to save the token.") + "\n\n" + saved.error);
         return;
     }
     Storage::AccountRepository().clearHeartbeatSession(info->id);

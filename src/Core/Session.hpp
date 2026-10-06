@@ -43,6 +43,7 @@ public:
 
 signals:
     void connectionStateChanged(Snowflake accountId, Core::ConnectionState newState);
+    void connectFailed(Snowflake accountId, const QString &reason);
     void accountDetailsUpdated(const Core::AccountInfo &info);
 
     void ready(const Discord::Ready &ready);

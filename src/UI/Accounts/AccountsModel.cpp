@@ -97,8 +97,12 @@ QVariant AccountsModel::data(const QModelIndex &index, int role) const
     }
 }
 
-void AccountsModel::addAccount(const AccountInfo &account)
+Result<void> AccountsModel::addAccount(const AccountInfo &account)
 {
+    Result<void> saved = Core::TokenStore::saveToken(account.id, account.token);
+    if (!saved.success())
+        return saved;
+
     AccountInfo newAccount = account;
 
     int maxOrder = -1;
@@ -107,8 +111,6 @@ void AccountsModel::addAccount(const AccountInfo &account)
             maxOrder = acc.displayOrder;
     }
     newAccount.displayOrder = maxOrder + 1;
-
-    Core::TokenStore::saveToken(newAccount.id, newAccount.token);
 
     AccountRepository repo;
     repo.saveAccount(newAccount);
@@ -121,6 +123,8 @@ void AccountsModel::addAccount(const AccountInfo &account)
     beginInsertRows(QModelIndex(), accounts.size(), accounts.size());
     accounts.append(newAccount);
     endInsertRows();
+
+    return saved;
 }
 
 void AccountsModel::removeAccount(int row)

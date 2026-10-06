@@ -18,7 +18,16 @@ QString TokenStore::keyForAccount(Snowflake accountId)
     return QString("account_%1_token").arg(accountId.toString());
 }
 
-bool TokenStore::saveToken(Snowflake accountId, const QString &token)
+QString TokenStore::describeKeychainFailure(const QString &keychainError)
+{
+    QString description = tr("The system keychain reported: %1").arg(keychainError);
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    description += "\n\n" + tr("Acheron keeps tokens in the system keyring, which needs a Secret Service provider such as GNOME Keyring, KWallet or KeePassXC to be installed and running.");
+#endif
+    return description;
+}
+
+Result<void> TokenStore::saveToken(Snowflake accountId, const QString &token)
 {
     QKeychain::WritePasswordJob job(SERVICE_NAME);
     job.setAutoDelete(false);
@@ -33,13 +42,13 @@ bool TokenStore::saveToken(Snowflake accountId, const QString &token)
     if (job.error() != QKeychain::NoError) {
         qCWarning(LogCore) << "TokenStore: Failed to save token for account"
                            << accountId << ":" << job.errorString();
-        return false;
+        return Result<void>::makeError(describeKeychainFailure(job.errorString()));
     }
 
-    return true;
+    return Result<void>::makeOk();
 }
 
-QString TokenStore::loadToken(Snowflake accountId)
+Result<QString> TokenStore::loadToken(Snowflake accountId)
 {
     QKeychain::ReadPasswordJob job(SERVICE_NAME);
     job.setAutoDelete(false);
@@ -50,14 +59,17 @@ QString TokenStore::loadToken(Snowflake accountId)
     job.start();
     loop.exec();
 
-    if (job.error() != QKeychain::NoError) {
-        if (job.error() != QKeychain::EntryNotFound)
-            qCWarning(LogCore) << "TokenStore: Failed to load token for account"
-                               << accountId << ":" << job.errorString();
-        return {};
+    if (job.error() != QKeychain::NoError && job.error() != QKeychain::EntryNotFound) {
+        qCWarning(LogCore) << "TokenStore: Failed to load token for account"
+                           << accountId << ":" << job.errorString();
+        return Result<QString>::makeError(describeKeychainFailure(job.errorString()));
     }
 
-    return job.textData();
+    QString token = job.textData();
+    if (token.isEmpty())
+        return Result<QString>::makeError(tr("No token is stored for this account. Use \"Set Token\" to enter it again."));
+
+    return Result<QString>::makeOk(token);
 }
 
 bool TokenStore::deleteToken(Snowflake accountId)

@@ -33,6 +33,7 @@ private slots:
     void onDisconnectClicked();
     void onSetTokenRequested(int row);
     void onProxyApplyClicked();
+    void onConnectFailed(Core::Snowflake accountId, const QString &reason);
 
 private:
     Core::Session *session;

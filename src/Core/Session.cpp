@@ -63,11 +63,13 @@ void Session::connectAccount(Snowflake accountId)
         return;
     }
 
-    acc.token = TokenStore::loadToken(accountId);
-    if (acc.token.isEmpty()) {
+    Result<QString> token = TokenStore::loadToken(accountId);
+    if (!token.success()) {
         qCWarning(LogCore) << "No token found in keychain for account:" << accountId;
+        emit connectFailed(accountId, token.error);
         return;
     }
+    acc.token = *token.value;
 
     imageManager->setAccountProxy(acc.id, acc.proxy);
 

@@ -3,6 +3,7 @@
 #include <QAbstractListModel>
 #include <QVector>
 #include "Core/AccountInfo.hpp"
+#include "Core/Result.hpp"
 #include "UI/AvatarRequestTracker.hpp"
 
 namespace Acheron {
@@ -35,7 +36,7 @@ public:
     bool dropMimeData(const QMimeData *data, Qt::DropAction action, int row, int column,
                       const QModelIndex &parent) override;
 
-    void addAccount(const Core::AccountInfo &account);
+    [[nodiscard]] Core::Result<void> addAccount(const Core::AccountInfo &account);
     void removeAccount(int row);
 
     void setConnectionState(int row, Core::ConnectionState state);
