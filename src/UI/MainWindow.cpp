@@ -467,8 +467,8 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     forumModel->setManager(nullptr);
     typingTracker->clear();
     typingTracker->setUserManager(nullptr);
-    if (reactionPicker)
-        reactionPicker->hide();
+    if (emojiPicker)
+        emojiPicker->hide();
     chatView->setEmojiManager(nullptr, Core::Snowflake());
 
     currentInstance = nullptr;
@@ -490,8 +490,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
     }
 
-    if (reactionPicker)
-        reactionPicker->hide();
+    if (emojiPicker)
+        emojiPicker->hide();
 
     currentInstance = newInstance;
     auto *msgs = currentInstance->messages();
@@ -1466,6 +1466,7 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
+    connect(messageInput, &MessageInput::emojiPickerRequested, this, &MainWindow::openChatEmojiPicker);
 
     connect(chatView, &ChatView::reactionToggleRequested, this,
             [this](Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Discord::Client::ReactionLocation location) {
@@ -2434,6 +2435,11 @@ void MainWindow::setupMenu()
     memberListToggle->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_U));
     connect(memberListToggle, &QAction::toggled, this, [this](bool checked) { setMemberListHidden(!checked); });
 
+    auto *emojiPickerShortcut = new QAction(this);
+    emojiPickerShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    addAction(emojiPickerShortcut);
+    connect(emojiPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestEmojiPicker);
+
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect
     auto *debugReconnect = new QAction(this);
     debugReconnect->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
@@ -2465,8 +2471,8 @@ void MainWindow::openSettingsWindow()
         connect(settingsWindow, &SettingsWindow::channelListIndentChanged, this, &MainWindow::applyChannelIndent);
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setEmojiEnabled(enabled);
-            if (reactionPicker)
-                reactionPicker->setAnimationEnabled(enabled);
+            if (emojiPicker)
+                emojiPicker->setAnimationEnabled(enabled);
         });
         connect(settingsWindow, &SettingsWindow::animateStickersChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setStickersEnabled(enabled);
@@ -2747,22 +2753,53 @@ void MainWindow::openReactionPicker(Core::Snowflake channelId, Core::Snowflake m
     if (!currentInstance)
         return;
 
-    if (!reactionPicker) {
-        reactionPicker = new EmojiPicker(session->getImageManager(), session->getAnimatedImageCache(), this);
-        reactionPicker->setAnimationEnabled(QSettings().value("chat/animate_emoji", true).toBool());
-        connect(reactionPicker, &EmojiPicker::emojiPicked, this, [this](const Core::PickerEmoji &emoji) {
-            if (currentInstance && reactionPickerTarget)
-                currentInstance->messages()->addReaction(reactionPickerTarget->channelId, reactionPickerTarget->messageId, emoji.toReactionEmoji(), false, Discord::Client::ReactionLocation::ReactionPicker);
-        });
-        connect(reactionPicker, &EmojiPicker::closed, this, [this]() {
-            reactionPickerTarget.reset();
-            chatView->setReactionPickerOpen(false);
-        });
-    }
-
     reactionPickerTarget = ReactionPickerTarget{ channelId, messageId };
     chatView->setReactionPickerOpen(true);
-    reactionPicker->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, globalAnchor);
+    sharedEmojiPicker()->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, Core::EmojiIntention::Reaction, globalAnchor, EmojiPicker::Placement::BesideAnchor);
+}
+
+void MainWindow::openChatEmojiPicker(const QRect &globalAnchor)
+{
+    if (!currentInstance)
+        return;
+    const Snowflake channelId = chatModel->getActiveChannelId();
+    if (!channelId.isValid())
+        return;
+
+    reactionPickerTarget.reset();
+    messageInput->setFocus();
+    messageInput->setEmojiPickerOpen(true);
+    sharedEmojiPicker()->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, Core::EmojiIntention::Chat, globalAnchor, EmojiPicker::Placement::AboveAnchor);
+}
+
+EmojiPicker *MainWindow::sharedEmojiPicker()
+{
+    if (emojiPicker)
+        return emojiPicker;
+
+    emojiPicker = new EmojiPicker(session->getImageManager(), session->getAnimatedImageCache(), this);
+    emojiPicker->setAnimationEnabled(QSettings().value("chat/animate_emoji", true).toBool());
+    connect(emojiPicker, &EmojiPicker::emojiPicked, this, &MainWindow::onEmojiPicked);
+    connect(emojiPicker, &EmojiPicker::closed, this, &MainWindow::onEmojiPickerClosed);
+    return emojiPicker;
+}
+
+void MainWindow::onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysOpen)
+{
+    if (!currentInstance)
+        return;
+
+    if (reactionPickerTarget)
+        currentInstance->messages()->addReaction(reactionPickerTarget->channelId, reactionPickerTarget->messageId, emoji.toReactionEmoji(), false, Discord::Client::ReactionLocation::ReactionPicker);
+    else
+        messageInput->insertText(pickerStaysOpen ? emoji.messageText() : emoji.messageText() + " ");
+}
+
+void MainWindow::onEmojiPickerClosed()
+{
+    reactionPickerTarget.reset();
+    chatView->setReactionPickerOpen(false);
+    messageInput->setEmojiPickerOpen(false);
 }
 
 void MainWindow::openChannelTopicPopup()

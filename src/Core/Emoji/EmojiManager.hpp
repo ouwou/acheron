@@ -44,9 +44,9 @@ public:
 
     [[nodiscard]] QList<EmojiMatch> search(const QString &query, Snowflake channelId, int maxResults = 10);
 
-    [[nodiscard]] QList<PickerSection> reactionPickerSections(Snowflake channelId);
-    [[nodiscard]] QList<PickerEmoji> searchReactions(const QString &query, Snowflake channelId);
-    [[nodiscard]] QList<PickerEmoji> frequentReactions(Snowflake channelId);
+    [[nodiscard]] QList<PickerSection> pickerSections(Snowflake channelId, EmojiIntention intention);
+    [[nodiscard]] QList<PickerEmoji> searchPicker(const QString &query, Snowflake channelId, EmojiIntention intention);
+    [[nodiscard]] QList<PickerEmoji> frequentlyUsed(Snowflake channelId, EmojiIntention intention);
     [[nodiscard]] QList<PickerEmoji> quickReactions(Snowflake channelId, int count);
 
     void trackMessageEmojis(const QString &content);
@@ -117,6 +117,7 @@ private:
     [[nodiscard]] UsabilityContext usabilityIn(Snowflake channelId) const;
     [[nodiscard]] QList<RankedEmoji> rankedMatches(const QString &query, Snowflake channelId, FrecencyTracker &tracker);
     [[nodiscard]] QList<Snowflake> guildsInSidebarOrder() const;
+    [[nodiscard]] FrecencyTracker &trackerFor(EmojiIntention intention);
 
     [[nodiscard]] static PickerEmoji toPickerEmoji(const UnicodeEmoji &emoji);
     [[nodiscard]] static PickerEmoji toPickerEmoji(const CustomEmoji &custom);

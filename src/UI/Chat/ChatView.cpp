@@ -1014,7 +1014,7 @@ void ChatView::addReactionMenu(QMenu &menu, Core::Snowflake messageId)
     const Core::Snowflake channelId = chatModel->getActiveChannelId();
 
     QMenu *reactionMenu = menu.addMenu(tr("Add Reaction"));
-    for (const Core::PickerEmoji &emoji : emojis->frequentReactions(channelId).mid(0, SuggestedReactions)) {
+    for (const Core::PickerEmoji &emoji : emojis->frequentlyUsed(channelId, Core::EmojiIntention::Reaction).mid(0, SuggestedReactions)) {
         QAction *action = reactionMenu->addAction(reactionMenuIcon(emoji), ":" + emoji.name + ":");
         connect(action, &QAction::triggered, this, [this, channelId, messageId, emoji]() {
             emit reactionToggleRequested(channelId, messageId, emoji.toReactionEmoji(), false, false, Location::ContextMenu);

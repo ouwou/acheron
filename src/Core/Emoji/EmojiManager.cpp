@@ -367,13 +367,13 @@ QList<EmojiMatch> EmojiManager::search(const QString &query, Snowflake channelId
         const RankedEmoji &emoji = ranked.at(i);
         EmojiMatch match;
         if (emoji.unicode) {
-            match.insertText = ":" + UnicodeEmojiIndex::primaryName(*emoji.unicode) + ":";
+            match.insertText = toPickerEmoji(*emoji.unicode).messageText();
             match.displayLabel = match.insertText;
             match.surrogates = emoji.unicode->surrogates;
         } else {
             const CustomEmoji &custom = *emoji.custom;
             const Snowflake id = custom.emoji.id.get();
-            match.insertText = (custom.emoji.isAnimated() ? "<a:" : "<:") + custom.originalName + ":" + id.toString() + ">";
+            match.insertText = toPickerEmoji(custom).messageText();
             match.displayLabel = ":" + custom.disambiguatedName + ":";
             match.customId = id;
             match.imageUrl = custom.emoji.getImageUrl();
@@ -402,9 +402,14 @@ PickerEmoji EmojiManager::toPickerEmoji(const CustomEmoji &custom)
     return picker;
 }
 
-QList<PickerEmoji> EmojiManager::searchReactions(const QString &query, Snowflake channelId)
+FrecencyTracker &EmojiManager::trackerFor(EmojiIntention intention)
 {
-    const QList<RankedEmoji> ranked = rankedMatches(query, channelId, reactionTracker);
+    return intention == EmojiIntention::Reaction ? reactionTracker : chatTracker;
+}
+
+QList<PickerEmoji> EmojiManager::searchPicker(const QString &query, Snowflake channelId, EmojiIntention intention)
+{
+    const QList<RankedEmoji> ranked = rankedMatches(query, channelId, trackerFor(intention));
 
     QList<PickerEmoji> results;
     results.reserve(ranked.size());
@@ -413,14 +418,14 @@ QList<PickerEmoji> EmojiManager::searchReactions(const QString &query, Snowflake
     return results;
 }
 
-QList<PickerEmoji> EmojiManager::frequentReactions(Snowflake channelId)
+QList<PickerEmoji> EmojiManager::frequentlyUsed(Snowflake channelId, EmojiIntention intention)
 {
     const QList<CustomEmoji> &customs = customEmojis();
     const UnicodeEmojiIndex &index = UnicodeEmojiIndex::instance();
     UsabilityContext usability = usabilityIn(channelId);
 
     QList<PickerEmoji> frequent;
-    for (const QString &key : reactionTracker.frequently(nowMs())) {
+    for (const QString &key : trackerFor(intention).frequently(nowMs())) {
         if (const UnicodeEmoji *emoji = index.byName(key)) {
             frequent.append(toPickerEmoji(*emoji));
             continue;
@@ -435,7 +440,7 @@ QList<PickerEmoji> EmojiManager::frequentReactions(Snowflake channelId)
 
 QList<PickerEmoji> EmojiManager::quickReactions(Snowflake channelId, int count)
 {
-    QList<PickerEmoji> quick = frequentReactions(channelId);
+    QList<PickerEmoji> quick = frequentlyUsed(channelId, EmojiIntention::Reaction);
 
     const UnicodeEmojiIndex &index = UnicodeEmojiIndex::instance();
     for (const char *name : QUICK_REACTION_FALLBACKS) {
@@ -476,11 +481,11 @@ QList<Snowflake> EmojiManager::guildsInSidebarOrder() const
     return unplacedNewestFirst + placedBySettings;
 }
 
-QList<PickerSection> EmojiManager::reactionPickerSections(Snowflake channelId)
+QList<PickerSection> EmojiManager::pickerSections(Snowflake channelId, EmojiIntention intention)
 {
     QList<PickerSection> sections;
 
-    QList<PickerEmoji> frequent = frequentReactions(channelId);
+    QList<PickerEmoji> frequent = frequentlyUsed(channelId, intention);
     if (!frequent.isEmpty())
         sections.append({ QString::fromLatin1(PickerSection::RecentId), tr("Frequently Used"), Snowflake(), QUrl(), std::move(frequent) });
 

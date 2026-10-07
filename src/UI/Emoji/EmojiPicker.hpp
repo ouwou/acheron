@@ -30,11 +30,16 @@ class EmojiPicker : public QFrame
 public:
     EmojiPicker(Core::ImageManager *imageManager, Core::AnimatedImageCache *animatedCache, QWidget *parent = nullptr);
 
+    enum class Placement {
+        BesideAnchor,
+        AboveAnchor,
+    };
+
     void setAnimationEnabled(bool enabled);
-    void openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, const QRect &globalAnchor);
+    void openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention, const QRect &globalAnchor, Placement placement);
 
 signals:
-    void emojiPicked(const Acheron::Core::PickerEmoji &emoji);
+    void emojiPicked(const Acheron::Core::PickerEmoji &emoji, bool pickerStaysOpen);
     void closed();
 
 protected:
@@ -43,7 +48,8 @@ protected:
     void hideEvent(QHideEvent *event) override;
 
 private:
-    void placeBeside(const QRect &globalAnchor);
+    void placeAt(const QRect &globalAnchor, Placement placement);
+    [[nodiscard]] QString searchPrompt() const;
     void showSearchResults(const QString &text);
     void showBrowseSections();
     void pick(const Core::PickerEmoji &emoji, bool keepOpen);
@@ -62,6 +68,7 @@ private:
 
     QPointer<Core::EmojiManager> emojis;
     Core::Snowflake channelId;
+    Core::EmojiIntention intention = Core::EmojiIntention::Reaction;
     QList<Core::PickerSection> browseSections;
     QHash<Core::Snowflake, QString> guildNames;
     bool searching = false;

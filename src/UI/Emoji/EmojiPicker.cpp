@@ -109,7 +109,7 @@ EmojiPicker::EmojiPicker(Core::ImageManager *imageManager, Core::AnimatedImageCa
     setAttribute(Qt::WA_NoMouseReplay);
 
     search = new QLineEdit(this);
-    search->setPlaceholderText(tr("Find the perfect reaction"));
+    search->setPlaceholderText(searchPrompt());
     search->setClearButtonEnabled(true);
     search->addAction(Core::Theme::Icons::icon(Core::Theme::Icons::Name::Search, Core::Theme::Token::PlaceholderText), QLineEdit::LeadingPosition);
     search->installEventFilter(this);
@@ -158,16 +158,22 @@ void EmojiPicker::setAnimationEnabled(bool enabled)
     grid->setAnimationEnabled(enabled);
 }
 
-void EmojiPicker::openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, const QRect &globalAnchor)
+QString EmojiPicker::searchPrompt() const
+{
+    return intention == Core::EmojiIntention::Reaction ? tr("Find the perfect reaction") : tr("Find the perfect emoji");
+}
+
+void EmojiPicker::openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention, const QRect &globalAnchor, Placement placement)
 {
     emojis = emojiManager;
     this->channelId = channelId;
+    this->intention = intention;
 
     grid->setImageSources(imageManager, animatedCache, accountId);
     rail->setImageSource(imageManager, accountId);
     inspector->setImageSource(imageManager, accountId);
 
-    browseSections = emojiManager->reactionPickerSections(channelId);
+    browseSections = emojiManager->pickerSections(channelId, intention);
     guildNames.clear();
     for (const Core::PickerSection &section : browseSections) {
         if (section.guildId.isValid())
@@ -179,12 +185,12 @@ void EmojiPicker::openFor(Core::EmojiManager *emojiManager, Core::Snowflake acco
     search->clear();
     showBrowseSections();
 
-    placeBeside(globalAnchor);
+    placeAt(globalAnchor, placement);
     show();
     search->setFocus();
 }
 
-void EmojiPicker::placeBeside(const QRect &globalAnchor)
+void EmojiPicker::placeAt(const QRect &globalAnchor, Placement placement)
 {
     layout()->activate();
     const QSize size = sizeHint();
@@ -194,11 +200,14 @@ void EmojiPicker::placeBeside(const QRect &globalAnchor)
         screen = QGuiApplication::primaryScreen();
     const QRect available = screen ? screen->availableGeometry() : QRect(globalAnchor.topLeft(), size);
 
-    int x = globalAnchor.left() - AnchorSpacing - size.width();
-    if (x < available.left())
-        x = globalAnchor.right() + 1 + AnchorSpacing;
-    x = qBound(available.left(), x, qMax(available.left(), available.right() + 1 - size.width()));
-    const int y = qBound(available.top(), globalAnchor.top(), qMax(available.top(), available.bottom() + 1 - size.height()));
+    QPoint preferred(globalAnchor.right() + 1 - size.width(), globalAnchor.top() - AnchorSpacing - size.height());
+    if (placement == Placement::BesideAnchor) {
+        const int leftOfAnchor = globalAnchor.left() - AnchorSpacing - size.width();
+        preferred = QPoint(leftOfAnchor >= available.left() ? leftOfAnchor : globalAnchor.right() + 1 + AnchorSpacing, globalAnchor.top());
+    }
+
+    const int x = qBound(available.left(), preferred.x(), qMax(available.left(), available.right() + 1 - size.width()));
+    const int y = qBound(available.top(), preferred.y(), qMax(available.top(), available.bottom() + 1 - size.height()));
     move(x, y);
 }
 
@@ -223,7 +232,7 @@ void EmojiPicker::showSearchResults(const QString &text)
     }
 
     searching = true;
-    const QList<Core::PickerEmoji> results = emojis->searchReactions(query, channelId);
+    const QList<Core::PickerEmoji> results = emojis->searchPicker(query, channelId, intention);
     QList<Core::PickerSection> sections;
     if (!results.isEmpty()) {
         Core::PickerSection section;
@@ -237,7 +246,7 @@ void EmojiPicker::showSearchResults(const QString &text)
 
 void EmojiPicker::pick(const Core::PickerEmoji &emoji, bool keepOpen)
 {
-    emit emojiPicked(emoji);
+    emit emojiPicked(emoji, keepOpen);
     if (!keepOpen)
         hide();
 }
@@ -245,7 +254,7 @@ void EmojiPicker::pick(const Core::PickerEmoji &emoji, bool keepOpen)
 void EmojiPicker::onActiveEmojiChanged()
 {
     const Core::PickerEmoji *emoji = grid->activeEmoji();
-    search->setPlaceholderText(emoji ? ":" + emoji->name + ":" : tr("Find the perfect reaction"));
+    search->setPlaceholderText(emoji ? ":" + emoji->name + ":" : searchPrompt());
     inspector->inspect(emoji, emoji && emoji->isCustom() ? guildNames.value(emoji->guildId) : QString());
 }
 
@@ -285,6 +294,11 @@ bool EmojiPicker::handleSearchKey(const QKeyEvent *key)
             if (const Core::PickerEmoji *emoji = grid->activeEmoji())
                 pick(*emoji, key->modifiers().testFlag(Qt::ShiftModifier));
         }
+        return true;
+    case Qt::Key_E:
+        if (key->modifiers() != Qt::ControlModifier)
+            return false;
+        hide();
         return true;
     default:
         return false;

@@ -20,6 +20,7 @@ namespace Core {
 class Session;
 class ClientInstance;
 class TypingTracker;
+struct PickerEmoji;
 } // namespace Core
 namespace Discord {
 struct TypingStart;
@@ -157,13 +158,17 @@ private:
     void setThreadBrowserTarget(Core::Snowflake channelId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
+    void openChatEmojiPicker(const QRect &globalAnchor);
+    void onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysOpen);
+    void onEmojiPickerClosed();
+    [[nodiscard]] EmojiPicker *sharedEmojiPicker();
 
     struct ReactionPickerTarget
     {
         Core::Snowflake channelId;
         Core::Snowflake messageId;
     };
-    EmojiPicker *reactionPicker = nullptr;
+    EmojiPicker *emojiPicker = nullptr;
     std::optional<ReactionPickerTarget> reactionPickerTarget;
 
     ChatView *chatView;

@@ -19,6 +19,16 @@
 namespace Acheron {
 namespace UI {
 
+namespace {
+
+constexpr int MinTextEditHeight = 44;
+constexpr int MaxTextEditHeight = 200;
+constexpr int EmojiButtonSize = 28;
+constexpr int EmojiButtonIconSize = 20;
+constexpr int EmojiButtonGap = 4;
+
+} // namespace
+
 ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
 {
     setObjectName("MessageInput");
@@ -29,6 +39,32 @@ ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
 
     setPlaceholderText("Message...");
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    emojiPickerButton = new QToolButton(this);
+    emojiPickerButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::Smile, Core::Theme::Token::PlaceholderText));
+    emojiPickerButton->setIconSize(QSize(EmojiButtonIconSize, EmojiButtonIconSize));
+    emojiPickerButton->setFixedSize(EmojiButtonSize, EmojiButtonSize);
+    emojiPickerButton->setToolTip(tr("Select emoji"));
+    emojiPickerButton->setAutoRaise(true);
+    emojiPickerButton->setFocusPolicy(Qt::NoFocus);
+    emojiPickerButton->setCursor(Qt::PointingHandCursor);
+    setViewportMargins(0, 0, EmojiButtonSize + EmojiButtonGap, 0);
+}
+
+void ChatTextEdit::resizeEvent(QResizeEvent *e)
+{
+    QTextEdit::resizeEvent(e);
+    emojiPickerButton->move(viewport()->geometry().right() + 1 + EmojiButtonGap, (MinTextEditHeight - EmojiButtonSize) / 2);
+}
+
+void ChatTextEdit::changeEvent(QEvent *e)
+{
+    QTextEdit::changeEvent(e);
+    if (e->type() != QEvent::EnabledChange)
+        return;
+
+    emojiPickerButton->setVisible(isEnabled());
+    setViewportMargins(0, 0, isEnabled() ? EmojiButtonSize + EmojiButtonGap : 0, 0);
 }
 
 void ChatTextEdit::keyPressEvent(QKeyEvent *e)
@@ -136,6 +172,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     });
 
     connect(textEdit, &ChatTextEdit::editLastMessageRequested, this, &MessageInput::editLastMessageRequested);
+    connect(textEdit->emojiButton(), &QToolButton::clicked, this, &MessageInput::requestEmojiPicker);
 
     connect(textEdit, &ChatTextEdit::escapePressed, this, [this]() {
         clearReplyTarget();
@@ -241,18 +278,30 @@ void MessageInput::insertText(const QString &text)
     textEdit->setFocus();
 }
 
+void MessageInput::requestEmojiPicker()
+{
+    const QToolButton *button = textEdit->emojiButton();
+    if (button->isVisible())
+        emit emojiPickerRequested(QRect(button->mapToGlobal(QPoint(0, 0)), button->size()));
+}
+
+void MessageInput::setEmojiPickerOpen(bool open)
+{
+    textEdit->emojiButton()->setDown(open);
+}
+
 void MessageInput::adjustHeight()
 {
     int contentHeight = textEdit->document()->size().height();
 
     int newHeight = contentHeight + contentHeight;
 
-    if (newHeight < 44)
-        newHeight = 44;
-    if (newHeight > 200)
-        newHeight = 200;
+    if (newHeight < MinTextEditHeight)
+        newHeight = MinTextEditHeight;
+    if (newHeight > MaxTextEditHeight)
+        newHeight = MaxTextEditHeight;
 
-    if (newHeight >= 200)
+    if (newHeight >= MaxTextEditHeight)
         textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     else
         textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);

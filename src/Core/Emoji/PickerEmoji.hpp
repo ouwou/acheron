@@ -10,6 +10,11 @@
 namespace Acheron {
 namespace Core {
 
+enum class EmojiIntention {
+    Reaction,
+    Chat,
+};
+
 struct PickerEmoji
 {
     QString name;
@@ -29,6 +34,13 @@ struct PickerEmoji
     [[nodiscard]] Discord::Emoji toReactionEmoji() const
     {
         return isCustom() ? Discord::Emoji::custom(customId, customName, animated) : Discord::Emoji::unicode(surrogates);
+    }
+
+    [[nodiscard]] QString messageText() const
+    {
+        if (!isCustom())
+            return ":" + name + ":";
+        return (animated ? "<a:" : "<:") + customName + ":" + customId.toString() + ">";
     }
 };
 

@@ -21,8 +21,12 @@ class ChatTextEdit : public QTextEdit
 public:
     explicit ChatTextEdit(QWidget *parent = nullptr);
 
+    [[nodiscard]] QToolButton *emojiButton() const { return emojiPickerButton; }
+
 protected:
     void keyPressEvent(QKeyEvent *e) override;
+    void resizeEvent(QResizeEvent *e) override;
+    void changeEvent(QEvent *e) override;
     bool canInsertFromMimeData(const QMimeData *source) const override;
     void insertFromMimeData(const QMimeData *source) override;
 signals:
@@ -31,6 +35,9 @@ signals:
     void editLastMessageRequested();
     void filesPasted(const QList<QUrl> &urls);
     void imagePasted(const QImage &image);
+
+private:
+    QToolButton *emojiPickerButton;
 };
 
 class MessageInput : public QWidget
@@ -51,6 +58,9 @@ public:
 
     void insertText(const QString &text);
 
+    void requestEmojiPicker();
+    void setEmojiPickerOpen(bool open);
+
     void queueAttachments(const QList<QUrl> &urls);
     void setMaxUploadSize(qint64 bytes);
 
@@ -64,6 +74,7 @@ protected:
 signals:
     void sendMessage(const QString &text, const QList<Core::PendingAttachment> &attachments);
     void editLastMessageRequested();
+    void emojiPickerRequested(const QRect &globalAnchor);
 
 private:
     ChatTextEdit *textEdit;
