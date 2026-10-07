@@ -9,22 +9,28 @@
         <file>resources/icons/lucide/bell.svg</file>
         <file>resources/icons/lucide/book-check.svg</file>
         <file>resources/icons/lucide/bot.svg</file>
+        <file>resources/icons/lucide/car.svg</file>
         <file>resources/icons/lucide/chart-column.svg</file>
         <file>resources/icons/lucide/chevron-down.svg</file>
         <file>resources/icons/lucide/chevron-right.svg</file>
+        <file>resources/icons/lucide/clock.svg</file>
         <file>resources/icons/lucide/compass.svg</file>
         <file>resources/icons/lucide/ellipsis.svg</file>
         <file>resources/icons/lucide/eye.svg</file>
         <file>resources/icons/lucide/file-audio.svg</file>
         <file>resources/icons/lucide/file-text.svg</file>
+        <file>resources/icons/lucide/flag.svg</file>
         <file>resources/icons/lucide/forward.svg</file>
         <file>resources/icons/lucide/gamepad-2.svg</file>
         <file>resources/icons/lucide/gem.svg</file>
         <file>resources/icons/lucide/hand.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
         <file>resources/icons/lucide/hash.svg</file>
+        <file>resources/icons/lucide/heart.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
+        <file>resources/icons/lucide/leaf.svg</file>
+        <file>resources/icons/lucide/lightbulb.svg</file>
         <file>resources/icons/lucide/link.svg</file>
         <file>resources/icons/lucide/lock.svg</file>
         <file>resources/icons/lucide/maximize.svg</file>
@@ -43,12 +49,16 @@
         <file>resources/icons/lucide/radio.svg</file>
         <file>resources/icons/lucide/reply.svg</file>
         <file>resources/icons/lucide/rss.svg</file>
+        <file>resources/icons/lucide/search.svg</file>
         <file>resources/icons/lucide/shield-alert.svg</file>
+        <file>resources/icons/lucide/smile.svg</file>
+        <file>resources/icons/lucide/smile-plus.svg</file>
         <file>resources/icons/lucide/spool.svg</file>
         <file>resources/icons/lucide/trash-2.svg</file>
         <file>resources/icons/lucide/triangle-alert.svg</file>
         <file>resources/icons/lucide/user-minus.svg</file>
         <file>resources/icons/lucide/user-plus.svg</file>
+        <file>resources/icons/lucide/utensils.svg</file>
         <file>resources/icons/lucide/volume-2.svg</file>
         <file>resources/icons/lucide/volume-x.svg</file>
         <file>resources/icons/lucide/x.svg</file>

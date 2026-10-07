@@ -18,8 +18,15 @@ struct UnicodeEmoji
     QStringList names;
     QStringList keywords;
     QString surrogates;
+    QString category;
     bool hasDiversity = false;
     bool isDiversityChild = false;
+};
+
+struct UnicodeEmojiCategory
+{
+    QString id;
+    QList<const UnicodeEmoji *> emojis;
 };
 
 // index extracted from client
@@ -38,6 +45,7 @@ public:
 
     // non-diversity
     [[nodiscard]] const QList<const UnicodeEmoji *> &topLevel() const { return topLevelEmojis; }
+    [[nodiscard]] const QList<UnicodeEmojiCategory> &categories() const { return topLevelByCategory; }
 
     // `:name:` / `:name::skin-tone-N:` to surrogates
     [[nodiscard]] QString translateNamesToSurrogates(const QString &text) const;
@@ -50,6 +58,7 @@ private:
     QHash<QString, int> nameToIndex;
     QHash<QString, int> surrogateToIndex;
     QList<const UnicodeEmoji *> topLevelEmojis; // -> emojis
+    QList<UnicodeEmojiCategory> topLevelByCategory;
 };
 
 } // namespace Core

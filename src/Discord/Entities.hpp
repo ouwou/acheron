@@ -677,9 +677,31 @@ struct Emoji : Core::JsonUtils::JsonObject
         return emoji;
     }
 
+    static Emoji unicode(const QString &surrogates)
+    {
+        Emoji emoji;
+        emoji.id = nullptr;
+        emoji.name = surrogates;
+        return emoji;
+    }
+
+    static Emoji custom(Core::Snowflake id, const QString &name, bool animated)
+    {
+        Emoji emoji;
+        emoji.id = id;
+        emoji.name = name;
+        emoji.animated = animated;
+        return emoji;
+    }
+
     bool isUnicode() const { return !id.hasValue(); }
 
     bool isAnimated() const { return animated.hasValue() && *animated; }
+
+    QString reactionKey() const
+    {
+        return isUnicode() ? name.get() : name.get() + ":" + id.get().toString();
+    }
 
     QUrl getImageUrl(bool animatedFrames = false) const
     {

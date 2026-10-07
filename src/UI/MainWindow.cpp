@@ -50,6 +50,7 @@
 #include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
+#include "Emoji/EmojiPicker.hpp"
 #include "Discord/CdnUrls.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/MemberListManager.hpp"
@@ -86,6 +87,39 @@ bool voiceChatLocked(Core::ClientInstance *instance, Core::Snowflake channelId)
     if (!channel || !channel->isVoice())
         return false;
     return !instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
+}
+
+bool canAddReactionsIn(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId)
+{
+    const std::optional<Discord::Channel> channel = instance->getChannel(channelId);
+    const bool isThread = channel && channel->isThread();
+    if (isThread && channel->isArchived())
+        return false;
+    if (!guildId.isValid())
+        return true;
+
+    const Core::Snowflake permissionChannel = isThread && channel->parentId.hasValue() ? channel->parentId.get() : channelId;
+    return instance->permissions()->hasChannelPermission(instance->accountId(), permissionChannel, Discord::Permission::ADD_REACTIONS);
+}
+
+void showReactionRejection(QWidget *parent, MessageManager::ReactionRejection reason)
+{
+    QString title;
+    QString text;
+    switch (reason) {
+    case MessageManager::ReactionRejection::TooManyReactions:
+        title = MainWindow::tr("We appreciate the enthusiasm, but...");
+        text = MainWindow::tr("Your reaction was not added because there are too many reactions on this message.");
+        break;
+    case MessageManager::ReactionRejection::AlreadyReactedWithOtherType:
+        title = MainWindow::tr("Oops!");
+        text = MainWindow::tr("You can't react and super react with the same emoji. There's a lot of emoji to choose from, so maybe try another one.");
+        break;
+    }
+
+    auto *box = new QMessageBox(QMessageBox::Information, title, text, QMessageBox::Ok, parent);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 } // namespace
 
@@ -406,6 +440,7 @@ void MainWindow::switchChatChannel(Core::Snowflake channelId, Core::Snowflake gu
     chatModel->setActiveChannel(channelId, guildId);
     typingTracker->setActiveChannel(channelId);
     messageInput->clearReplyTarget();
+    chatView->setCanAddReactions(currentInstance && canAddReactionsIn(currentInstance, channelId, guildId));
 }
 
 // Session destroys a ClientInstance as soon as it reports Disconnected, so every
@@ -432,6 +467,9 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     forumModel->setManager(nullptr);
     typingTracker->clear();
     typingTracker->setUserManager(nullptr);
+    if (reactionPicker)
+        reactionPicker->hide();
+    chatView->setEmojiManager(nullptr, Core::Snowflake());
 
     currentInstance = nullptr;
 }
@@ -451,6 +489,9 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
     }
+
+    if (reactionPicker)
+        reactionPicker->hide();
 
     currentInstance = newInstance;
     auto *msgs = currentInstance->messages();
@@ -477,6 +518,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
             currentInstance->memberList(), &Core::MemberListManager::updateSubscriptionRange);
 
     chatView->setCurrentUserId(currentInstance->accountId());
+    chatView->setEmojiManager(currentInstance->emojis(), currentInstance->accountId());
 
     typingTracker->clear();
     typingTracker->setUserManager(currentInstance->users());
@@ -486,6 +528,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs, &MessageManager::messageErrored, chatModel, &ChatModel::handleMessageErrored);
     connect(msgs, &MessageManager::messageDeleted, chatModel, &ChatModel::handleMessageDeleted);
     connect(msgs, &MessageManager::attachmentUploadProgress, chatModel, &ChatModel::handleUploadProgress);
+    connect(msgs, &MessageManager::reactionRejected, this, [this](MessageManager::ReactionRejection reason) { showReactionRejection(this, reason); }, Qt::QueuedConnection);
     connect(msgs, &MessageManager::messagesReceived, this,
             [this](const MessageRequestResult &result) {
                 if (result.channelId != chatModel->getActiveChannelId())
@@ -1422,20 +1465,16 @@ void MainWindow::setupUi()
                 messageInput->setReplyTarget(messageId, tr("Unknown"), QString());
             });
 
-    connect(chatView, &ChatView::addReactionRequested, this,
-            [this](Snowflake channelId, Snowflake messageId) {
-                qCInfo(LogCore) << "Add reaction requested for message" << messageId
-                                << "- UI not yet implemented";
-            });
+    connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
 
-    connect(chatView, &ChatView::toggleReactionClicked, this,
-            [this](Snowflake channelId, Snowflake messageId, const QString &emoji, bool currentlyReacted, bool isBurst) {
+    connect(chatView, &ChatView::reactionToggleRequested, this,
+            [this](Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Discord::Client::ReactionLocation location) {
                 if (!currentInstance)
                     return;
                 if (currentlyReacted)
-                    currentInstance->discord()->removeReaction(channelId, messageId, emoji, isBurst);
+                    currentInstance->messages()->removeReaction(channelId, messageId, emoji, isBurst, location);
                 else
-                    currentInstance->messages()->addReaction(channelId, messageId, emoji, isBurst);
+                    currentInstance->messages()->addReaction(channelId, messageId, emoji, isBurst, location);
             });
 
     connect(chatView, &ChatView::userContextMenuRequested, this,
@@ -2426,6 +2465,8 @@ void MainWindow::openSettingsWindow()
         connect(settingsWindow, &SettingsWindow::channelListIndentChanged, this, &MainWindow::applyChannelIndent);
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setEmojiEnabled(enabled);
+            if (reactionPicker)
+                reactionPicker->setAnimationEnabled(enabled);
         });
         connect(settingsWindow, &SettingsWindow::animateStickersChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setStickersEnabled(enabled);
@@ -2483,6 +2524,7 @@ void MainWindow::onChannelPermissionsChanged(Core::Snowflake channelId)
     messageInput->setSendBlocked(onCooldown);
     chatView->setCanPinMessages(canPin);
     chatView->setCanManageMessages(canManage);
+    chatView->setCanAddReactions(canAddReactionsIn(currentInstance, channelId, chatModel->getActiveGuildId()));
 
     if (voiceLocked) {
         messageInput->setPlaceholder("You do not have permission to connect to this channel");
@@ -2698,6 +2740,29 @@ void MainWindow::refreshChannelTopic()
 {
     if (currentInstance && channelTopicChannelId.isValid())
         showChannelTopic(currentInstance, channelTopicChannelId);
+}
+
+void MainWindow::openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor)
+{
+    if (!currentInstance)
+        return;
+
+    if (!reactionPicker) {
+        reactionPicker = new EmojiPicker(session->getImageManager(), session->getAnimatedImageCache(), this);
+        reactionPicker->setAnimationEnabled(QSettings().value("chat/animate_emoji", true).toBool());
+        connect(reactionPicker, &EmojiPicker::emojiPicked, this, [this](const Core::PickerEmoji &emoji) {
+            if (currentInstance && reactionPickerTarget)
+                currentInstance->messages()->addReaction(reactionPickerTarget->channelId, reactionPickerTarget->messageId, emoji.toReactionEmoji(), false, Discord::Client::ReactionLocation::ReactionPicker);
+        });
+        connect(reactionPicker, &EmojiPicker::closed, this, [this]() {
+            reactionPickerTarget.reset();
+            chatView->setReactionPickerOpen(false);
+        });
+    }
+
+    reactionPickerTarget = ReactionPickerTarget{ channelId, messageId };
+    chatView->setReactionPickerOpen(true);
+    reactionPicker->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, globalAnchor);
 }
 
 void MainWindow::openChannelTopicPopup()

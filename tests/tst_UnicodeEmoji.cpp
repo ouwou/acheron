@@ -13,6 +13,7 @@ private slots:
     void testConvertSurrogateToBase();
     void testTranslateNamesToSurrogates();
     void testTopLevel();
+    void testCategories();
 };
 
 // U+1F44D U+1F3FC — thumbsup with the medium-light skin tone.
@@ -77,6 +78,25 @@ void TestUnicodeEmoji::testTopLevel()
     QVERIFY(!index.topLevel().isEmpty());
     for (const UnicodeEmoji *emoji : index.topLevel())
         QVERIFY(!emoji->isDiversityChild);
+}
+
+void TestUnicodeEmoji::testCategories()
+{
+    const UnicodeEmojiIndex &index = UnicodeEmojiIndex::instance();
+
+    QStringList ids;
+    qsizetype categorized = 0;
+    for (const UnicodeEmojiCategory &category : index.categories()) {
+        ids.append(category.id);
+        categorized += category.emojis.size();
+        for (const UnicodeEmoji *emoji : category.emojis)
+            QCOMPARE(emoji->category, category.id);
+    }
+
+    QCOMPARE(ids, QStringList({ "people", "nature", "food", "activity", "travel", "objects", "symbols", "flags" }));
+    QCOMPARE(categorized, index.topLevel().size());
+    QCOMPARE(index.categories().first().emojis.first(), index.byName("grinning"));
+    QCOMPARE(index.byName("thumbsup::skin-tone-2")->category, QStringLiteral("people"));
 }
 
 QTEST_GUILESS_MAIN(TestUnicodeEmoji)

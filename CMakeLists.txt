@@ -273,6 +273,13 @@ set(PROJECT_SOURCES
     src/UI/Input/MessageInput.cpp
     src/UI/Input/EmojiAutocompletePopup.cpp
     src/UI/Input/TextEdgeNavigation.cpp
+    src/UI/Emoji/EmojiButton.cpp
+    src/UI/Emoji/EmojiGlyphs.cpp
+    src/UI/Emoji/EmojiGridView.cpp
+    src/UI/Emoji/EmojiPainting.cpp
+    src/UI/Emoji/EmojiPicker.cpp
+    src/UI/Emoji/EmojiSectionRail.cpp
+    src/UI/Emoji/PaintedImages.cpp
     src/UI/Input/AttachmentPreviewPanel.cpp
     src/Storage/DatabaseManager.cpp
     src/Storage/BaseRepository.cpp
@@ -390,6 +397,17 @@ if(BUILD_TESTS)
     target_include_directories(TestProxy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME ProxyTests COMMAND TestProxy)
 
+    qt_add_executable(TestEmojiGrid tests/tst_EmojiGrid.cpp
+        src/UI/Emoji/EmojiGridView.cpp src/UI/Emoji/EmojiGlyphs.cpp src/UI/Emoji/EmojiPainting.cpp
+        src/UI/Emoji/PaintedImages.cpp
+        src/Core/ImageManager.cpp src/Core/AnimatedImageCache.cpp src/Core/ApngDecoder.cpp
+        src/Core/LottieDecoder.cpp src/Core/ProxyConfig.cpp src/Core/Snowflake.cpp src/Core/Logging.cpp
+        src/Core/Theme/Manager.cpp src/Core/Theme/Fonts.cpp src/Core/Theme/Stylesheet.cpp
+        src/Core/Theme/Tokens.cpp src/Core/Theme/Icons.cpp resources.qrc)
+    target_link_libraries(TestEmojiGrid PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Svg Qt::Test)
+    target_include_directories(TestEmojiGrid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME EmojiGridTests COMMAND TestEmojiGrid)
+
     if(TARGET ffmpeg)
         qt_add_executable(TestApng tests/tst_Apng.cpp src/Core/ApngDecoder.cpp)
         target_link_libraries(TestApng PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg)
@@ -412,7 +430,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy)
+        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid)
         if(TARGET TestApng)
             list(APPEND _msvc_test_targets TestApng)
         endif()

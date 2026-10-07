@@ -16,6 +16,8 @@
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
+#include "UI/Emoji/EmojiGlyphs.hpp"
+#include "UI/Emoji/EmojiPainting.hpp"
 #include "UI/ImageViewer.hpp"
 #include "UI/Input/TextEdgeNavigation.hpp"
 
@@ -135,6 +137,8 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     connect(actionBar, &MessageActionBar::shiftHeldChanged, this, &ChatView::updateHoveredMessage);
     connect(actionBar, &MessageActionBar::triggered, this, &ChatView::onActionBarTriggered);
     connect(actionBar, &MessageActionBar::moreRequested, this, &ChatView::onActionBarMoreRequested);
+    connect(actionBar, &MessageActionBar::quickReactionTriggered, this, &ChatView::onActionBarQuickReaction);
+    connect(actionBar, &MessageActionBar::reactionPickerRequested, this, &ChatView::onActionBarReactionPickerRequested);
 
     auto *highlightFade = new QVariantAnimation(this);
     highlightFade->setDuration(1000);
@@ -412,9 +416,8 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         Snowflake channelId = chatModel->getActiveChannelId();
         Snowflake messageId = idx.data(ChatModel::MessageIdRole).toULongLong();
         const ReactionData &r = resolved.ctx.reactions[region->index];
-        QString emojiStr = r.emojiId.isValid() ? (r.emojiName + ":" + QString::number(r.emojiId))
-                                               : r.emojiName;
-        emit toggleReactionClicked(channelId, messageId, emojiStr, r.me, r.isBurst);
+        const Discord::Emoji emoji = r.emojiId.isValid() ? Discord::Emoji::custom(r.emojiId, r.emojiName, r.emojiAnimated) : Discord::Emoji::unicode(r.emojiName);
+        emit reactionToggleRequested(channelId, messageId, emoji, r.me, r.isBurst, Discord::Client::ReactionLocation::InlineButton);
         break;
     }
 
@@ -671,6 +674,10 @@ void ChatView::onRowsInserted(const QModelIndex &parent, int start, int end)
 
 void ChatView::onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight)
 {
+    const bool hoveredMessageChanged = hoveredMessage.isValid() && topLeft.row() <= hoveredMessage.row() && hoveredMessage.row() <= bottomRight.row();
+    if (hoveredMessageChanged)
+        updateHoveredMessage();
+
     if (!atBottom)
         return;
 
@@ -877,6 +884,7 @@ void ChatView::updateHoveredMessage()
 
     actionBarMessageId = hovered.data(ChatModel::MessageIdRole).toULongLong();
     actionBar->setCanDelete(canDeleteMessage(hovered));
+    actionBar->setReactions(canReactTo(hovered), quickReactionsFor(hovered));
     actionBar->adjustSize();
     actionBar->move(actionBarPosition(hovered));
     actionBar->show();
@@ -937,6 +945,108 @@ void ChatView::onActionBarMoreRequested(const QPoint &buttonTopLeft)
 
     execMessageMenu(menu, buttonTopLeft - QPoint(menu.sizeHint().width() + MenuGap, 0));
     actionBar->setMoreButtonDown(false);
+}
+
+void ChatView::onActionBarQuickReaction(const Core::PickerEmoji &emoji, bool reacted)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !actionBarMessageId.isValid())
+        return;
+    emit reactionToggleRequested(chatModel->getActiveChannelId(), actionBarMessageId, emoji.toReactionEmoji(), reacted, false, Discord::Client::ReactionLocation::HoverBar);
+}
+
+void ChatView::onActionBarReactionPickerRequested()
+{
+    requestReactionPicker(actionBarMessageId);
+}
+
+bool ChatView::canReactTo(const QModelIndex &index) const
+{
+    return canAddReactions && emojis && canShowActionBar(index);
+}
+
+QList<MessageActionBar::QuickReaction> ChatView::quickReactionsFor(const QModelIndex &index) const
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !canReactTo(index))
+        return {};
+
+    const auto reactions = index.data(ChatModel::ReactionsRole).value<QList<ReactionData>>();
+    const auto ownReactionMatches = [&reactions](const Core::PickerEmoji &emoji) {
+        return std::any_of(reactions.cbegin(), reactions.cend(), [&emoji](const ReactionData &reaction) {
+            if (!reaction.me || reaction.isBurst)
+                return false;
+            return emoji.isCustom() ? reaction.emojiId == emoji.customId : (!reaction.emojiId.isValid() && reaction.emojiName == emoji.surrogates);
+        });
+    };
+
+    QList<MessageActionBar::QuickReaction> quick;
+    for (const Core::PickerEmoji &emoji : emojis->quickReactions(chatModel->getActiveChannelId(), MessageActionBar::QuickReactionCount))
+        quick.append({ emoji, ownReactionMatches(emoji) });
+    return quick;
+}
+
+QIcon ChatView::reactionMenuIcon(const Core::PickerEmoji &emoji) const
+{
+    constexpr int IconPx = 18;
+    if (!emoji.isCustom())
+        return QIcon(EmojiGlyphs::pixmap(emoji.surrogates, IconPx, devicePixelRatioF()));
+
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !imageManager)
+        return {};
+
+    const QUrl url = emojiStillUrl(emoji.customId, devicePixelRatioF());
+    const QSize size(IconPx, IconPx);
+    const bool downloaded = imageManager->isCached(url, size);
+    const QPixmap pixmap = imageManager->get(url, size, chatModel->getAccountId());
+    return downloaded ? QIcon(pixmap) : QIcon();
+}
+
+void ChatView::addReactionMenu(QMenu &menu, Core::Snowflake messageId)
+{
+    constexpr int SuggestedReactions = 12;
+    using Location = Discord::Client::ReactionLocation;
+
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !emojis)
+        return;
+    const Core::Snowflake channelId = chatModel->getActiveChannelId();
+
+    QMenu *reactionMenu = menu.addMenu(tr("Add Reaction"));
+    for (const Core::PickerEmoji &emoji : emojis->frequentReactions(channelId).mid(0, SuggestedReactions)) {
+        QAction *action = reactionMenu->addAction(reactionMenuIcon(emoji), ":" + emoji.name + ":");
+        connect(action, &QAction::triggered, this, [this, channelId, messageId, emoji]() {
+            emit reactionToggleRequested(channelId, messageId, emoji.toReactionEmoji(), false, false, Location::ContextMenu);
+        });
+    }
+
+    reactionMenu->addSeparator();
+    QAction *viewMore = reactionMenu->addAction(tr("View More"));
+    connect(viewMore, &QAction::triggered, this, [this, messageId]() {
+        QMetaObject::invokeMethod(this, [this, messageId]() { requestReactionPicker(messageId); }, Qt::QueuedConnection);
+    });
+}
+
+void ChatView::requestReactionPicker(Core::Snowflake messageId)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !messageId.isValid())
+        return;
+
+    const bool barOnMessage = actionBar->isVisible() && actionBarMessageId == messageId;
+    const QRect globalAnchor = barOnMessage ? actionBar->reactionPickerButtonGlobalRect() : QRect(QCursor::pos(), QSize(1, 1));
+    emit reactionPickerRequested(chatModel->getActiveChannelId(), messageId, globalAnchor);
+}
+
+void ChatView::setReactionPickerOpen(bool open)
+{
+    actionBar->setReactionPickerOpen(open);
+    if (open)
+        return;
+
+    hoverHeldAt = QCursor::pos();
+    updateHoveredMessage();
 }
 
 void ChatView::execMessageMenu(QMenu &menu, const QPoint &globalPos)
@@ -1018,6 +1128,19 @@ void ChatView::setCanPinMessages(bool canPin)
 void ChatView::setCanManageMessages(bool canManage)
 {
     canManageMessages = canManage;
+}
+
+void ChatView::setCanAddReactions(bool canReact)
+{
+    canAddReactions = canReact;
+    updateHoveredMessage();
+}
+
+void ChatView::setEmojiManager(Core::EmojiManager *manager, Core::Snowflake accountId)
+{
+    emojis = manager;
+    actionBar->setImageSource(imageManager, accountId);
+    updateHoveredMessage();
 }
 
 void ChatView::contextMenuEvent(QContextMenuEvent *event)
@@ -1109,10 +1232,8 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
         });
     }
 
-    QAction *reactAction = menu.addAction(tr("Add Reaction"));
-    connect(reactAction, &QAction::triggered, this, [this, channelId, messageId]() {
-        emit addReactionRequested(channelId, messageId);
-    });
+    if (canReactTo(index))
+        addReactionMenu(menu, messageId);
 
     bool isPending = index.data(ChatModel::IsPendingRole).toBool();
     bool hasAttachments = !index.data(ChatModel::AttachmentsRole).isNull();

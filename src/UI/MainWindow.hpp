@@ -27,6 +27,7 @@ struct TypingStart;
 namespace UI {
 class ChatView;
 class ChatModel;
+class EmojiPicker;
 class ForumBrowser;
 class ForumPostModel;
 class ThreadBrowserPopup;
@@ -154,6 +155,16 @@ private:
     void navigateToChannel(Core::Snowflake channelId);
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
     void setThreadBrowserTarget(Core::Snowflake channelId);
+
+    void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
+
+    struct ReactionPickerTarget
+    {
+        Core::Snowflake channelId;
+        Core::Snowflake messageId;
+    };
+    EmojiPicker *reactionPicker = nullptr;
+    std::optional<ReactionPickerTarget> reactionPickerTarget;
 
     ChatView *chatView;
     ChatModel *chatModel;

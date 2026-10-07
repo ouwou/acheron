@@ -9,7 +9,9 @@
 #include "ChatLayout.hpp"
 #include "ChatModel.hpp"
 #include "MessageActionBar.hpp"
+#include "Core/Emoji/EmojiManager.hpp"
 #include "Core/Snowflake.hpp"
+#include "Discord/Client.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -63,6 +65,7 @@ public:
     ChatView(QWidget *parent = nullptr);
 
     void setImageManager(Core::ImageManager *manager) { imageManager = manager; }
+    void setEmojiManager(Core::EmojiManager *manager, Core::Snowflake accountId);
 
     int hoveredRowAtPaint() const { return hoveredRow; }
     int hoveredCharIndexAtPaint() const { return hoveredChar; }
@@ -89,6 +92,8 @@ public:
     void setCurrentUserId(Core::Snowflake userId);
     void setCanPinMessages(bool canPin);
     void setCanManageMessages(bool canManage);
+    void setCanAddReactions(bool canReact);
+    void setReactionPickerOpen(bool open);
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
@@ -120,11 +125,10 @@ signals:
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void replyToMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
-    void addReactionRequested(Core::Snowflake channelId, Core::Snowflake messageId);
+    void reactionPickerRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void cancelUploadRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void filesDropped(const QList<QUrl> &urls);
-    void toggleReactionClicked(Core::Snowflake channelId, Core::Snowflake messageId,
-                               const QString &emoji, bool currentlyReacted, bool isBurst);
+    void reactionToggleRequested(Core::Snowflake channelId, Core::Snowflake messageId, const Acheron::Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Acheron::Discord::Client::ReactionLocation location);
     void channelMentionClicked(Core::Snowflake channelId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
@@ -147,6 +151,8 @@ private slots:
     void onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight);
     void onActionBarTriggered(MessageActionBar::Action action);
     void onActionBarMoreRequested(const QPoint &buttonTopLeft);
+    void onActionBarQuickReaction(const Core::PickerEmoji &emoji, bool reacted);
+    void onActionBarReactionPickerRequested();
 
 private:
     void copySelectedText();
@@ -173,11 +179,17 @@ private:
     void addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId);
     void triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId);
     void execMessageMenu(QMenu &menu, const QPoint &globalPos);
+    [[nodiscard]] bool canReactTo(const QModelIndex &index) const;
+    [[nodiscard]] QList<MessageActionBar::QuickReaction> quickReactionsFor(const QModelIndex &index) const;
+    [[nodiscard]] QIcon reactionMenuIcon(const Core::PickerEmoji &emoji) const;
+    void addReactionMenu(QMenu &menu, Core::Snowflake messageId);
+    void requestReactionPicker(Core::Snowflake messageId);
     void releaseHoverHold(const QPoint &globalPos);
 
     InlineVideoController *video = nullptr;
     FrameAnimator *animator = nullptr;
     Core::ImageManager *imageManager = nullptr;
+    QPointer<Core::EmojiManager> emojis;
 
     QTextEdit *inlineEditWidget = nullptr;
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;
@@ -212,6 +224,7 @@ private:
     Core::Snowflake currentUserId = Core::Snowflake::Invalid;
     bool canPinMessages = false;
     bool canManageMessages = false;
+    bool canAddReactions = false;
 };
 } // namespace UI
 } // namespace Acheron

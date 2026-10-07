@@ -106,6 +106,7 @@ UnicodeEmojiIndex::UnicodeEmojiIndex()
         emoji.names = toStringList(obj.value(QStringLiteral("names")));
         emoji.keywords = toStringList(obj.value(QStringLiteral("keywords")));
         emoji.surrogates = obj.value(QStringLiteral("surrogates")).toString();
+        emoji.category = obj.value(QStringLiteral("category")).toString();
         emoji.hasDiversity = obj.value(QStringLiteral("hasDiversity")).toBool();
         emoji.isDiversityChild = obj.value(QStringLiteral("hasDiversityParent")).toBool() || obj.value(QStringLiteral("hasMultiDiversityParent")).toBool();
         emojis.append(emoji);
@@ -116,8 +117,12 @@ UnicodeEmojiIndex::UnicodeEmojiIndex()
         for (const QString &name : emoji.names)
             nameToIndex.insert(name, i);
         surrogateToIndex.insert(emoji.surrogates, i);
-        if (!emoji.isDiversityChild)
+        if (!emoji.isDiversityChild) {
             topLevelEmojis.append(&emoji);
+            if (topLevelByCategory.isEmpty() || topLevelByCategory.last().id != emoji.category)
+                topLevelByCategory.append({ emoji.category, {} });
+            topLevelByCategory.last().emojis.append(&emoji);
+        }
         if (!emoji.hasDiversity)
             continue;
 

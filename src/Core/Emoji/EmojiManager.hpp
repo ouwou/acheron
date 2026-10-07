@@ -13,6 +13,7 @@
 
 #include "Core/Emoji/EmojiMatch.hpp"
 #include "Core/Emoji/FrecencyTracker.hpp"
+#include "Core/Emoji/PickerEmoji.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Entities.hpp"
 #include "Discord/Events.hpp"
@@ -42,6 +43,11 @@ public:
     void removeGuild(Snowflake guildId);
 
     [[nodiscard]] QList<EmojiMatch> search(const QString &query, Snowflake channelId, int maxResults = 10);
+
+    [[nodiscard]] QList<PickerSection> reactionPickerSections(Snowflake channelId);
+    [[nodiscard]] QList<PickerEmoji> searchReactions(const QString &query, Snowflake channelId);
+    [[nodiscard]] QList<PickerEmoji> frequentReactions(Snowflake channelId);
+    [[nodiscard]] QList<PickerEmoji> quickReactions(Snowflake channelId, int count);
 
     void trackMessageEmojis(const QString &content);
     void trackReaction(const QString &reactionEmoji);
@@ -86,6 +92,13 @@ private:
         Snowflake selfId;
         bool premium = false;
         QHash<Snowflake, QSet<Snowflake>> rolesByGuild;
+        std::optional<bool> externalEmojisAllowed;
+    };
+
+    struct RankedEmoji
+    {
+        const UnicodeEmoji *unicode = nullptr;
+        const CustomEmoji *custom = nullptr;
     };
 
     void fetchSettings();
@@ -101,6 +114,13 @@ private:
     const QList<CustomEmoji> &customEmojis();
     const QList<UnicodeCandidate> &unicodeCandidates();
     bool isUsable(const CustomEmoji &custom, UsabilityContext &context) const;
+    [[nodiscard]] UsabilityContext usabilityIn(Snowflake channelId) const;
+    [[nodiscard]] QList<RankedEmoji> rankedMatches(const QString &query, Snowflake channelId, FrecencyTracker &tracker);
+    [[nodiscard]] QList<Snowflake> guildsInSidebarOrder() const;
+
+    [[nodiscard]] static PickerEmoji toPickerEmoji(const UnicodeEmoji &emoji);
+    [[nodiscard]] static PickerEmoji toPickerEmoji(const CustomEmoji &custom);
+    [[nodiscard]] static QString unicodeCategoryTitle(const QString &categoryId);
 
     [[nodiscard]] static uint64_t nowMs();
     [[nodiscard]] static QString unicodeKey(const QString &surrogates);
@@ -110,6 +130,7 @@ private:
 
     QHash<Snowflake /*guildId*/, QList<Discord::Emoji>> guildEmojis;
     QList<CustomEmoji> customCandidates;
+    QHash<Snowflake, int> customCandidateIndex;
     bool customCandidatesDirty = true;
     QList<UnicodeCandidate> unicodeCandidateCache;
 

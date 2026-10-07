@@ -124,10 +124,24 @@ public:
     void pinMessage(Snowflake channelId, Snowflake messageId);
     void unpinMessage(Snowflake channelId, Snowflake messageId);
 
-    void addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
-                     bool isBurst = false);
-    void removeReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
-                        bool isBurst = false);
+    enum class ReactionLocation {
+        HoverBar,
+        InlineButton,
+        ContextMenu,
+        ReactionPicker,
+    };
+
+    struct ReactionResult
+    {
+        bool success = false;
+        int statusCode = 0;
+        int errorCode = 0;
+        int retryAfterSeconds = 0;
+    };
+    using ReactionCallback = std::function<void(const ReactionResult &)>;
+
+    void addReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback);
+    void removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback);
 
     struct AckEntry
     {

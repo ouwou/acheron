@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QCache>
+#include <QHash>
 #include <QList>
 #include <QObject>
 #include <QPixmap>
@@ -9,6 +10,7 @@
 #include <QThreadPool>
 #include <QUrl>
 
+#include <atomic>
 #include <memory>
 
 #include "ImageManager.hpp"
@@ -56,6 +58,7 @@ public:
 
     // null while fetching or decoding
     AnimatedFramesPtr get(const QUrl &url, const QSize &logicalSize, Snowflake accountId);
+    void discard(const QUrl &url, const QSize &logicalSize);
 
 signals:
     void framesReady(const QUrl &url, const QSize &logicalSize, const AnimatedFramesPtr &frames);
@@ -75,6 +78,7 @@ private:
 
     void onRawDownloadReady(const QUrl &url, const QSize &size);
     void decode(const ImageRequestKey &key, const QString &path);
+    void onDecodeSkipped(const ImageRequestKey &key);
     void publish(const ImageRequestKey &key, const Decoded &decoded, qreal dpr);
     static Decoded decodeFrames(const QString &path, const DecodeTarget &target);
     static Decoded decodeApng(Apng::Reader &apng, const DecodeTarget &target);
@@ -86,7 +90,8 @@ private:
     int animationLimitMiB = AnimationLimit.fallback;
     int newestFirstPriority = 0;
     QSet<ImageRequestKey> wanted;
-    QSet<ImageRequestKey> decoding;
+    using DiscardedFlag = std::shared_ptr<std::atomic_bool>;
+    QHash<ImageRequestKey, DiscardedFlag> decoding;
     QCache<ImageRequestKey, AnimatedFramesPtr> cache;
 };
 

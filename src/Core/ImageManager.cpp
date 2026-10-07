@@ -127,8 +127,8 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
     // check disk cache
     QString path = getCachePath(url, size);
     if (QFile::exists(path)) {
-        QPixmap pixmap;
-        if (pixmap.load(path)) {
+        QPixmap pixmap = QPixmap::fromImage(QImage(path));
+        if (!pixmap.isNull()) {
             qreal dpr = qApp->devicePixelRatio();
 
             if (scalesToDevicePixels(url)) {

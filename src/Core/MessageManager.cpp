@@ -4,10 +4,13 @@
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QPointer>
+#include <QTimer>
 #include <QUrl>
 
 #include <functional>
 
+#include "Discord/ApiError.hpp"
 #include "Discord/Client.hpp"
 #include "Emoji/EmojiManager.hpp"
 #include "Markdown/Parser.hpp"
@@ -417,11 +420,86 @@ void MessageManager::onMessageSendFailed(const QString &nonce, const QString &er
     emit messageErrored(nonce);
 }
 
-void MessageManager::addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji, bool isBurst)
+static bool emojisMatch(const Discord::Emoji &a, const Discord::Emoji &b)
 {
-    if (emojiManager)
-        emojiManager->trackReaction(emoji);
-    client->addReaction(channelId, messageId, emoji, isBurst);
+    if (!a.isUnicode() && !b.isUnicode())
+        return a.id.get() == b.id.get();
+    if (a.isUnicode() && b.isUnicode())
+        return a.name.get() == b.name.get();
+    return false;
+}
+
+static bool hasOwnReactionOfOtherType(const Discord::Message &msg, const Discord::Emoji &emoji, bool isBurst)
+{
+    if (!msg.reactions.hasValue())
+        return false;
+
+    for (const Discord::Reaction &reaction : msg.reactions.get()) {
+        if (emojisMatch(reaction.emoji, emoji))
+            return isBurst ? reaction.me.get() : reaction.meBurst.valueOr(false);
+    }
+    return false;
+}
+
+void MessageManager::addReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location)
+{
+    const Discord::Message *cached = messageCache.object(messageId);
+    if (cached && hasOwnReactionOfOtherType(*cached, emoji, isBurst)) {
+        emit reactionRejected(ReactionRejection::AlreadyReactedWithOtherType);
+        return;
+    }
+
+    sendReactionChange(ReactionOp::Add, { channelId, messageId, emoji, isBurst, location }, ReactionAttempt::First);
+}
+
+void MessageManager::removeReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location)
+{
+    sendReactionChange(ReactionOp::Remove, { channelId, messageId, emoji, isBurst, location }, ReactionAttempt::First);
+}
+
+void MessageManager::sendReactionChange(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt)
+{
+    const QPointer<MessageManager> self(this);
+    const auto onFinished = [self, op, change, attempt](const Discord::Client::ReactionResult &result) {
+        if (self && !result.success)
+            self->onReactionChangeFailed(op, change, attempt, result);
+    };
+
+    applyOwnReaction(op, change);
+
+    const QString reactionKey = change.emoji.reactionKey();
+    if (op == ReactionOp::Add) {
+        if (emojiManager)
+            emojiManager->trackReaction(reactionKey);
+        client->addReaction(change.channelId, change.messageId, reactionKey, change.isBurst, change.location, onFinished);
+    } else {
+        client->removeReaction(change.channelId, change.messageId, reactionKey, change.isBurst, change.location, onFinished);
+    }
+}
+
+void MessageManager::onReactionChangeFailed(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt, const Discord::Client::ReactionResult &result)
+{
+    constexpr int Forbidden = 403;
+    constexpr int TooManyRequests = 429;
+
+    const bool canRetry = attempt == ReactionAttempt::First;
+    const auto retry = [this, op, change]() { sendReactionChange(op, change, ReactionAttempt::Retry); };
+
+    if (result.statusCode == TooManyRequests) {
+        if (canRetry) {
+            QTimer::singleShot(result.retryAfterSeconds * 1000, this, retry);
+            return;
+        }
+    } else if (result.statusCode == Forbidden) {
+        if (result.errorCode == Discord::ApiError::TooManyReactions)
+            emit reactionRejected(ReactionRejection::TooManyReactions);
+    } else if (canRetry) {
+        retry();
+        return;
+    }
+
+    const ReactionOp undo = op == ReactionOp::Add ? ReactionOp::Remove : ReactionOp::Add;
+    applyOwnReaction(undo, change);
 }
 
 void MessageManager::sendMessage(Snowflake channelId, const QString &content,
@@ -516,15 +594,6 @@ void MessageManager::cancelSend(Snowflake channelId, const QString &nonce)
     emit messageDeleted(channelId, nonceId);
 }
 
-static bool emojisMatch(const Discord::Emoji &a, const Discord::Emoji &b)
-{
-    if (!a.isUnicode() && !b.isUnicode())
-        return a.id.get() == b.id.get();
-    if (a.isUnicode() && b.isUnicode())
-        return a.name.get() == b.name.get();
-    return false;
-}
-
 // todo i dont like this here
 static QString reactionsToJson(const QList<Discord::Reaction> &reactions)
 {
@@ -604,13 +673,15 @@ void MessageManager::emitReactionUpdate(Discord::Message &msg)
     emit messagesReceived({ true, Discord::Client::MessageLoadType::Created, msg.channelId, { msg } });
 }
 
-static void applyReactionAdd(QList<Discord::Reaction> &reactions,
-                             const Discord::Emoji &emoji, bool isBurst, bool isMe,
-                             const QList<QString> &burstColors = {})
+static bool addToReactions(QList<Discord::Reaction> &reactions,
+                           const Discord::Emoji &emoji, bool isBurst, bool isMe,
+                           const QList<QString> &burstColors = {})
 {
     bool found = false;
     for (auto &r : reactions) {
         if (emojisMatch(r.emoji, emoji)) {
+            if (isMe && (isBurst ? r.meBurst.valueOr(false) : r.me.get()))
+                return false;
             r.count = *r.count + 1;
             if (r.countDetails.hasValue()) {
                 if (isBurst)
@@ -649,20 +720,16 @@ static void applyReactionAdd(QList<Discord::Reaction> &reactions,
 
         reactions.append(newReaction);
     }
+    return true;
 }
 
-void MessageManager::onReactionAdd(const Discord::MessageReactionAdd &event)
+void MessageManager::updateReactions(Snowflake messageId, const std::function<bool(QList<Discord::Reaction> &)> &mutate)
 {
-    bool isBurst = event.type.hasValue() && *event.type == 1;
-    bool isMe = event.userId.get() == client->getMe().id.get();
-
-    auto *cached = messageCache.object(event.messageId);
+    auto *cached = messageCache.object(messageId);
     if (!cached) {
-        QList<Discord::Reaction> reactions =
-                reactionsFromJson(repo.getReactionsJson(event.messageId));
-        QList<QString> colors = event.burstColors.hasValue() ? *event.burstColors : QList<QString>{};
-        applyReactionAdd(reactions, event.emoji, isBurst, isMe, colors);
-        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
+        QList<Discord::Reaction> reactions = reactionsFromJson(repo.getReactionsJson(messageId));
+        if (mutate(reactions))
+            repo.updateReactionsJson(messageId, reactionsToJson(reactions));
         return;
     }
 
@@ -671,10 +738,17 @@ void MessageManager::onReactionAdd(const Discord::MessageReactionAdd &event)
     if (!msg.reactions.hasValue())
         msg.reactions = QList<Discord::Reaction>();
 
-    QList<QString> colors = event.burstColors.hasValue() ? *event.burstColors : QList<QString>{};
-    applyReactionAdd(*msg.reactions, event.emoji, isBurst, isMe, colors);
+    if (mutate(*msg.reactions))
+        emitReactionUpdate(msg);
+}
 
-    emitReactionUpdate(msg);
+void MessageManager::onReactionAdd(const Discord::MessageReactionAdd &event)
+{
+    bool isBurst = event.type.hasValue() && *event.type == 1;
+    bool isMe = event.userId.get() == client->getMe().id.get();
+    updateReactions(event.messageId, [&](QList<Discord::Reaction> &reactions) {
+        return addToReactions(reactions, event.emoji, isBurst, isMe, event.burstColors.valueOr({}));
+    });
 }
 
 static void applyReactionAddMany(QList<Discord::Reaction> &reactions,
@@ -693,6 +767,9 @@ static void applyReactionAddMany(QList<Discord::Reaction> &reactions,
         bool found = false;
         for (auto &r : reactions) {
             if (emojisMatch(r.emoji, debounced.emoji)) {
+                const bool ownAlreadyApplied = isMe && r.me.get();
+                if (ownAlreadyApplied)
+                    addCount--;
                 r.count = *r.count + addCount;
                 if (r.countDetails.hasValue())
                     r.countDetails->normal = *r.countDetails->normal + addCount;
@@ -724,32 +801,20 @@ static void applyReactionAddMany(QList<Discord::Reaction> &reactions,
 void MessageManager::onReactionAddMany(const Discord::MessageReactionAddMany &event)
 {
     Snowflake myId = client->getMe().id;
-
-    auto *cached = messageCache.object(event.messageId);
-    if (!cached) {
-        QList<Discord::Reaction> reactions =
-                reactionsFromJson(repo.getReactionsJson(event.messageId));
+    updateReactions(event.messageId, [&](QList<Discord::Reaction> &reactions) {
         applyReactionAddMany(reactions, event, myId);
-        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
-        return;
-    }
-
-    Discord::Message msg = *cached;
-
-    if (!msg.reactions.hasValue())
-        msg.reactions = QList<Discord::Reaction>();
-
-    applyReactionAddMany(*msg.reactions, event, myId);
-
-    emitReactionUpdate(msg);
+        return true;
+    });
 }
 
-static void applyReactionRemove(QList<Discord::Reaction> &reactions,
+static bool removeFromReactions(QList<Discord::Reaction> &reactions,
                                 const Discord::Emoji &emoji, bool isBurst, bool isMe)
 {
     for (int i = 0; i < reactions.size(); ++i) {
         auto &r = reactions[i];
         if (emojisMatch(r.emoji, emoji)) {
+            if (isMe && !(isBurst ? r.meBurst.valueOr(false) : r.me.get()))
+                return false;
             r.count = *r.count - 1;
             if (r.countDetails.hasValue()) {
                 if (isBurst)
@@ -767,33 +832,27 @@ static void applyReactionRemove(QList<Discord::Reaction> &reactions,
             if (*r.count <= 0)
                 reactions.removeAt(i);
 
-            break;
+            return true;
         }
     }
+    return false;
 }
 
 void MessageManager::onReactionRemove(const Discord::MessageReactionRemove &event)
 {
     bool isBurst = event.type.hasValue() && *event.type == 1;
     bool isMe = event.userId.get() == client->getMe().id.get();
+    updateReactions(event.messageId, [&](QList<Discord::Reaction> &reactions) {
+        return removeFromReactions(reactions, event.emoji, isBurst, isMe);
+    });
+}
 
-    auto *cached = messageCache.object(event.messageId);
-    if (!cached) {
-        QList<Discord::Reaction> reactions =
-                reactionsFromJson(repo.getReactionsJson(event.messageId));
-        applyReactionRemove(reactions, event.emoji, isBurst, isMe);
-        repo.updateReactionsJson(event.messageId, reactionsToJson(reactions));
-        return;
-    }
-
-    Discord::Message msg = *cached;
-
-    if (!msg.reactions.hasValue())
-        return;
-
-    applyReactionRemove(*msg.reactions, event.emoji, isBurst, isMe);
-
-    emitReactionUpdate(msg);
+void MessageManager::applyOwnReaction(ReactionOp op, const ReactionChange &change)
+{
+    constexpr bool isMe = true;
+    updateReactions(change.messageId, [&](QList<Discord::Reaction> &reactions) {
+        return op == ReactionOp::Add ? addToReactions(reactions, change.emoji, change.isBurst, isMe) : removeFromReactions(reactions, change.emoji, change.isBurst, isMe);
+    });
 }
 
 void MessageManager::onReactionRemoveAll(const Discord::MessageReactionRemoveAll &event)

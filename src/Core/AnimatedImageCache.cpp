@@ -95,16 +95,31 @@ AnimatedFramesPtr AnimatedImageCache::get(const QUrl &url, const QSize &logicalS
     const ImageRequestKey key{ url, logicalSize };
     if (const AnimatedFramesPtr *cached = cache.object(key))
         return *cached;
-    if (decoding.contains(key))
-        return nullptr;
 
     wanted.insert(key);
+    const auto inFlight = decoding.constFind(key);
+    if (inFlight != decoding.constEnd()) {
+        inFlight.value()->store(false);
+        return nullptr;
+    }
+
     const QString path = imageManager->rawDownloadPath(url, logicalSize);
     if (path.isEmpty())
         imageManager->downloadToCache(url, logicalSize, accountId);
     else
         decode(key, path);
     return nullptr;
+}
+
+void AnimatedImageCache::discard(const QUrl &url, const QSize &logicalSize)
+{
+    const ImageRequestKey key{ url, logicalSize };
+    wanted.remove(key);
+    cache.remove(key);
+
+    const auto inFlight = decoding.constFind(key);
+    if (inFlight != decoding.constEnd())
+        inFlight.value()->store(true);
 }
 
 void AnimatedImageCache::onRawDownloadReady(const QUrl &url, const QSize &size)
@@ -121,18 +136,31 @@ void AnimatedImageCache::onRawDownloadReady(const QUrl &url, const QSize &size)
 
 void AnimatedImageCache::decode(const ImageRequestKey &key, const QString &path)
 {
-    decoding.insert(key);
+    const DiscardedFlag discarded = std::make_shared<std::atomic_bool>(false);
+    decoding.insert(key, discarded);
 
     const qreal dpr = qGuiApp->devicePixelRatio();
     const DecodeTarget target{ key.size * dpr, animationLimitMiB * BytesPerMiB };
 
     // newest first
     // clang-format off
-    decodePool.start([this, key, path, target, dpr]() {
+    decodePool.start([this, key, path, target, dpr, discarded]() {
+        if (discarded->load()) {
+            QMetaObject::invokeMethod(this, [this, key]() { onDecodeSkipped(key); }, Qt::QueuedConnection);
+            return;
+        }
         const Decoded decoded = decodeFrames(path, target);
         QMetaObject::invokeMethod(this, [this, key, decoded, dpr]() { publish(key, decoded, dpr); }, Qt::QueuedConnection);
     }, ++newestFirstPriority);
     // clang-format on
+}
+
+void AnimatedImageCache::onDecodeSkipped(const ImageRequestKey &key)
+{
+    decoding.remove(key);
+    const bool wantedAgainSince = wanted.contains(key);
+    if (wantedAgainSince)
+        onRawDownloadReady(key.url, key.size);
 }
 
 AnimatedImageCache::Decoded AnimatedImageCache::decodeFrames(const QString &path, const DecodeTarget &target)
@@ -238,6 +266,11 @@ AnimatedImageCache::Decoded AnimatedImageCache::decodeWithImageReader(const QByt
 
 void AnimatedImageCache::publish(const ImageRequestKey &key, const Decoded &decoded, qreal dpr)
 {
+    decoding.remove(key);
+    const bool discardedWhileDecoding = !wanted.remove(key);
+    if (discardedWhileDecoding)
+        return;
+
     auto frames = std::make_shared<AnimatedFrames>();
     qsizetype bytes = 0;
     int elapsed = 0;
@@ -252,8 +285,6 @@ void AnimatedImageCache::publish(const ImageRequestKey &key, const Decoded &deco
 
     const AnimatedFramesPtr published = std::move(frames);
     cache.insert(key, new AnimatedFramesPtr(published), int(std::max<qsizetype>(1, bytes / 1024)));
-    decoding.remove(key);
-    wanted.remove(key);
     emit framesReady(key.url, key.size, published);
 }
 

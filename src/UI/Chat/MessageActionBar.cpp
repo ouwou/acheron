@@ -6,9 +6,17 @@
 #include <QToolButton>
 
 #include "Core/Theme/Icons.hpp"
+#include "UI/Emoji/EmojiButton.hpp"
 
 namespace Acheron {
 namespace UI {
+
+namespace {
+
+constexpr int ButtonSize = 24;
+constexpr int IconSize = 18;
+
+} // namespace
 
 MessageActionBar::MessageActionBar(QWidget *parent) : QFrame(parent)
 {
@@ -24,6 +32,9 @@ MessageActionBar::MessageActionBar(QWidget *parent) : QFrame(parent)
 
     copyIdButton = addActionButton(Action::CopyId, Icons::Name::IdCard, Token::ButtonText);
     copyLinkButton = addActionButton(Action::CopyLink, Icons::Name::Link, Token::ButtonText);
+    addQuickReactionButtons();
+    reactionPickerButton = addButton(Icons::Name::SmilePlus, tr("Add Reaction"), Token::ButtonText);
+    connect(reactionPickerButton, &QToolButton::clicked, this, &MessageActionBar::reactionPickerRequested);
     addActionButton(Action::Reply, Icons::Name::Reply, Token::ButtonText);
     deleteButton = addActionButton(Action::Delete, Icons::Name::Trash, Token::ChatError);
     moreButton = addButton(Icons::Name::Ellipsis, tr("More"), Token::ButtonText);
@@ -54,6 +65,7 @@ QString MessageActionBar::label(Action action)
 
 void MessageActionBar::setShiftHeld(bool held)
 {
+    held = held && !reactionPickerOpen;
     if (shiftHeld == held)
         return;
     shiftHeld = held;
@@ -72,6 +84,40 @@ void MessageActionBar::setCanDelete(bool canDelete)
 void MessageActionBar::setMoreButtonDown(bool down)
 {
     moreButton->setDown(down);
+}
+
+void MessageActionBar::setImageSource(Core::ImageManager *imageManager, Core::Snowflake accountId)
+{
+    for (EmojiButton *button : quickReactionButtons)
+        button->setImageSource(imageManager, accountId);
+}
+
+void MessageActionBar::setReactions(bool canReact, const QList<QuickReaction> &quickReactions)
+{
+    this->canReact = canReact;
+    quickReactionCount = qMin(int(quickReactions.size()), QuickReactionCount);
+
+    for (int i = 0; i < quickReactionCount; i++) {
+        const QuickReaction &quick = quickReactions.at(i);
+        EmojiButton *button = quickReactionButtons.at(i);
+        button->setEmoji(quick.emoji);
+        button->setReacted(quick.reacted);
+        button->setToolTip(":" + quick.emoji.name + ":\n" + (quick.reacted ? tr("Click to remove") : tr("Click to react")));
+    }
+    updateButtons();
+}
+
+void MessageActionBar::setReactionPickerOpen(bool open)
+{
+    reactionPickerOpen = open;
+    reactionPickerButton->setDown(open);
+    if (open)
+        setShiftHeld(false);
+}
+
+QRect MessageActionBar::reactionPickerButtonGlobalRect() const
+{
+    return QRect(reactionPickerButton->mapToGlobal(QPoint(0, 0)), reactionPickerButton->size());
 }
 
 bool MessageActionBar::eventFilter(QObject *obj, QEvent *event)
@@ -96,11 +142,27 @@ bool MessageActionBar::eventFilter(QObject *obj, QEvent *event)
     return QFrame::eventFilter(obj, event);
 }
 
+void MessageActionBar::addQuickReactionButtons()
+{
+    constexpr int SeparatorHeight = 16;
+
+    for (int i = 0; i < QuickReactionCount; i++) {
+        auto *button = new EmojiButton(ButtonSize, IconSize, this);
+        connect(button, &EmojiButton::clicked, this, [this, button]() {
+            emit quickReactionTriggered(button->emoji(), button->isReacted());
+        });
+        layout()->addWidget(button);
+        quickReactionButtons.append(button);
+    }
+
+    quickReactionSeparator = new QFrame(this);
+    quickReactionSeparator->setFrameShape(QFrame::VLine);
+    quickReactionSeparator->setFixedHeight(SeparatorHeight);
+    layout()->addWidget(quickReactionSeparator);
+}
+
 QToolButton *MessageActionBar::addButton(const QString &iconName, const QString &toolTip, Core::Theme::Token color)
 {
-    constexpr int IconSize = 18;
-    constexpr int ButtonSize = 24;
-
     auto *button = new QToolButton(this);
     button->setIcon(Core::Theme::Icons::icon(iconName, color));
     button->setIconSize(QSize(IconSize, IconSize));
@@ -123,8 +185,13 @@ QToolButton *MessageActionBar::addActionButton(Action action, const QString &ico
 void MessageActionBar::updateButtons()
 {
     const bool showDelete = shiftHeld && canDelete;
+    const bool showQuickReactions = canReact && !shiftHeld;
     copyIdButton->setVisible(shiftHeld);
     copyLinkButton->setVisible(shiftHeld);
+    for (int i = 0; i < quickReactionButtons.size(); i++)
+        quickReactionButtons.at(i)->setVisible(showQuickReactions && i < quickReactionCount);
+    quickReactionSeparator->setVisible(showQuickReactions && quickReactionCount > 0);
+    reactionPickerButton->setVisible(canReact);
     deleteButton->setVisible(showDelete);
     moreButton->setVisible(!showDelete);
 }

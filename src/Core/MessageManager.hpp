@@ -56,9 +56,19 @@ public:
                      Snowflake replyToMessageId = Snowflake::Invalid,
                      const QList<PendingAttachment> &attachments = {});
     void cancelSend(Snowflake channelId, const QString &nonce);
-    void addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji, bool isBurst);
+
+    using ReactionLocation = Discord::Client::ReactionLocation;
+    void addReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location);
+    void removeReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location);
+
+    enum class ReactionRejection {
+        TooManyReactions,
+        AlreadyReactedWithOtherType,
+    };
+    Q_ENUM(ReactionRejection)
 
 signals:
+    void reactionRejected(Acheron::Core::MessageManager::ReactionRejection reason);
     void messagesReceived(const MessageRequestResult &result);
     void messageErrored(const QString &nonce);
     void messageDeleted(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -89,6 +99,27 @@ private:
                                                                      const MessageSegments::Run &run,
                                                                      int from, int to);
     void emitReactionUpdate(Discord::Message &msg);
+
+    struct ReactionChange
+    {
+        Snowflake channelId;
+        Snowflake messageId;
+        Discord::Emoji emoji;
+        bool isBurst;
+        ReactionLocation location;
+    };
+    enum class ReactionOp {
+        Add,
+        Remove,
+    };
+    enum class ReactionAttempt {
+        First,
+        Retry,
+    };
+    void updateReactions(Snowflake messageId, const std::function<bool(QList<Discord::Reaction> &)> &mutate);
+    void applyOwnReaction(ReactionOp op, const ReactionChange &change);
+    void sendReactionChange(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt);
+    void onReactionChangeFailed(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt, const Discord::Client::ReactionResult &result);
     void cacheGatewayMembers(const Discord::Message &msg);
     void parseMessageContent(Discord::Message &msg);
     QString inlineHtml(const QString &content, Snowflake channelId) const;

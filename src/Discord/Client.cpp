@@ -4,6 +4,7 @@
 #include <QGuiApplication>
 #include <QJsonObject>
 #include <QPointer>
+#include <QtMath>
 
 #include "ApiError.hpp"
 #include "Enums.hpp"
@@ -1095,37 +1096,75 @@ void Client::unpinMessage(Snowflake channelId, Snowflake messageId)
     });
 }
 
-void Client::addReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
-                         bool isBurst)
-{
-    QString encoded = QUrl::toPercentEncoding(emoji, ":");
-    int type = isBurst ? 1 : 0;
-    QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
-                       QString::number(messageId) + "/reactions/" + encoded +
-                       "/%40me?location=Message%20Inline%20Button&type=" + QString::number(type);
+namespace {
 
-    httpClient->put(endpoint, QJsonObject{}, [this, channelId, messageId](const HttpResponse &response) {
+constexpr int ReactionTypeNormal = 0;
+constexpr int ReactionTypeBurst = 1;
+
+QString reactionLocationName(Client::ReactionLocation location)
+{
+    switch (location) {
+    case Client::ReactionLocation::HoverBar:
+        return QStringLiteral("Message Hover Bar");
+    case Client::ReactionLocation::InlineButton:
+        return QStringLiteral("Message Inline Button");
+    case Client::ReactionLocation::ContextMenu:
+        return QStringLiteral("Message Context Menu");
+    case Client::ReactionLocation::ReactionPicker:
+        return QStringLiteral("Message Reaction Picker");
+    }
+    return {};
+}
+
+QString reactionsEndpoint(Core::Snowflake channelId, Core::Snowflake messageId, const QString &reactionKey)
+{
+    return "/channels/" + QString::number(channelId) + "/messages/" + QString::number(messageId) + "/reactions/" + QString::fromLatin1(QUrl::toPercentEncoding(reactionKey, ":"));
+}
+
+Client::ReactionResult reactionResult(const HttpResponse &response)
+{
+    Client::ReactionResult result;
+    result.success = response.success;
+    result.statusCode = response.statusCode;
+    if (response.success)
+        return result;
+
+    const QJsonObject body = QJsonDocument::fromJson(response.body).object();
+    result.errorCode = body.value("code").toInt();
+    if (response.rateLimited())
+        result.retryAfterSeconds = qMax(1, qCeil(body.value("retry_after").toDouble(1.0)));
+    return result;
+}
+
+} // namespace
+
+void Client::addReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("location", reactionLocationName(location));
+    query.addQueryItem("type", QString::number(isBurst ? ReactionTypeBurst : ReactionTypeNormal));
+    const QString endpoint = reactionsEndpoint(channelId, messageId, reactionKey) + "/%40me?" + query.toString(QUrl::FullyEncoded);
+
+    httpClient->put(endpoint, QJsonObject{}, [channelId, messageId, callback](const HttpResponse &response) {
         if (!response.success)
-            qCWarning(LogDiscord) << "Failed to add reaction on message" << messageId
-                                  << "in channel" << channelId << ":" << response.error;
+            qCWarning(LogDiscord) << "Failed to add reaction on message" << messageId << "in channel" << channelId << ":" << response.error;
+        if (callback)
+            callback(reactionResult(response));
     });
 }
 
-void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QString &emoji,
-                            bool isBurst)
+void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback)
 {
-    QString encoded = QUrl::toPercentEncoding(emoji, ":");
-    QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
-                       QString::number(messageId) + "/reactions/" + encoded + "/%40me";
-    if (isBurst)
-        endpoint += "?burst=true";
-    else
-        endpoint += "?type=0";
+    QUrlQuery query;
+    query.addQueryItem("location", reactionLocationName(location));
+    query.addQueryItem("burst", isBurst ? "true" : "false");
+    const QString endpoint = reactionsEndpoint(channelId, messageId, reactionKey) + "/" + QString::number(isBurst ? ReactionTypeBurst : ReactionTypeNormal) + "/%40me?" + query.toString(QUrl::FullyEncoded);
 
-    httpClient->delete_(endpoint, [this, channelId, messageId](const HttpResponse &response) {
+    httpClient->delete_(endpoint, [channelId, messageId, callback](const HttpResponse &response) {
         if (!response.success)
-            qCWarning(LogDiscord) << "Failed to remove reaction on message" << messageId
-                                  << "in channel" << channelId << ":" << response.error;
+            qCWarning(LogDiscord) << "Failed to remove reaction on message" << messageId << "in channel" << channelId << ":" << response.error;
+        if (callback)
+            callback(reactionResult(response));
     });
 }
 
