@@ -93,7 +93,7 @@ private:
     void request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId, FetchPurpose purpose = FetchPurpose::Pixmap);
     [[nodiscard]] QString getCachePath(const QUrl &url, const QSize &size) const;
     [[nodiscard]] bool recentlyFailed(const ImageRequestKey &key) const;
-    void fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin, QNetworkAccessManager *nam);
+    void fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose);
     static bool isDiscordProxyUrl(const QUrl &url);
     static bool scalesToDevicePixels(const QUrl &url);
     static QUrl buildOptimizedUrl(const QUrl &proxyUrl, const QSize &displaySize, qreal dpr);

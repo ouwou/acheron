@@ -267,6 +267,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
             "width" INTEGER,
             "height" INTEGER,
             "duration_secs" REAL,
+            "flags" INTEGER,
             PRIMARY KEY("id")
         );
     )");

@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "ImageManager.hpp"
+#include "MiBRange.hpp"
 #include "Snowflake.hpp"
 
 namespace Acheron {
@@ -39,13 +40,6 @@ class AnimatedImageCache : public QObject
 {
     Q_OBJECT
 public:
-    struct MiBRange
-    {
-        int min;
-        int fallback;
-        int max;
-    };
-
     static constexpr MiBRange CacheLimit{ 64, 96, 512 };
     static constexpr MiBRange AnimationLimit{ 8, 24, 64 };
 

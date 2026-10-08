@@ -279,35 +279,7 @@ EmbedLayout calculateEmbedLayout(const EmbedData &embed, const QFont &font, int 
         return layout;
     }
 
-    if (embed.type == EmbedType::Gifv) {
-        layout.hasThumbnail = false;
-        layout.contentWidth = contentWidth;
-        int currentY = 0;
-
-        int imagesHeight = 0;
-        if (!embed.thumbnail.isNull()) {
-            QSize actualSize =
-                    embed.thumbnail.size().scaled(embed.thumbnailSize, Qt::KeepAspectRatio);
-            imagesHeight = actualSize.height();
-            layout.imagesRect =
-                    QRect(left, top + currentY, actualSize.width(), actualSize.height());
-            currentY += imagesHeight;
-        }
-
-        QFont gifFont = font;
-        gifFont.setPointSize(gifFont.pointSize() - 2);
-        QFontMetrics gifFm(gifFont);
-        int gifLabelHeight = gifFm.height() + 4;
-        currentY += gifLabelHeight;
-
-        layout.totalHeight = currentY;
-        layout.embedRect = QRect(left, top, embedWidth, layout.totalHeight);
-        layout.contentRect = QRect(contentLeft, top, contentWidth, layout.totalHeight);
-
-        return layout;
-    }
-
-    if (embed.type == EmbedType::Image) {
+    if (embed.type == EmbedType::Gifv || embed.type == EmbedType::Image) {
         layout.hasThumbnail = false;
         layout.contentWidth = contentWidth;
         int currentY = 0;
@@ -1063,26 +1035,24 @@ QString formatFileSize(qint64 bytes)
     return QString::number(bytes) + " B";
 }
 
+QRect centredCrop(const QSize &content, const QSize &target)
+{
+    const qreal targetAspect = qreal(target.width()) / target.height();
+    if (qreal(content.width()) / content.height() > targetAspect) {
+        const int width = qRound(content.height() * targetAspect);
+        return QRect((content.width() - width) / 2, 0, width, content.height());
+    }
+
+    const int height = qRound(content.width() / targetAspect);
+    return QRect(0, (content.height() - height) / 2, content.width(), height);
+}
+
 void drawCroppedPixmap(QPainter *painter, const QRect &targetRect, const QPixmap &pixmap)
 {
     if (pixmap.isNull())
         return;
 
-    QSize pixSize = pixmap.size() / pixmap.devicePixelRatio();
-    QRect sourceRect;
-
-    qreal targetAspect = qreal(targetRect.width()) / targetRect.height();
-    qreal pixAspect = qreal(pixSize.width()) / pixSize.height();
-
-    if (pixAspect > targetAspect) {
-        int cropWidth = qRound(pixSize.height() * targetAspect);
-        int cropX = (pixSize.width() - cropWidth) / 2;
-        sourceRect = QRect(cropX, 0, cropWidth, pixSize.height());
-    } else {
-        int cropHeight = qRound(pixSize.width() / targetAspect);
-        int cropY = (pixSize.height() - cropHeight) / 2;
-        sourceRect = QRect(0, cropY, pixSize.width(), cropHeight);
-    }
+    const QRect sourceRect = centredCrop(pixmap.size() / pixmap.devicePixelRatio(), targetRect.size());
 
     qreal dpr = pixmap.devicePixelRatio();
     QRect physicalSourceRect(qRound(sourceRect.x() * dpr), qRound(sourceRect.y() * dpr),

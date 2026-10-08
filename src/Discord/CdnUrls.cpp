@@ -15,6 +15,30 @@ namespace Cdn {
 namespace {
 
 constexpr qint64 RefreshWindowSecs = 60 * 60;
+constexpr int MaxProxyRequestPx = 4096;
+constexpr int LoopingVideoLongSidePx = 6016;
+constexpr int LoopingVideoShortSidePx = 3384;
+
+bool hasExtension(const QString &url, QLatin1String extension)
+{
+    for (auto at = url.indexOf(extension, 0, Qt::CaseInsensitive); at >= 0; at = url.indexOf(extension, at + 1, Qt::CaseInsensitive)) {
+        const auto end = at + extension.size();
+        if (end == url.size() || url[end] == QLatin1Char('?') || url[end] == QLatin1Char('#'))
+            return true;
+    }
+    return false;
+}
+
+QSize fittedWithin(const QSize &size, int maxSide)
+{
+    if (size.isEmpty())
+        return size;
+
+    const double widthScale = size.width() > maxSide ? double(maxSide) / size.width() : 1.0;
+    const QSize narrowed(qRound(size.width() * widthScale), qRound(size.height() * widthScale));
+    const double heightScale = narrowed.height() > maxSide ? double(maxSide) / narrowed.height() : 1.0;
+    return QSize(qRound(narrowed.width() * heightScale), qRound(narrowed.height() * heightScale));
+}
 
 qint64 expiryEpochSecs(const QUrl &url)
 {
@@ -126,6 +150,54 @@ bool hasExpired(const QUrl &url)
     if (!isSigned(url))
         return false;
     return QDateTime::currentSecsSinceEpoch() + RefreshWindowSecs >= expiryEpochSecs(url);
+}
+
+bool isDiscordAssetUrl(const QUrl &url)
+{
+    if (url.scheme() != QLatin1String("https"))
+        return false;
+
+    const QString host = url.host();
+    return host == QLatin1String("cdn.discordapp.com") || host.endsWith(QLatin1String(".discordapp.net"));
+}
+
+bool isAnimatedImage(const QUrl &originalUrl, bool flaggedAnimated)
+{
+    const QString original = originalUrl.toString();
+    if (hasExtension(original, QLatin1String(".gif")))
+        return true;
+    return flaggedAnimated && (hasExtension(original, QLatin1String(".webp")) || hasExtension(original, QLatin1String(".avif")));
+}
+
+QUrl animatedImageUrl(const QUrl &proxyUrl, bool flaggedAnimated, const QSize &sourceSize, const QSize &targetPixels)
+{
+    if (proxyUrl.host() == QLatin1String("cdn.discordapp.com"))
+        return proxyUrl;
+
+    const QString proxy = proxyUrl.toString();
+    const bool avif = hasExtension(proxy, QLatin1String(".avif"));
+
+    QUrlQuery query(proxyUrl);
+    if (flaggedAnimated && (avif || hasExtension(proxy, QLatin1String(".webp"))))
+        query.addQueryItem(QStringLiteral("animated"), QStringLiteral("true"));
+    if (avif)
+        query.addQueryItem(QStringLiteral("format"), QStringLiteral("webp"));
+
+    const QSize requested = fittedWithin(targetPixels, MaxProxyRequestPx);
+    if (!requested.isEmpty() && requested != sourceSize) {
+        query.addQueryItem(QStringLiteral("width"), QString::number(requested.width()));
+        query.addQueryItem(QStringLiteral("height"), QString::number(requested.height()));
+    }
+
+    QUrl animated = proxyUrl;
+    animated.setQuery(query);
+    return animated;
+}
+
+bool fitsLoopingVideoLimit(const QSize &naturalSize)
+{
+    return (naturalSize.width() <= LoopingVideoLongSidePx && naturalSize.height() <= LoopingVideoShortSidePx) ||
+           (naturalSize.width() <= LoopingVideoShortSidePx && naturalSize.height() <= LoopingVideoLongSidePx);
 }
 
 QUrl activityAsset(Core::Snowflake applicationId, const QString &key, int size)

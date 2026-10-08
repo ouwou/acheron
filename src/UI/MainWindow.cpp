@@ -13,6 +13,7 @@
 #include "Chat/ChatDelegate.hpp"
 #include "Chat/ChatView.hpp"
 #include "Chat/FrameAnimator.hpp"
+#include "Chat/GifPlayback.hpp"
 #include "Chat/InlineVideoController.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
@@ -120,6 +121,14 @@ void showReactionRejection(QWidget *parent, MessageManager::ReactionRejection re
     auto *box = new QMessageBox(QMessageBox::Information, title, text, QMessageBox::Ok, parent);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->open();
+}
+
+void applyGifSettings(GifPlayback *gifs)
+{
+    const QSettings settings;
+    gifs->setPlayMode(gifPlayModeFromSetting(settings.value("chat/gif_playback").toString()));
+    gifs->setMaxPlayingAtOnce(settings.value("chat/gif_max_playing", GifPlayback::DefaultPlayingAtOnce).toInt());
+    gifs->setClipMemoryLimitMiB(settings.value("chat/gif_max_mb", GifPlayback::ClipMemoryLimit.fallback).toInt());
 }
 } // namespace
 
@@ -1339,6 +1348,7 @@ void MainWindow::setupUi()
     chatView->frameAnimator()->setCache(animatedImages);
     chatView->frameAnimator()->setEmojiEnabled(QSettings().value("chat/animate_emoji", true).toBool());
     chatView->frameAnimator()->setStickersEnabled(QSettings().value("chat/animate_stickers", true).toBool());
+    applyGifSettings(chatView->gifPlayback());
     chatView->setItemDelegate(new ChatDelegate(session->getImageManager(), chatView));
     chatView->setIconSize(QSize(24, 24));
     chatView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -2476,6 +2486,9 @@ void MainWindow::openSettingsWindow()
         });
         connect(settingsWindow, &SettingsWindow::animateStickersChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setStickersEnabled(enabled);
+        });
+        connect(settingsWindow, &SettingsWindow::gifSettingsChanged, this, [this]() {
+            applyGifSettings(chatView->gifPlayback());
         });
         connect(settingsWindow, &SettingsWindow::animationCacheLimitChanged, session->getAnimatedImageCache(),
                 &Core::AnimatedImageCache::setCacheLimitMiB);

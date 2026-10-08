@@ -17,6 +17,7 @@ public:
 signals:
     void animateEmojiChanged(bool enabled);
     void animateStickersChanged(bool enabled);
+    void gifSettingsChanged();
     void animationCacheLimitChanged(int megabytes);
     void animationSizeLimitChanged(int megabytes);
 

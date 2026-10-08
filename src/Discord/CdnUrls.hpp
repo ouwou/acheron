@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QSize>
 #include <QString>
 #include <QUrl>
 
@@ -159,6 +160,11 @@ QUrl activityAsset(Core::Snowflake applicationId, const QString &key, int size);
 bool isDiscordMediaUrl(const QUrl &url);
 bool isSigned(const QUrl &url);
 bool hasExpired(const QUrl &url);
+
+[[nodiscard]] bool isDiscordAssetUrl(const QUrl &url);
+[[nodiscard]] bool isAnimatedImage(const QUrl &originalUrl, bool flaggedAnimated);
+[[nodiscard]] QUrl animatedImageUrl(const QUrl &proxyUrl, bool flaggedAnimated, const QSize &sourceSize, const QSize &targetPixels);
+[[nodiscard]] bool fitsLoopingVideoLimit(const QSize &naturalSize);
 
 } // namespace Cdn
 } // namespace Discord

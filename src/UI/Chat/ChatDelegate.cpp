@@ -10,6 +10,7 @@
 #include "Core/Media/PlayerPool.hpp"
 #include "UI/Chat/FrameAnimator.hpp"
 #include "UI/Chat/EmojiTextObject.hpp"
+#include "UI/Chat/GifPlayback.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Chat/VideoControls.hpp"
@@ -248,6 +249,60 @@ static void paintSpoilerOverlay(QPainter *painter, const QRect &rect, const QFon
     painter->drawText(rect, Qt::AlignCenter, ChatDelegate::tr("SPOILER"));
 }
 
+static constexpr int GifBadgeInset = 6;
+static constexpr int GifBadgePaddingX = 5;
+static constexpr int GifBadgePaddingY = 1;
+static constexpr int GifBadgeRadius = 4;
+static constexpr int GifBadgeBackdropAlpha = 153;
+static constexpr qreal GifBadgeFontScale = 0.8;
+static constexpr int SeamlessFitTolerancePx = 2;
+
+static void drawGifBadge(QPainter *painter, const QRect &mediaRect, const QFont &baseFont)
+{
+    QFont font = baseFont;
+    font.setBold(true);
+    font.setPointSizeF(baseFont.pointSizeF() * GifBadgeFontScale);
+    const QFontMetrics metrics(font);
+
+    const QString label = ChatDelegate::tr("GIF");
+    const QRect badge(mediaRect.left() + GifBadgeInset, mediaRect.top() + GifBadgeInset, metrics.horizontalAdvance(label) + 2 * GifBadgePaddingX, metrics.height() + 2 * GifBadgePaddingY);
+    if (!mediaRect.contains(badge))
+        return;
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(QColor(0, 0, 0, GifBadgeBackdropAlpha));
+    painter->drawRoundedRect(badge, GifBadgeRadius, GifBadgeRadius);
+    painter->setFont(font);
+    painter->setPen(Qt::white);
+    painter->drawText(badge, Qt::AlignCenter, label);
+    painter->restore();
+}
+
+static void drawClipFrame(QPainter *painter, const QRect &rect, const QImage &frame, ClipFit fit)
+{
+    painter->save();
+    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    if (fit == ClipFit::Crop) {
+        painter->drawImage(rect, frame, ChatLayout::centredCrop(frame.size(), rect.size()));
+    } else {
+        const QSize fitted = frame.size().scaled(rect.size(), Qt::KeepAspectRatio);
+        const bool fillsRect = rect.width() - fitted.width() <= SeamlessFitTolerancePx && rect.height() - fitted.height() <= SeamlessFitTolerancePx;
+        painter->drawImage(fillsRect ? rect : QRect(rect.topLeft(), fitted), frame);
+    }
+
+    painter->restore();
+}
+
+static GifPlayback::Shown showGif(GifPlayback *gifs, const GifKey &key, const QUrl &animatedUrl, const QRect &rect, ClipFit fit)
+{
+    if (!gifs || animatedUrl.isEmpty() || rect.isEmpty())
+        return {};
+    return gifs->show(key, animatedUrl, rect, fit);
+}
+
 static void paintMediaTarget(QPainter *painter,
                              const QStyleOptionViewItem &option,
                              const MediaTarget &target,
@@ -318,6 +373,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const auto *chatView = qobject_cast<const ChatView *>(option.widget);
     const InlineVideoController *video = chatView ? chatView->videoController() : nullptr;
     FrameAnimator *animator = chatView ? chatView->frameAnimator() : nullptr;
+    GifPlayback *gifs = chatView ? chatView->gifPlayback() : nullptr;
 
     if (animator && !animator->intersectsPaintDamage(option.rect)) {
         painter->restore();
@@ -327,6 +383,20 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (video) {
         if (const auto surface = video->surfaceCoveringDamage(index); surface && !surface->isAudio()) {
             paintMediaTarget(painter, option, *surface, video);
+            painter->restore();
+            return;
+        }
+    }
+
+    if (gifs) {
+        if (const auto clips = gifs->clipOnlyRepaint(index, option.rect)) {
+            for (const auto &clip : *clips) {
+                drawHoverHighlight(painter, option, chatView, index.row(), clip.rect);
+                drawHighlightFlash(painter, option, chatView, index.row(), clip.rect);
+                drawClipFrame(painter, clip.rect, clip.frame, clip.fit);
+                if (clip.badge)
+                    drawGifBadge(painter, clip.rect, option.font);
+            }
             painter->restore();
             return;
         }
@@ -360,6 +430,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     if (animator)
         animator->beginRow(index.row(), option.rect, layout.textRect);
+    if (gifs)
+        gifs->beginRow(index, option.rect);
 
     QRect messageRect = option.rect;
     if (layout.hasSeparator)
@@ -566,11 +638,18 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
             if (showBlurred)
                 displayPixmap = cachedBlur(att.pixmap);
 
-            if (isSingleImage)
+            const ClipFit fit = isSingleImage ? ClipFit::Fit : ClipFit::Crop;
+            const auto gif = showBlurred ? GifPlayback::Shown() : showGif(gifs, GifKeys::attachment(att.id), att.animatedUrl, imgLayout.rect, fit);
+
+            if (!gif.frame.isNull())
+                drawClipFrame(painter, imgLayout.rect, gif.frame, fit);
+            else if (isSingleImage)
                 painter->drawPixmap(imgLayout.rect, displayPixmap);
             else
                 ChatLayout::drawCroppedPixmap(painter, imgLayout.rect, displayPixmap);
 
+            if (gif.badge)
+                drawGifBadge(painter, imgLayout.rect, option.font);
             if (showBlurred)
                 paintSpoilerOverlay(painter, imgLayout.rect, option.font);
         } else {
@@ -664,32 +743,24 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         const auto &embedLayout = layout.embedLayouts[embedIdx];
         const auto &embed = embeds[embedIdx];
 
-        if (embed.type == EmbedType::Gifv) {
+        if (embed.type == EmbedType::Gifv || embed.type == EmbedType::Image) {
             if (!embedLayout.imagesRect.isNull() && !embed.thumbnail.isNull()) {
-                QPixmap scaledThumb = embed.thumbnail.scaled(
-                        embed.thumbnailSize * embed.thumbnail.devicePixelRatio(),
-                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                painter->drawPixmap(embedLayout.imagesRect.topLeft(), scaledThumb);
-            }
+                const bool loopsVideo = embed.type == EmbedType::Gifv;
+                const auto gif = loopsVideo ? showGif(gifs, GifKeys::embedVideo(ctx.messageId, embedIdx), embed.loopingVideoUrl, embedLayout.imagesRect, ClipFit::Fit)
+                                            : showGif(gifs, GifKeys::embedThumbnail(ctx.messageId, embedIdx), embed.thumbnailAnimatedUrl, embedLayout.imagesRect, ClipFit::Fit);
 
-            QFont gifFont = option.font;
-            gifFont.setPointSize(gifFont.pointSize() - 2);
-            painter->setFont(gifFont);
-            painter->setPen(option.palette.placeholderText().color());
-            QFontMetrics gifFm(gifFont);
-            int gifLabelTop = embedLayout.imagesRect.isNull() ? embedLayout.embedRect.top()
-                                                              : embedLayout.imagesRect.bottom();
-            painter->drawText(embedLayout.embedRect.left(), gifLabelTop + gifFm.ascent() + 2,
-                              "GIF");
-            continue;
-        }
+                if (!gif.frame.isNull()) {
+                    drawClipFrame(painter, embedLayout.imagesRect, gif.frame, ClipFit::Fit);
+                } else {
+                    QPixmap scaledThumb = embed.thumbnail.scaled(
+                            embed.thumbnailSize * embed.thumbnail.devicePixelRatio(),
+                            Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    painter->drawPixmap(embedLayout.imagesRect.topLeft(), scaledThumb);
+                }
 
-        if (embed.type == EmbedType::Image) {
-            if (!embedLayout.imagesRect.isNull() && !embed.thumbnail.isNull()) {
-                QPixmap scaledThumb = embed.thumbnail.scaled(
-                        embed.thumbnailSize * embed.thumbnail.devicePixelRatio(),
-                        Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                painter->drawPixmap(embedLayout.imagesRect.topLeft(), scaledThumb);
+                const bool stillOfUnplayableGif = loopsVideo && embed.loopingVideoUrl.isEmpty();
+                if (gif.badge || stillOfUnplayableGif)
+                    drawGifBadge(painter, embedLayout.imagesRect, option.font);
             }
             continue;
         }
@@ -709,9 +780,17 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         if (embedLayout.hasThumbnail && !embedLayout.thumbnailRect.isNull()) {
             QPixmap thumb = !embed.thumbnail.isNull() ? embed.thumbnail : embed.videoThumbnail;
             if (!thumb.isNull()) {
-                QPixmap scaledThumb = thumb.scaled(embedLayout.thumbnailRect.size(),
-                                                   Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                painter->drawPixmap(embedLayout.thumbnailRect.topLeft(), scaledThumb);
+                const auto gif = embed.thumbnail.isNull() ? GifPlayback::Shown()
+                                                          : showGif(gifs, GifKeys::embedThumbnail(ctx.messageId, embedIdx), embed.thumbnailAnimatedUrl, embedLayout.thumbnailRect, ClipFit::Fit);
+                if (!gif.frame.isNull()) {
+                    drawClipFrame(painter, embedLayout.thumbnailRect, gif.frame, ClipFit::Fit);
+                } else {
+                    QPixmap scaledThumb = thumb.scaled(embedLayout.thumbnailRect.size(),
+                                                       Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                    painter->drawPixmap(embedLayout.thumbnailRect.topLeft(), scaledThumb);
+                }
+                if (gif.badge)
+                    drawGifBadge(painter, embedLayout.thumbnailRect, option.font);
             }
         }
 
@@ -867,7 +946,12 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                 bool isSingleImage = (embed.images.size() == 1);
 
                 if (!img.pixmap.isNull()) {
-                    if (isSingleImage) {
+                    const ClipFit fit = isSingleImage ? ClipFit::Fit : ClipFit::Crop;
+                    const auto gif = showGif(gifs, GifKeys::embedImage(ctx.messageId, embedIdx, imgLayout.imageIndex), img.animatedUrl, imgLayout.rect, fit);
+
+                    if (!gif.frame.isNull()) {
+                        drawClipFrame(painter, imgLayout.rect, gif.frame, fit);
+                    } else if (isSingleImage) {
                         QPixmap scaledImage =
                                 img.pixmap.scaled(img.displaySize * img.pixmap.devicePixelRatio(),
                                                   Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -875,6 +959,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                     } else {
                         ChatLayout::drawCroppedPixmap(painter, imgLayout.rect, img.pixmap);
                     }
+                    if (gif.badge)
+                        drawGifBadge(painter, imgLayout.rect, option.font);
                 } else {
                     painter->fillRect(imgLayout.rect, QColor(60, 60, 60));
                     painter->setPen(option.palette.text().color());
@@ -1027,6 +1113,8 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
 
     if (animator)
         animator->endRow();
+    if (gifs)
+        gifs->endRow();
 
     painter->restore();
 }

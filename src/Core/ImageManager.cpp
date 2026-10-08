@@ -8,6 +8,8 @@
 #include <QUrlQuery>
 #include <QApplication>
 
+#include <memory>
+
 #include "Logging.hpp"
 #include "NetworkRequest.hpp"
 #include "Discord/CdnUrls.hpp"
@@ -18,6 +20,14 @@ namespace Core {
 namespace {
 constexpr qint64 FailedFetchRetryMs = 60 * 1000;
 constexpr int MaxMemoizedPlaceholderPx = 64;
+constexpr auto PartialDownloadSuffix = ".part";
+
+QByteArray fileContents(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
 } // namespace
 
 ImageManager::ImageManager(QObject *parent) : QObject(parent)
@@ -224,26 +234,46 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
     if (pin != PinGroup::None)
         pendingPins.insert(k, pin);
 
-    fetchFromNetwork(url, size, pin, nam);
+    fetchFromNetwork(url, size, nam, purpose);
 }
 
-void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup pin, QNetworkAccessManager *nam)
+void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose)
 {
     qreal dpr = qApp->devicePixelRatio();
     const bool deviceScaled = scalesToDevicePixels(url);
 
     // the format override in the optimized query would break an animated sticker
-    const bool optimizable = isDiscordProxyUrl(url) && !Discord::Cdn::isStickerUrl(url);
+    const bool optimizable = purpose == FetchPurpose::Pixmap && isDiscordProxyUrl(url) && !Discord::Cdn::isStickerUrl(url);
     QUrl fetchUrl = optimizable ? buildOptimizedUrl(url, size, dpr) : url;
     QNetworkReply *reply = nam->get(networkRequest(fetchUrl));
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr]() {
+    const QString path = getCachePath(url, size);
+    std::shared_ptr<QFile> streamedToDisk;
+    if (purpose == FetchPurpose::DownloadOnly) {
+        streamedToDisk = std::make_shared<QFile>(path + PartialDownloadSuffix);
+        if (streamedToDisk->open(QIODevice::WriteOnly))
+            connect(reply, &QNetworkReply::readyRead, this, [reply, streamedToDisk]() { streamedToDisk->write(reply->readAll()); });
+        else
+            streamedToDisk.reset();
+    }
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr, path, streamedToDisk]() {
         ImageRequestKey k{ url, size };
         PinGroup pin = pendingPins.value(k, PinGroup::None);
         pendingPins.remove(k);
 
-        if (reply->error() != QNetworkReply::NoError) {
-            qCWarning(LogCore) << "Failed to fetch image:" << reply->errorString();
+        bool fetched = reply->error() == QNetworkReply::NoError;
+        if (fetched && streamedToDisk) {
+            streamedToDisk->write(reply->readAll());
+            streamedToDisk->close();
+            QFile::remove(path);
+            fetched = streamedToDisk->rename(path);
+        }
+
+        if (!fetched) {
+            qCWarning(LogCore) << "Failed to fetch image:" << url << reply->errorString();
+            if (streamedToDisk)
+                streamedToDisk->remove();
             requests.remove(k);
             downloadOnlyRequests.remove(k);
             failedAtMs.insert(k, uptime.elapsed());
@@ -253,18 +283,21 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, PinGroup
         }
         failedAtMs.remove(k);
 
-        QByteArray data = reply->readAll();
-        reply->deleteLater();
-
-        // save to disk cache
-        QString path = getCachePath(url, size);
-        QFile file(path);
-        if (file.open(QIODevice::WriteOnly)) {
-            file.write(data);
-            file.close();
-        }
-
         const bool pixmapWanted = !downloadOnlyRequests.remove(k);
+
+        QByteArray data;
+        if (streamedToDisk) {
+            if (pixmapWanted)
+                data = fileContents(path);
+        } else {
+            data = reply->readAll();
+            QFile file(path);
+            if (file.open(QIODevice::WriteOnly)) {
+                file.write(data);
+                file.close();
+            }
+        }
+        reply->deleteLater();
 
         QPixmap pixmap;
         if (pixmapWanted && pixmap.loadFromData(data)) {

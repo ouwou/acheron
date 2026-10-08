@@ -37,6 +37,7 @@ void SettingsWindow::setupUi()
     addPage(tr("General"), general);
     connect(general, &GeneralPage::animateEmojiChanged, this, &SettingsWindow::animateEmojiChanged);
     connect(general, &GeneralPage::animateStickersChanged, this, &SettingsWindow::animateStickersChanged);
+    connect(general, &GeneralPage::gifSettingsChanged, this, &SettingsWindow::gifSettingsChanged);
     connect(general, &GeneralPage::animationCacheLimitChanged, this, &SettingsWindow::animationCacheLimitChanged);
     connect(general, &GeneralPage::animationSizeLimitChanged, this, &SettingsWindow::animationSizeLimitChanged);
 

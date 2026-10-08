@@ -34,6 +34,13 @@ static bool isSystemMessageType(Discord::MessageType type)
     }
 }
 
+static QUrl animatedUrlFor(const QUrl &proxyUrl, const QUrl &originalUrl, bool flaggedAnimated, const QSize &sourceSize, const QSize &displaySize)
+{
+    if (!Discord::Cdn::isDiscordAssetUrl(proxyUrl) || !Discord::Cdn::isAnimatedImage(originalUrl, flaggedAnimated))
+        return {};
+    return Discord::Cdn::animatedImageUrl(proxyUrl, flaggedAnimated, sourceSize, displaySize * qApp->devicePixelRatio());
+}
+
 static EmbedType embedTypeFromString(const QString &typeStr)
 {
     if (typeStr.isEmpty() || typeStr == "rich")
@@ -492,6 +499,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 }
 
                 data.displaySize = Core::ImageManager::calculateDisplaySize(original);
+                if (data.isImage)
+                    data.animatedUrl = animatedUrlFor(data.proxyUrl, data.originalUrl, att.isFlaggedAnimated(), original, data.displaySize);
                 if (!att.localPreview.isNull()) {
                     // pending paste preview: pixels live in memory, not on disk
                     data.pixmap = previewPixmap(att.id, att.localPreview, data.displaySize);
@@ -574,6 +583,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 if (embed.image->width.hasValue() && embed.image->height.hasValue())
                     origSize = QSize(*embed.image->width, *embed.image->height);
                 imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
+                imageData.animatedUrl = animatedUrlFor(imageData.url, imageData.originalUrl, embed.image->isFlaggedAnimated(), origSize, imageData.displaySize);
                 imageData.pixmap =
                         suppressImageFetch
                                 ? imageManager->getIfCached(imageData.url, imageData.displaySize)
@@ -667,6 +677,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                         data.thumbnailSize = origSize.isValid()
                                                      ? origSize.scaled(80, 80, Qt::KeepAspectRatio)
                                                      : QSize(80, 80);
+                    if (data.type != EmbedType::Gifv)
+                        data.thumbnailAnimatedUrl = animatedUrlFor(data.thumbnailUrl, data.thumbnailOriginalUrl, embed.thumbnail->isFlaggedAnimated(), origSize, data.thumbnailSize);
                     data.thumbnail =
                             suppressImageFetch
                                     ? imageManager->getIfCached(data.thumbnailUrl,
@@ -682,6 +694,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     if (embed.image->width.hasValue() && embed.image->height.hasValue())
                         origSize = QSize(*embed.image->width, *embed.image->height);
                     imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
+                    imageData.animatedUrl = animatedUrlFor(imageData.url, imageData.originalUrl, embed.image->isFlaggedAnimated(), origSize, imageData.displaySize);
                     imageData.pixmap =
                             suppressImageFetch
                                     ? imageManager->getIfCached(imageData.url,
@@ -698,7 +711,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     const QString videoType = embed.video->contentType.hasValue()
                                                       ? *embed.video->contentType
                                                       : QString();
-                    if (!mediaUrl.isEmpty() && Core::Media::canPlay(videoType, mediaUrl)) {
+                    const QSize videoNaturalSize(embed.video->width.hasValue() ? *embed.video->width : 0, embed.video->height.hasValue() ? *embed.video->height : 0);
+                    if (data.type == EmbedType::Gifv) {
+                        if (Core::Media::isSupported() && !data.thumbnailUrl.isEmpty() && Discord::Cdn::isDiscordAssetUrl(mediaUrl) && Discord::Cdn::fitsLoopingVideoLimit(videoNaturalSize))
+                            data.loopingVideoUrl = mediaUrl;
+                    } else if (!mediaUrl.isEmpty() && Core::Media::canPlay(videoType, mediaUrl)) {
                         data.videoUrl = mediaUrl;
                         data.videoPlayable = true;
                         hasAnything = true;

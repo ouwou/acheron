@@ -198,6 +198,8 @@ set(PROJECT_SOURCES
     src/Core/Media/MediaDecoder.cpp
     src/Core/Media/AudioOutput.cpp
     src/Core/Media/PlayerPool.cpp
+    src/Core/Media/ClipDecoder.cpp
+    src/Core/Media/ClipPlayer.cpp
     src/Core/Media/CurlAvio.cpp
     src/UI/MainWindow.cpp
     src/UI/BrowserCaptchaResolver.cpp
@@ -246,6 +248,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatView.cpp
     src/UI/Chat/ChatLayout.cpp
     src/UI/Chat/InlineVideoController.cpp
+    src/UI/Chat/GifPlayback.cpp
     src/UI/Chat/FrameAnimator.cpp
     src/UI/Chat/EmojiTextObject.cpp
     src/UI/Chat/MessageTextDocument.cpp
@@ -408,7 +411,18 @@ if(BUILD_TESTS)
     target_include_directories(TestEmojiGrid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME EmojiGridTests COMMAND TestEmojiGrid)
 
+    qt_add_executable(TestCdnUrls tests/tst_CdnUrls.cpp src/Discord/CdnUrls.cpp src/Core/Snowflake.cpp)
+    target_link_libraries(TestCdnUrls PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestCdnUrls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME CdnUrlTests COMMAND TestCdnUrls)
+
     if(TARGET ffmpeg)
+        qt_add_executable(TestClips tests/tst_Clips.cpp src/Core/Media/ClipDecoder.cpp src/Core/Media/ClipPlayer.cpp)
+        target_link_libraries(TestClips PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg)
+        target_compile_definitions(TestClips PRIVATE ACHERON_HAVE_FFMPEG)
+        target_include_directories(TestClips PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        add_test(NAME ClipTests COMMAND TestClips)
+
         qt_add_executable(TestApng tests/tst_Apng.cpp src/Core/ApngDecoder.cpp)
         target_link_libraries(TestApng PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg)
         target_compile_definitions(TestApng PRIVATE ACHERON_HAVE_FFMPEG)
@@ -430,9 +444,9 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid)
+        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls)
         if(TARGET TestApng)
-            list(APPEND _msvc_test_targets TestApng)
+            list(APPEND _msvc_test_targets TestApng TestClips)
         endif()
         foreach(test_target ${_msvc_test_targets})
             target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)

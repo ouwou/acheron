@@ -13,6 +13,7 @@
 #include "Core/TimeUtils.hpp"
 #include "Discord/ChannelLink.hpp"
 #include "UI/Chat/FrameAnimator.hpp"
+#include "UI/Chat/GifPlayback.hpp"
 #include "UI/Chat/InlineVideoController.hpp"
 #include "UI/Chat/MediaTarget.hpp"
 #include "UI/Dialogs/ConfirmPopup.hpp"
@@ -128,6 +129,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
 
     video = new InlineVideoController(this);
     animator = new FrameAnimator(this);
+    gifs = new GifPlayback(this);
 
     jumpToPresentBar = new JumpToPresentBar(this);
     jumpToPresentBar->setVisible(false);
@@ -165,6 +167,12 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, &ChatView::updateJumpToPresentBar);
 }
 
+void ChatView::setImageManager(Core::ImageManager *manager)
+{
+    imageManager = manager;
+    gifs->setImageManager(manager);
+}
+
 bool ChatView::hasTextSelection() const
 {
     return selectionAnchor.isValid() && selectionHead.isValid() && selectionAnchor != selectionHead;
@@ -186,6 +194,7 @@ void ChatView::setModel(QAbstractItemModel *model)
 
     video->attachModel(model);
     animator->attachModel(model);
+    gifs->attachModel(model);
 
     connect(model, &QAbstractItemModel::modelReset, this, &ChatView::onModelReset);
     if (auto *chatModel = qobject_cast<ChatModel *>(model))
@@ -201,6 +210,7 @@ void ChatView::resizeEvent(QResizeEvent *event)
 {
     video->invalidateRects();
     animator->invalidateRects();
+    gifs->viewportMoved();
 
     QListView::resizeEvent(event);
     positionJumpToPresentBar();
@@ -216,20 +226,24 @@ void ChatView::paintEvent(QPaintEvent *event)
 {
     video->setPaintDamage(event->rect());
     animator->setPaintDamage(event->region());
+    gifs->setPaintDamage(event->region());
     QListView::paintEvent(event);
     video->setPaintDamage(QRect());
     animator->setPaintDamage(QRegion());
+    gifs->setPaintDamage(QRegion());
 }
 
 void ChatView::showEvent(QShowEvent *event)
 {
     QListView::showEvent(event);
     animator->setViewVisible(true);
+    gifs->setViewVisible(true);
 }
 
 void ChatView::hideEvent(QHideEvent *event)
 {
     animator->setViewVisible(false);
+    gifs->setViewVisible(false);
     QListView::hideEvent(event);
     updateHoveredMessage();
 }
@@ -320,6 +334,7 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
     auto region = ChatLayout::hitTest(resolved, pos);
 
     video->updateHover(region ? MediaTargets::forRegion(resolved, *region) : MediaTarget(), pos);
+    gifs->updateHover(pos);
 
     Qt::CursorShape shape = Qt::ArrowCursor;
     int charPos = -1;
@@ -527,6 +542,7 @@ void ChatView::leaveEvent(QEvent *event)
 
     if (!video->dragging())
         video->clearHover();
+    gifs->clearHover();
 
     if (needsUpdate) {
         viewport()->update();
@@ -702,6 +718,7 @@ void ChatView::onScrollBarValueChanged(int)
     updateScrollState();
     updateHoveredMessage();
 
+    gifs->viewportMoved();
     if (underMouse())
         video->refreshHoverAt(viewport()->mapFromGlobal(QCursor::pos()));
 }

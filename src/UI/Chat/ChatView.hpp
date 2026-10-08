@@ -17,6 +17,7 @@ namespace Acheron {
 namespace UI {
 
 class FrameAnimator;
+class GifPlayback;
 class ImageViewer;
 class InlineVideoController;
 struct ChatCursor
@@ -64,7 +65,7 @@ class ChatView : public QListView
 public:
     ChatView(QWidget *parent = nullptr);
 
-    void setImageManager(Core::ImageManager *manager) { imageManager = manager; }
+    void setImageManager(Core::ImageManager *manager);
     void setEmojiManager(Core::EmojiManager *manager, Core::Snowflake accountId);
 
     int hoveredRowAtPaint() const { return hoveredRow; }
@@ -79,6 +80,7 @@ public:
 
     [[nodiscard]] InlineVideoController *videoController() const { return video; }
     [[nodiscard]] FrameAnimator *frameAnimator() const { return animator; }
+    [[nodiscard]] GifPlayback *gifPlayback() const { return gifs; }
 
     static constexpr int InlineEditMinHeight = 60;
 
@@ -188,6 +190,7 @@ private:
 
     InlineVideoController *video = nullptr;
     FrameAnimator *animator = nullptr;
+    GifPlayback *gifs = nullptr;
     Core::ImageManager *imageManager = nullptr;
     QPointer<Core::EmojiManager> emojis;
 

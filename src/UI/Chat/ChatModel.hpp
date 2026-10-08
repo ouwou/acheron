@@ -20,6 +20,7 @@ struct AttachmentData
     Snowflake id;
     QUrl proxyUrl;
     QUrl originalUrl;
+    QUrl animatedUrl;
     QSize displaySize;
     QPixmap pixmap;
     bool isLoading;
@@ -51,6 +52,7 @@ struct EmbedImageData
 {
     QUrl url;
     QUrl originalUrl;
+    QUrl animatedUrl;
     QPixmap pixmap;
     QSize displaySize;
 };
@@ -149,6 +151,7 @@ struct EmbedData
 
     QUrl thumbnailUrl;
     QUrl thumbnailOriginalUrl;
+    QUrl thumbnailAnimatedUrl;
     QPixmap thumbnail;
     QSize thumbnailSize;
 
@@ -160,6 +163,7 @@ struct EmbedData
 
     QUrl videoUrl;
     bool videoPlayable = false;
+    QUrl loopingVideoUrl;
 
     QString providerName;
     QString providerUrl;

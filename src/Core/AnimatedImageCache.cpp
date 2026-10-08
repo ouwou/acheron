@@ -9,6 +9,7 @@
 #include <cmath>
 #include <optional>
 
+#include "AnimationTiming.hpp"
 #include "ApngDecoder.hpp"
 #include "Logging.hpp"
 #include "LottieDecoder.hpp"
@@ -22,13 +23,6 @@ constexpr int MaxFrames = 300;
 constexpr int KiBPerMiB = 1024;
 constexpr qsizetype BytesPerMiB = 1024 * 1024;
 constexpr double MinBudgetScale = 0.5;
-
-int normalizedDelay(int delayMs)
-{
-    if (delayMs <= 10)
-        return 100;
-    return std::max(delayMs, 20);
-}
 
 std::optional<QSize> frameSizeWithinBudget(const QSize &wanted, int frameCount, qsizetype byteBudget)
 {
@@ -192,7 +186,7 @@ AnimatedImageCache::Decoded AnimatedImageCache::decodeApng(Apng::Reader &apng, c
     int delayMs = 0;
     while (apng.next(canvas, delayMs)) {
         out.frames.append(scaledFrame(canvas, *frameSize));
-        out.delaysMs.append(normalizedDelay(delayMs));
+        out.delaysMs.append(normalizedFrameDelayMs(delayMs));
     }
     return out;
 }
@@ -259,7 +253,7 @@ AnimatedImageCache::Decoded AnimatedImageCache::decodeWithImageReader(const QByt
         }
 
         out.frames.append(frame);
-        out.delaysMs.append(normalizedDelay(delay));
+        out.delaysMs.append(normalizedFrameDelayMs(delay));
     }
     return out;
 }

@@ -40,8 +40,8 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     QSqlQuery qAtt(db);
     qAtt.prepare(R"(
         INSERT OR REPLACE INTO attachments
-        (id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs)
-        VALUES (:id, :message_id, :filename, :content_type, :size, :url, :proxy_url, :width, :height, :duration_secs)
+        (id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs, flags)
+        VALUES (:id, :message_id, :filename, :content_type, :size, :url, :proxy_url, :width, :height, :duration_secs, :flags)
     )");
 
     // Collect referenced messages to save as their own rows
@@ -97,6 +97,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
                 bindOptional(qAtt, ":width", att.width);
                 bindOptional(qAtt, ":height", att.height);
                 bindOptional(qAtt, ":duration_secs", att.durationSecs);
+                qAtt.bindValue(":flags", att.flags.hasValue() ? QVariant(static_cast<int>(*att.flags)) : QVariant());
 
                 execLogged(qAtt, "MessageRepository: Save attachment");
             }
@@ -405,7 +406,7 @@ void MessageRepository::loadAttachmentsForMessages(QList<Discord::Message> &mess
     }
 
     QString query = QString(R"(
-        SELECT id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs
+        SELECT id, message_id, filename, content_type, size, url, proxy_url, width, height, duration_secs, flags
         FROM attachments
         WHERE message_id IN (%1)
     )")
@@ -435,6 +436,8 @@ void MessageRepository::loadAttachmentsForMessages(QList<Discord::Message> &mess
             att.height = q.value(8).toInt();
         if (!q.value(9).isNull())
             att.durationSecs = q.value(9).toDouble();
+        if (!q.value(10).isNull())
+            att.flags = static_cast<Discord::AttachmentFlags>(q.value(10).toInt());
 
         if (!messages[idx].attachments.hasValue())
             messages[idx].attachments = QList<Discord::Attachment>();

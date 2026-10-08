@@ -998,11 +998,14 @@ struct EmbedFooter : Core::JsonUtils::JsonObject
 
 struct EmbedMedia : Core::JsonUtils::JsonObject
 {
+    static constexpr int IsAnimatedFlag = 1 << 5;
+
     Field<QString> url;
     Field<QString, true> proxyUrl;
     Field<int, true> width;
     Field<int, true> height;
     Field<QString, true> contentType;
+    Field<int, true> flags;
 
     static EmbedMedia fromJson(const QJsonObject &obj)
     {
@@ -1012,8 +1015,11 @@ struct EmbedMedia : Core::JsonUtils::JsonObject
         get(obj, "width", image.width);
         get(obj, "height", image.height);
         get(obj, "content_type", image.contentType);
+        get(obj, "flags", image.flags);
         return image;
     }
+
+    [[nodiscard]] bool isFlaggedAnimated() const { return flags.hasValue() && (*flags & IsAnimatedFlag); }
 };
 
 struct EmbedProvider : Core::JsonUtils::JsonObject
@@ -1142,6 +1148,11 @@ struct Attachment : Core::JsonUtils::JsonObject
     bool isSpoiler() const
     {
         return flags.hasValue() && flags->testFlag(AttachmentFlag::IS_SPOILER);
+    }
+
+    [[nodiscard]] bool isFlaggedAnimated() const
+    {
+        return flags.hasValue() && flags->testFlag(AttachmentFlag::IS_ANIMATED);
     }
 };
 

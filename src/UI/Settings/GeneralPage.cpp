@@ -9,12 +9,14 @@
 #include <QVBoxLayout>
 
 #include "Core/AnimatedImageCache.hpp"
+#include "Core/MiBRange.hpp"
+#include "UI/Chat/GifPlayback.hpp"
 
 namespace Acheron {
 namespace UI {
 
 static QSpinBox *addMemoryLimit(QVBoxLayout *layout, QWidget *parent, const QString &title, const QString &explanation,
-                                const QString &settingsKey, const Core::AnimatedImageCache::MiBRange &range)
+                                const QString &settingsKey, const Core::MiBRange &range)
 {
     auto *row = new QHBoxLayout();
     row->addWidget(new QLabel(title, parent));
@@ -54,6 +56,40 @@ GeneralPage::GeneralPage(QWidget *parent)
     animateStickersCheckbox = new QCheckBox(tr("Animate stickers"), this);
     animateStickersCheckbox->setChecked(QSettings().value("chat/animate_stickers", true).toBool());
     layout->addWidget(animateStickersCheckbox);
+
+    auto *gifRow = new QHBoxLayout();
+    gifRow->addWidget(new QLabel(tr("GIFs"), this));
+    auto *gifPlayModeCombo = new QComboBox(this);
+    gifPlayModeCombo->addItem(tr("Play when Acheron is focused"), "focused");
+    gifPlayModeCombo->addItem(tr("Play on hover"), "hover");
+    gifPlayModeCombo->addItem(tr("Never play"), "never");
+    gifPlayModeCombo->setCurrentIndex(qMax(0, gifPlayModeCombo->findData(QSettings().value("chat/gif_playback", "focused").toString())));
+    gifRow->addWidget(gifPlayModeCombo);
+    auto *gifsAtOnce = new QSpinBox(this);
+    gifsAtOnce->setRange(GifPlayback::FewestPlayingAtOnce, GifPlayback::MostPlayingAtOnce);
+    gifsAtOnce->setPrefix(tr("up to "));
+    gifsAtOnce->setSuffix(tr(" at once"));
+    gifsAtOnce->setValue(QSettings().value("chat/gif_max_playing", GifPlayback::DefaultPlayingAtOnce).toInt());
+    gifRow->addWidget(gifsAtOnce);
+    gifRow->addStretch();
+    layout->addLayout(gifRow);
+
+    QSpinBox *gifMemoryLimit = addMemoryLimit(
+            layout, this, tr("Largest GIF"),
+            tr("While it plays, a GIF needs memory in proportion to its own resolution, however small it is shown. "
+               "One that would need more than this stays a still picture."),
+            "chat/gif_max_mb", GifPlayback::ClipMemoryLimit);
+    connect(gifMemoryLimit, qOverload<int>(&QSpinBox::valueChanged), this, &GeneralPage::gifSettingsChanged);
+
+    connect(gifPlayModeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, gifPlayModeCombo](int index) {
+        QSettings().setValue("chat/gif_playback", gifPlayModeCombo->itemData(index).toString());
+        emit gifSettingsChanged();
+    });
+
+    connect(gifsAtOnce, qOverload<int>(&QSpinBox::valueChanged), this, [this](int count) {
+        QSettings().setValue("chat/gif_max_playing", count);
+        emit gifSettingsChanged();
+    });
 
     using Core::AnimatedImageCache;
     QSpinBox *cacheLimit = addMemoryLimit(

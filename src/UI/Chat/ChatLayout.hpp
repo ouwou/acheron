@@ -342,6 +342,7 @@ int hitTestCharIndex(const QAbstractItemView *view, const QModelIndex &index, co
 
 QString formatFileSize(qint64 bytes);
 
+[[nodiscard]] QRect centredCrop(const QSize &content, const QSize &target);
 void drawCroppedPixmap(QPainter *painter, const QRect &targetRect, const QPixmap &pixmap);
 QPixmap createBlurredPixmap(const QPixmap &source, int blurRadius = 30);
 
