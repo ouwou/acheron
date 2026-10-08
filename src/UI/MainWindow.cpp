@@ -6,6 +6,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
+#include <QSystemTrayIcon>
 
 #include <utility>
 
@@ -47,6 +48,7 @@
 #include "SlowModeIndicator.hpp"
 #include "ConnectionBanner.hpp"
 #include "ChannelTopicLine.hpp"
+#include "TrayIcon.hpp"
 #include "BrowserCaptchaResolver.hpp"
 #include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
@@ -190,6 +192,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 
     setupUi();
     setupMenu();
+    applyCloseToTray();
 
     qApp->installEventFilter(this);
 
@@ -269,6 +272,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     saveWindowState();
 
+    const bool reachableFromTray = trayIcon && QSystemTrayIcon::isSystemTrayAvailable();
+    qApp->setQuitOnLastWindowClosed(!reachableFromTray);
     hide();
 
     // if (session)
@@ -2456,6 +2461,7 @@ void MainWindow::openSettingsWindow()
             setChannelListMode(classic ? ChannelListMode::Classic : ChannelListMode::Tree);
         });
         connect(settingsWindow, &SettingsWindow::channelListIndentChanged, this, &MainWindow::applyChannelIndent);
+        connect(settingsWindow, &SettingsWindow::closeToTrayChanged, this, &MainWindow::applyCloseToTray);
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setEmojiEnabled(enabled);
             if (expressionPicker)
@@ -2478,6 +2484,41 @@ void MainWindow::openSettingsWindow()
     settingsWindow->show();
     settingsWindow->raise();
     settingsWindow->activateWindow();
+}
+
+void MainWindow::applyCloseToTray()
+{
+    const bool wanted = QSettings().value("general/close_to_tray", false).toBool();
+    if (wanted == (trayIcon != nullptr))
+        return;
+
+    if (!wanted) {
+        if (isHidden())
+            showFromTray();
+        delete trayIcon;
+        trayIcon = nullptr;
+        return;
+    }
+
+    trayIcon = new TrayIcon(this);
+    trayIcon->setToolTip(windowTitle());
+    connect(this, &QWidget::windowTitleChanged, trayIcon, &TrayIcon::setToolTip);
+    connect(trayIcon, &TrayIcon::showWindowRequested, this, &MainWindow::showFromTray);
+    connect(trayIcon, &TrayIcon::quitRequested, this, &MainWindow::quitFromTray);
+}
+
+void MainWindow::showFromTray()
+{
+    setWindowState(windowState() & ~Qt::WindowMinimized);
+    show();
+    raise();
+    activateWindow();
+}
+
+void MainWindow::quitFromTray()
+{
+    saveWindowState();
+    qApp->quit();
 }
 
 void MainWindow::onTypingStart(const Discord::TypingStart &event)

@@ -35,6 +35,7 @@ void SettingsWindow::setupUi()
 
     auto *general = new GeneralPage(this);
     addPage(tr("General"), general);
+    connect(general, &GeneralPage::closeToTrayChanged, this, &SettingsWindow::closeToTrayChanged);
     connect(general, &GeneralPage::animateEmojiChanged, this, &SettingsWindow::animateEmojiChanged);
     connect(general, &GeneralPage::animateStickersChanged, this, &SettingsWindow::animateStickersChanged);
     connect(general, &GeneralPage::gifSettingsChanged, this, &SettingsWindow::gifSettingsChanged);

@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file>acheron.svg</file>
         <file>resources/placeholder.png</file>
         <file>resources/emoji_data.json</file>
         <file>resources/icons/lucide/arrow-down.svg</file>

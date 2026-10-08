@@ -47,6 +47,7 @@ class SlowModeIndicator;
 class ConnectionBanner;
 class ChannelTopicLine;
 class GuildSettingsWindow;
+class TrayIcon;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
 #endif
@@ -231,11 +232,15 @@ private:
 #endif
     AccountsWindow *accountsWindow = nullptr;
     SettingsWindow *settingsWindow = nullptr;
+    TrayIcon *trayIcon = nullptr;
     QHash<QPair<Core::Snowflake, Core::Snowflake>, QPointer<GuildSettingsWindow>> guildSettingsWindows;
 
 private slots:
     void openAccountsWindow();
     void openSettingsWindow();
+    void applyCloseToTray();
+    void showFromTray();
+    void quitFromTray();
 
 private:
     Core::Session *session;

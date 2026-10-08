@@ -211,6 +211,7 @@ set(PROJECT_SOURCES
     src/UI/ChannelTopicLine.cpp
     src/UI/ElidedLabel.cpp
     src/UI/StatusIndicator.cpp
+    src/UI/TrayIcon.cpp
     src/UI/ProxyLineEdit.cpp
     src/UI/ImageViewer.cpp
     src/UI/VideoFullscreenWindow.cpp

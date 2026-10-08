@@ -15,6 +15,7 @@ public:
     explicit GeneralPage(QWidget *parent = nullptr);
 
 signals:
+    void closeToTrayChanged();
     void animateEmojiChanged(bool enabled);
     void animateStickersChanged(bool enabled);
     void gifSettingsChanged();

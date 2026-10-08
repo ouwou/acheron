@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QSettings>
 #include <QSpinBox>
+#include <QSystemTrayIcon>
 #include <QVBoxLayout>
 
 #include "Core/AnimatedImageCache.hpp"
@@ -48,6 +49,15 @@ GeneralPage::GeneralPage(QWidget *parent)
     inMemoryCacheCheckbox = new QCheckBox(tr("In-memory cache database (requires restart)"), this);
     inMemoryCacheCheckbox->setChecked(QSettings().value("general/in_memory_cache", false).toBool());
     layout->addWidget(inMemoryCacheCheckbox);
+
+    auto *closeToTrayCheckbox = new QCheckBox(tr("Keep running in the system tray when the window is closed"), this);
+    closeToTrayCheckbox->setChecked(QSettings().value("general/close_to_tray", false).toBool());
+    closeToTrayCheckbox->setEnabled(QSystemTrayIcon::isSystemTrayAvailable());
+    layout->addWidget(closeToTrayCheckbox);
+    connect(closeToTrayCheckbox, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue("general/close_to_tray", checked);
+        emit closeToTrayChanged();
+    });
 
     animateEmojiCheckbox = new QCheckBox(tr("Animate emoji"), this);
     animateEmojiCheckbox->setChecked(QSettings().value("chat/animate_emoji", true).toBool());
