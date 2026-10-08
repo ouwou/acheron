@@ -10,6 +10,7 @@
 #include "ChatModel.hpp"
 #include "MessageActionBar.hpp"
 #include "Core/Emoji/EmojiManager.hpp"
+#include "Core/Gifs/FavoriteGifs.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Client.hpp"
 
@@ -66,6 +67,7 @@ public:
     ChatView(QWidget *parent = nullptr);
 
     void setImageManager(Core::ImageManager *manager);
+    void setFavoriteGifs(Core::FavoriteGifs *favoriteGifs);
     void setEmojiManager(Core::EmojiManager *manager, Core::Snowflake accountId);
 
     int hoveredRowAtPaint() const { return hoveredRow; }
@@ -191,6 +193,7 @@ private:
     InlineVideoController *video = nullptr;
     FrameAnimator *animator = nullptr;
     GifPlayback *gifs = nullptr;
+    bool pressedGifStar = false;
     Core::ImageManager *imageManager = nullptr;
     QPointer<Core::EmojiManager> emojis;
 

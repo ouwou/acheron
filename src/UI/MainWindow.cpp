@@ -51,7 +51,6 @@
 #include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
-#include "Emoji/EmojiPicker.hpp"
 #include "Discord/CdnUrls.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/MemberListManager.hpp"
@@ -476,9 +475,10 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     forumModel->setManager(nullptr);
     typingTracker->clear();
     typingTracker->setUserManager(nullptr);
-    if (emojiPicker)
-        emojiPicker->hide();
+    if (expressionPicker)
+        expressionPicker->hide();
     chatView->setEmojiManager(nullptr, Core::Snowflake());
+    chatView->setFavoriteGifs(nullptr);
 
     currentInstance = nullptr;
 }
@@ -499,8 +499,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
     }
 
-    if (emojiPicker)
-        emojiPicker->hide();
+    if (expressionPicker)
+        expressionPicker->hide();
 
     currentInstance = newInstance;
     auto *msgs = currentInstance->messages();
@@ -528,6 +528,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
     chatView->setCurrentUserId(currentInstance->accountId());
     chatView->setEmojiManager(currentInstance->emojis(), currentInstance->accountId());
+    chatView->setFavoriteGifs(currentInstance->favoriteGifs());
+    connect(currentInstance->favoriteGifs(), &Core::FavoriteGifs::limitReached, this, &MainWindow::showFavoriteGifLimit, Qt::UniqueConnection);
 
     typingTracker->clear();
     typingTracker->setUserManager(currentInstance->users());
@@ -1358,38 +1360,7 @@ void MainWindow::setupUi()
     chatView->setWordWrap(true);
     chatView->setResizeMode(QListView::Adjust);
 
-    connect(messageInput, &MessageInput::sendMessage, this, [this](const QString &text, const QList<Core::PendingAttachment> &attachments) {
-        if (!currentInstance) {
-            qCWarning(LogCore) << "Cannot send message: no active instance";
-            return;
-        }
-
-        Snowflake channelId = chatModel->getActiveChannelId();
-        if (!channelId.isValid()) {
-            qCWarning(LogCore) << "Cannot send message: no active channel";
-            return;
-        }
-
-        if (messageInput->isSendBlocked()) {
-            qCDebug(LogCore) << "Cannot send message: slowmode cooldown active";
-            return;
-        }
-
-        Snowflake replyTo = messageInput->replyTargetMessageId();
-        if (!chatModel->isAtLatest())
-            chatView->jumpToPresent();
-        currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
-
-        int rateLimit = currentInstance->getChannelRateLimit(channelId);
-        Snowflake userId = currentInstance->accountId();
-        bool canBypass = currentInstance->permissions()->hasChannelPermission(
-                userId, channelId, Discord::Permission::BYPASS_SLOWMODE);
-        if (rateLimit > 0 && !canBypass) {
-            slowModeIndicator->startCooldown(channelId, rateLimit);
-            messageInput->setSendBlocked(true);
-            messageInput->setPlaceholder("Slowmode is active");
-        }
-    });
+    connect(messageInput, &MessageInput::sendMessage, this, &MainWindow::sendFromChatInput);
 
     connect(messageInput, &MessageInput::editLastMessageRequested, chatView, &ChatView::editLastOwnMessage);
     connect(chatView, &ChatView::inlineEditFinished, messageInput, qOverload<>(&QWidget::setFocus));
@@ -1476,7 +1447,8 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
-    connect(messageInput, &MessageInput::emojiPickerRequested, this, &MainWindow::openChatEmojiPicker);
+    connect(messageInput, &MessageInput::emojiPickerRequested, this, [this](const QRect &globalAnchor) { openChatPicker(ExpressionPicker::Tab::Emoji, globalAnchor); });
+    connect(messageInput, &MessageInput::gifPickerRequested, this, [this](const QRect &globalAnchor) { openChatPicker(ExpressionPicker::Tab::Gifs, globalAnchor); });
 
     connect(chatView, &ChatView::reactionToggleRequested, this,
             [this](Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Discord::Client::ReactionLocation location) {
@@ -2450,6 +2422,11 @@ void MainWindow::setupMenu()
     addAction(emojiPickerShortcut);
     connect(emojiPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestEmojiPicker);
 
+    auto *gifPickerShortcut = new QAction(this);
+    gifPickerShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
+    addAction(gifPickerShortcut);
+    connect(gifPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestGifPicker);
+
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect
     auto *debugReconnect = new QAction(this);
     debugReconnect->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
@@ -2481,14 +2458,16 @@ void MainWindow::openSettingsWindow()
         connect(settingsWindow, &SettingsWindow::channelListIndentChanged, this, &MainWindow::applyChannelIndent);
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setEmojiEnabled(enabled);
-            if (emojiPicker)
-                emojiPicker->setAnimationEnabled(enabled);
+            if (expressionPicker)
+                expressionPicker->setAnimationEnabled(enabled);
         });
         connect(settingsWindow, &SettingsWindow::animateStickersChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setStickersEnabled(enabled);
         });
         connect(settingsWindow, &SettingsWindow::gifSettingsChanged, this, [this]() {
             applyGifSettings(chatView->gifPlayback());
+            if (expressionPicker)
+                applyGifSettings(expressionPicker->gifPlayback());
         });
         connect(settingsWindow, &SettingsWindow::animationCacheLimitChanged, session->getAnimatedImageCache(),
                 &Core::AnimatedImageCache::setCacheLimitMiB);
@@ -2768,10 +2747,10 @@ void MainWindow::openReactionPicker(Core::Snowflake channelId, Core::Snowflake m
 
     reactionPickerTarget = ReactionPickerTarget{ channelId, messageId };
     chatView->setReactionPickerOpen(true);
-    sharedEmojiPicker()->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, Core::EmojiIntention::Reaction, globalAnchor, EmojiPicker::Placement::BesideAnchor);
+    sharedExpressionPicker()->openForReaction(currentInstance->emojis(), currentInstance->accountId(), channelId, globalAnchor);
 }
 
-void MainWindow::openChatEmojiPicker(const QRect &globalAnchor)
+void MainWindow::openChatPicker(ExpressionPicker::Tab tab, const QRect &globalAnchor)
 {
     if (!currentInstance)
         return;
@@ -2781,20 +2760,28 @@ void MainWindow::openChatEmojiPicker(const QRect &globalAnchor)
 
     reactionPickerTarget.reset();
     messageInput->setFocus();
-    messageInput->setEmojiPickerOpen(true);
-    sharedEmojiPicker()->openFor(currentInstance->emojis(), currentInstance->accountId(), channelId, Core::EmojiIntention::Chat, globalAnchor, EmojiPicker::Placement::AboveAnchor);
+    sharedExpressionPicker()->openForChat(currentInstance->emojis(), currentInstance->favoriteGifs(), currentInstance->accountId(), channelId, tab, globalAnchor);
 }
 
-EmojiPicker *MainWindow::sharedEmojiPicker()
+void MainWindow::onChatPickerTabShown(ExpressionPicker::Tab tab)
 {
-    if (emojiPicker)
-        return emojiPicker;
+    messageInput->setEmojiPickerOpen(tab == ExpressionPicker::Tab::Emoji);
+    messageInput->setGifPickerOpen(tab == ExpressionPicker::Tab::Gifs);
+}
 
-    emojiPicker = new EmojiPicker(session->getImageManager(), session->getAnimatedImageCache(), this);
-    emojiPicker->setAnimationEnabled(QSettings().value("chat/animate_emoji", true).toBool());
-    connect(emojiPicker, &EmojiPicker::emojiPicked, this, &MainWindow::onEmojiPicked);
-    connect(emojiPicker, &EmojiPicker::closed, this, &MainWindow::onEmojiPickerClosed);
-    return emojiPicker;
+ExpressionPicker *MainWindow::sharedExpressionPicker()
+{
+    if (expressionPicker)
+        return expressionPicker;
+
+    expressionPicker = new ExpressionPicker(session->getImageManager(), session->getAnimatedImageCache(), this);
+    expressionPicker->setAnimationEnabled(QSettings().value("chat/animate_emoji", true).toBool());
+    applyGifSettings(expressionPicker->gifPlayback());
+    connect(expressionPicker, &ExpressionPicker::emojiPicked, this, &MainWindow::onEmojiPicked);
+    connect(expressionPicker, &ExpressionPicker::gifPicked, this, &MainWindow::onGifPicked);
+    connect(expressionPicker, &ExpressionPicker::chatTabShown, this, &MainWindow::onChatPickerTabShown);
+    connect(expressionPicker, &ExpressionPicker::closed, this, &MainWindow::onExpressionPickerClosed);
+    return expressionPicker;
 }
 
 void MainWindow::onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysOpen)
@@ -2808,11 +2795,61 @@ void MainWindow::onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysO
         messageInput->insertText(pickerStaysOpen ? emoji.messageText() : emoji.messageText() + " ");
 }
 
-void MainWindow::onEmojiPickerClosed()
+void MainWindow::onGifPicked(const QString &url)
+{
+    if (sendFromChatInput(url, {}))
+        messageInput->clearReplyTarget();
+    messageInput->setFocus();
+}
+
+void MainWindow::onExpressionPickerClosed()
 {
     reactionPickerTarget.reset();
     chatView->setReactionPickerOpen(false);
     messageInput->setEmojiPickerOpen(false);
+    messageInput->setGifPickerOpen(false);
+}
+
+bool MainWindow::sendFromChatInput(const QString &text, const QList<Core::PendingAttachment> &attachments)
+{
+    if (!currentInstance) {
+        qCWarning(LogCore) << "Cannot send message: no active instance";
+        return false;
+    }
+
+    Snowflake channelId = chatModel->getActiveChannelId();
+    if (!channelId.isValid()) {
+        qCWarning(LogCore) << "Cannot send message: no active channel";
+        return false;
+    }
+
+    if (messageInput->isSendBlocked()) {
+        qCDebug(LogCore) << "Cannot send message: slowmode cooldown active";
+        return false;
+    }
+
+    Snowflake replyTo = messageInput->replyTargetMessageId();
+    if (!chatModel->isAtLatest())
+        chatView->jumpToPresent();
+    currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
+
+    int rateLimit = currentInstance->getChannelRateLimit(channelId);
+    Snowflake userId = currentInstance->accountId();
+    bool canBypass = currentInstance->permissions()->hasChannelPermission(
+            userId, channelId, Discord::Permission::BYPASS_SLOWMODE);
+    if (rateLimit > 0 && !canBypass) {
+        slowModeIndicator->startCooldown(channelId, rateLimit);
+        messageInput->setSendBlocked(true);
+        messageInput->setPlaceholder("Slowmode is active");
+    }
+    return true;
+}
+
+void MainWindow::showFavoriteGifLimit()
+{
+    auto *box = new QMessageBox(QMessageBox::Information, tr("Oh no!"), tr("You cannot have more favorites."), QMessageBox::Ok, this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 
 void MainWindow::openChannelTopicPopup()

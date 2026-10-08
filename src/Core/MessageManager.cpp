@@ -88,17 +88,16 @@ void MessageManager::parseMessageContent(Discord::Message &msg)
     auto authorName = [&] {
         return userManager->getAuthorDisplayName(msg.author.get(), client->getGuildIdForChannel(msg.channelId));
     };
-    msg.parsedContentCached = inlineHtml(resolveSystemMessageContent(msg, authorName), msg.channelId);
+    cacheParsedContent(msg, resolveSystemMessageContent(msg, authorName), msg.channelId);
 
     if (msg.type.hasValue() && msg.type.get() == Discord::MessageType::THREAD_STARTER_MESSAGE &&
         msg.referencedMessage && msg.referencedMessage->content.hasValue() &&
         msg.referencedMessage->parsedContentCached.isEmpty())
-        msg.referencedMessage->parsedContentCached =
-                inlineHtml(msg.referencedMessage->content.get(), msg.referencedMessage->channelId);
+        cacheParsedContent(*msg.referencedMessage, msg.referencedMessage->content.get(), msg.referencedMessage->channelId);
 
     if (msg.snapshotMessage && msg.snapshotMessage->content.hasValue() &&
         msg.snapshotMessage->parsedContentCached.isEmpty())
-        msg.snapshotMessage->parsedContentCached = inlineHtml(msg.snapshotMessage->content.get(), msg.channelId);
+        cacheParsedContent(*msg.snapshotMessage, msg.snapshotMessage->content.get(), msg.channelId);
 }
 
 static const QSet<QString> OfficialTopicExcludedRules = { QStringLiteral("inlineCode"), QStringLiteral("br") };
@@ -112,10 +111,11 @@ static Markdown::ParseState inlineParseState(Snowflake channelId)
     return state;
 }
 
-QString MessageManager::inlineHtml(const QString &content, Snowflake channelId) const
+void MessageManager::cacheParsedContent(Discord::Message &msg, const QString &content, Snowflake channelId) const
 {
     auto ast = parser->parse(content, inlineParseState(channelId));
-    return parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
+    msg.parsedContentCached = parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
+    msg.contentIsSingleLink = Markdown::Parser::isSingleLink(ast);
 }
 
 QString MessageManager::channelTopicHtml(const QString &topic, Snowflake channelId) const

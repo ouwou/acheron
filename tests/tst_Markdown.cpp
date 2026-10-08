@@ -13,6 +13,7 @@ private slots:
     void testNewlines();
     void testAutolink();
     void testUrl();
+    void testSingleLink();
     void testEmojiSequences();
 };
 
@@ -91,6 +92,29 @@ void TestMarkdown::testUrl()
     // A host-only URL with a non-default port still gets the "/" path.
     QCOMPARE(renderInline("https://localhost:3000"),
              QStringLiteral("<a href=\"https://localhost:3000/\">https://localhost:3000/</a>"));
+}
+
+static bool isSingleLink(const QString &source)
+{
+    Parser parser;
+    ParseState state;
+    state.isInline = true;
+    return Parser::isSingleLink(parser.parse(source, state));
+}
+
+void TestMarkdown::testSingleLink()
+{
+    QVERIFY(isSingleLink("https://klipy.com/gifs/cat-jump"));
+    QVERIFY(isSingleLink("https://tenor.com/view/cat-gif-12345"));
+    QVERIFY(isSingleLink("[a cat](https://klipy.com/gifs/cat-jump)"));
+
+    QVERIFY(!isSingleLink("look https://klipy.com/gifs/cat-jump"));
+    QVERIFY(!isSingleLink("https://klipy.com/gifs/cat-jump lol"));
+    QVERIFY(!isSingleLink("https://klipy.com/gifs/a https://klipy.com/gifs/b"));
+    QVERIFY(!isSingleLink("**https://klipy.com/gifs/cat-jump**"));
+    QVERIFY(!isSingleLink("||https://klipy.com/gifs/cat-jump||"));
+    QVERIFY(!isSingleLink("just text"));
+    QVERIFY(!isSingleLink(""));
 }
 
 void TestMarkdown::testEmojiSequences()

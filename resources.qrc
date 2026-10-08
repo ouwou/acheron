@@ -29,6 +29,7 @@
         <file>resources/icons/lucide/heart.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
+        <file>resources/icons/lucide/image-play.svg</file>
         <file>resources/icons/lucide/leaf.svg</file>
         <file>resources/icons/lucide/lightbulb.svg</file>
         <file>resources/icons/lucide/link.svg</file>
@@ -54,6 +55,8 @@
         <file>resources/icons/lucide/smile.svg</file>
         <file>resources/icons/lucide/smile-plus.svg</file>
         <file>resources/icons/lucide/spool.svg</file>
+        <file>resources/icons/lucide/star.svg</file>
+        <file>resources/icons/lucide/star-filled.svg</file>
         <file>resources/icons/lucide/trash-2.svg</file>
         <file>resources/icons/lucide/triangle-alert.svg</file>
         <file>resources/icons/lucide/user-minus.svg</file>

@@ -3,6 +3,7 @@
 #include <QtWidgets>
 #include <QCache>
 #include <QTextDocument>
+#include "Core/Gifs/FavoriteGifRules.hpp"
 #include "Core/Session.hpp"
 #include "Core/MessageManager.hpp"
 #include "UI/AvatarRequestTracker.hpp"
@@ -21,6 +22,7 @@ struct AttachmentData
     QUrl proxyUrl;
     QUrl originalUrl;
     QUrl animatedUrl;
+    Core::FavoriteGifCandidate favoriteGif;
     QSize displaySize;
     QPixmap pixmap;
     bool isLoading;
@@ -53,6 +55,7 @@ struct EmbedImageData
     QUrl url;
     QUrl originalUrl;
     QUrl animatedUrl;
+    Core::FavoriteGifCandidate favoriteGif;
     QPixmap pixmap;
     QSize displaySize;
 };
@@ -164,6 +167,7 @@ struct EmbedData
     QUrl videoUrl;
     bool videoPlayable = false;
     QUrl loopingVideoUrl;
+    Core::FavoriteGifCandidate favoriteGif;
 
     QString providerName;
     QString providerUrl;

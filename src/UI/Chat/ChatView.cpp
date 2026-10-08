@@ -6,6 +6,7 @@
 #include <QToolTip>
 
 #include <algorithm>
+#include <utility>
 
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Icons.hpp"
@@ -129,7 +130,10 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
 
     video = new InlineVideoController(this);
     animator = new FrameAnimator(this);
-    gifs = new GifPlayback(this);
+    gifs = new GifPlayback(this, [this] {
+        const auto *chatModel = qobject_cast<const ChatModel *>(model());
+        return chatModel ? chatModel->getAccountId() : Core::Snowflake();
+    });
 
     jumpToPresentBar = new JumpToPresentBar(this);
     jumpToPresentBar->setVisible(false);
@@ -171,6 +175,11 @@ void ChatView::setImageManager(Core::ImageManager *manager)
 {
     imageManager = manager;
     gifs->setImageManager(manager);
+}
+
+void ChatView::setFavoriteGifs(Core::FavoriteGifs *favoriteGifs)
+{
+    gifs->setFavorites(favoriteGifs);
 }
 
 bool ChatView::hasTextSelection() const
@@ -252,6 +261,11 @@ void ChatView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         QPoint pos = event->pos();
+        if (gifs->isOverStar(pos)) {
+            pressedGifStar = true;
+            return;
+        }
+
         QModelIndex idx = indexAt(pos);
         auto resolved = ChatLayout::resolveLayout(this, idx);
         auto region = ChatLayout::hitTest(resolved, pos);
@@ -346,6 +360,8 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
             shape = Qt::PointingHandCursor;
         }
     }
+    if (gifs->isOverStar(pos))
+        shape = Qt::PointingHandCursor;
     if (viewport()->cursor().shape() != shape)
         viewport()->setCursor(shape);
 
@@ -402,6 +418,11 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
 
     if (video->dragging()) {
         video->endDrag();
+        return;
+    }
+
+    if (std::exchange(pressedGifStar, false)) {
+        gifs->toggleFavoriteAt(pos);
         return;
     }
 

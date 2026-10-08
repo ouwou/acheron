@@ -122,7 +122,7 @@ private:
     void onReactionChangeFailed(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt, const Discord::Client::ReactionResult &result);
     void cacheGatewayMembers(const Discord::Message &msg);
     void parseMessageContent(Discord::Message &msg);
-    QString inlineHtml(const QString &content, Snowflake channelId) const;
+    void cacheParsedContent(Discord::Message &msg, const QString &content, Snowflake channelId) const;
 
     Storage::MessageRepository repo;
 

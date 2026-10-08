@@ -13,6 +13,7 @@ class QSqlDatabase;
 #include "AccountInfo.hpp"
 #include "Discord/Client.hpp"
 #include "Emoji/EmojiManager.hpp"
+#include "Gifs/FavoriteGifs.hpp"
 #include "MessageManager.hpp"
 #include "MemberListManager.hpp"
 #include "Presence/PresenceManager.hpp"
@@ -56,6 +57,7 @@ public:
     [[nodiscard]] RelationshipManager *relationships() const;
     [[nodiscard]] PresenceManager *presences() const;
     [[nodiscard]] EmojiManager *emojis() const;
+    [[nodiscard]] FavoriteGifs *favoriteGifs() const;
 #ifndef ACHERON_NO_VOICE
     [[nodiscard]] Audio::VoiceManager *voice() const;
 #endif
@@ -187,6 +189,7 @@ private:
     RelationshipManager *relationshipManager;
     PresenceManager *presenceManager;
     EmojiManager *emojiManager;
+    FavoriteGifs *favoriteGifManager;
 #ifndef ACHERON_NO_VOICE
     Audio::VoiceManager *voiceManager;
 #endif

@@ -1020,6 +1020,7 @@ struct EmbedMedia : Core::JsonUtils::JsonObject
     }
 
     [[nodiscard]] bool isFlaggedAnimated() const { return flags.hasValue() && (*flags & IsAnimatedFlag); }
+    [[nodiscard]] bool hasSize() const { return width.hasValue() && height.hasValue() && *width > 0 && *height > 0; }
 };
 
 struct EmbedProvider : Core::JsonUtils::JsonObject
@@ -1103,6 +1104,26 @@ struct Embed : Core::JsonUtils::JsonObject
         get(obj, "author", embed.author);
         get(obj, "fields", embed.fields);
         return embed;
+    }
+
+    [[nodiscard]] bool isBareMedia() const
+    {
+        const QString kind = type.hasValue() ? *type : QString();
+        const bool isGifv = kind == QLatin1String("gifv");
+        const bool isImage = kind == QLatin1String("image");
+        if (!isGifv && !isImage)
+            return false;
+
+        const bool sizedThumbnail = thumbnail.hasValue() && thumbnail->hasSize();
+        const bool sizedVideo = video.hasValue() && video->hasSize();
+        const bool videoIsProxied = sizedVideo && video->proxyUrl.hasValue();
+        const bool showsImage = (image.hasValue() && image->hasSize()) || (isImage && sizedThumbnail);
+        const bool videoHasPoster = (isGifv && sizedThumbnail) || videoIsProxied;
+        const bool showsVideo = sizedVideo && videoHasPoster && (videoIsProxied || video->url->startsWith(QLatin1String("https:"), Qt::CaseInsensitive));
+        if (!showsImage && !showsVideo)
+            return false;
+
+        return isGifv || (!author.hasValue() && !title.hasValue());
     }
 };
 
@@ -1286,6 +1307,7 @@ struct Message : Core::JsonUtils::JsonObject
 
     // cached data
     QString parsedContentCached;
+    bool contentIsSingleLink = false;
     QString embedsJson;
     QString reactionsJson;
     QString stickersJson;
@@ -1307,6 +1329,11 @@ struct Message : Core::JsonUtils::JsonObject
     [[nodiscard]] const Message &contentMessage() const
     {
         return isForwarded() && snapshotMessage ? *snapshotMessage : *this;
+    }
+
+    [[nodiscard]] bool hidesLinkBehindItsEmbed() const
+    {
+        return contentIsSingleLink && embeds.hasValue() && embeds->size() == 1 && embeds->first().isBareMedia();
     }
 
     void setSnapshot(const QJsonObject &snapshotObj)

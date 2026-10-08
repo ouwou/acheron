@@ -22,6 +22,7 @@ public:
     explicit ChatTextEdit(QWidget *parent = nullptr);
 
     [[nodiscard]] QToolButton *emojiButton() const { return emojiPickerButton; }
+    [[nodiscard]] QToolButton *gifButton() const { return gifPickerButton; }
 
 protected:
     void keyPressEvent(QKeyEvent *e) override;
@@ -37,6 +38,7 @@ signals:
     void imagePasted(const QImage &image);
 
 private:
+    QToolButton *gifPickerButton;
     QToolButton *emojiPickerButton;
 };
 
@@ -60,6 +62,8 @@ public:
 
     void requestEmojiPicker();
     void setEmojiPickerOpen(bool open);
+    void requestGifPicker();
+    void setGifPickerOpen(bool open);
 
     void queueAttachments(const QList<QUrl> &urls);
     void setMaxUploadSize(qint64 bytes);
@@ -75,6 +79,7 @@ signals:
     void sendMessage(const QString &text, const QList<Core::PendingAttachment> &attachments);
     void editLastMessageRequested();
     void emojiPickerRequested(const QRect &globalAnchor);
+    void gifPickerRequested(const QRect &globalAnchor);
 
 private:
     ChatTextEdit *textEdit;
@@ -88,6 +93,7 @@ private:
     bool sendBlocked = false;
 
     void adjustHeight();
+    [[nodiscard]] QRect pickerAnchor() const;
 };
 
 } // namespace UI

@@ -7,6 +7,7 @@
 #include <Core/Snowflake.hpp>
 #include <optional>
 
+#include "Emoji/ExpressionPicker.hpp"
 #include "Input/MessageInput.hpp"
 #include "MemberList/MemberListView.hpp"
 #include "MemberList/MemberListModel.hpp"
@@ -28,7 +29,6 @@ struct TypingStart;
 namespace UI {
 class ChatView;
 class ChatModel;
-class EmojiPicker;
 class ForumBrowser;
 class ForumPostModel;
 class ThreadBrowserPopup;
@@ -158,17 +158,21 @@ private:
     void setThreadBrowserTarget(Core::Snowflake channelId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
-    void openChatEmojiPicker(const QRect &globalAnchor);
+    void openChatPicker(ExpressionPicker::Tab tab, const QRect &globalAnchor);
+    void onChatPickerTabShown(ExpressionPicker::Tab tab);
     void onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysOpen);
-    void onEmojiPickerClosed();
-    [[nodiscard]] EmojiPicker *sharedEmojiPicker();
+    void onGifPicked(const QString &url);
+    void onExpressionPickerClosed();
+    [[nodiscard]] ExpressionPicker *sharedExpressionPicker();
+    bool sendFromChatInput(const QString &text, const QList<Core::PendingAttachment> &attachments);
+    void showFavoriteGifLimit();
 
     struct ReactionPickerTarget
     {
         Core::Snowflake channelId;
         Core::Snowflake messageId;
     };
-    EmojiPicker *emojiPicker = nullptr;
+    ExpressionPicker *expressionPicker = nullptr;
     std::optional<ReactionPickerTarget> reactionPickerTarget;
 
     ChatView *chatView;

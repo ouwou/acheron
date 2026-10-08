@@ -140,6 +140,11 @@ bool Parser::isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis)
     return totalEmojis > 0;
 }
 
+bool Parser::isSingleLink(const QList<AstNode> &nodes)
+{
+    return nodes.size() == 1 && (nodes.first().type == "url" || nodes.first().type == "link");
+}
+
 QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
 {
     QString result;

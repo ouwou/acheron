@@ -1387,7 +1387,8 @@ bool Client::isPremium() const
 
 void Client::fetchFrecencySettings(FrecencyCallback callback)
 {
-    httpClient->get(frecencySettingsEndpoint(), {}, [callback](const HttpResponse &response) {
+    QPointer<Client> self(this);
+    httpClient->get(frecencySettingsEndpoint(), {}, [self, callback](const HttpResponse &response) {
         if (!response.success) {
             QString err = QStringLiteral("status=%1 error=%2")
                                   .arg(response.statusCode)
@@ -1398,8 +1399,16 @@ void Client::fetchFrecencySettings(FrecencyCallback callback)
         }
 
         const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
-        callback(Core::Result<Proto::FrecencyUserSettings>::makeOk(
-                decodeFrecencySettings(obj).value_or(Proto::FrecencyUserSettings())));
+        if (!obj.value("settings").isString()) {
+            qCWarning(LogDiscord) << "Frecency settings response carries no settings";
+            callback(Core::Result<Proto::FrecencyUserSettings>::makeError(QStringLiteral("response carries no settings")));
+            return;
+        }
+
+        const Proto::FrecencyUserSettings settings = decodeFrecencySettings(obj).value_or(Proto::FrecencyUserSettings());
+        if (self)
+            emit self->frecencySettingsReceived(settings);
+        callback(Core::Result<Proto::FrecencyUserSettings>::makeOk(settings));
     });
 }
 
@@ -1412,8 +1421,9 @@ void Client::patchFrecencySettings(const QByteArray &partialProto,
     if (requiredDataVersion)
         payload["required_data_version"] = static_cast<qint64>(*requiredDataVersion);
 
+    QPointer<Client> self(this);
     httpClient->patch(frecencySettingsEndpoint(), payload,
-                      [callback](const HttpResponse &response) {
+                      [self, callback](const HttpResponse &response) {
                           FrecencyPatchResult result;
                           result.rateLimited = response.rateLimited();
 
@@ -1430,6 +1440,8 @@ void Client::patchFrecencySettings(const QByteArray &partialProto,
                           result.success = true;
                           result.outOfDate = obj.value("out_of_date").toBool();
                           result.settings = decodeFrecencySettings(obj);
+                          if (self && result.settings)
+                              emit self->frecencySettingsReceived(*result.settings);
 
                           callback(result);
                       });

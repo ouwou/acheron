@@ -23,9 +23,24 @@ namespace {
 
 constexpr int MinTextEditHeight = 44;
 constexpr int MaxTextEditHeight = 200;
-constexpr int EmojiButtonSize = 28;
-constexpr int EmojiButtonIconSize = 20;
-constexpr int EmojiButtonGap = 4;
+constexpr int PickerButtonSize = 28;
+constexpr int PickerButtonIconSize = 20;
+constexpr int PickerButtonGap = 4;
+constexpr int PickerButtonCount = 2;
+constexpr int PickerButtonsWidth = PickerButtonCount * (PickerButtonSize + PickerButtonGap);
+
+QToolButton *makePickerButton(const char *iconName, const QString &toolTip, QWidget *parent)
+{
+    auto *button = new QToolButton(parent);
+    button->setIcon(Core::Theme::Icons::icon(iconName, Core::Theme::Token::PlaceholderText));
+    button->setIconSize(QSize(PickerButtonIconSize, PickerButtonIconSize));
+    button->setFixedSize(PickerButtonSize, PickerButtonSize);
+    button->setToolTip(toolTip);
+    button->setAutoRaise(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setCursor(Qt::PointingHandCursor);
+    return button;
+}
 
 } // namespace
 
@@ -40,21 +55,18 @@ ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
     setPlaceholderText("Message...");
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
-    emojiPickerButton = new QToolButton(this);
-    emojiPickerButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::Smile, Core::Theme::Token::PlaceholderText));
-    emojiPickerButton->setIconSize(QSize(EmojiButtonIconSize, EmojiButtonIconSize));
-    emojiPickerButton->setFixedSize(EmojiButtonSize, EmojiButtonSize);
-    emojiPickerButton->setToolTip(tr("Select emoji"));
-    emojiPickerButton->setAutoRaise(true);
-    emojiPickerButton->setFocusPolicy(Qt::NoFocus);
-    emojiPickerButton->setCursor(Qt::PointingHandCursor);
-    setViewportMargins(0, 0, EmojiButtonSize + EmojiButtonGap, 0);
+    gifPickerButton = makePickerButton(Core::Theme::Icons::Name::ImagePlay, tr("Open GIF picker"), this);
+    emojiPickerButton = makePickerButton(Core::Theme::Icons::Name::Smile, tr("Select emoji"), this);
+    setViewportMargins(0, 0, PickerButtonsWidth, 0);
 }
 
 void ChatTextEdit::resizeEvent(QResizeEvent *e)
 {
     QTextEdit::resizeEvent(e);
-    emojiPickerButton->move(viewport()->geometry().right() + 1 + EmojiButtonGap, (MinTextEditHeight - EmojiButtonSize) / 2);
+    const int left = viewport()->geometry().right() + 1 + PickerButtonGap;
+    const int top = (MinTextEditHeight - PickerButtonSize) / 2;
+    gifPickerButton->move(left, top);
+    emojiPickerButton->move(left + PickerButtonSize + PickerButtonGap, top);
 }
 
 void ChatTextEdit::changeEvent(QEvent *e)
@@ -63,8 +75,9 @@ void ChatTextEdit::changeEvent(QEvent *e)
     if (e->type() != QEvent::EnabledChange)
         return;
 
+    gifPickerButton->setVisible(isEnabled());
     emojiPickerButton->setVisible(isEnabled());
-    setViewportMargins(0, 0, isEnabled() ? EmojiButtonSize + EmojiButtonGap : 0, 0);
+    setViewportMargins(0, 0, isEnabled() ? PickerButtonsWidth : 0, 0);
 }
 
 void ChatTextEdit::keyPressEvent(QKeyEvent *e)
@@ -173,6 +186,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
     connect(textEdit, &ChatTextEdit::editLastMessageRequested, this, &MessageInput::editLastMessageRequested);
     connect(textEdit->emojiButton(), &QToolButton::clicked, this, &MessageInput::requestEmojiPicker);
+    connect(textEdit->gifButton(), &QToolButton::clicked, this, &MessageInput::requestGifPicker);
 
     connect(textEdit, &ChatTextEdit::escapePressed, this, [this]() {
         clearReplyTarget();
@@ -278,16 +292,32 @@ void MessageInput::insertText(const QString &text)
     textEdit->setFocus();
 }
 
+QRect MessageInput::pickerAnchor() const
+{
+    const QToolButton *rightmost = textEdit->emojiButton();
+    return QRect(rightmost->mapToGlobal(QPoint(0, 0)), rightmost->size());
+}
+
 void MessageInput::requestEmojiPicker()
 {
-    const QToolButton *button = textEdit->emojiButton();
-    if (button->isVisible())
-        emit emojiPickerRequested(QRect(button->mapToGlobal(QPoint(0, 0)), button->size()));
+    if (textEdit->emojiButton()->isVisible())
+        emit emojiPickerRequested(pickerAnchor());
 }
 
 void MessageInput::setEmojiPickerOpen(bool open)
 {
     textEdit->emojiButton()->setDown(open);
+}
+
+void MessageInput::requestGifPicker()
+{
+    if (textEdit->gifButton()->isVisible())
+        emit gifPickerRequested(pickerAnchor());
+}
+
+void MessageInput::setGifPickerOpen(bool open)
+{
+    textEdit->gifButton()->setDown(open);
 }
 
 void MessageInput::adjustHeight()

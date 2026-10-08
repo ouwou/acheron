@@ -57,12 +57,14 @@ public:
 
     static constexpr int MaxDisplayWidth = 400;
     static constexpr int MaxDisplayHeight = 300;
+    static constexpr qint64 FailedFetchRetryMs = 60 * 1000;
 
     void setAccountProxy(Snowflake accountId, const ProxyConfig &proxy);
     [[nodiscard]] QNetworkAccessManager *networkManagerFor(Snowflake accountId) const;
 
     [[nodiscard]] bool isCached(const QUrl &url, const QSize &size);
     [[nodiscard]] bool isUnavailable(const ImageRequestKey &key) const;
+    [[nodiscard]] bool willNeverLoad(const ImageRequestKey &key) const;
     [[nodiscard]] QString rawDownloadPath(const QUrl &url, const QSize &size) const;
     void assign(QLabel *label, const QUrl &url, const QSize &size, Snowflake accountId);
     QPixmap get(const QUrl &url, const QSize &size, Snowflake accountId, PinGroup pin = PinGroup::None);
@@ -93,7 +95,8 @@ private:
     void request(const QUrl &url, const QSize &size, PinGroup pin, Snowflake accountId, FetchPurpose purpose = FetchPurpose::Pixmap);
     [[nodiscard]] QString getCachePath(const QUrl &url, const QSize &size) const;
     [[nodiscard]] bool recentlyFailed(const ImageRequestKey &key) const;
-    void fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose);
+    void fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose, int attempt = 1);
+    void giveUpOn(const ImageRequestKey &key, int httpStatus);
     static bool isDiscordProxyUrl(const QUrl &url);
     static bool scalesToDevicePixels(const QUrl &url);
     static QUrl buildOptimizedUrl(const QUrl &proxyUrl, const QSize &displaySize, qreal dpr);
@@ -106,6 +109,7 @@ private:
     QSet<ImageRequestKey> downloadOnlyRequests;
     QHash<ImageRequestKey, qint64> failedAtMs;
     QSet<ImageRequestKey> undecodable;
+    QSet<ImageRequestKey> refusedByServer;
     QHash<QSize, QPixmap> placeholders;
     QHash<ImageRequestKey, PinGroup> pendingPins;
     QCache<ImageRequestKey, QPixmap> cache;

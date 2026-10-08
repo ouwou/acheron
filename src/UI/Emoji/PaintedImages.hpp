@@ -26,8 +26,14 @@ public:
     void setSource(Core::ImageManager *manager, Core::Snowflake account);
     [[nodiscard]] Core::Snowflake accountId() const { return account; }
 
-    [[nodiscard]] QPixmap pixmap(const QUrl &url, int px, const QRect &paintedRect);
+    [[nodiscard]] QPixmap pixmap(const QUrl &url, const QSize &size, const QRect &paintedRect);
+    [[nodiscard]] QPixmap pixmapWithoutFetching(const QUrl &url, const QSize &size);
+    [[nodiscard]] int fetchesInFlight() const { return int(awaited.size()); }
+    [[nodiscard]] QPixmap pixmap(const QUrl &url, int px, const QRect &paintedRect) { return pixmap(url, QSize(px, px), paintedRect); }
     void clear();
+
+signals:
+    void fetchFinished(bool fetched);
 
 private:
     void onImageFetched(const QUrl &url, const QSize &size, const QPixmap &pixmap);

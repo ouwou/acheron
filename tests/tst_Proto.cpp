@@ -20,6 +20,9 @@ private slots:
     void testMapEncoding();
     void testSkipsUnknownFields();
     void testNegativeInt32();
+    void testFavoriteGifEncoding();
+    void testFavoriteGifsKeepWhatTheyDoNotUnderstand();
+    void testFavoriteGifsTravelAloneInAPatch();
 };
 
 void TestProto::testFrecencyRoundTrip()
@@ -127,6 +130,74 @@ void TestProto::testNegativeInt32()
     ProtoReader reader(writer.bytes());
     FrecencyItem item = FrecencyItem::fromProto(reader);
     QCOMPARE(item.frecency, -1);
+}
+
+void TestProto::testFavoriteGifEncoding()
+{
+    FavoriteGif gif;
+    gif.url = "u";
+    gif.format = GifType::Video;
+    gif.src = "s";
+    gif.width = 3;
+    gif.height = 4;
+    gif.order = 5;
+
+    FavoriteGifs favorites;
+    favorites.gifs.append(gif);
+    favorites.hideTooltip = true;
+
+    const QByteArray entryKeyedUThenHideTooltip = "0a100a0175120b0802120173180320042805" + QByteArray("1001");
+    QCOMPARE(favorites.toProto().toHex(), entryKeyedUThenHideTooltip);
+
+    const FavoriteGifs decoded = FavoriteGifs::fromProto(favorites.toProto());
+    QCOMPARE(decoded.gifs.size(), 1);
+    QCOMPARE(decoded.gifs[0].url, QString("u"));
+    QCOMPARE(decoded.gifs[0].format, GifType::Video);
+    QCOMPARE(decoded.gifs[0].src, QString("s"));
+    QCOMPARE(decoded.gifs[0].width, 3u);
+    QCOMPARE(decoded.gifs[0].height, 4u);
+    QCOMPARE(decoded.gifs[0].order, 5u);
+    QVERIFY(decoded.hideTooltip);
+}
+
+void TestProto::testFavoriteGifsKeepWhatTheyDoNotUnderstand()
+{
+    const QByteArray unknownVarintField9 = "4807";
+    const QByteArray entryFromServer = QByteArray::fromHex("0a120a0175120d0802120173180320042805" + unknownVarintField9);
+    const QByteArray unknownField = QByteArray::fromHex("1a01ff");
+    const QByteArray hideTooltip = QByteArray::fromHex("1001");
+
+    FavoriteGifs favorites = FavoriteGifs::fromProto(entryFromServer + unknownField + hideTooltip);
+    QCOMPARE(favorites.gifs.size(), 1);
+    QCOMPARE(favorites.gifs[0].order, 5u);
+    QVERIFY(favorites.hideTooltip);
+
+    FavoriteGif added;
+    added.url = "v";
+    added.format = GifType::Image;
+    added.src = "t";
+    added.order = 6;
+    favorites.gifs.append(added);
+
+    const QByteArray entryMadeHere = QByteArray::fromHex("0a0c0a0176120708011201742806");
+    QCOMPARE(favorites.toProto().toHex(), (entryFromServer + entryMadeHere + hideTooltip + unknownField).toHex());
+
+    favorites.gifs.removeFirst();
+    QCOMPARE(favorites.toProto().toHex(), (entryMadeHere + hideTooltip + unknownField).toHex());
+}
+
+void TestProto::testFavoriteGifsTravelAloneInAPatch()
+{
+    FrecencyUserSettings settings;
+    settings.dataVersion = 9;
+    settings.favoriteGifs = FavoriteGifs();
+    QCOMPARE(settings.toProtoPartial().toHex(), QByteArray("1200"));
+
+    ProtoReader reader(QByteArray::fromHex("12140a100a0175120b08021201731803200428051001"));
+    const FrecencyUserSettings decoded = FrecencyUserSettings::fromProto(reader);
+    QVERIFY(decoded.favoriteGifs.has_value());
+    QCOMPARE(decoded.favoriteGifs->gifs.size(), 1);
+    QVERIFY(!decoded.emojiFrecency.has_value());
 }
 
 QTEST_GUILESS_MAIN(TestProto)

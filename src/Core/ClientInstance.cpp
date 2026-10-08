@@ -72,6 +72,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     userManager->setRelationshipManager(relationshipManager);
     presenceManager = new PresenceManager(this);
     emojiManager = new EmojiManager(client, this, this);
+    favoriteGifManager = new FavoriteGifs(client, this);
     messageManager->setEmojiManager(emojiManager);
 #ifndef ACHERON_NO_VOICE
     voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
@@ -225,6 +226,9 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(client, &Discord::Client::ready, emojiManager, &EmojiManager::onReady);
     connect(client, &Discord::Client::guildEmojisUpdated, emojiManager, &EmojiManager::onGuildEmojisUpdated);
     connect(client, &Discord::Client::userSettingsProtoUpdated, emojiManager, &EmojiManager::onUserSettingsProtoUpdated);
+    connect(client, &Discord::Client::frecencySettingsReceived, emojiManager, &EmojiManager::onFrecencySettingsReceived);
+    connect(client, &Discord::Client::userSettingsProtoUpdated, favoriteGifManager, &FavoriteGifs::onUserSettingsProtoUpdated);
+    connect(client, &Discord::Client::frecencySettingsReceived, favoriteGifManager, &FavoriteGifs::onFrecencySettingsReceived);
     connect(client, &Discord::Client::settingsChanged, this, [this]() { presenceManager->applyProtoStatus(client->getSettings()); });
 
     connect(client, &Discord::Client::presenceUpdated, presenceManager, &PresenceManager::onPresenceUpdate);
@@ -1429,6 +1433,11 @@ MemberListManager *ClientInstance::memberList() const
 EmojiManager *ClientInstance::emojis() const
 {
     return emojiManager;
+}
+
+FavoriteGifs *ClientInstance::favoriteGifs() const
+{
+    return favoriteGifManager;
 }
 
 #ifndef ACHERON_NO_VOICE

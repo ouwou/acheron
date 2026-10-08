@@ -699,6 +699,12 @@ void EmojiManager::onUserSettingsProtoUpdated(const Discord::UserSettingsProtoUp
                     << (dataVersion ? int(*dataVersion) : -1);
 }
 
+void EmojiManager::onFrecencySettingsReceived(const Proto::FrecencyUserSettings &settings)
+{
+    if (settings.dataVersion)
+        dataVersion = settings.dataVersion;
+}
+
 void EmojiManager::onSyncTimer()
 {
     if (!loaded) {

@@ -312,6 +312,7 @@ signals:
     void relationshipRemoved(const RelationshipPartial &event);
     void userNoteUpdated(const UserNoteUpdate &event);
     void userSettingsProtoUpdated(const UserSettingsProtoUpdate &event);
+    void frecencySettingsReceived(const Proto::FrecencyUserSettings &settings);
     void settingsChanged();
     void applicationIconResolved(Snowflake applicationId);
     void presenceUpdated(const Presence &event);

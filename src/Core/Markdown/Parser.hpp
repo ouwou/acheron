@@ -85,6 +85,7 @@ public:
     void setChannelLinkResolver(ChannelLinkResolverFn resolver);
 
     static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
+    static bool isSingleLink(const QList<AstNode> &nodes);
 
 private:
     void setupDefaultRules();

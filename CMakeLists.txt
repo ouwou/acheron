@@ -185,6 +185,8 @@ set(PROJECT_SOURCES
     src/Core/MurmurHash3.cpp
     src/Core/EmojiSegmenter.cpp
     src/Core/Emoji/EmojiManager.cpp
+    src/Core/Gifs/FavoriteGifRules.cpp
+    src/Core/Gifs/FavoriteGifs.cpp
     src/Core/Emoji/FrecencyTracker.cpp
     src/Core/Emoji/UnicodeEmojiIndex.cpp
     src/Core/Markdown/Parser.cpp
@@ -249,6 +251,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/ChatLayout.cpp
     src/UI/Chat/InlineVideoController.cpp
     src/UI/Chat/GifPlayback.cpp
+    src/UI/Chat/GifPainting.cpp
     src/UI/Chat/FrameAnimator.cpp
     src/UI/Chat/EmojiTextObject.cpp
     src/UI/Chat/MessageTextDocument.cpp
@@ -281,6 +284,10 @@ set(PROJECT_SOURCES
     src/UI/Emoji/EmojiGridView.cpp
     src/UI/Emoji/EmojiPainting.cpp
     src/UI/Emoji/EmojiPicker.cpp
+    src/UI/Emoji/ExpressionPicker.cpp
+    src/UI/Gifs/GifMasonryLayout.cpp
+    src/UI/Gifs/FavoriteGifGrid.cpp
+    src/UI/Gifs/FavoriteGifPicker.cpp
     src/UI/Emoji/EmojiSectionRail.cpp
     src/UI/Emoji/PaintedImages.cpp
     src/UI/Input/AttachmentPreviewPanel.cpp
@@ -416,6 +423,17 @@ if(BUILD_TESTS)
     target_include_directories(TestCdnUrls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME CdnUrlTests COMMAND TestCdnUrls)
 
+    qt_add_executable(TestEmbeds tests/tst_Embeds.cpp src/Discord/CdnUrls.cpp src/Core/Snowflake.cpp)
+    target_link_libraries(TestEmbeds PRIVATE Qt::Core Qt::Gui Qt::Test)
+    target_include_directories(TestEmbeds PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME EmbedTests COMMAND TestEmbeds)
+
+    qt_add_executable(TestFavoriteGifs tests/tst_FavoriteGifs.cpp src/Core/Gifs/FavoriteGifRules.cpp src/UI/Gifs/GifMasonryLayout.cpp
+        src/Discord/CdnUrls.cpp src/Core/Snowflake.cpp)
+    target_link_libraries(TestFavoriteGifs PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestFavoriteGifs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME FavoriteGifTests COMMAND TestFavoriteGifs)
+
     if(TARGET ffmpeg)
         qt_add_executable(TestClips tests/tst_Clips.cpp src/Core/Media/ClipDecoder.cpp src/Core/Media/ClipPlayer.cpp)
         target_link_libraries(TestClips PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg)
@@ -444,7 +462,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls)
+        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs)
         if(TARGET TestApng)
             list(APPEND _msvc_test_targets TestApng TestClips)
         endif()

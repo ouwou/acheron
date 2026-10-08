@@ -1,13 +1,10 @@
 #include "UI/Emoji/EmojiPicker.hpp"
 
 #include <QCoreApplication>
-#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QPainter>
-#include <QPainterPath>
-#include <QScreen>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
@@ -27,11 +24,9 @@ namespace UI {
 namespace {
 
 constexpr int OuterMargin = 8;
-constexpr int CornerRadius = 8;
 constexpr int InspectorHeight = 40;
 constexpr int InspectorEmojiPx = 28;
 constexpr int InspectorGap = 8;
-constexpr int AnchorSpacing = 8;
 constexpr auto CollapsedSectionsKey = "emoji_picker/collapsed_sections";
 
 } // namespace
@@ -102,12 +97,8 @@ private:
 };
 
 EmojiPicker::EmojiPicker(Core::ImageManager *imageManager, Core::AnimatedImageCache *animatedCache, QWidget *parent)
-    : QFrame(parent, Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint), imageManager(imageManager), animatedCache(animatedCache)
+    : QWidget(parent), imageManager(imageManager), animatedCache(animatedCache)
 {
-    setObjectName("EmojiPicker");
-    setAttribute(Qt::WA_TranslucentBackground);
-    setAttribute(Qt::WA_NoMouseReplay);
-
     search = new QLineEdit(this);
     search->setPlaceholderText(searchPrompt());
     search->setClearButtonEnabled(true);
@@ -131,7 +122,7 @@ EmojiPicker::EmojiPicker(Core::ImageManager *imageManager, Core::AnimatedImageCa
     searchRow->addWidget(search);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(1, 1, 1, 1);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addLayout(searchRow);
     layout->addLayout(body);
@@ -163,7 +154,7 @@ QString EmojiPicker::searchPrompt() const
     return intention == Core::EmojiIntention::Reaction ? tr("Find the perfect reaction") : tr("Find the perfect emoji");
 }
 
-void EmojiPicker::openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention, const QRect &globalAnchor, Placement placement)
+void EmojiPicker::prepareFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention)
 {
     emojis = emojiManager;
     this->channelId = channelId;
@@ -184,31 +175,6 @@ void EmojiPicker::openFor(Core::EmojiManager *emojiManager, Core::Snowflake acco
     const QSignalBlocker blocker(search);
     search->clear();
     showBrowseSections();
-
-    placeAt(globalAnchor, placement);
-    show();
-    search->setFocus();
-}
-
-void EmojiPicker::placeAt(const QRect &globalAnchor, Placement placement)
-{
-    layout()->activate();
-    const QSize size = sizeHint();
-
-    QScreen *screen = QGuiApplication::screenAt(globalAnchor.center());
-    if (!screen)
-        screen = QGuiApplication::primaryScreen();
-    const QRect available = screen ? screen->availableGeometry() : QRect(globalAnchor.topLeft(), size);
-
-    QPoint preferred(globalAnchor.right() + 1 - size.width(), globalAnchor.top() - AnchorSpacing - size.height());
-    if (placement == Placement::BesideAnchor) {
-        const int leftOfAnchor = globalAnchor.left() - AnchorSpacing - size.width();
-        preferred = QPoint(leftOfAnchor >= available.left() ? leftOfAnchor : globalAnchor.right() + 1 + AnchorSpacing, globalAnchor.top());
-    }
-
-    const int x = qBound(available.left(), preferred.x(), qMax(available.left(), available.right() + 1 - size.width()));
-    const int y = qBound(available.top(), preferred.y(), qMax(available.top(), available.bottom() + 1 - size.height()));
-    move(x, y);
 }
 
 void EmojiPicker::showBrowseSections()
@@ -247,8 +213,6 @@ void EmojiPicker::showSearchResults(const QString &text)
 void EmojiPicker::pick(const Core::PickerEmoji &emoji, bool keepOpen)
 {
     emit emojiPicked(emoji, keepOpen);
-    if (!keepOpen)
-        hide();
 }
 
 void EmojiPicker::onActiveEmojiChanged()
@@ -295,11 +259,6 @@ bool EmojiPicker::handleSearchKey(const QKeyEvent *key)
                 pick(*emoji, key->modifiers().testFlag(Qt::ShiftModifier));
         }
         return true;
-    case Qt::Key_E:
-        if (key->modifiers() != Qt::ControlModifier)
-            return false;
-        hide();
-        return true;
     default:
         return false;
     }
@@ -309,27 +268,7 @@ bool EmojiPicker::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == search && event->type() == QEvent::KeyPress && handleSearchKey(static_cast<QKeyEvent *>(event)))
         return true;
-    return QFrame::eventFilter(watched, event);
-}
-
-void EmojiPicker::paintEvent(QPaintEvent *)
-{
-    using namespace Core::Theme;
-    const Manager &theme = Manager::instance();
-
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    QPainterPath path;
-    path.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), CornerRadius, CornerRadius);
-    painter.fillPath(path, theme.color(Token::BaseBg));
-    painter.setPen(theme.color(Token::Divider));
-    painter.drawPath(path);
-}
-
-void EmojiPicker::hideEvent(QHideEvent *event)
-{
-    QFrame::hideEvent(event);
-    emit closed();
+    return QWidget::eventFilter(watched, event);
 }
 
 } // namespace UI

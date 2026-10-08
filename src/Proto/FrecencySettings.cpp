@@ -96,6 +96,84 @@ void readEmojiEntry(ProtoReader &reader, EmojiFrecency &frecency)
         frecency.emojis.insert(key, item);
 }
 
+QByteArray writeFavoriteGif(const FavoriteGif &gif)
+{
+    ProtoWriter writer;
+    if (gif.format != GifType::None)
+        writer.writeVarint(1, static_cast<uint64_t>(gif.format));
+    if (!gif.src.isEmpty())
+        writer.writeString(2, gif.src);
+    if (gif.width)
+        writer.writeVarint(3, gif.width);
+    if (gif.height)
+        writer.writeVarint(4, gif.height);
+    if (gif.order)
+        writer.writeVarint(5, gif.order);
+    return writer.bytes();
+}
+
+void readFavoriteGif(const QByteArray &bytes, FavoriteGif &gif)
+{
+    gif.messageAsReceived = bytes;
+
+    ProtoReader reader(bytes);
+    Tag tag;
+    while (reader.readTag(tag)) {
+        if (tag.fieldNumber == 2 && tag.wireType == WireType::LENGTH_DELIMITED) {
+            gif.src = readString(reader);
+            continue;
+        }
+
+        const std::optional<uint64_t> value = readVarintField(reader, tag.wireType);
+        if (!value)
+            continue;
+
+        switch (tag.fieldNumber) {
+        case 1:
+            gif.format = static_cast<GifType>(*value);
+            break;
+        case 3:
+            gif.width = static_cast<uint32_t>(*value);
+            break;
+        case 4:
+            gif.height = static_cast<uint32_t>(*value);
+            break;
+        case 5:
+            gif.order = static_cast<uint32_t>(*value);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+std::optional<FavoriteGif> readFavoriteGifEntry(const QByteArray &bytes)
+{
+    FavoriteGif gif;
+    ProtoReader reader(bytes);
+    Tag tag;
+
+    while (reader.readTag(tag)) {
+        if (tag.wireType != WireType::LENGTH_DELIMITED) {
+            reader.skipField(tag.wireType);
+            continue;
+        }
+
+        if (tag.fieldNumber == 1) {
+            gif.url = readString(reader);
+            continue;
+        }
+
+        QByteArray nested;
+        if (!reader.readLengthDelimited(nested))
+            break;
+        if (tag.fieldNumber == 2)
+            readFavoriteGif(nested, gif);
+    }
+
+    return gif.url.isEmpty() ? std::nullopt : std::optional(gif);
+}
+
 /*
 Versions
 {
@@ -187,6 +265,52 @@ EmojiFrecency EmojiFrecency::fromProto(ProtoReader &reader)
     return frecency;
 }
 
+FavoriteGifs FavoriteGifs::fromProto(const QByteArray &bytes)
+{
+    FavoriteGifs favorites;
+    ProtoReader reader(bytes);
+    Tag tag;
+
+    for (;;) {
+        const size_t fieldStart = reader.position();
+        if (!reader.readTag(tag))
+            break;
+
+        if (tag.fieldNumber == 1 && tag.wireType == WireType::LENGTH_DELIMITED) {
+            QByteArray entry;
+            if (!reader.readLengthDelimited(entry))
+                break;
+            if (const std::optional<FavoriteGif> gif = readFavoriteGifEntry(entry))
+                favorites.gifs.append(*gif);
+        } else if (tag.fieldNumber == 2 && tag.wireType == WireType::VARINT) {
+            uint64_t value = 0;
+            if (!reader.readVarint(value))
+                break;
+            favorites.hideTooltip = value != 0;
+        } else {
+            if (!reader.skipField(tag.wireType))
+                break;
+            favorites.unknownFields.append(bytes.mid(qsizetype(fieldStart), qsizetype(reader.position() - fieldStart)));
+        }
+    }
+
+    return favorites;
+}
+
+QByteArray FavoriteGifs::toProto() const
+{
+    ProtoWriter writer;
+    for (const FavoriteGif &gif : gifs) {
+        ProtoWriter entry;
+        entry.writeString(1, gif.url);
+        entry.writeBytes(2, gif.messageAsReceived.isEmpty() ? writeFavoriteGif(gif) : gif.messageAsReceived);
+        writer.writeBytes(1, entry.bytes());
+    }
+    if (hideTooltip)
+        writer.writeVarint(2, 1);
+    return writer.bytes() + unknownFields;
+}
+
 FrecencyUserSettings FrecencyUserSettings::fromProto(ProtoReader &reader)
 {
     FrecencyUserSettings settings;
@@ -208,6 +332,9 @@ FrecencyUserSettings FrecencyUserSettings::fromProto(ProtoReader &reader)
         case 1:
             settings.dataVersion = readDataVersion(nestedReader);
             break;
+        case 2:
+            settings.favoriteGifs = FavoriteGifs::fromProto(nested);
+            break;
         // EmojiFrecency emoji_frecency
         case 6:
             settings.emojiFrecency = EmojiFrecency::fromProto(nestedReader);
@@ -227,6 +354,8 @@ FrecencyUserSettings FrecencyUserSettings::fromProto(ProtoReader &reader)
 QByteArray FrecencyUserSettings::toProtoPartial() const
 {
     ProtoWriter writer;
+    if (favoriteGifs)
+        writer.writeBytes(2, favoriteGifs->toProto());
     if (emojiFrecency)
         writer.writeBytes(6, writeEmojiFrecency(*emojiFrecency));
     if (emojiReactionFrecency)

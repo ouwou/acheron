@@ -1,9 +1,9 @@
 #pragma once
 
-#include <QFrame>
 #include <QHash>
 #include <QList>
 #include <QPointer>
+#include <QWidget>
 
 #include "Core/Emoji/EmojiManager.hpp"
 #include "Core/Emoji/PickerEmoji.hpp"
@@ -24,31 +24,23 @@ class EmojiGridView;
 class EmojiInspector;
 class EmojiSectionRail;
 
-class EmojiPicker : public QFrame
+class EmojiPicker : public QWidget
 {
     Q_OBJECT
 public:
     EmojiPicker(Core::ImageManager *imageManager, Core::AnimatedImageCache *animatedCache, QWidget *parent = nullptr);
 
-    enum class Placement {
-        BesideAnchor,
-        AboveAnchor,
-    };
-
     void setAnimationEnabled(bool enabled);
-    void openFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention, const QRect &globalAnchor, Placement placement);
+    void prepareFor(Core::EmojiManager *emojiManager, Core::Snowflake accountId, Core::Snowflake channelId, Core::EmojiIntention intention);
+    [[nodiscard]] QLineEdit *searchField() const { return search; }
 
 signals:
     void emojiPicked(const Acheron::Core::PickerEmoji &emoji, bool pickerStaysOpen);
-    void closed();
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
-    void paintEvent(QPaintEvent *event) override;
-    void hideEvent(QHideEvent *event) override;
 
 private:
-    void placeAt(const QRect &globalAnchor, Placement placement);
     [[nodiscard]] QString searchPrompt() const;
     void showSearchResults(const QString &text);
     void showBrowseSections();

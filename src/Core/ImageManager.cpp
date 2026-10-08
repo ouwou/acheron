@@ -5,6 +5,8 @@
 #include <QNetworkReply>
 #include <QCryptographicHash>
 #include <QFile>
+#include <QPointer>
+#include <QTimer>
 #include <QUrlQuery>
 #include <QApplication>
 
@@ -18,9 +20,22 @@ namespace Acheron {
 namespace Core {
 
 namespace {
-constexpr qint64 FailedFetchRetryMs = 60 * 1000;
 constexpr int MaxMemoizedPlaceholderPx = 64;
 constexpr auto PartialDownloadSuffix = ".part";
+constexpr int MaxFetchAttempts = 2;
+constexpr int RetryBrokenTransferAfterMs = 500;
+constexpr int HttpRequestTimeout = 408;
+constexpr int HttpTooManyRequests = 429;
+
+bool isErrorAnswer(int httpStatus)
+{
+    return httpStatus >= 400;
+}
+
+bool refusesForGood(int httpStatus)
+{
+    return isErrorAnswer(httpStatus) && httpStatus < 500 && httpStatus != HttpRequestTimeout && httpStatus != HttpTooManyRequests;
+}
 
 QByteArray fileContents(const QString &path)
 {
@@ -50,7 +65,12 @@ bool ImageManager::isCached(const QUrl &url, const QSize &size)
 
 bool ImageManager::isUnavailable(const ImageRequestKey &key) const
 {
-    return undecodable.contains(key) || recentlyFailed(key);
+    return willNeverLoad(key) || recentlyFailed(key);
+}
+
+bool ImageManager::willNeverLoad(const ImageRequestKey &key) const
+{
+    return undecodable.contains(key) || refusedByServer.contains(key);
 }
 
 QString ImageManager::rawDownloadPath(const QUrl &url, const QSize &size) const
@@ -125,7 +145,7 @@ QPixmap ImageManager::getImpl(const QUrl &url, const QSize &size, PinGroup pin, 
         return pixmap;
     }
 
-    if (undecodable.contains(k))
+    if (willNeverLoad(k))
         return placeholder(size);
 
     if (requests.contains(k) || recentlyFailed(k)) {
@@ -212,7 +232,7 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
     }
 
     ImageRequestKey k{ url, size };
-    if (recentlyFailed(k))
+    if (isUnavailable(k))
         return;
 
     if (requests.contains(k)) {
@@ -237,7 +257,19 @@ void ImageManager::request(const QUrl &url, const QSize &size, PinGroup pin, Sno
     fetchFromNetwork(url, size, nam, purpose);
 }
 
-void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose)
+void ImageManager::giveUpOn(const ImageRequestKey &key, int httpStatus)
+{
+    pendingPins.remove(key);
+    requests.remove(key);
+    downloadOnlyRequests.remove(key);
+    if (refusesForGood(httpStatus))
+        refusedByServer.insert(key);
+    else
+        failedAtMs.insert(key, uptime.elapsed());
+    emit imageUnavailable(key.url, key.size);
+}
+
+void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, QNetworkAccessManager *nam, FetchPurpose purpose, int attempt)
 {
     qreal dpr = qApp->devicePixelRatio();
     const bool deviceScaled = scalesToDevicePixels(url);
@@ -257,10 +289,8 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, QNetwork
             streamedToDisk.reset();
     }
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr, path, streamedToDisk]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, url, size, deviceScaled, dpr, path, streamedToDisk, purpose, attempt, nam = QPointer<QNetworkAccessManager>(nam)]() {
         ImageRequestKey k{ url, size };
-        PinGroup pin = pendingPins.value(k, PinGroup::None);
-        pendingPins.remove(k);
 
         bool fetched = reply->error() == QNetworkReply::NoError;
         if (fetched && streamedToDisk) {
@@ -271,16 +301,28 @@ void ImageManager::fetchFromNetwork(const QUrl &url, const QSize &size, QNetwork
         }
 
         if (!fetched) {
+            const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
             qCWarning(LogCore) << "Failed to fetch image:" << url << reply->errorString();
             if (streamedToDisk)
                 streamedToDisk->remove();
-            requests.remove(k);
-            downloadOnlyRequests.remove(k);
-            failedAtMs.insert(k, uptime.elapsed());
             reply->deleteLater();
-            emit imageUnavailable(url, size);
+
+            const bool transferBroke = reply->error() != QNetworkReply::NoError && !isErrorAnswer(httpStatus);
+            if (!transferBroke || attempt >= MaxFetchAttempts) {
+                giveUpOn(k, httpStatus);
+                return;
+            }
+
+            QTimer::singleShot(RetryBrokenTransferAfterMs, this, [this, k, nam, purpose, attempt]() {
+                if (nam)
+                    fetchFromNetwork(k.url, k.size, nam, purpose, attempt + 1);
+                else
+                    giveUpOn(k, 0);
+            });
             return;
         }
+        PinGroup pin = pendingPins.value(k, PinGroup::None);
+        pendingPins.remove(k);
         failedAtMs.remove(k);
 
         const bool pixmapWanted = !downloadOnlyRequests.remove(k);

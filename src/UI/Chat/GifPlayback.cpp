@@ -1,13 +1,13 @@
 #include "UI/Chat/GifPlayback.hpp"
 
 #include <QAbstractItemModel>
+#include <QAbstractItemView>
 #include <QGuiApplication>
 
 #include <algorithm>
 #include <utility>
 
-#include "UI/Chat/ChatModel.hpp"
-#include "UI/Chat/ChatView.hpp"
+#include "UI/Chat/GifPainting.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -19,6 +19,7 @@ constexpr int PruneIntervalMs = 100;
 constexpr int ClosePausedAfterMs = 30 * 1000;
 constexpr double VisibleFractionToPlay = 0.6;
 constexpr qint64 BytesPerMiB = 1024 * 1024;
+constexpr int RetryDownloadsAfterMs = int(Core::ImageManager::FailedFetchRetryMs) + 2000;
 
 const QSize AsDownloaded;
 
@@ -46,8 +47,8 @@ GifPlayMode gifPlayModeFromSetting(const QString &value)
     return GifPlayMode::WhenFocused;
 }
 
-GifPlayback::GifPlayback(ChatView *chatView)
-    : QObject(chatView), view(chatView), player(new Core::Media::ClipPlayer(this))
+GifPlayback::GifPlayback(QAbstractItemView *view, AccountSource playingAccount)
+    : QObject(view), view(view), playingAccount(std::move(playingAccount)), player(new Core::Media::ClipPlayer(this))
 {
     connect(player, &Core::Media::ClipPlayer::frameChanged, this, &GifPlayback::onFrameChanged);
     connect(player, &Core::Media::ClipPlayer::clipFailed, this, &GifPlayback::onClipFailed);
@@ -64,6 +65,13 @@ GifPlayback::GifPlayback(ChatView *chatView)
     pausedTooLongTimer.setSingleShot(true);
     pausedTooLongTimer.setInterval(ClosePausedAfterMs);
     connect(&pausedTooLongTimer, &QTimer::timeout, this, &GifPlayback::closeClipsPausedTooLong);
+
+    retryDownloadsTimer.setSingleShot(true);
+    retryDownloadsTimer.setInterval(RetryDownloadsAfterMs);
+    connect(&retryDownloadsTimer, &QTimer::timeout, this, [this] {
+        downloadsOnHold.clear();
+        reconcile(Starts::Allowed);
+    });
 
     focused = qGuiApp->applicationState() == Qt::ApplicationActive;
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
@@ -86,6 +94,19 @@ void GifPlayback::setImageManager(Core::ImageManager *manager)
         connect(manager, &Core::ImageManager::imageUnavailable, this, &GifPlayback::onDownloadFailed);
     }
     reconcileAndRepaint();
+}
+
+void GifPlayback::setFavorites(Core::FavoriteGifs *favoriteGifs)
+{
+    if (favorites == favoriteGifs)
+        return;
+
+    if (favorites)
+        disconnect(favorites, nullptr, this, nullptr);
+    favorites = favoriteGifs;
+    if (favorites)
+        connect(favorites, &Core::FavoriteGifs::changed, this, &GifPlayback::repaintAll);
+    repaintAll();
 }
 
 void GifPlayback::setPlayMode(GifPlayMode playMode)
@@ -153,10 +174,12 @@ void GifPlayback::reset()
     wanted.clear();
     undecided.clear();
     unplayable.clear();
+    downloadsOnHold.clear();
     hoveredKey.reset();
     startTimer.stop();
     pruneTimer.stop();
     pausedTooLongTimer.stop();
+    retryDownloadsTimer.stop();
 }
 
 void GifPlayback::viewportMoved()
@@ -180,14 +203,50 @@ void GifPlayback::clearHover()
 
 std::optional<GifKey> GifPlayback::keyUnderCursor() const
 {
-    if (!cursorPos)
-        return std::nullopt;
+    return cursorPos ? keyAt(*cursorPos) : std::nullopt;
+}
 
+std::optional<GifKey> GifPlayback::keyAt(const QPoint &viewportPos) const
+{
     for (auto it = surfaces.constBegin(); it != surfaces.constEnd(); ++it) {
-        if (viewportRect(*it).contains(*cursorPos))
+        if (viewportRect(*it).contains(viewportPos))
             return it.key();
     }
     return std::nullopt;
+}
+
+GifStar GifPlayback::starFor(const GifKey &key, const Surface &surface) const
+{
+    if (!favorites || !favorites->isLoaded() || !surface.favorite.isValid() || hoveredKey != key)
+        return GifStar::Hidden;
+    return favorites->contains(surface.favorite.url) ? GifStar::Filled : GifStar::Outline;
+}
+
+const GifPlayback::Surface *GifPlayback::surfaceWithStarAt(const QPoint &viewportPos) const
+{
+    const std::optional<GifKey> key = keyAt(viewportPos);
+    if (!key)
+        return nullptr;
+
+    const auto surface = surfaces.constFind(*key);
+    const bool onStar = starFor(*key, *surface) != GifStar::Hidden && GifPainting::starRect(viewportRect(*surface)).contains(viewportPos);
+    return onStar ? &*surface : nullptr;
+}
+
+bool GifPlayback::isOverStar(const QPoint &viewportPos) const
+{
+    return surfaceWithStarAt(viewportPos) != nullptr;
+}
+
+bool GifPlayback::toggleFavoriteAt(const QPoint &viewportPos)
+{
+    const Surface *surface = surfaceWithStarAt(viewportPos);
+    if (!surface)
+        return false;
+
+    const Core::FavoriteGifCandidate favorite = surface->favorite;
+    favorites->toggle(favorite);
+    return true;
 }
 
 void GifPlayback::beginRow(const QModelIndex &index, const QRect &rowRect)
@@ -216,24 +275,21 @@ void GifPlayback::endRow()
         scheduleReconcile();
 }
 
-GifPlayback::Shown GifPlayback::show(const GifKey &key, const QUrl &animatedUrl, const QRect &rect, ClipFit fit)
+GifPlayback::Shown GifPlayback::show(const GifKey &key, const QUrl &animatedUrl, const QRect &rect, ClipFit fit, const Core::FavoriteGifCandidate &favorite)
 {
-    if (mode == GifPlayMode::Never)
-        return { QImage(), true };
-
     if (recording) {
         recording->keys.insert(key);
 
         const QRect rectInRow = rect.translated(-recording->origin);
         const auto known = surfaces.constFind(key);
         const bool unchanged = known != surfaces.constEnd() && known->index == recording->index && known->rectInRow == rectInRow &&
-                               known->url == animatedUrl && known->fit == fit;
+                               known->url == animatedUrl && known->fit == fit && known->favorite.url == favorite.url;
         if (!unchanged) {
             if (known == surfaces.constEnd())
                 undecided.insert(key);
             else if (known->url != animatedUrl)
-                unplayable.remove(key);
-            surfaces.insert(key, { QPersistentModelIndex(recording->index), rectInRow, animatedUrl, fit });
+                forgetFailuresOf(key);
+            surfaces.insert(key, { QPersistentModelIndex(recording->index), rectInRow, animatedUrl, fit, favorite });
             scheduleReconcile();
         }
     }
@@ -242,7 +298,11 @@ GifPlayback::Shown GifPlayback::show(const GifKey &key, const QUrl &animatedUrl,
     const auto open = openClips.constFind(key);
     if (open != openClips.constEnd())
         shown.frame = player->frame(open->id);
-    shown.badge = !unplayable.contains(key) && !expectedToPlay(key);
+    shown.badge = !animatedUrl.isEmpty() && !unplayable.contains(key) && !expectedToPlay(key);
+
+    const auto surface = surfaces.constFind(key);
+    if (surface != surfaces.constEnd())
+        shown.star = starFor(key, *surface);
     return shown;
 }
 
@@ -262,6 +322,9 @@ std::optional<QList<GifPlayback::Repaint>> GifPlayback::clipOnlyRepaint(const QM
             continue;
 
         const QRect rect = it->rectInRow.translated(rowRect.topLeft());
+        const bool recordedBeforeTheRowWasLaidOutAgain = !rowRect.contains(rect);
+        if (recordedBeforeTheRowWasLaidOutAgain)
+            return std::nullopt;
         if (!rowDamage.intersects(rect))
             continue;
 
@@ -271,7 +334,7 @@ std::optional<QList<GifPlayback::Repaint>> GifPlayback::clipOnlyRepaint(const QM
             return std::nullopt;
 
         covered += rect;
-        repaints.append({ rect, frame, it->fit, !expectedToPlay(it.key()) });
+        repaints.append({ rect, frame, it->fit, !expectedToPlay(it.key()), starFor(it.key(), *it) });
     }
 
     if (repaints.isEmpty() || !rowDamage.subtracted(covered).isEmpty())
@@ -332,7 +395,7 @@ QSet<GifKey> GifPlayback::chooseWanted(Starts starts) const
     for (auto it = surfaces.constBegin(); it != surfaces.constEnd(); ++it) {
         const GifKey &key = it.key();
         const bool hovered = hoveredKey == key;
-        if (unplayable.contains(key) || (mode == GifPlayMode::OnHover && !hovered))
+        if (it->url.isEmpty() || unplayable.contains(key) || downloadsOnHold.contains(key) || (mode == GifPlayMode::OnHover && !hovered))
             continue;
         if (starts == Starts::None && !wanted.contains(key))
             continue;
@@ -369,7 +432,14 @@ void GifPlayback::reconcile(Starts starts)
     }
 
     dropSurfacesOutOfView();
-    hoveredKey = keyUnderCursor();
+
+    const std::optional<GifKey> previouslyHovered = std::exchange(hoveredKey, keyUnderCursor());
+    if (previouslyHovered != hoveredKey) {
+        if (previouslyHovered)
+            repaint(*previouslyHovered);
+        if (hoveredKey)
+            repaint(*hoveredKey);
+    }
 
     const bool open = gateOpen();
     const QSet<GifKey> nowWanted = open ? chooseWanted(starts) : QSet<GifKey>();
@@ -419,9 +489,7 @@ void GifPlayback::play(const GifKey &key)
     if (open == openClips.end()) {
         const QString path = imageManager->rawDownloadPath(surface->url, AsDownloaded);
         if (path.isEmpty()) {
-            const auto *chatModel = qobject_cast<const ChatModel *>(view->model());
-            if (chatModel)
-                imageManager->downloadToCache(surface->url, AsDownloaded, chatModel->getAccountId());
+            download(key, surface->url);
             return;
         }
 
@@ -431,6 +499,35 @@ void GifPlayback::play(const GifKey &key)
     }
 
     player->setPlaying(open->id, true);
+}
+
+void GifPlayback::download(const GifKey &key, const QUrl &url)
+{
+    const Core::Snowflake account = playingAccount();
+    const bool accountHasNoRoute = !imageManager->networkManagerFor(account);
+    if (accountHasNoRoute || imageManager->willNeverLoad({ url, AsDownloaded })) {
+        unplayable.insert(key);
+        return;
+    }
+
+    if (imageManager->isUnavailable({ url, AsDownloaded })) {
+        holdUntilRetry(key);
+        return;
+    }
+
+    const bool roomForAnother = downloadsInFlight.contains(url) || downloadsInFlight.size() < maxPlayingAtOnce;
+    if (!roomForAnother)
+        return;
+
+    downloadsInFlight.insert(url);
+    imageManager->downloadToCache(url, AsDownloaded, account);
+}
+
+void GifPlayback::holdUntilRetry(const GifKey &key)
+{
+    downloadsOnHold.insert(key);
+    if (!retryDownloadsTimer.isActive())
+        retryDownloadsTimer.start();
 }
 
 void GifPlayback::closeClip(const GifKey &key)
@@ -479,11 +576,12 @@ void GifPlayback::onDownloadReady(const QUrl &url, const QSize &size)
     if (size != AsDownloaded)
         return;
 
+    const bool madeRoomForAnother = downloadsInFlight.remove(url);
     const bool awaited = std::any_of(wanted.constBegin(), wanted.constEnd(), [this, &url](const GifKey &key) {
         const auto surface = surfaces.constFind(key);
         return surface != surfaces.constEnd() && surface->url == url && !openClips.contains(key);
     });
-    if (awaited)
+    if (awaited || madeRoomForAnother)
         reconcile(Starts::Allowed);
 }
 
@@ -492,16 +590,29 @@ void GifPlayback::onDownloadFailed(const QUrl &url, const QSize &size)
     if (size != AsDownloaded)
         return;
 
-    bool gaveUpOnAny = false;
+    const bool madeRoomForAnother = downloadsInFlight.remove(url);
+
+    const bool worthRetrying = imageManager && !imageManager->willNeverLoad({ url, AsDownloaded });
+
+    bool waitingOnThisUrl = false;
     for (auto it = surfaces.constBegin(); it != surfaces.constEnd(); ++it) {
         if (it->url != url || openClips.contains(it.key()))
             continue;
-        unplayable.insert(it.key());
-        gaveUpOnAny = true;
+        if (worthRetrying)
+            holdUntilRetry(it.key());
+        else
+            unplayable.insert(it.key());
+        waitingOnThisUrl = true;
     }
 
-    if (gaveUpOnAny)
+    if (waitingOnThisUrl || madeRoomForAnother)
         reconcile(Starts::Allowed);
+}
+
+void GifPlayback::forgetFailuresOf(const GifKey &key)
+{
+    unplayable.remove(key);
+    downloadsOnHold.remove(key);
 }
 
 void GifPlayback::onFrameChanged(quint64 clip)

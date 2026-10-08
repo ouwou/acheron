@@ -41,6 +41,19 @@ static QUrl animatedUrlFor(const QUrl &proxyUrl, const QUrl &originalUrl, bool f
     return Discord::Cdn::animatedImageUrl(proxyUrl, flaggedAnimated, sourceSize, displaySize * qApp->devicePixelRatio());
 }
 
+static QString klipyThumbnailUrl(const Discord::Embed &embed)
+{
+    const bool fromKlipy = embed.provider.hasValue() && embed.provider->name.hasValue() && *embed.provider->name == QLatin1String("Klipy");
+    if (!fromKlipy || !embed.thumbnail.hasValue())
+        return {};
+    return embed.thumbnail->proxyUrl.hasValue() ? *embed.thumbnail->proxyUrl : *embed.thumbnail->url;
+}
+
+static Core::FavoriteGifCandidate favoriteEmbedImage(const Discord::Embed &embed, const QSize &size)
+{
+    return { *embed.image->url, *embed.image->proxyUrl, klipyThumbnailUrl(embed), embed.video.hasValue() ? Proto::GifType::Video : Proto::GifType::Image, size };
+}
+
 static EmbedType embedTypeFromString(const QString &typeStr)
 {
     if (typeStr.isEmpty() || typeStr == "rich")
@@ -417,18 +430,7 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         const Discord::Message &visible = msg.contentMessage();
 
-        QString html = visible.parsedContentCached;
-
-        // for image embeds, suppress text if content is just the embed url
-        if (visible.embeds.hasValue() && visible.embeds->size() == 1) {
-            const auto &embed = visible.embeds->first();
-            QString embedType = embed.type.hasValue() ? *embed.type : QString();
-            if (embedType == "image") {
-                QString embedUrl = embed.url.hasValue() ? *embed.url : QString();
-                if (!embedUrl.isEmpty() && visible.content == embedUrl)
-                    html.clear();
-            }
-        }
+        QString html = visible.hidesLinkBehindItsEmbed() ? QString() : visible.parsedContentCached;
 
         if (msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::HAS_THREAD)) {
             QString sep = html.isEmpty() ? QString() : QStringLiteral("<br>");
@@ -501,6 +503,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 data.displaySize = Core::ImageManager::calculateDisplaySize(original);
                 if (data.isImage)
                     data.animatedUrl = animatedUrlFor(data.proxyUrl, data.originalUrl, att.isFlaggedAnimated(), original, data.displaySize);
+                if (!data.animatedUrl.isEmpty())
+                    data.favoriteGif = { *att.url, *att.proxyUrl, {}, Proto::GifType::Image, original };
                 if (!att.localPreview.isNull()) {
                     // pending paste preview: pixels live in memory, not on disk
                     data.pixmap = previewPixmap(att.id, att.localPreview, data.displaySize);
@@ -584,6 +588,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                     origSize = QSize(*embed.image->width, *embed.image->height);
                 imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
                 imageData.animatedUrl = animatedUrlFor(imageData.url, imageData.originalUrl, embed.image->isFlaggedAnimated(), origSize, imageData.displaySize);
+                if (!imageData.animatedUrl.isEmpty())
+                    imageData.favoriteGif = favoriteEmbedImage(embed, origSize);
                 imageData.pixmap =
                         suppressImageFetch
                                 ? imageManager->getIfCached(imageData.url, imageData.displaySize)
@@ -679,6 +685,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                                      : QSize(80, 80);
                     if (data.type != EmbedType::Gifv)
                         data.thumbnailAnimatedUrl = animatedUrlFor(data.thumbnailUrl, data.thumbnailOriginalUrl, embed.thumbnail->isFlaggedAnimated(), origSize, data.thumbnailSize);
+                    if (data.type == EmbedType::Image && !data.thumbnailAnimatedUrl.isEmpty())
+                        data.favoriteGif = { *embed.thumbnail->url, *embed.thumbnail->proxyUrl, {}, Proto::GifType::Image, origSize };
                     data.thumbnail =
                             suppressImageFetch
                                     ? imageManager->getIfCached(data.thumbnailUrl,
@@ -695,6 +703,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                         origSize = QSize(*embed.image->width, *embed.image->height);
                     imageData.displaySize = Core::ImageManager::calculateDisplaySize(origSize);
                     imageData.animatedUrl = animatedUrlFor(imageData.url, imageData.originalUrl, embed.image->isFlaggedAnimated(), origSize, imageData.displaySize);
+                    if (!imageData.animatedUrl.isEmpty())
+                        imageData.favoriteGif = favoriteEmbedImage(embed, origSize);
                     imageData.pixmap =
                             suppressImageFetch
                                     ? imageManager->getIfCached(imageData.url,
@@ -713,8 +723,10 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                                                       : QString();
                     const QSize videoNaturalSize(embed.video->width.hasValue() ? *embed.video->width : 0, embed.video->height.hasValue() ? *embed.video->height : 0);
                     if (data.type == EmbedType::Gifv) {
-                        if (Core::Media::isSupported() && !data.thumbnailUrl.isEmpty() && Discord::Cdn::isDiscordAssetUrl(mediaUrl) && Discord::Cdn::fitsLoopingVideoLimit(videoNaturalSize))
+                        if (Core::Media::isSupported() && !data.thumbnailUrl.isEmpty() && Discord::Cdn::isDiscordAssetUrl(mediaUrl) && Discord::Cdn::fitsLoopingVideoLimit(videoNaturalSize)) {
                             data.loopingVideoUrl = mediaUrl;
+                            data.favoriteGif = { embedUrl, *embed.video->proxyUrl, klipyThumbnailUrl(embed), Proto::GifType::Video, videoNaturalSize };
+                        }
                     } else if (!mediaUrl.isEmpty() && Core::Media::canPlay(videoType, mediaUrl)) {
                         data.videoUrl = mediaUrl;
                         data.videoPlayable = true;

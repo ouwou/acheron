@@ -24,17 +24,29 @@ void PaintedImages::setSource(Core::ImageManager *manager, Core::Snowflake accou
     unavailableConnection = connect(imageManager, &Core::ImageManager::imageUnavailable, this, &PaintedImages::onImageUnavailable);
 }
 
-QPixmap PaintedImages::pixmap(const QUrl &url, int px, const QRect &paintedRect)
+QPixmap PaintedImages::pixmapWithoutFetching(const QUrl &url, const QSize &size)
 {
     if (!imageManager || !url.isValid())
         return {};
 
-    const QSize size(px, px);
     const Core::ImageRequestKey key{ url, size };
-
     if (const QPixmap *remembered = loaded.object(key))
         return *remembered;
+    if (awaited.contains(key) || imageManager->isUnavailable(key) || !imageManager->isCached(url, size))
+        return {};
 
+    const QPixmap cached = imageManager->get(url, size, account);
+    remember(key, cached);
+    return cached;
+}
+
+QPixmap PaintedImages::pixmap(const QUrl &url, const QSize &size, const QRect &paintedRect)
+{
+    const QPixmap alreadyHere = pixmapWithoutFetching(url, size);
+    if (!alreadyHere.isNull() || !imageManager || !url.isValid())
+        return alreadyHere;
+
+    const Core::ImageRequestKey key{ url, size };
     const auto awaitedIt = awaited.find(key);
     if (awaitedIt != awaited.end()) {
         *awaitedIt += paintedRect;
@@ -43,12 +55,6 @@ QPixmap PaintedImages::pixmap(const QUrl &url, int px, const QRect &paintedRect)
 
     if (imageManager->isUnavailable(key))
         return {};
-
-    if (imageManager->isCached(url, size)) {
-        const QPixmap cached = imageManager->get(url, size, account);
-        remember(key, cached);
-        return cached;
-    }
 
     imageManager->get(url, size, account);
     awaited.insert(key, paintedRect);
@@ -78,11 +84,13 @@ void PaintedImages::onImageFetched(const QUrl &url, const QSize &size, const QPi
     awaited.erase(it);
     remember(key, pixmap);
     widget->update(region);
+    emit fetchFinished(true);
 }
 
 void PaintedImages::onImageUnavailable(const QUrl &url, const QSize &size)
 {
-    awaited.remove({ url, size });
+    if (awaited.remove({ url, size }))
+        emit fetchFinished(false);
 }
 
 } // namespace UI

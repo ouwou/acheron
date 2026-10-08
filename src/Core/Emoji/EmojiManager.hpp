@@ -59,6 +59,7 @@ public slots:
     void onReady();
     void onGuildEmojisUpdated(const Discord::GuildEmojisUpdate &event);
     void onUserSettingsProtoUpdated(const Discord::UserSettingsProtoUpdate &event);
+    void onFrecencySettingsReceived(const Proto::FrecencyUserSettings &settings);
 
 private:
     struct CustomEmoji
