@@ -301,6 +301,8 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
 
     actionBar->setShiftHeld(event->modifiers().testFlag(Qt::ShiftModifier));
     releaseHoverHold(event->globalPos());
+    if (reactionTooltipPill && !reactionTooltipPill->rect.contains(pos))
+        reactionTooltipPill.reset();
     if (hoveredMessage != messageUnderCursor(event->globalPos()))
         updateHoveredMessage();
 
@@ -447,13 +449,8 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
     case Kind::Reaction: {
         if (hasTextSelection())
             break;
-        if (region->index < 0 || region->index >= resolved.ctx.reactions.size())
-            break;
-        Snowflake channelId = chatModel->getActiveChannelId();
-        Snowflake messageId = idx.data(ChatModel::MessageIdRole).toULongLong();
-        const ReactionData &r = resolved.ctx.reactions[region->index];
-        const Discord::Emoji emoji = r.emojiId.isValid() ? Discord::Emoji::custom(r.emojiId, r.emojiName, r.emojiAnimated) : Discord::Emoji::unicode(r.emojiName);
-        emit reactionToggleRequested(channelId, messageId, emoji, r.me, r.isBurst, Discord::Client::ReactionLocation::InlineButton);
+        if (const auto pill = reactionPill(idx, resolved, region))
+            emit reactionToggleRequested(chatModel->getActiveChannelId(), pill->reaction.messageId, pill->reaction.emoji, pill->me, pill->reaction.isBurst, Discord::Client::ReactionLocation::InlineButton);
         break;
     }
 
@@ -592,6 +589,11 @@ bool ChatView::viewportEvent(QEvent *event)
         const ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, idx);
 
         const auto region = ChatLayout::hitTest(resolved, helpEvent->pos());
+        if (const auto pill = reactionPill(idx, resolved, region)) {
+            reactionTooltipPill = pill;
+            showReactionTooltip(*pill, helpEvent->globalPos());
+            return true;
+        }
         if (region && region->kind == ChatLayout::HitRegion::Kind::Sticker) {
             QToolTip::showText(helpEvent->globalPos(), resolved.ctx.stickers[region->index].name, viewport(), region->rect);
             return true;
@@ -610,6 +612,48 @@ bool ChatView::viewportEvent(QEvent *event)
     }
 
     return QListView::viewportEvent(event);
+}
+
+std::optional<ChatView::ReactionPill> ChatView::reactionPill(const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region)
+{
+    if (!region || region->kind != ChatLayout::HitRegion::Kind::Reaction || region->index < 0 || region->index >= resolved.ctx.reactions.size())
+        return std::nullopt;
+
+    const ReactionData &shown = resolved.ctx.reactions[region->index];
+    const Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
+    return ReactionPill{ { messageId, shown.emoji(), shown.isBurst }, shown.me, shown.count, region->rect };
+}
+
+std::optional<ChatView::ReactionPill> ChatView::reactionPillAt(const QPoint &viewportPos) const
+{
+    const QModelIndex index = indexAt(viewportPos);
+    const ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, index);
+    return reactionPill(index, resolved, ChatLayout::hitTest(resolved, viewportPos));
+}
+
+void ChatView::setReactionTooltip(ReactionTooltip tooltip)
+{
+    reactionTooltip = std::move(tooltip);
+}
+
+void ChatView::showReactionTooltip(const ReactionPill &pill, const QPoint &globalPos)
+{
+    const QString text = reactionTooltip ? reactionTooltip(pill.reaction, pill.count) : QString();
+    QToolTip::showText(globalPos, text, viewport(), pill.rect);
+}
+
+void ChatView::refreshReactionTooltip(Core::Snowflake messageId)
+{
+    if (!reactionTooltipPill || reactionTooltipPill->reaction.messageId != messageId)
+        return;
+
+    const QPoint globalPos = QCursor::pos();
+    const auto hovered = viewport()->underMouse() ? reactionPillAt(viewport()->mapFromGlobal(globalPos)) : std::nullopt;
+    if (!hovered || !hovered->reaction.sameReaction(reactionTooltipPill->reaction)) {
+        reactionTooltipPill.reset();
+        return;
+    }
+    showReactionTooltip(*hovered, globalPos);
 }
 
 void ChatView::onHistoryRequestFinished()
@@ -1272,6 +1316,15 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     if (canReactTo(index))
         addReactionMenu(menu, messageId);
+
+    if (!resolved.ctx.reactions.isEmpty()) {
+        const auto pill = reactionPill(index, resolved, region);
+        const std::optional<Core::ReactionRef> selected = pill ? std::optional(pill->reaction) : std::nullopt;
+        QAction *viewReactionsAction = menu.addAction(tr("View Reactions"));
+        connect(viewReactionsAction, &QAction::triggered, this, [this, channelId, messageId, selected]() {
+            emit reactorsRequested(channelId, messageId, selected);
+        });
+    }
 
     bool isPending = index.data(ChatModel::IsPendingRole).toBool();
     bool hasAttachments = !index.data(ChatModel::AttachmentsRole).isNull();

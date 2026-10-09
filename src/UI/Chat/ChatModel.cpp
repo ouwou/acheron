@@ -832,8 +832,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
                 isLoading = !imageManager->isCached(emojiUrl, emojiSize);
             }
 
-            int normalCount = reaction.countDetails.hasValue() ? *reaction.countDetails->normal : *reaction.count;
-            int burstCount = reaction.countDetails.hasValue() ? *reaction.countDetails->burst : 0;
+            int normalCount = reaction.normalCount();
+            int burstCount = reaction.superCount();
 
             if (burstCount > 0) {
                 ReactionData data;

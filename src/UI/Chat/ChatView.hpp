@@ -11,6 +11,7 @@
 #include "MessageActionBar.hpp"
 #include "Core/Emoji/EmojiManager.hpp"
 #include "Core/Gifs/FavoriteGifs.hpp"
+#include "Core/MessageReactors.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Client.hpp"
 
@@ -99,6 +100,9 @@ public:
     void setCanAddReactions(bool canReact);
     void setReactionPickerOpen(bool open);
 
+    using ReactionTooltip = std::function<QString(const Core::ReactionRef &reaction, int reactionCount)>;
+    void setReactionTooltip(ReactionTooltip tooltip);
+
 protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -133,6 +137,7 @@ signals:
     void cancelUploadRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void filesDropped(const QList<QUrl> &urls);
     void reactionToggleRequested(Core::Snowflake channelId, Core::Snowflake messageId, const Acheron::Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Acheron::Discord::Client::ReactionLocation location);
+    void reactorsRequested(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Acheron::Core::ReactionRef> &selected);
     void channelMentionClicked(Core::Snowflake channelId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
@@ -145,6 +150,7 @@ public slots:
     void jumpToMessage(Core::Snowflake messageId);
     void openLink(const QString &url);
     void jumpToPresent();
+    void refreshReactionTooltip(Core::Snowflake messageId);
 
 private slots:
     void onScrollBarValueChanged(int value);
@@ -190,6 +196,17 @@ private:
     void requestReactionPicker(Core::Snowflake messageId);
     void releaseHoverHold(const QPoint &globalPos);
 
+    struct ReactionPill
+    {
+        Core::ReactionRef reaction;
+        bool me;
+        int count;
+        QRect rect;
+    };
+    [[nodiscard]] static std::optional<ReactionPill> reactionPill(const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region);
+    [[nodiscard]] std::optional<ReactionPill> reactionPillAt(const QPoint &viewportPos) const;
+    void showReactionTooltip(const ReactionPill &pill, const QPoint &globalPos);
+
     InlineVideoController *video = nullptr;
     FrameAnimator *animator = nullptr;
     GifPlayback *gifs = nullptr;
@@ -231,6 +248,9 @@ private:
     bool canPinMessages = false;
     bool canManageMessages = false;
     bool canAddReactions = false;
+
+    ReactionTooltip reactionTooltip;
+    std::optional<ReactionPill> reactionTooltipPill;
 };
 } // namespace UI
 } // namespace Acheron

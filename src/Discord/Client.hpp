@@ -129,6 +129,7 @@ public:
         InlineButton,
         ContextMenu,
         ReactionPicker,
+        Message,
     };
 
     struct ReactionResult
@@ -141,7 +142,7 @@ public:
     using ReactionCallback = std::function<void(const ReactionResult &)>;
 
     void addReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback);
-    void removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback);
+    void removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, std::optional<Snowflake> reactorUnlessMe, ReactionCallback callback);
 
     struct AckEntry
     {
@@ -198,6 +199,8 @@ public:
     template <typename T>
     using ResultCallback = std::function<void(const Core::Result<T> &)>;
     using ActionCallback = ResultCallback<void>;
+
+    void fetchReactors(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, int limit, std::optional<Snowflake> after, ResultCallback<QList<User>> callback);
 
     void fetchGuildProfile(Snowflake guildId, ResultCallback<GuildProfileEdit> callback);
     void modifyGuildProfile(Snowflake guildId, const GuildProfileEdit &edit, ResultCallback<GuildProfileEdit> callback);

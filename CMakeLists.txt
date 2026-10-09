@@ -166,6 +166,7 @@ set(PROJECT_SOURCES
     src/Core/Session.cpp
     src/Core/Logging.cpp
     src/Core/MessageManager.cpp
+    src/Core/MessageReactors.cpp
     src/Core/MessageSegments.cpp
     src/Core/ForumManager.cpp
     src/Core/ImageManager.cpp
@@ -260,6 +261,7 @@ set(PROJECT_SOURCES
     src/UI/Chat/MediaTarget.cpp
     src/UI/Chat/VideoControls.cpp
     src/UI/Chat/MessageActionBar.cpp
+    src/UI/Chat/ReactionTooltip.cpp
     src/UI/Forum/ForumPostModel.cpp
     src/UI/Forum/ForumPostDelegate.cpp
     src/UI/Forum/ForumBrowser.cpp
@@ -272,6 +274,7 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ChannelTopicPopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
+    src/UI/Dialogs/ReactionsPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
     src/UI/Dialogs/ActivityCard.cpp
     src/UI/MemberList/MemberListModel.cpp

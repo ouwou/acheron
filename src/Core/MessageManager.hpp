@@ -7,6 +7,7 @@
 #include <QPair>
 #include <QSet>
 
+#include "MessageReactors.hpp"
 #include "MessageSegments.hpp"
 #include "PendingAttachment.hpp"
 #include "Snowflake.hpp"
@@ -60,6 +61,10 @@ public:
     using ReactionLocation = Discord::Client::ReactionLocation;
     void addReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location);
     void removeReaction(Snowflake channelId, Snowflake messageId, const Discord::Emoji &emoji, bool isBurst, ReactionLocation location);
+    void removeReactionOf(Snowflake reactorId, Snowflake channelId, const ReactionRef &reaction);
+
+    [[nodiscard]] MessageReactors *reactors() const { return reactorStore; }
+    [[nodiscard]] QList<Discord::Reaction> reactionsOf(Snowflake messageId);
 
     enum class ReactionRejection {
         TooManyReactions,
@@ -69,6 +74,7 @@ public:
 
 signals:
     void reactionRejected(Acheron::Core::MessageManager::ReactionRejection reason);
+    void reactionsChanged(Core::Snowflake messageId);
     void messagesReceived(const MessageRequestResult &result);
     void messageErrored(const QString &nonce);
     void messageDeleted(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -107,6 +113,7 @@ private:
         Discord::Emoji emoji;
         bool isBurst;
         ReactionLocation location;
+        std::optional<Snowflake> reactorUnlessMe;
     };
     enum class ReactionOp {
         Add,
@@ -117,7 +124,7 @@ private:
         Retry,
     };
     void updateReactions(Snowflake messageId, const std::function<bool(QList<Discord::Reaction> &)> &mutate);
-    void applyOwnReaction(ReactionOp op, const ReactionChange &change);
+    void applyOptimistically(ReactionOp op, const ReactionChange &change);
     void sendReactionChange(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt);
     void onReactionChangeFailed(ReactionOp op, const ReactionChange &change, ReactionAttempt attempt, const Discord::Client::ReactionResult &result);
     void cacheGatewayMembers(const Discord::Message &msg);
@@ -128,6 +135,7 @@ private:
 
     Discord::Client *client;
     UserManager *userManager;
+    MessageReactors *reactorStore;
     EmojiManager *emojiManager = nullptr;
     std::unique_ptr<Markdown::Parser> parser;
 

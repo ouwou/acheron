@@ -1112,6 +1112,8 @@ QString reactionLocationName(Client::ReactionLocation location)
         return QStringLiteral("Message Context Menu");
     case Client::ReactionLocation::ReactionPicker:
         return QStringLiteral("Message Reaction Picker");
+    case Client::ReactionLocation::Message:
+        return QStringLiteral("Message");
     }
     return {};
 }
@@ -1119,6 +1121,11 @@ QString reactionLocationName(Client::ReactionLocation location)
 QString reactionsEndpoint(Core::Snowflake channelId, Core::Snowflake messageId, const QString &reactionKey)
 {
     return "/channels/" + QString::number(channelId) + "/messages/" + QString::number(messageId) + "/reactions/" + QString::fromLatin1(QUrl::toPercentEncoding(reactionKey, ":"));
+}
+
+QString reactionTypeParameter(bool isBurst)
+{
+    return QString::number(isBurst ? ReactionTypeBurst : ReactionTypeNormal);
 }
 
 Client::ReactionResult reactionResult(const HttpResponse &response)
@@ -1142,7 +1149,7 @@ void Client::addReaction(Snowflake channelId, Snowflake messageId, const QString
 {
     QUrlQuery query;
     query.addQueryItem("location", reactionLocationName(location));
-    query.addQueryItem("type", QString::number(isBurst ? ReactionTypeBurst : ReactionTypeNormal));
+    query.addQueryItem("type", reactionTypeParameter(isBurst));
     const QString endpoint = reactionsEndpoint(channelId, messageId, reactionKey) + "/%40me?" + query.toString(QUrl::FullyEncoded);
 
     httpClient->put(endpoint, QJsonObject{}, [channelId, messageId, callback](const HttpResponse &response) {
@@ -1153,12 +1160,13 @@ void Client::addReaction(Snowflake channelId, Snowflake messageId, const QString
     });
 }
 
-void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, ReactionCallback callback)
+void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, ReactionLocation location, std::optional<Snowflake> reactorUnlessMe, ReactionCallback callback)
 {
     QUrlQuery query;
     query.addQueryItem("location", reactionLocationName(location));
     query.addQueryItem("burst", isBurst ? "true" : "false");
-    const QString endpoint = reactionsEndpoint(channelId, messageId, reactionKey) + "/" + QString::number(isBurst ? ReactionTypeBurst : ReactionTypeNormal) + "/%40me?" + query.toString(QUrl::FullyEncoded);
+    const QString reactor = reactorUnlessMe ? QString::number(*reactorUnlessMe) : QStringLiteral("%40me");
+    const QString endpoint = reactionsEndpoint(channelId, messageId, reactionKey) + "/" + reactionTypeParameter(isBurst) + "/" + reactor + "?" + query.toString(QUrl::FullyEncoded);
 
     httpClient->delete_(endpoint, [channelId, messageId, callback](const HttpResponse &response) {
         if (!response.success)
@@ -1166,6 +1174,16 @@ void Client::removeReaction(Snowflake channelId, Snowflake messageId, const QStr
         if (callback)
             callback(reactionResult(response));
     });
+}
+
+void Client::fetchReactors(Snowflake channelId, Snowflake messageId, const QString &reactionKey, bool isBurst, int limit, std::optional<Snowflake> after, ResultCallback<QList<User>> callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("limit", QString::number(limit));
+    if (after)
+        query.addQueryItem("after", QString::number(*after));
+    query.addQueryItem("type", reactionTypeParameter(isBurst));
+    httpClient->get(reactionsEndpoint(channelId, messageId, reactionKey), query, valueHandler<QList<User>>("Fetching reactors", std::move(callback), parseArray<User>));
 }
 
 void Client::leaveGuild(Snowflake guildId)

@@ -51,8 +51,10 @@
 #include "TrayIcon.hpp"
 #include "BrowserCaptchaResolver.hpp"
 #include "Dialogs/ChannelTopicPopup.hpp"
+#include "Dialogs/ReactionsPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
+#include "Chat/ReactionTooltip.hpp"
 #include "Discord/CdnUrls.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/MemberListManager.hpp"
@@ -91,17 +93,33 @@ bool voiceChatLocked(Core::ClientInstance *instance, Core::Snowflake channelId)
     return !instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
 }
 
+bool isArchivedThread(const std::optional<Discord::Channel> &channel)
+{
+    return channel && channel->isThread() && channel->isArchived();
+}
+
+bool hasPermissionIn(Core::ClientInstance *instance, const std::optional<Discord::Channel> &channel, Core::Snowflake channelId, Discord::Permission permission)
+{
+    const bool inheritsFromParent = channel && channel->isThread() && channel->parentId.hasValue();
+    return instance->permissions()->hasChannelPermission(instance->accountId(), inheritsFromParent ? channel->parentId.get() : channelId, permission);
+}
+
 bool canAddReactionsIn(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId)
 {
     const std::optional<Discord::Channel> channel = instance->getChannel(channelId);
-    const bool isThread = channel && channel->isThread();
-    if (isThread && channel->isArchived())
+    if (isArchivedThread(channel))
         return false;
-    if (!guildId.isValid())
-        return true;
+    return !guildId.isValid() || hasPermissionIn(instance, channel, channelId, Discord::Permission::ADD_REACTIONS);
+}
 
-    const Core::Snowflake permissionChannel = isThread && channel->parentId.hasValue() ? channel->parentId.get() : channelId;
-    return instance->permissions()->hasChannelPermission(instance->accountId(), permissionChannel, Discord::Permission::ADD_REACTIONS);
+ReactionsPopup::RemovableReactors removableReactorsIn(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId)
+{
+    const std::optional<Discord::Channel> channel = instance->getChannel(channelId);
+    if (isArchivedThread(channel))
+        return ReactionsPopup::RemovableReactors::None;
+
+    const bool canManageMessages = guildId.isValid() && hasPermissionIn(instance, channel, channelId, Discord::Permission::MANAGE_MESSAGES);
+    return canManageMessages ? ReactionsPopup::RemovableReactors::Anyone : ReactionsPopup::RemovableReactors::OwnOnly;
 }
 
 void showReactionRejection(QWidget *parent, MessageManager::ReactionRejection reason)
@@ -468,6 +486,8 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     auto *msgs = currentInstance->messages();
     disconnect(msgs, nullptr, chatModel, nullptr);
     disconnect(msgs, nullptr, this, nullptr);
+    disconnect(msgs, nullptr, chatView, nullptr);
+    disconnect(msgs->reactors(), nullptr, chatView, nullptr);
     disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
     disconnect(currentInstance->permissions(), nullptr, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
@@ -496,6 +516,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         auto *msgs = currentInstance->messages();
         disconnect(msgs, nullptr, chatModel, nullptr);
         disconnect(msgs, nullptr, this, nullptr);
+        disconnect(msgs, nullptr, chatView, nullptr);
+        disconnect(msgs->reactors(), nullptr, chatView, nullptr);
         disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
@@ -545,6 +567,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs, &MessageManager::messageDeleted, chatModel, &ChatModel::handleMessageDeleted);
     connect(msgs, &MessageManager::attachmentUploadProgress, chatModel, &ChatModel::handleUploadProgress);
     connect(msgs, &MessageManager::reactionRejected, this, [this](MessageManager::ReactionRejection reason) { showReactionRejection(this, reason); }, Qt::QueuedConnection);
+    connect(msgs->reactors(), &Core::MessageReactors::reactorsChanged, chatView, &ChatView::refreshReactionTooltip);
+    connect(msgs, &MessageManager::reactionsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::messagesReceived, this,
             [this](const MessageRequestResult &result) {
                 if (result.channelId != chatModel->getActiveChannelId())
@@ -843,9 +867,9 @@ void MainWindow::openGuildSettings(Snowflake accountId, Snowflake guildId, Guild
     window->activateWindow();
 }
 
-void MainWindow::showUserProfile(Core::ClientInstance *instance, Snowflake userId, Snowflake guildId)
+void MainWindow::showUserProfile(Core::ClientInstance *instance, Snowflake userId, Snowflake guildId, QWidget *aboveModalPopup)
 {
-    auto *popup = new UserProfilePopup(session->getImageManager(), instance, userId, guildId, this);
+    auto *popup = new UserProfilePopup(session->getImageManager(), instance, userId, guildId, aboveModalPopup ? aboveModalPopup : this);
     connect(popup, &UserProfilePopup::linkActivated, chatView, &ChatView::openLink);
     popup->show();
 }
@@ -1464,6 +1488,11 @@ void MainWindow::setupUi()
                 else
                     currentInstance->messages()->addReaction(channelId, messageId, emoji, isBurst, location);
             });
+
+    connect(chatView, &ChatView::reactorsRequested, this, &MainWindow::openReactors);
+    chatView->setReactionTooltip([this](const Core::ReactionRef &reaction, int reactionCount) {
+        return currentInstance ? reactionTooltip(currentInstance, chatModel->getActiveChannelId(), chatModel->getActiveGuildId(), reaction, reactionCount) : QString();
+    });
 
     connect(chatView, &ChatView::userContextMenuRequested, this,
             [this](Snowflake userId, QPoint globalPos) {
@@ -2891,6 +2920,20 @@ void MainWindow::showFavoriteGifLimit()
     auto *box = new QMessageBox(QMessageBox::Information, tr("Oh no!"), tr("You cannot have more favorites."), QMessageBox::Ok, this);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->open();
+}
+
+void MainWindow::openReactors(Snowflake channelId, Snowflake messageId, const std::optional<Core::ReactionRef> &selected)
+{
+    if (!currentInstance)
+        return;
+
+    const Snowflake guildId = chatModel->getActiveGuildId();
+    auto *popup = new ReactionsPopup(session->getImageManager(), currentInstance, channelId, guildId, messageId, selected, removableReactorsIn(currentInstance, channelId, guildId), this);
+    connect(popup, &ReactionsPopup::userActivated, this, [this, popup, instance = QPointer<Core::ClientInstance>(currentInstance), guildId](Snowflake userId) {
+        if (instance)
+            showUserProfile(instance, userId, guildId, popup);
+    });
+    popup->open();
 }
 
 void MainWindow::openChannelTopicPopup()

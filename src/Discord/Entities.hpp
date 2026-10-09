@@ -698,6 +698,13 @@ struct Emoji : Core::JsonUtils::JsonObject
 
     bool isAnimated() const { return animated.hasValue() && *animated; }
 
+    [[nodiscard]] bool sameEmoji(const Emoji &other) const
+    {
+        if (isUnicode() != other.isUnicode())
+            return false;
+        return isUnicode() ? name.get() == other.name.get() : id.get() == other.id.get();
+    }
+
     QString reactionKey() const
     {
         return isUnicode() ? name.get() : name.get() + ":" + id.get().toString();
@@ -1229,6 +1236,9 @@ struct Reaction : Core::JsonUtils::JsonObject
         get(obj, "burst_colors", reaction.burstColors);
         return reaction;
     }
+
+    [[nodiscard]] int normalCount() const { return countDetails.hasValue() ? countDetails->normal.get() : count.get(); }
+    [[nodiscard]] int superCount() const { return countDetails.hasValue() ? countDetails->burst.get() : 0; }
 
     QColor getBrightestBurstColor() const
     {

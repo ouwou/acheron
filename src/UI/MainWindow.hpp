@@ -7,6 +7,7 @@
 #include <Core/Snowflake.hpp>
 #include <optional>
 
+#include "Core/MessageReactors.hpp"
 #include "Emoji/ExpressionPicker.hpp"
 #include "Input/MessageInput.hpp"
 #include "MemberList/MemberListView.hpp"
@@ -115,7 +116,7 @@ private:
     void showChannelTopic(Core::ClientInstance *instance, Core::Snowflake channelId);
     void refreshChannelTopic();
     void openChannelTopicPopup();
-    void showUserProfile(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId);
+    void showUserProfile(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QWidget *aboveModalPopup = nullptr);
     QWidget *buildLeftSide();
     void onRailAccountHomeSelected(Core::Snowflake accountId);
     void onRailAccountHomeClicked(Core::Snowflake accountId);
@@ -159,6 +160,7 @@ private:
     void setThreadBrowserTarget(Core::Snowflake channelId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
+    void openReactors(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Core::ReactionRef> &selected);
     void openChatPicker(ExpressionPicker::Tab tab, const QRect &globalAnchor);
     void onChatPickerTabShown(ExpressionPicker::Tab tab);
     void onEmojiPicked(const Core::PickerEmoji &emoji, bool pickerStaysOpen);

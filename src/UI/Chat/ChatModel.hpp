@@ -115,6 +115,11 @@ struct ReactionData
     QPixmap emojiPixmap;
     bool isLoading = false;
     QColor burstTintColor;
+
+    [[nodiscard]] Discord::Emoji emoji() const
+    {
+        return emojiId.isValid() ? Discord::Emoji::custom(emojiId, emojiName, emojiAnimated) : Discord::Emoji::unicode(emojiName);
+    }
 };
 
 struct StickerData
