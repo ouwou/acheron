@@ -85,5 +85,5 @@ void TestEmbeds::testOnlyALoneLinkIsHiddenBehindItsEmbed()
     QVERIFY(!withoutEmbeds.hidesLinkBehindItsEmbed());
 }
 
-QTEST_MAIN(TestEmbeds)
+QTEST_GUILESS_MAIN(TestEmbeds)
 #include "tst_Embeds.moc"

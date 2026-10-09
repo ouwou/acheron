@@ -18,6 +18,9 @@ env:
   # AppImage builds against this prebuilt prefix and bundles it.
   FFMPEG_LINUX_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-shared-8.1
   FFMPEG_LINUX_SHA256: c882a80f06617149198a98a07a0880a7e881953ae9f9cb931f5be09a4f93caae
+  # aqtinstall 3.3.0, still the newest release, cannot find Qt 6.11+ for Windows: the
+  # repository moved to one folder per compiler (jurplel/install-qt-action#374).
+  AQT_FOR_WINDOWS_QT6: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
 
 jobs:
   build-windows:
@@ -38,6 +41,7 @@ jobs:
           version: '6.12.0'
           modules: qtimageformats
           cache: true
+          aqtsource: ${{ env.AQT_FOR_WINDOWS_QT6 }}
 
       - name: Bootstrap vcpkg
         shell: pwsh
@@ -140,6 +144,7 @@ jobs:
           version: '6.12.0'
           modules: qtimageformats
           cache: true
+          aqtsource: ${{ env.AQT_FOR_WINDOWS_QT6 }}
 
       - name: Bootstrap vcpkg
         shell: pwsh

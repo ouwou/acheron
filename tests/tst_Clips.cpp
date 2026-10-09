@@ -452,5 +452,5 @@ void TestClips::testPlayerRefusesClipOverItsMemoryLimit()
     QCOMPARE(failed.count(), 1);
 }
 
-QTEST_MAIN(TestClips)
+QTEST_GUILESS_MAIN(TestClips)
 #include "tst_Clips.moc"
