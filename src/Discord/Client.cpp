@@ -1493,6 +1493,13 @@ void Client::modifyGuildProfile(Snowflake guildId, const GuildProfileEdit &edit,
                                                      }));
 }
 
+void Client::modifyUserGuildSettings(Snowflake guildId, const QJsonObject &changes, ActionCallback callback)
+{
+    httpClient->patch("/users/@me/guilds/" + QString::number(guildId) + "/settings", changes,
+                      applyThen([this](const QJsonDocument &doc) { emit userGuildSettingsUpdated(UserGuildSettings::fromJson(doc.object())); },
+                                actionHandler("Saving notification settings", std::move(callback))));
+}
+
 void Client::modifyGuild(Snowflake guildId, const GuildEdit &edit, const QMap<QString, QByteArray> &originalMd5s, ActionCallback callback)
 {
     RequestOptions options;

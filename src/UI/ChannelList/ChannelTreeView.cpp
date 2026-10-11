@@ -227,6 +227,11 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
         Core::Snowflake accountId = findAccountIdForIndex(sourceIndex);
         Core::Snowflake guildId(sourceIndex.data(ChannelTreeModel::IdRole).toULongLong());
 
+        if (guildNotificationMenuProvider) {
+            guildNotificationMenuProvider(&menu, accountId, guildId);
+            menu.addSeparator();
+        }
+
         GuildSettingsAccess::addMenu(&menu, guildSettingsProvider, accountId, guildId, [this, accountId, guildId](GuildSettingsSection section) {
             emit guildSettingsRequested(accountId, guildId, section);
         });
@@ -273,6 +278,11 @@ bool ChannelTreeView::isAccountInVoice(Core::Snowflake accountId) const
 void ChannelTreeView::setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider)
 {
     guildSettingsProvider = std::move(provider);
+}
+
+void ChannelTreeView::setGuildNotificationMenuProvider(GuildMenuExtender provider)
+{
+    guildNotificationMenuProvider = std::move(provider);
 }
 
 Core::Snowflake ChannelTreeView::findAccountIdForIndex(const QModelIndex &sourceIndex) const

@@ -206,6 +206,7 @@ public:
     void modifyGuildProfile(Snowflake guildId, const GuildProfileEdit &edit, ResultCallback<GuildProfileEdit> callback);
     void modifyGuild(Snowflake guildId, const GuildEdit &edit, const QMap<QString, QByteArray> &originalMd5s, ActionCallback callback);
     void deleteGuild(Snowflake guildId, ActionCallback callback);
+    void modifyUserGuildSettings(Snowflake guildId, const QJsonObject &changes, ActionCallback callback);
 
     void createRole(Snowflake guildId, ResultCallback<Role> callback);
     void modifyRole(Snowflake guildId, Snowflake roleId, const RoleEdit &edit, ActionCallback callback);

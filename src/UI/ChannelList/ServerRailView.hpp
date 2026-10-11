@@ -2,6 +2,8 @@
 
 #include <QListView>
 
+#include <functional>
+
 #include "Core/Snowflake.hpp"
 #include "UI/GuildSettings/GuildSettingsSection.hpp"
 
@@ -14,10 +16,13 @@ class ServerRailView : public QListView
 {
     Q_OBJECT
 public:
+    using GuildMenuExtender = std::function<void(QMenu *menu, Core::Snowflake accountId, Core::Snowflake guildId)>;
+
     explicit ServerRailView(QWidget *parent = nullptr);
 
     void setModel(QAbstractItemModel *model) override;
     void setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider);
+    void setGuildNotificationMenuProvider(GuildMenuExtender provider);
 
 signals:
     void accountHomeClicked(Core::Snowflake accountId);
@@ -34,6 +39,7 @@ protected:
 
 private:
     GuildSettingsAccess::SectionsProvider guildSettingsProvider;
+    GuildMenuExtender guildNotificationMenuProvider;
     MentionJumpIndicator *mentionJump = nullptr;
 };
 

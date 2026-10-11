@@ -47,6 +47,11 @@ void ServerRailView::setGuildSettingsProvider(GuildSettingsAccess::SectionsProvi
     guildSettingsProvider = std::move(provider);
 }
 
+void ServerRailView::setGuildNotificationMenuProvider(GuildMenuExtender provider)
+{
+    guildNotificationMenuProvider = std::move(provider);
+}
+
 void ServerRailView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton)
@@ -100,6 +105,11 @@ void ServerRailView::contextMenuEvent(QContextMenuEvent *event)
 
     if (!isFolder) {
         Core::Snowflake ownerId(idx.data(ServerRailModel::OwnerIdRole).toULongLong());
+
+        if (guildNotificationMenuProvider) {
+            menu.addSeparator();
+            guildNotificationMenuProvider(&menu, accountId, id);
+        }
 
         GuildSettingsAccess::addMenu(&menu, guildSettingsProvider, accountId, id, [this, accountId, id](GuildSettingsSection section) {
             emit guildSettingsRequested(accountId, id, section);
