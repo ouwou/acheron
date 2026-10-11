@@ -5,6 +5,8 @@
 #include <QSet>
 #include <QDateTime>
 
+#include <optional>
+
 #include "ChannelReadState.hpp"
 #include "Snowflake.hpp"
 #include "Discord/Entities.hpp"
@@ -51,6 +53,8 @@ public:
     bool isGuildMuted(Snowflake guildId) const;
     [[nodiscard]] bool isSuppressEveryone(Snowflake guildId) const;
     [[nodiscard]] bool isSuppressRoles(Snowflake guildId) const;
+    [[nodiscard]] std::optional<Discord::UserGuildSettings> guildSettings(Snowflake guildId) const;
+    [[nodiscard]] Discord::MessageNotificationLevel guildMessageNotifications(Snowflake guildId) const;
 
     [[nodiscard]] bool isForumPostUnread(Snowflake threadId, Snowflake lastMessageId, bool archived) const;
     // should it be in channel list

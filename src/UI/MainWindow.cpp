@@ -1,8 +1,11 @@
 #include "MainWindow.hpp"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QJsonObject>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
@@ -849,6 +852,97 @@ QList<GuildSettingsSection> MainWindow::guildSettingsSections(Snowflake accountI
     return GuildSettingsAccess::visibleSections(session->client(accountId), guildId);
 }
 
+void MainWindow::addGuildNotificationMenu(QMenu *menu, Snowflake accountId, Snowflake guildId)
+{
+    ClientInstance *instance = session->client(accountId);
+    if (!instance)
+        return;
+
+    using Level = Discord::MessageNotificationLevel;
+    Core::ReadStateManager *readState = instance->readState();
+    const std::optional<Discord::UserGuildSettings> settings = readState->guildSettings(guildId);
+
+    QPointer<MainWindow> self(this);
+    auto apply = [self, accountId, guildId](const QJsonObject &changes) {
+        if (!self)
+            return;
+        ClientInstance *inst = self->session->client(accountId);
+        if (!inst)
+            return;
+        inst->discord()->modifyUserGuildSettings(guildId, changes, [self](const Core::Result<void> &result) {
+            if (self && !result.success())
+                QMessageBox::warning(self, tr("Notification Settings"),
+                                     tr("Could not save notification settings: %1").arg(result.error));
+        });
+    };
+
+    if (readState->isGuildMuted(guildId)) {
+        QString label = tr("Unmute Server");
+        if (settings && settings->muteConfig.hasValue() && settings->muteConfig.get().endTime.hasValue()) {
+            const QDateTime end = QDateTime::fromString(settings->muteConfig.get().endTime.get(), Qt::ISODate);
+            if (end.isValid())
+                label = tr("Unmute Server (muted until %1)").arg(QLocale().toString(end.toLocalTime(), QLocale::ShortFormat));
+        }
+        QAction *unmute = menu->addAction(label);
+        connect(unmute, &QAction::triggered, this, [apply]() { apply({ { "muted", false } }); });
+    } else {
+        QMenu *muteMenu = menu->addMenu(tr("Mute Server"));
+        const QList<QPair<QString, int>> durations = {
+            { tr("For 15 Minutes"), 15 * 60 },
+            { tr("For 1 Hour"), 60 * 60 },
+            { tr("For 3 Hours"), 3 * 60 * 60 },
+            { tr("For 8 Hours"), 8 * 60 * 60 },
+            { tr("For 24 Hours"), 24 * 60 * 60 },
+            { tr("Until I Turn It Back On"), -1 },
+        };
+        for (const auto &[label, seconds] : durations) {
+            QAction *action = muteMenu->addAction(label);
+            connect(action, &QAction::triggered, this, [apply, seconds = seconds]() {
+                QJsonObject muteConfig;
+                muteConfig["selected_time_window"] = seconds;
+                muteConfig["end_time"] = seconds < 0
+                        ? QJsonValue(QJsonValue::Null)
+                        : QJsonValue(QDateTime::currentDateTimeUtc().addSecs(seconds).toString(Qt::ISODateWithMs));
+                apply({ { "muted", true }, { "mute_config", muteConfig } });
+            });
+        }
+    }
+
+    QMenu *notifMenu = menu->addMenu(tr("Notification Settings"));
+    auto *levelGroup = new QActionGroup(notifMenu);
+    const Level currentLevel = readState->guildMessageNotifications(guildId);
+    const QList<QPair<QString, Level>> levels = {
+        { tr("All Messages"), Level::ALL_MESSAGES },
+        { tr("Only @mentions"), Level::ONLY_MENTIONS },
+        { tr("Nothing"), Level::NO_MESSAGES },
+    };
+    for (const auto &[label, level] : levels) {
+        QAction *action = notifMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(level == currentLevel);
+        levelGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [apply, level = level]() {
+            apply({ { "message_notifications", static_cast<int>(level) } });
+        });
+    }
+
+    notifMenu->addSeparator();
+    auto addToggle = [this, notifMenu, apply](const QString &label, bool checked, const QString &key) {
+        QAction *action = notifMenu->addAction(label);
+        action->setCheckable(true);
+        action->setChecked(checked);
+        connect(action, &QAction::triggered, this, [apply, key](bool on) { apply({ { key, on } }); });
+    };
+    addToggle(tr("Suppress @everyone and @here"), readState->isSuppressEveryone(guildId), "suppress_everyone");
+    addToggle(tr("Suppress All Role @mentions"), readState->isSuppressRoles(guildId), "suppress_roles");
+    addToggle(tr("Mute New Events"),
+              settings && settings->muteScheduledEvents.hasValue() && settings->muteScheduledEvents.get(),
+              "mute_scheduled_events");
+    addToggle(tr("Mobile Push Notifications"),
+              !settings || !settings->mobilePush.hasValue() || settings->mobilePush.get(),
+              "mobile_push");
+}
+
 void MainWindow::openGuildSettings(Snowflake accountId, Snowflake guildId, GuildSettingsSection section)
 {
     ClientInstance *instance = session->client(accountId);
@@ -1138,6 +1232,7 @@ void MainWindow::setupUi()
 
     connect(serverRail, &ServerRailView::leaveGuildRequested, this, &MainWindow::confirmAndLeaveGuild);
     serverRail->setGuildSettingsProvider(std::bind_front(&MainWindow::guildSettingsSections, this));
+    serverRail->setGuildNotificationMenuProvider(std::bind_front(&MainWindow::addGuildNotificationMenu, this));
     connect(serverRail, &ServerRailView::guildSettingsRequested, this, &MainWindow::openGuildSettings);
 
     guildHeaderLabel = new QLabel(this);
@@ -1562,6 +1657,7 @@ void MainWindow::setupUi()
 
     connect(channelTree, &ChannelTreeView::leaveGuildRequested, this, &MainWindow::confirmAndLeaveGuild);
     channelTree->setGuildSettingsProvider(std::bind_front(&MainWindow::guildSettingsSections, this));
+    channelTree->setGuildNotificationMenuProvider(std::bind_front(&MainWindow::addGuildNotificationMenu, this));
     connect(channelTree, &ChannelTreeView::guildSettingsRequested, this, &MainWindow::openGuildSettings);
 
 #ifndef ACHERON_NO_VOICE

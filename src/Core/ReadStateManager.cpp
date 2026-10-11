@@ -549,6 +549,30 @@ bool ReadStateManager::isSuppressRoles(Snowflake guildId) const
     return it != guildSettingsMap.constEnd() && it->suppressRoles.hasValue() && it->suppressRoles.get();
 }
 
+std::optional<Discord::UserGuildSettings> ReadStateManager::guildSettings(Snowflake guildId) const
+{
+    auto it = guildSettingsMap.constFind(guildId);
+    if (it == guildSettingsMap.constEnd())
+        return std::nullopt;
+    return it.value();
+}
+
+Discord::MessageNotificationLevel ReadStateManager::guildMessageNotifications(Snowflake guildId) const
+{
+    using Level = Discord::MessageNotificationLevel;
+
+    auto gs = guildSettingsMap.constFind(guildId);
+    if (gs != guildSettingsMap.constEnd() && gs->messageNotifications.hasValue() &&
+        gs->messageNotifications.get() != Level::INHERIT)
+        return gs->messageNotifications.get();
+
+    auto gi = guildInfo.constFind(guildId);
+    if (gi != guildInfo.constEnd())
+        return gi->defaultMessageNotifications;
+
+    return Level::ALL_MESSAGES;
+}
+
 bool ReadStateManager::isMuteActive(bool muted, const Discord::MuteConfig *muteConfig)
 {
     if (!muted)

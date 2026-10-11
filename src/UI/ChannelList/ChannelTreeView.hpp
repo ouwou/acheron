@@ -15,6 +15,8 @@ class ChannelTreeView : public QTreeView
 {
     Q_OBJECT
 public:
+    using GuildMenuExtender = std::function<void(QMenu *menu, Core::Snowflake accountId, Core::Snowflake guildId)>;
+
     ChannelTreeView(QWidget *parent = nullptr);
 
     void setModel(QAbstractItemModel *m) override;
@@ -23,6 +25,7 @@ public:
     void setAccountVoiceChannel(Core::Snowflake accountId, Core::Snowflake channelId);
     [[nodiscard]] bool isAccountInVoice(Core::Snowflake accountId) const;
     void setGuildSettingsProvider(GuildSettingsAccess::SectionsProvider provider);
+    void setGuildNotificationMenuProvider(GuildMenuExtender provider);
     void setMentionJumpEnabled(bool enabled);
 
 signals:
@@ -54,6 +57,7 @@ private:
     QHash<Core::Snowflake, Core::Snowflake> accountVoiceChannels; // accountId -> channelId
     MentionJumpIndicator *mentionJump = nullptr;
     GuildSettingsAccess::SectionsProvider guildSettingsProvider;
+    GuildMenuExtender guildNotificationMenuProvider;
 };
 
 } // namespace UI
