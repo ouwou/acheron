@@ -52,6 +52,8 @@ public:
     [[nodiscard]] Discord::Voice::VoiceClient::State clientState() const;
     [[nodiscard]] Snowflake currentChannelId() const { return channelId; }
     [[nodiscard]] Snowflake currentGuildId() const { return guildId; }
+    [[nodiscard]] bool isSelfMuted() const { return selfMute; }
+    [[nodiscard]] bool isSelfDeafened() const { return selfDeaf; }
 
     void setInputGain(float gain);
     void setOutputVolume(float volume);
@@ -114,6 +116,7 @@ signals:
     void participantsCleared();
     void userAudioLevelChanged(Snowflake userId, float rms);
     void privacyCodeChanged(const QString &code);
+    void selfMuteDeafChanged(bool selfMute, bool selfDeaf);
 
 private slots:
     void onVoiceClientConnected();

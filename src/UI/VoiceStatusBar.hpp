@@ -47,6 +47,7 @@ public:
 
 signals:
     void disconnectRequested();
+    void selfVoiceStateRequested(bool selfMute, bool selfDeaf);
     void userProfileRequested(Core::Snowflake accountId, Core::Snowflake userId);
 
 protected:
@@ -58,6 +59,7 @@ private:
     void toggleVoiceWindow();
     void showVoiceWindow();
     void configureVoiceWindow();
+    void updateSelfButtons();
 
     Core::Audio::VoiceManager *voiceManager = nullptr;
     Core::ImageManager *imageManager = nullptr;
@@ -69,6 +71,8 @@ private:
     QLabel *statusDot;
     QLabel *statusLabel;
     QLabel *channelLabel;
+    QPushButton *muteBtn;
+    QPushButton *deafenBtn;
     QPushButton *disconnectBtn;
 
     QPointer<VoiceWindow> voiceWindow;

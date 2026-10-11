@@ -120,6 +120,9 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         if (!channelChanged && channelId.isValid() && (selfMute != wasMuted || selfDeaf != wasDeaf))
             emit participantVoiceStateChanged(channelId, accountId);
 
+        if (selfMute != wasMuted || selfDeaf != wasDeaf)
+            emit selfMuteDeafChanged(selfMute, selfDeaf);
+
         if (audioPipeline && (selfMute != wasMuted || selfDeaf != wasDeaf)) {
             if (selfMute || selfDeaf)
                 QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::stopCapture);
@@ -657,6 +660,7 @@ void VoiceManager::onVoiceClientConnected()
     qCInfo(LogVoice) << "Voice connection established for channel" << channelId;
 
     bool capturing = !selfMute && !selfDeaf;
+    bool deafened = selfDeaf;
     QByteArray inputId = currentInputDeviceId;
     QByteArray outputId = currentOutputDeviceId;
     IAudioBackend *audio = backend();
@@ -668,7 +672,7 @@ void VoiceManager::onVoiceClientConnected()
     int plp = cachedOpusPacketLossPercent;
     bool ns = cachedNoiseSuppression;
     bool nsVad = cachedUseRnnoiseVad;
-    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, audio, capturing, inputId, outputId,
+    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, audio, capturing, deafened, inputId, outputId,
                                               application, bitrate, complexity, signalType, fec, plp, ns, nsVad]() {
         p->setOpusApplication(application);
         p->setOpusBitrate(bitrate);
@@ -679,6 +683,7 @@ void VoiceManager::onVoiceClientConnected()
         p->setNoiseSuppressionEnabled(ns);
         p->setUseRnnoiseVad(nsVad);
         p->start(audio, capturing);
+        p->setDeafened(deafened);
         if (!inputId.isEmpty())
             p->setInputDevice(inputId);
         if (!outputId.isEmpty())

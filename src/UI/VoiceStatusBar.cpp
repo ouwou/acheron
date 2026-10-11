@@ -72,11 +72,54 @@ void VoiceStatusBar::setupUi()
     disconnectBtn->setCursor(Qt::PointingHandCursor);
     connect(disconnectBtn, &QPushButton::clicked, this, &VoiceStatusBar::disconnectRequested);
 
+    auto makeToggle = [this](const QString &text, const QString &toolTip) {
+        auto *btn = new QPushButton(text, this);
+        btn->setCheckable(true);
+        btn->setFixedHeight(22);
+        btn->setToolTip(toolTip);
+        btn->setCursor(Qt::PointingHandCursor);
+        btn->setStyleSheet(
+                "QPushButton { color: #b9bbbe; background: transparent; border: 1px solid #4f545c;"
+                "  border-radius: 4px; font-size: 10px; font-weight: bold; padding: 0 6px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 20); }"
+                "QPushButton:checked { color: #fff; background: #f04747; border-color: #f04747; }");
+        return btn;
+    };
+
+    muteBtn = makeToggle(tr("Mute"), tr("Mute your microphone"));
+    deafenBtn = makeToggle(tr("Deafen"), tr("Stop hearing the call (also mutes you)"));
+
+    connect(muteBtn, &QPushButton::clicked, this, [this](bool checked) {
+        const bool deaf = voiceManager && voiceManager->isSelfDeafened();
+        if (!checked && deaf)
+            emit selfVoiceStateRequested(false, false);
+        else
+            emit selfVoiceStateRequested(checked, deaf);
+        updateSelfButtons();
+    });
+    connect(deafenBtn, &QPushButton::clicked, this, [this](bool checked) {
+        const bool mute = voiceManager && voiceManager->isSelfMuted();
+        emit selfVoiceStateRequested(mute, checked);
+        updateSelfButtons();
+    });
+
     layout->addWidget(statusDot);
     layout->addWidget(statusLabel);
     layout->addWidget(channelLabel);
     layout->addStretch();
+    layout->addWidget(muteBtn);
+    layout->addWidget(deafenBtn);
     layout->addWidget(disconnectBtn);
+}
+
+void VoiceStatusBar::updateSelfButtons()
+{
+    const bool mute = voiceManager && voiceManager->isSelfMuted();
+    const bool deaf = voiceManager && voiceManager->isSelfDeafened();
+    muteBtn->setChecked(mute || deaf);
+    muteBtn->setText(mute || deaf ? tr("Muted") : tr("Mute"));
+    deafenBtn->setChecked(deaf);
+    deafenBtn->setText(deaf ? tr("Deafened") : tr("Deafen"));
 }
 
 void VoiceStatusBar::setVoiceManager(Core::Audio::VoiceManager *manager)
@@ -87,6 +130,8 @@ void VoiceStatusBar::setVoiceManager(Core::Audio::VoiceManager *manager)
     disconnectManager();
     voiceManager = manager;
 
+    updateSelfButtons();
+
     if (!voiceManager) {
         if (voiceWindow)
             voiceWindow->setVoiceManager(nullptr);
@@ -96,6 +141,8 @@ void VoiceStatusBar::setVoiceManager(Core::Audio::VoiceManager *manager)
 
     connect(voiceManager, &Core::Audio::VoiceManager::voiceStateChanged,
             this, &VoiceStatusBar::updateConnectionState);
+    connect(voiceManager, &Core::Audio::VoiceManager::selfMuteDeafChanged,
+            this, &VoiceStatusBar::updateSelfButtons);
 
     configureVoiceWindow();
     updateConnectionState();
@@ -212,7 +259,8 @@ void VoiceStatusBar::updateConnectionState()
 
 void VoiceStatusBar::mousePressEvent(QMouseEvent *event)
 {
-    if (disconnectBtn->geometry().contains(event->pos())) {
+    if (disconnectBtn->geometry().contains(event->pos()) || muteBtn->geometry().contains(event->pos()) ||
+        deafenBtn->geometry().contains(event->pos())) {
         QWidget::mousePressEvent(event);
         return;
     }
