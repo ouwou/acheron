@@ -1,5 +1,6 @@
 #include "App.hpp"
 #include "UI/MainWindow.hpp"
+#include "UI/TrayIcon.hpp"
 #include "Storage/DatabaseManager.hpp"
 #include "Core/Session.hpp"
 #include "Core/Logging.hpp"
@@ -77,6 +78,7 @@ int main(int argc, char *argv[])
 
     App app(argc, argv);
     app.setDesktopFileName("io.github.ouwou.acheron");
+    app.setWindowIcon(UI::TrayIcon::applicationIcon());
     if (!Core::Theme::Manager::startsWithSystemStyle())
         app.setStyle("Fusion");
 

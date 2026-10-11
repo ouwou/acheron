@@ -13,11 +13,11 @@ static constexpr bool ClickOpensTheMenu = true;
 static constexpr bool ClickOpensTheMenu = false;
 #endif
 
-static QIcon applicationIcon()
+QIcon TrayIcon::applicationIcon()
 {
     QSvgRenderer renderer(QStringLiteral(":/acheron.svg"));
     QIcon rendered;
-    for (int side : { 16, 24, 32, 48, 64 }) {
+    for (int side : { 16, 24, 32, 48, 64, 128, 256 }) {
         QPixmap pixmap(side, side);
         pixmap.fill(Qt::transparent);
 
