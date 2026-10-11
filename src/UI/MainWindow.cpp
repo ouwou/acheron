@@ -1110,6 +1110,14 @@ void MainWindow::setupUi()
             }
         }
     });
+    connect(voiceStatusBar, &VoiceStatusBar::selfVoiceStateRequested, this, [this](bool selfMute, bool selfDeaf) {
+        for (const auto &inst : session->getClients()) {
+            if (inst && inst->isInVoice()) {
+                inst->discord()->sendVoiceStateUpdate(inst->voiceGuildId(), inst->voiceChannelId(), selfMute, selfDeaf);
+                break;
+            }
+        }
+    });
     connect(voiceStatusBar, &VoiceStatusBar::userProfileRequested, this,
             [this](Snowflake accountId, Snowflake userId) {
                 ClientInstance *instance = session->client(accountId);
@@ -1593,9 +1601,12 @@ void MainWindow::setupUi()
                     return;
                 }
 
+                const bool selfMute = instance->voice()->isSelfMuted();
+                const bool selfDeaf = instance->voice()->isSelfDeafened();
+
                 if (isDM) {
                     qCInfo(LogVoice) << "Joining DM call" << node->name << node->id;
-                    instance->discord()->sendVoiceStateUpdate(Snowflake::Invalid, node->id, false, false);
+                    instance->discord()->sendVoiceStateUpdate(Snowflake::Invalid, node->id, selfMute, selfDeaf);
                 } else {
                     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
                     if (!guildNode)
@@ -1603,7 +1614,7 @@ void MainWindow::setupUi()
 
                     qCInfo(LogVoice) << "Joining voice channel" << node->name << node->id
                                      << "in guild" << guildNode->id;
-                    instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, false, false);
+                    instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, selfMute, selfDeaf);
                 }
             });
 
