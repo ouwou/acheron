@@ -366,6 +366,10 @@ endif()
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
+if(WIN32)
+    target_sources(${PROJECT_NAME} PRIVATE acheron.rc)
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE vendor/emoji-segmenter)
 if(TARGET unofficial::nayuki-qr-code-generator::nayuki-qr-code-generator)
     target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::nayuki-qr-code-generator::nayuki-qr-code-generator)

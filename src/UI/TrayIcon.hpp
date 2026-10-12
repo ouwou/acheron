@@ -12,6 +12,8 @@ class TrayIcon : public QObject
 public:
     explicit TrayIcon(QObject *parent = nullptr);
 
+    static QIcon applicationIcon();
+
     void setToolTip(const QString &windowTitle);
 
 signals:
