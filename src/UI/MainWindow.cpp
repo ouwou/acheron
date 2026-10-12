@@ -20,6 +20,7 @@
 #include "Forum/ForumPostModel.hpp"
 #include "Forum/NewPostDialog.hpp"
 #include "ThreadBrowser/ThreadBrowserPopup.hpp"
+#include "PinnedMessages/PinnedMessagesPopup.hpp"
 #include "Core/ForumManager.hpp"
 #include "ChannelList/ChannelTreeModel.hpp"
 #include "ChannelList/ChannelFilterProxyModel.hpp"
@@ -355,7 +356,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         ChannelNode *gNode = ChannelTreeModel::findGuildNode(node);
         Snowflake gId = gNode ? gNode->id : Snowflake::Invalid;
 
-        setThreadBrowserTarget(Snowflake::Invalid);
+        setChannelToolbarTargets(Snowflake::Invalid, Snowflake::Invalid);
         openForumChannel(selectedInstance, forumNode->id, gId);
         tabBar->updateCurrentTab(makeTabEntry(forumNode, accountNode));
 
@@ -405,7 +406,7 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
     bool isThread = threadParentId.isValid();
 
     // voice channels cannot hold threads
-    setThreadBrowserTarget(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId));
+    setChannelToolbarTargets(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId), channelId);
     showChannelTopic(instance, channelId);
 
     if (isDm) {
@@ -1167,6 +1168,16 @@ void MainWindow::setupUi()
     threadBrowserButton->setCursor(Qt::PointingHandCursor);
     connect(threadBrowserButton, &QToolButton::clicked, this, &MainWindow::openThreadBrowser);
 
+    pinsButton = new QToolButton(rightSideWidget);
+    pinsButton->setText(tr("Pins"));
+    pinsButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::Pin, Core::Theme::Token::PrimaryText));
+    pinsButton->setIconSize(QSize(16, 16));
+    pinsButton->setToolTip(tr("Pinned messages"));
+    pinsButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    pinsButton->setAutoRaise(true);
+    pinsButton->setCursor(Qt::PointingHandCursor);
+    connect(pinsButton, &QToolButton::clicked, this, &MainWindow::openPinnedMessages);
+
     channelToolbar = new QWidget(rightSideWidget);
     channelToolbar->setObjectName("channelToolbar");
     channelToolbar->setAttribute(Qt::WA_StyledBackground, true);
@@ -1177,6 +1188,7 @@ void MainWindow::setupUi()
     connect(channelTopicLine, &ChannelTopicLine::clicked, this, &MainWindow::openChannelTopicPopup);
     channelToolbarLayout->addWidget(channelTopicLine, 1);
     channelToolbarLayout->addWidget(threadBrowserButton, 0);
+    channelToolbarLayout->addWidget(pinsButton, 0);
     channelToolbar->setStyleSheet(
             "#channelToolbar { border-bottom: 1px solid rgba(128, 128, 128, 0.25); }");
     channelToolbar->hide();
@@ -2105,7 +2117,7 @@ void MainWindow::activateChannel(const TabEntry &entry)
         switchActiveInstance(instance);
 
     if (entry.isForum) {
-        setThreadBrowserTarget(Snowflake::Invalid);
+        setChannelToolbarTargets(Snowflake::Invalid, Snowflake::Invalid);
         openForumChannel(instance, entry.channelId, entry.guildId);
         if (entry.guildId.isValid())
             recordLastViewedChannel(entry.accountId, entry.guildId, entry.channelId);
@@ -2954,10 +2966,33 @@ void MainWindow::openChannelTopicPopup()
     popup->open();
 }
 
-void MainWindow::setThreadBrowserTarget(Core::Snowflake channelId)
+void MainWindow::setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel)
 {
-    threadBrowserChannelId = channelId;
-    channelToolbar->setVisible(channelId.isValid());
+    threadBrowserChannelId = threadBrowserChannel;
+    pinsChannelId = pinsChannel;
+    threadBrowserButton->setVisible(threadBrowserChannel.isValid());
+    pinsButton->setVisible(pinsChannel.isValid());
+    channelToolbar->setVisible(threadBrowserChannel.isValid() || pinsChannel.isValid());
+}
+
+void MainWindow::openPinnedMessages()
+{
+    if (!currentInstance || !pinsChannelId.isValid())
+        return;
+
+    if (!pinnedMessages) {
+        pinnedMessages = new PinnedMessagesPopup(session->getImageManager(), this);
+        connect(pinnedMessages, &PinnedMessagesPopup::messageActivated, this, &MainWindow::jumpToMessageLink);
+        connect(pinnedMessages, &PinnedMessagesPopup::linkActivated, chatView, &ChatView::openLink);
+    }
+
+    QString name;
+    if (auto ch = currentInstance->getChannel(pinsChannelId); ch && ch->name.hasValue())
+        name = ch->name.get();
+
+    pinnedMessages->configure(currentInstance, pinsChannelId, name);
+    pinnedMessages->show();
+    pinnedMessages->raise();
 }
 
 void MainWindow::openThreadBrowser()

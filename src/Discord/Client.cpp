@@ -501,6 +501,35 @@ void Client::searchThreads(Snowflake channelId, bool archived, int offset, Threa
             });
 }
 
+void Client::fetchMessagePins(Snowflake channelId, const QDateTime &before, MessagePinsCallback callback)
+{
+    QString endpoint = "/channels/" + QString::number(channelId) + "/messages/pins";
+    QUrlQuery query;
+    query.addQueryItem("limit", "50");
+    if (before.isValid())
+        query.addQueryItem("before", before.toUTC().toString(Qt::ISODateWithMs));
+
+    httpClient->get(endpoint, query, [channelId, callback](const HttpResponse &response) {
+        if (!response.success) {
+            qCWarning(LogDiscord) << "Failed to fetch pins for channel" << channelId << ":" << response.error;
+            callback(Core::Result<MessagePinsResult>::makeError(response.error));
+            return;
+        }
+
+        const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
+        MessagePinsResult result;
+        for (const QJsonValue &val : obj.value("items").toArray()) {
+            const QJsonObject item = val.toObject();
+            MessagePin pin;
+            pin.pinnedAt = QDateTime::fromString(item.value("pinned_at").toString(), Qt::ISODateWithMs);
+            pin.message = Message::fromJson(item.value("message").toObject());
+            result.items.append(pin);
+        }
+        result.hasMore = obj.value("has_more").toBool();
+        callback(Core::Result<MessagePinsResult>::makeOk(result));
+    });
+}
+
 void Client::createForumThread(Snowflake forumId, const QString &name,
                                const QList<Snowflake> &appliedTags, const QString &content,
                                const QString &nonce,
