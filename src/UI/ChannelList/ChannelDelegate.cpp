@@ -64,6 +64,8 @@ static void drawBranchIndicator(QPainter *painter, const QStyleOptionViewItem &o
                                          option.widget);
 }
 
+static constexpr int categoryTopGap = 8;
+
 static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option)
 {
     int pillWidth = 4;
@@ -417,6 +419,37 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         painter->drawRoundedRect(contentOpt.rect.adjusted(0, 1, -4, -1), 4, 4);
     }
 
+    if (node->type == ChannelNode::Type::Category) {
+        QColor color = option.palette.placeholderText().color();
+        if (node->isMuted)
+            color.setAlphaF(color.alphaF() / 2);
+
+        QFont font = painter->font();
+        font.setPointSizeF(font.pointSizeF() * 0.85);
+        font.setWeight(QFont::DemiBold);
+        painter->setFont(font);
+        painter->setPen(color);
+
+        constexpr int chevronSize = 12;
+        const QRect headerRect = contentOpt.rect.adjusted(0, categoryTopGap, 0, 0);
+        QRect textRect = headerRect.adjusted(4, 0, -(chevronSize + 8), 0);
+        QString elidedName = painter->fontMetrics().elidedText(
+                index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
+        QRect drawnRect;
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName, &drawnRect);
+
+        const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+        QRect chevronRect(drawnRect.right() + 4,
+                          headerRect.top() + (headerRect.height() - chevronSize) / 2,
+                          chevronSize, chevronSize);
+        painter->drawPixmap(chevronRect,
+                            Core::Theme::Icons::pixmap(node->collapsed ? Core::Theme::Icons::Name::ChevronRight
+                                                                       : Core::Theme::Icons::Name::ChevronDown,
+                                                       chevronSize, color, dpr));
+        painter->restore();
+        return;
+    }
+
     if (node->type == ChannelNode::Type::Account) {
         QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -iconSize, 0);
         painter->fillRect(contentOpt.rect, option.palette.alternateBase().color());
@@ -551,9 +584,6 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     } else if (node->type == ChannelNode::Type::Server) {
         if (!node->isUnread || node->isMuted)
             textColor = readColor;
-    } else if (node->type == ChannelNode::Type::Category) {
-        if (node->isMuted)
-            textColor = option.palette.text().color().darker(150);
     }
 
     if (node->type == ChannelNode::Type::Channel) {
@@ -603,10 +633,6 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     QString elidedName = painter->fontMetrics().elidedText(
             index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName);
-
-    // branch indicator for categories
-    if (node->type == ChannelNode::Type::Category)
-        drawBranchIndicator(painter, contentOpt, !node->collapsed);
 
     // unread pill for channels and servers (draws in the left margin)
     if ((node->opensChat() || node->type == ChannelNode::Type::Server) && node->isUnread &&
@@ -659,7 +685,8 @@ void ChannelDelegate::setIndentScopes(ChannelIndent::Scopes scopes)
 QSize ChannelDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     QSize sz = QStyledItemDelegate::sizeHint(option, index);
-    return QSize(sz.width(), 24);
+    const auto type = static_cast<ChannelNode::Type>(index.data(ChannelTreeModel::TypeRole).toInt());
+    return QSize(sz.width(), type == ChannelNode::Type::Category ? 24 + categoryTopGap : 24);
 }
 } // namespace UI
 } // namespace Acheron
