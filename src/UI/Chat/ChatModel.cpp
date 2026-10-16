@@ -269,6 +269,11 @@ void ChatModel::setGuildInfoResolver(GuildInfoResolver resolver)
     guildInfoResolver = std::move(resolver);
 }
 
+void ChatModel::setMentionResolver(MentionResolver resolver)
+{
+    mentionResolver = std::move(resolver);
+}
+
 QString ChatModel::resolveAuthorName(const Discord::User &author) const
 {
     if (displayNameResolver) {
@@ -873,6 +878,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         return static_cast<int>(msg.type.get());
     case IsForwardedRole:
         return msg.isForwarded();
+    case IsMentionedRole:
+        return mentionResolver && mentionResolver(msg, currentGuildId);
     case ForwardOriginRole: {
         if (!msg.isForwarded() || !msg.messageReference->channelId.hasValue())
             return {};

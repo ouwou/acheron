@@ -283,6 +283,10 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
     chatModel->setRoleColorResolver(
             [this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
 
+    chatModel->setMentionResolver([this](const Discord::Message &msg, Snowflake guildId) {
+        return currentInstance && currentInstance->messageMentionsMe(msg, guildId);
+    });
+
     chatModel->setChannelNameResolver([this](Snowflake channelId) -> QString {
         if (!currentInstance)
             return QString();

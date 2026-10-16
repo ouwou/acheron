@@ -1244,17 +1244,23 @@ bool ClientInstance::isMessageMentioningMe(const Discord::Message &msg) const
         return !readStateManager->isChannelMuted(msg.channelId.get());
     }
 
-    Snowflake guildId = msg.guildId.get();
+    return messageMentionsMe(msg, msg.guildId.get());
+}
 
-    if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
-        !readStateManager->isSuppressEveryone(guildId))
-        return true;
-
+bool ClientInstance::messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const
+{
     if (msg.mentions.hasValue()) {
         for (const auto &user : msg.mentions.get())
             if (user.id.get() == account.id)
                 return true;
     }
+
+    if (!guildId.isValid())
+        return false;
+
+    if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
+        !readStateManager->isSuppressEveryone(guildId))
+        return true;
 
     if (!msg.mentionRoles.hasValue() || readStateManager->isSuppressRoles(guildId))
         return false;
