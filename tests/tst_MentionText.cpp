@@ -1,5 +1,6 @@
 #include "UI/Input/MentionText.hpp"
 
+#include <QGuiApplication>
 #include <QTest>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -60,5 +61,14 @@ void TestMentionText::testRawMentionsRoundTrip()
     QCOMPARE(toMessageText(&document), raw);
 }
 
-QTEST_MAIN(TestMentionText)
+int main(int argc, char **argv)
+{
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+
+    QGuiApplication app(argc, argv);
+    TestMentionText test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "tst_MentionText.moc"
