@@ -1,5 +1,6 @@
 #include "MessageInput.hpp"
 #include "AttachmentPreviewPanel.hpp"
+#include "MentionText.hpp"
 #include "TextEdgeNavigation.hpp"
 
 #include "Core/Emoji/UnicodeEmojiIndex.hpp"
@@ -176,7 +177,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     connect(textEdit, &ChatTextEdit::returnPressed, [this]() {
         if (sendBlocked)
             return;
-        QString txt = textEdit->toPlainText().trimmed();
+        QString txt = toMessageText(textEdit->document()).trimmed();
         if (txt.isEmpty() && !attachmentPanel->hasAttachments())
             return;
         txt = Core::UnicodeEmojiIndex::instance().translateNamesToSurrogates(txt);
@@ -290,6 +291,11 @@ void MessageInput::insertText(const QString &text)
 {
     textEdit->insertPlainText(text);
     textEdit->setFocus();
+}
+
+void MessageInput::insertMention(const QString &displayText, const QString &mentionText)
+{
+    autocomplete->insertMention(displayText, mentionText);
 }
 
 QRect MessageInput::pickerAnchor() const

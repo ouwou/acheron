@@ -249,6 +249,9 @@ private:
     Core::ClientInstance *currentInstance = nullptr;
 
     Core::Snowflake cachedGuildId = Core::Snowflake::Invalid;
+    QTimer *memberQueryTimer = nullptr;
+    Core::Snowflake memberQueryGuildId;
+    QString memberQuery;
     QHash<Core::Snowflake, QColor> userColorCache; // current guild
 
     QSet<Core::Snowflake> instancesSignalsConnected;

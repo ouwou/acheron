@@ -15,7 +15,8 @@ struct EmojiMatch
     QString displayLabel;
     QString surrogates; // unicode only
     Snowflake customId; // custom only
-    QUrl imageUrl; // custom only
+    QUrl imageUrl; // custom emoji or mention avatar
+    QString mentionText; // `<@id>` / `<#id>` / `<@&id>` sent in place of insertText
 
     [[nodiscard]] bool isCustom() const { return customId.isValid(); }
 };

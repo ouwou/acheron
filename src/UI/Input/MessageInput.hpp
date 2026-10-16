@@ -59,6 +59,7 @@ public:
     [[nodiscard]] bool isSendBlocked() const { return sendBlocked; }
 
     void insertText(const QString &text);
+    void insertMention(const QString &displayText, const QString &mentionText);
 
     void requestEmojiPicker();
     void setEmojiPickerOpen(bool open);

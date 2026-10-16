@@ -282,6 +282,7 @@ set(PROJECT_SOURCES
     src/UI/MemberList/MemberListView.cpp
     src/UI/Input/MessageInput.cpp
     src/UI/Input/EmojiAutocompletePopup.cpp
+    src/UI/Input/MentionText.cpp
     src/UI/Input/TextEdgeNavigation.cpp
     src/UI/Emoji/EmojiButton.cpp
     src/UI/Emoji/EmojiGlyphs.cpp
@@ -380,6 +381,11 @@ if(BUILD_TESTS)
     target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
 
+    qt_add_executable(TestMentionText tests/tst_MentionText.cpp src/UI/Input/MentionText.cpp)
+    target_link_libraries(TestMentionText PRIVATE Qt::Gui Qt::Test)
+    target_include_directories(TestMentionText PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME MentionTextTests COMMAND TestMentionText)
+
     qt_add_executable(TestFrecency tests/tst_Frecency.cpp src/Core/Emoji/FrecencyTracker.cpp)
     target_link_libraries(TestFrecency PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestFrecency PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -466,7 +472,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs)
+        set(_msvc_test_targets TestMarkdown TestMentionText TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs)
         if(TARGET TestApng)
             list(APPEND _msvc_test_targets TestApng TestClips)
         endif()
