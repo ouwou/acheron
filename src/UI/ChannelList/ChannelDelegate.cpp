@@ -404,6 +404,19 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     QStyleOptionViewItem contentOpt = option;
     contentOpt.rect = option.rect.adjusted(pillMargin + indentWidth(node, indentScopes), 0, 0, 0);
 
+    const bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
+    QColor rowBg = option.palette.base().color();
+    if (isSelected && node->opensChat()) {
+        constexpr float selectedTint = 0.15f;
+        const QColor fg = option.palette.text().color();
+        rowBg = QColor::fromRgbF(rowBg.redF() + (fg.redF() - rowBg.redF()) * selectedTint,
+                                 rowBg.greenF() + (fg.greenF() - rowBg.greenF()) * selectedTint,
+                                 rowBg.blueF() + (fg.blueF() - rowBg.blueF()) * selectedTint);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(rowBg);
+        painter->drawRoundedRect(contentOpt.rect.adjusted(0, 1, -4, -1), 4, 4);
+    }
+
     if (node->type == ChannelNode::Type::Account) {
         QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -iconSize, 0);
         painter->fillRect(contentOpt.rect, option.palette.alternateBase().color());
@@ -528,7 +541,6 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     // determine text color
     QColor textColor = option.palette.text().color();
     const QColor readColor = option.palette.placeholderText().color();
-    bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
     if (node->opensChat()) {
         if (node->isMuted) {
             textColor = readColor;
@@ -553,17 +565,17 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         else
             drawHashIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     } else if (node->type == ChannelNode::Type::Forum) {
         drawForumIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     } else if (node->type == ChannelNode::Type::Thread) {
         drawThreadBranchIcon(painter, contentOpt.rect, textColor, isLastThreadSibling(node));
     } else if (node->type == ChannelNode::Type::VoiceChannel) {
         drawSpeakerIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     }
 
     const bool showForumBadge =
