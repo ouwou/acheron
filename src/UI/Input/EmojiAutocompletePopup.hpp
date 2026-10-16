@@ -10,6 +10,7 @@
 
 #include "Core/Emoji/EmojiMatch.hpp"
 #include "Core/Snowflake.hpp"
+#include "MentionText.hpp"
 
 class QKeyEvent;
 class QLabel;
@@ -65,7 +66,7 @@ public:
     explicit EmojiAutocompletePopup(QWidget *parent = nullptr);
 
     void setImageManager(Core::ImageManager *manager, Core::Snowflake account);
-    void setResults(const QList<Core::EmojiMatch> &results, const QString &query);
+    void setResults(const QList<Core::EmojiMatch> &results, QChar trigger, const QString &query, bool keepSelection = false);
     void moveSelection(int delta);
     [[nodiscard]] std::optional<Core::EmojiMatch> currentMatch() const;
     void showAbove(QWidget *anchor);
@@ -92,13 +93,16 @@ class EmojiAutocomplete : public QObject
 {
     Q_OBJECT
 public:
-    using Provider = std::function<QList<Core::EmojiMatch>(const QString &query)>;
+    using Provider = std::function<QList<Core::EmojiMatch>(QChar trigger, const QString &query)>;
 
     EmojiAutocomplete(QTextEdit *textEdit, QWidget *anchorWidget);
 
     void setProvider(Provider newProvider);
     void setImageManager(Core::ImageManager *manager, Core::Snowflake account);
     void cancel();
+    void refreshResults();
+    void insertMention(const QString &displayText, const QString &mentionText);
+    void insertTextWithMentions(const QString &text, const MentionNameResolver &resolve);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -117,6 +121,7 @@ private:
     Provider provider;
     // position of query word last given to provider
     int wordStart = -1;
+    QChar trigger;
     QString query;
     int dismissedWordStart = -1;
 };

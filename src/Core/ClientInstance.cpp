@@ -63,6 +63,12 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     messageManager->setChannelLinkResolver([this](const Markdown::ChannelLinkRef &ref) {
         return channelLinkParts(ref);
     });
+    messageManager->setRoleResolver([this](Snowflake roleId, Snowflake sourceChannelId) -> QString {
+        auto role = roleRepo.getRole(client->getGuildIdForChannel(sourceChannelId), roleId);
+        if (role && role->name.hasValue())
+            return role->name.get();
+        return QStringLiteral("deleted-role");
+    });
 
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);
@@ -1238,17 +1244,23 @@ bool ClientInstance::isMessageMentioningMe(const Discord::Message &msg) const
         return !readStateManager->isChannelMuted(msg.channelId.get());
     }
 
-    Snowflake guildId = msg.guildId.get();
+    return messageMentionsMe(msg, msg.guildId.get());
+}
 
-    if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
-        !readStateManager->isSuppressEveryone(guildId))
-        return true;
-
+bool ClientInstance::messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const
+{
     if (msg.mentions.hasValue()) {
         for (const auto &user : msg.mentions.get())
             if (user.id.get() == account.id)
                 return true;
     }
+
+    if (!guildId.isValid())
+        return false;
+
+    if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
+        !readStateManager->isSuppressEveryone(guildId))
+        return true;
 
     if (!msg.mentionRoles.hasValue() || readStateManager->isSuppressRoles(guildId))
         return false;

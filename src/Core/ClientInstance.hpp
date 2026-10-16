@@ -73,6 +73,7 @@ public:
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
+    [[nodiscard]] bool messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const;
 
     [[nodiscard]] QList<Discord::Ban> observedBans(Snowflake guildId) const;
     [[nodiscard]] QList<Discord::Invite> createdInvites(Snowflake guildId) const;

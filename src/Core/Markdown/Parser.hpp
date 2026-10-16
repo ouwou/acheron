@@ -54,6 +54,7 @@ struct MarkdownRule
 
 using UserResolverFn = std::function<QString(Snowflake userId, Snowflake sourceChannelId)>;
 using ChannelResolverFn = std::function<QString(const QString &channelId)>;
+using RoleResolverFn = std::function<QString(Snowflake roleId, Snowflake sourceChannelId)>;
 
 struct ChannelLinkRef
 {
@@ -82,6 +83,7 @@ public:
 
     void setUserResolver(UserResolverFn resolver);
     void setChannelResolver(ChannelResolverFn resolver);
+    void setRoleResolver(RoleResolverFn resolver);
     void setChannelLinkResolver(ChannelLinkResolverFn resolver);
 
     static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
@@ -98,6 +100,7 @@ private:
     QMap<QString, MarkdownRule *> ruleMap;
     UserResolverFn userResolver;
     ChannelResolverFn channelResolver;
+    RoleResolverFn roleResolver;
     ChannelLinkResolverFn channelLinkResolver;
 };
 

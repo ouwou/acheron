@@ -8,6 +8,7 @@
 #include <QSettings>
 #include <QSystemTrayIcon>
 
+#include <algorithm>
 #include <utility>
 
 #include "Chat/ChatModel.hpp"
@@ -77,6 +78,11 @@ constexpr int CenterPaneIndex = 1;
 constexpr int MemberPaneIndex = 2;
 constexpr int DefaultChannelListWidth = 240;
 constexpr int DefaultMemberListWidth = 200;
+constexpr int MentionUserLimit = 10;
+constexpr int MentionRoleLimit = 5;
+constexpr int MentionChannelLimit = 10;
+constexpr int MentionAvatarPx = 32;
+constexpr int MemberQueryDebounceMs = 300;
 
 QString guildChannelKey(Core::Snowflake accountId, Core::Snowflake guildId)
 {
@@ -110,6 +116,103 @@ bool canAddReactionsIn(Core::ClientInstance *instance, Core::Snowflake channelId
     if (isArchivedThread(channel))
         return false;
     return !guildId.isValid() || hasPermissionIn(instance, channel, channelId, Discord::Permission::ADD_REACTIONS);
+}
+
+void sortMentionMatches(QList<Core::EmojiMatch> &matches, const QString &query)
+{
+    std::stable_sort(matches.begin(), matches.end(), [&query](const Core::EmojiMatch &a, const Core::EmojiMatch &b) {
+        const bool aPrefix = a.insertText.mid(1).startsWith(query, Qt::CaseInsensitive);
+        const bool bPrefix = b.insertText.mid(1).startsWith(query, Qt::CaseInsensitive);
+        if (aPrefix != bPrefix)
+            return aPrefix;
+        return a.insertText.compare(b.insertText, Qt::CaseInsensitive) < 0;
+    });
+}
+
+Core::EmojiMatch userMentionMatch(const Discord::User &user, const QString &name, const QUrl &avatarUrl)
+{
+    Core::EmojiMatch match;
+    match.insertText = QLatin1Char('@') + name;
+    match.displayLabel = name == user.username.get() ? name : QStringLiteral("%1 (%2)").arg(name, user.username.get());
+    match.imageUrl = avatarUrl;
+    match.mentionText = QStringLiteral("<@%1>").arg(quint64(user.id.get()));
+    return match;
+}
+
+Core::EmojiMatch symbolMentionMatch(const QString &symbol, const QString &name, const QString &mentionText)
+{
+    Core::EmojiMatch match;
+    match.insertText = symbol + name;
+    match.displayLabel = name;
+    match.surrogates = symbol;
+    match.mentionText = mentionText;
+    return match;
+}
+
+QList<Core::EmojiMatch> userMentionMatches(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId, const QString &query)
+{
+    auto contains = [&query](const QString &text) { return text.contains(query, Qt::CaseInsensitive); };
+
+    QList<Core::EmojiMatch> users;
+    if (guildId.isValid()) {
+        for (const auto &member : instance->users()->getKnownMembers(guildId)) {
+            const Discord::User &user = member.user.get();
+            const QString nick = member.nick.valueOr();
+            if (!contains(user.username.get()) && !contains(user.globalName.valueOr()) && !contains(nick))
+                continue;
+            const QUrl avatar = Discord::Cdn::effectiveAvatar(guildId, user.id.get(), member.avatar.valueOr(), user.avatar.valueOr(), MentionAvatarPx);
+            users.append(userMentionMatch(user, nick.isEmpty() ? user.getDisplayName() : nick, avatar));
+        }
+    } else if (auto channel = instance->getChannel(channelId)) {
+        for (const auto &user : channel->recipients.valueOr()) {
+            if (!contains(user.username.get()) && !contains(user.globalName.valueOr()))
+                continue;
+            const QUrl avatar = Discord::Cdn::effectiveAvatar({}, user.id.get(), {}, user.avatar.valueOr(), MentionAvatarPx);
+            users.append(userMentionMatch(user, user.getDisplayName(), avatar));
+        }
+    }
+    sortMentionMatches(users, query);
+    QList<Core::EmojiMatch> matches = users.mid(0, MentionUserLimit);
+
+    if (!guildId.isValid())
+        return matches;
+
+    const bool canMentionEveryone = hasPermissionIn(instance, instance->getChannel(channelId), channelId, Discord::Permission::MENTION_EVERYONE);
+    QList<Core::EmojiMatch> roles;
+    for (const auto &role : instance->getRolesForGuild(guildId)) {
+        if (role.id.get() == guildId || !contains(role.name.get()))
+            continue;
+        if (canMentionEveryone || role.mentionable.valueOr(false))
+            roles.append(symbolMentionMatch(QStringLiteral("@"), role.name.get(), QStringLiteral("<@&%1>").arg(quint64(role.id.get()))));
+    }
+    sortMentionMatches(roles, query);
+    matches += roles.mid(0, MentionRoleLimit);
+
+    if (canMentionEveryone) {
+        for (const QString special : { QStringLiteral("everyone"), QStringLiteral("here") }) {
+            if (special.startsWith(query, Qt::CaseInsensitive))
+                matches.append(symbolMentionMatch(QStringLiteral("@"), special, QLatin1Char('@') + special));
+        }
+    }
+    return matches;
+}
+
+QList<Core::EmojiMatch> channelMentionMatches(Core::ClientInstance *instance, Core::Snowflake guildId, const QString &query)
+{
+    if (!guildId.isValid())
+        return {};
+
+    QList<Core::EmojiMatch> matches;
+    for (const auto &channel : instance->getGuildChannels(guildId)) {
+        const QString name = channel.name.valueOr();
+        if (channel.type.get() == Discord::ChannelType::GUILD_CATEGORY || !name.contains(query, Qt::CaseInsensitive))
+            continue;
+        if (!instance->permissions()->hasChannelPermission(instance->accountId(), channel.id.get(), Discord::Permission::VIEW_CHANNEL))
+            continue;
+        matches.append(symbolMentionMatch(QStringLiteral("#"), name, QStringLiteral("<#%1>").arg(quint64(channel.id.get()))));
+    }
+    sortMentionMatches(matches, query);
+    return matches.mid(0, MentionChannelLimit);
 }
 
 ReactionsPopup::RemovableReactors removableReactorsIn(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId)
@@ -179,6 +282,10 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 
     chatModel->setRoleColorResolver(
             [this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
+
+    chatModel->setMentionResolver([this](const Discord::Message &msg, Snowflake guildId) {
+        return currentInstance && currentInstance->messageMentionsMe(msg, guildId);
+    });
 
     chatModel->setChannelNameResolver([this](Snowflake channelId) -> QString {
         if (!currentInstance)
@@ -328,6 +435,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         return;
 
     messageInput->emojiAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->cancel();
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
     if (!accountNode) {
@@ -542,6 +650,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     chatModel->setAccount(currentInstance->accountId());
     messageInput->emojiAutocomplete()->cancel();
     messageInput->emojiAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
+    chatView->inlineEditAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
 
     forumModel->setAccount(currentInstance->accountId());
     forumModel->setManager(currentInstance->forums());
@@ -601,6 +711,10 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
                 chatModel->refreshUsersInView(userIds);
                 forumModel->refreshAuthors();
+                if (guildId == chatModel->getActiveGuildId()) {
+                    messageInput->emojiAutocomplete()->refreshResults();
+                    chatView->inlineEditAutocomplete()->refreshResults();
+                }
             });
 
     connect(currentInstance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
@@ -1184,14 +1298,34 @@ void MainWindow::setupUi()
     chatView = new ChatView(rightSideWidget);
     chatView->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
     messageInput = new MessageInput(rightSideWidget);
-    messageInput->emojiAutocomplete()->setProvider([this](const QString &query) -> QList<Core::EmojiMatch> {
+    memberQueryTimer = new QTimer(this);
+    memberQueryTimer->setSingleShot(true);
+    memberQueryTimer->setInterval(MemberQueryDebounceMs);
+    connect(memberQueryTimer, &QTimer::timeout, this, [this]() {
+        if (currentInstance)
+            currentInstance->discord()->queryGuildMembers(memberQueryGuildId, memberQuery, MentionUserLimit);
+    });
+    auto autocompleteProvider = [this](QChar trigger, const QString &query) -> QList<Core::EmojiMatch> {
         if (!currentInstance)
             return {};
         Snowflake channelId = chatModel->getActiveChannelId();
         if (!channelId.isValid())
             return {};
+        const Snowflake guildId = chatModel->getActiveGuildId();
+        if (trigger == '#')
+            return channelMentionMatches(currentInstance, guildId, query);
+        if (trigger == '@') {
+            if (guildId.isValid() && !query.isEmpty() && (guildId != memberQueryGuildId || query != memberQuery)) {
+                memberQueryGuildId = guildId;
+                memberQuery = query;
+                memberQueryTimer->start();
+            }
+            return userMentionMatches(currentInstance, channelId, guildId, query);
+        }
         return currentInstance->emojis()->search(query, channelId);
-    });
+    };
+    messageInput->emojiAutocomplete()->setProvider(autocompleteProvider);
+    chatView->inlineEditAutocomplete()->setProvider(autocompleteProvider);
     typingIndicator = new TypingIndicator(rightSideWidget);
     slowModeIndicator = new SlowModeIndicator(rightSideWidget);
 
@@ -1467,12 +1601,13 @@ void MainWindow::setupUi()
                     if (msgId == messageId) {
                         QString authorName = idx.data(ChatModel::UsernameRole).toString();
                         QString content = idx.data(ChatModel::ContentRole).toString();
-                        messageInput->setReplyTarget(messageId, authorName, content);
+                        const bool ownMessage = currentInstance && idx.data(ChatModel::UserIdRole).toULongLong() == currentInstance->accountId();
+                        messageInput->setReplyTarget(messageId, authorName, content, !ownMessage);
                         return;
                     }
                 }
                 // Fallback if message not found in model
-                messageInput->setReplyTarget(messageId, tr("Unknown"), QString());
+                messageInput->setReplyTarget(messageId, tr("Unknown"), QString(), true);
             });
 
     connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
@@ -1500,6 +1635,28 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
+    connect(chatView, &ChatView::userMentionClicked, this, [this](Snowflake userId) {
+        if (currentInstance)
+            showUserProfile(currentInstance, userId, chatModel->getActiveGuildId());
+    });
+    chatView->setMentionNameResolver([this](QChar kind, Snowflake id) -> QString {
+        if (!currentInstance)
+            return {};
+        const Snowflake guildId = chatModel->getActiveGuildId();
+        if (kind == '#') {
+            auto channel = currentInstance->getChannel(id);
+            return channel && channel->name.hasValue() ? QLatin1Char('#') + channel->name.get() : QString();
+        }
+        if (kind == '&') {
+            for (const auto &role : currentInstance->getRolesForGuild(guildId))
+                if (role.id.get() == id)
+                    return QLatin1Char('@') + role.name.get();
+            return {};
+        }
+        if (!currentInstance->users()->getUser(id))
+            return {};
+        return QLatin1Char('@') + currentInstance->users()->getDisplayName(id, guildId);
+    });
     connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
         if (currentInstance)
@@ -2727,8 +2884,11 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
 
     QAction *mentionAction = menu.addAction(tr("Mention"));
     mentionAction->setEnabled(instance == currentInstance);
-    connect(mentionAction, &QAction::triggered, this, [this, userId]() {
-        messageInput->insertText(QStringLiteral("<@%1>").arg(quint64(userId)));
+    connect(mentionAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {
+        if (!instanceGuard)
+            return;
+        messageInput->insertMention(QLatin1Char('@') + instanceGuard->users()->getDisplayName(userId, guildId),
+                                    QStringLiteral("<@%1>").arg(quint64(userId)));
     });
 
     QAction *openDmAction = menu.addAction(tr("Open DM"));
@@ -2901,7 +3061,7 @@ bool MainWindow::sendFromChatInput(const QString &text, const QList<Core::Pendin
     Snowflake replyTo = messageInput->replyTargetMessageId();
     if (!chatModel->isAtLatest())
         chatView->jumpToPresent();
-    currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
+    currentInstance->messages()->sendMessage(channelId, text, replyTo, messageInput->replyMentionsAuthor(), attachments);
 
     int rateLimit = currentInstance->getChannelRateLimit(channelId);
     Snowflake userId = currentInstance->accountId();

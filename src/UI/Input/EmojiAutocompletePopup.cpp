@@ -99,12 +99,19 @@ void EmojiAutocompleteDelegate::paint(QPainter *painter, const QStyleOptionViewI
                           r.top() + (r.height() - kEmojiPx) / 2,
                           kEmojiPx,
                           kEmojiPx);
-    if (match.isCustom()) {
-        if (imageManager && !match.imageUrl.isEmpty()) {
+    if (!match.imageUrl.isEmpty()) {
+        if (imageManager) {
             const QPixmap pixmap =
                     imageManager->get(match.imageUrl, QSize(kEmojiPx, kEmojiPx), accountId);
-            if (!pixmap.isNull())
+            if (!pixmap.isNull()) {
+                if (!match.mentionText.isEmpty()) {
+                    QPainterPath clip;
+                    clip.addEllipse(QRectF(emojiRect));
+                    painter->setClipPath(clip);
+                }
                 painter->drawPixmap(emojiRect, pixmap);
+                painter->setClipping(false);
+            }
         }
     } else if (!match.surrogates.isEmpty()) {
         QFont emojiFont = Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message);
@@ -212,19 +219,34 @@ void EmojiAutocompletePopup::setImageManager(Core::ImageManager *manager, Core::
                               });
 }
 
-void EmojiAutocompletePopup::setResults(const QList<Core::EmojiMatch> &results, const QString &query)
+void EmojiAutocompletePopup::setResults(const QList<Core::EmojiMatch> &results, QChar trigger, const QString &query, bool keepSelection)
 {
+    const std::optional<Core::EmojiMatch> previous = keepSelection ? currentMatch() : std::nullopt;
     model->setMatches(results);
-    header->setText(tr("EMOJI MATCHING :%1").arg(query));
+    if (trigger == '@')
+        header->setText(tr("MENTIONS MATCHING @%1").arg(query));
+    else if (trigger == '#')
+        header->setText(tr("CHANNELS MATCHING #%1").arg(query));
+    else
+        header->setText(tr("EMOJI MATCHING :%1").arg(query));
 
     const int visibleRows = qBound(1, static_cast<int>(results.size()), kMaxVisibleRows);
     listView->setFixedHeight(visibleRows * kRowHeight);
 
-    if (!results.isEmpty()) {
-        const QModelIndex first = model->index(0, 0);
-        listView->setCurrentIndex(first);
-        listView->scrollTo(first, QAbstractItemView::PositionAtTop);
+    if (results.isEmpty())
+        return;
+
+    int row = 0;
+    if (previous) {
+        const auto it = std::find_if(results.begin(), results.end(), [&previous](const Core::EmojiMatch &match) {
+            return match.insertText == previous->insertText && match.mentionText == previous->mentionText;
+        });
+        if (it != results.end())
+            row = static_cast<int>(it - results.begin());
     }
+    const QModelIndex current = model->index(row, 0);
+    listView->setCurrentIndex(current);
+    listView->scrollTo(current, row == 0 ? QAbstractItemView::PositionAtTop : QAbstractItemView::EnsureVisible);
 }
 
 void EmojiAutocompletePopup::moveSelection(int delta)
@@ -305,6 +327,7 @@ namespace {
 
 struct EmojiTrigger
 {
+    QChar trigger;
     QString query;
     int wordStart;
 };
@@ -316,11 +339,23 @@ std::optional<EmojiTrigger> triggerAt(const QString &line, int pos)
         --start;
 
     const QString word = line.mid(start, pos - start);
+    if (word.startsWith('@') || word.startsWith('#'))
+        return EmojiTrigger{ word.at(0), word.mid(1), start };
+
     const bool alreadyClosed = word.indexOf(':', 1) != -1;
     if (!word.startsWith(':') || word.size() < kMinQueryChars + 1 || alreadyClosed)
         return std::nullopt;
 
-    return EmojiTrigger{ word.mid(1), start };
+    return EmojiTrigger{ word.at(0), word.mid(1), start };
+}
+
+QTextCharFormat mentionFormat()
+{
+    const Core::Theme::Manager &theme = Core::Theme::Manager::instance();
+    QTextCharFormat format;
+    format.setForeground(theme.color(Core::Theme::Token::MentionText));
+    format.setBackground(theme.color(Core::Theme::Token::MentionBg));
+    return format;
 }
 
 } // namespace
@@ -351,40 +386,72 @@ void EmojiAutocomplete::cancel()
 {
     wordStart = -1;
     dismissedWordStart = -1;
+    trigger = QChar();
     query.clear();
     popup->hide();
+}
+
+void EmojiAutocomplete::refreshResults()
+{
+    if (wordStart < 0 || wordStart == dismissedWordStart || !provider)
+        return;
+
+    const QList<Core::EmojiMatch> results = provider(trigger, query.toLower());
+    if (results.isEmpty()) {
+        popup->hide();
+        return;
+    }
+
+    popup->setResults(results, trigger, query, true);
+    showPopup();
+}
+
+void EmojiAutocomplete::insertMention(const QString &displayText, const QString &mentionText)
+{
+    QTextCursor cursor = editor->textCursor();
+    UI::insertMention(cursor, displayText, mentionText, mentionFormat());
+    editor->setTextCursor(cursor);
+    editor->setFocus();
+}
+
+void EmojiAutocomplete::insertTextWithMentions(const QString &text, const MentionNameResolver &resolve)
+{
+    QTextCursor cursor = editor->textCursor();
+    insertWithMentions(cursor, text, resolve, mentionFormat());
+    editor->setTextCursor(cursor);
 }
 
 void EmojiAutocomplete::refresh()
 {
     const QTextCursor cursor = editor->textCursor();
-    std::optional<EmojiTrigger> trigger;
+    std::optional<EmojiTrigger> found;
     if (provider && !cursor.hasSelection())
-        trigger = triggerAt(cursor.block().text(), cursor.positionInBlock());
-    if (!trigger) {
+        found = triggerAt(cursor.block().text(), cursor.positionInBlock());
+    if (!found) {
         cancel();
         return;
     }
 
-    const int docStart = cursor.block().position() + trigger->wordStart;
+    const int docStart = cursor.block().position() + found->wordStart;
     if (docStart == dismissedWordStart) {
         popup->hide();
         return;
     }
     dismissedWordStart = -1;
 
-    if (docStart == wordStart && trigger->query == query)
+    if (docStart == wordStart && found->query == query)
         return;
     wordStart = docStart;
-    query = trigger->query;
+    trigger = found->trigger;
+    query = found->query;
 
-    const QList<Core::EmojiMatch> results = provider(query.toLower());
+    const QList<Core::EmojiMatch> results = provider(trigger, query.toLower());
     if (results.isEmpty()) {
         popup->hide();
         return;
     }
 
-    popup->setResults(results, query);
+    popup->setResults(results, trigger, query);
     showPopup();
 }
 
@@ -399,7 +466,10 @@ void EmojiAutocomplete::accept(const Core::EmojiMatch &match)
 
     cursor.setPosition(start);
     cursor.setPosition(end, QTextCursor::KeepAnchor);
-    cursor.insertText(match.insertText + " ");
+    if (match.mentionText.isEmpty())
+        cursor.insertText(match.insertText + " ");
+    else
+        UI::insertMention(cursor, match.insertText, match.mentionText, mentionFormat());
     editor->setTextCursor(cursor);
     editor->setFocus();
 }

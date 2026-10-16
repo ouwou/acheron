@@ -251,6 +251,7 @@ public:
         IsForwardedRole,
         ForwardOriginRole,
         StickersRole,
+        IsMentionedRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -270,6 +271,9 @@ public:
 
     using GuildInfoResolver = std::function<QPair<QString, QUrl>(Snowflake guildId)>;
     void setGuildInfoResolver(GuildInfoResolver resolver);
+
+    using MentionResolver = std::function<bool(const Discord::Message &msg, Snowflake guildId)>;
+    void setMentionResolver(MentionResolver resolver);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -343,6 +347,7 @@ private:
     RoleColorResolver roleColorResolver;
     ChannelNameResolver channelNameResolver;
     GuildInfoResolver guildInfoResolver;
+    MentionResolver mentionResolver;
 
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
     QSet<QString> pendingNonces;

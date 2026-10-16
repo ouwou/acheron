@@ -158,8 +158,22 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
             else
                 displayName = node.content;
 
-            result += QString("<span class=\"mention\">@%1</span>")
+            result += QString("<a href=\"acheron://user/%1\" class=\"mention\">@%2</a>")
+                              .arg(node.content.toHtmlEscaped())
                               .arg(displayName.toHtmlEscaped());
+            continue;
+        }
+
+        if (node.type == "role") {
+            QString name;
+            if (roleResolver)
+                name = roleResolver(Snowflake(node.content.toULongLong()),
+                                    Snowflake(node.attributes["sourceChannelId"].toULongLong()));
+            else
+                name = node.content;
+
+            result += QString("<span class=\"mention\">@%1</span>")
+                              .arg(name.toHtmlEscaped());
             continue;
         }
 
@@ -251,6 +265,11 @@ void Parser::setUserResolver(UserResolverFn resolver)
 void Parser::setChannelResolver(ChannelResolverFn resolver)
 {
     channelResolver = std::move(resolver);
+}
+
+void Parser::setRoleResolver(RoleResolverFn resolver)
+{
+    roleResolver = std::move(resolver);
 }
 
 void Parser::setChannelLinkResolver(ChannelLinkResolverFn resolver)
@@ -514,6 +533,38 @@ void Parser::setupDefaultRules()
     };
     // .html handled in toHtml() because of user resolution
     rules.append(user);
+
+    MarkdownRule role;
+    role.name = "role";
+    role.order = 21;
+    role.regex = QRegularExpression(R"(^<@&([0-9]+)>)");
+    role.match = anyScopeRegex(role.regex);
+    role.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "role";
+        node.content = match.captured(1);
+        node.attributes["sourceChannelId"] = state.customState.value("channelId");
+        return node;
+    };
+    // .html handled in toHtml() because of role resolution
+    rules.append(role);
+
+    MarkdownRule everyone;
+    everyone.name = "everyone";
+    everyone.order = 21;
+    everyone.regex = QRegularExpression(R"(^@(everyone|here)(?!\w))");
+    everyone.match = anyScopeRegex(everyone.regex);
+    everyone.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "everyone";
+        node.content = match.captured(1);
+        return node;
+    };
+    everyone.html = [](const AstNode &node,
+                       std::function<QString(const QList<AstNode> &)> renderChildren) -> QString {
+        return QString("<span class=\"mention\">@%1</span>").arg(node.content);
+    };
+    rules.append(everyone);
 
     MarkdownRule channel;
     channel.name = "channel";

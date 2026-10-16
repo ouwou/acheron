@@ -1,9 +1,11 @@
 #include "MessageInput.hpp"
 #include "AttachmentPreviewPanel.hpp"
+#include "MentionText.hpp"
 #include "TextEdgeNavigation.hpp"
 
 #include "Core/Emoji/UnicodeEmojiIndex.hpp"
 #include "Core/Theme/Icons.hpp"
+#include "Core/Theme/Manager.hpp"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -148,6 +150,15 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     replyLabel->setStyleSheet("color: #b5bac1; font-size: 12px;");
     replyLayout->addWidget(replyLabel, 1);
 
+    replyMentionButton = new QToolButton(replyBar);
+    replyMentionButton->setCheckable(true);
+    replyMentionButton->setChecked(true);
+    replyMentionButton->setAutoRaise(true);
+    replyMentionButton->setCursor(Qt::PointingHandCursor);
+    replyMentionButton->setFocusPolicy(Qt::NoFocus);
+    replyLayout->addWidget(replyMentionButton);
+    connect(replyMentionButton, &QToolButton::toggled, this, &MessageInput::updateReplyMentionButton);
+
     replyCancelButton = new QToolButton(replyBar);
     replyCancelButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::X, Core::Theme::Token::PlaceholderText));
     replyCancelButton->setIconSize(QSize(14, 14));
@@ -176,7 +187,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     connect(textEdit, &ChatTextEdit::returnPressed, [this]() {
         if (sendBlocked)
             return;
-        QString txt = textEdit->toPlainText().trimmed();
+        QString txt = toMessageText(textEdit->document()).trimmed();
         if (txt.isEmpty() && !attachmentPanel->hasAttachments())
             return;
         txt = Core::UnicodeEmojiIndex::instance().translateNamesToSurrogates(txt);
@@ -257,8 +268,12 @@ void MessageInput::dropEvent(QDropEvent *event)
 }
 
 void MessageInput::setReplyTarget(Core::Snowflake messageId, const QString &authorName,
-                                  const QString &contentSnippet)
+                                  const QString &contentSnippet, bool canMentionAuthor)
 {
+    replyMentionButton->setChecked(true);
+    replyMentionButton->setVisible(canMentionAuthor);
+    updateReplyMentionButton();
+
     replyMessageId = messageId;
     QString snippet = contentSnippet;
     snippet.replace('\n', ' ');
@@ -281,6 +296,23 @@ void MessageInput::clearReplyTarget()
     adjustHeight();
 }
 
+bool MessageInput::replyMentionsAuthor() const
+{
+    return replyMentionButton->isChecked();
+}
+
+void MessageInput::updateReplyMentionButton()
+{
+    using namespace Core::Theme;
+    const bool on = replyMentionButton->isChecked();
+    const QColor color = Manager::instance().color(on ? Token::LinkText : Token::PlaceholderText);
+    replyMentionButton->setText(on ? tr("@ ON") : tr("@ OFF"));
+    replyMentionButton->setToolTip(on ? tr("Click to disable pinging the original author")
+                                      : tr("Click to enable pinging the original author"));
+    replyMentionButton->setStyleSheet(QStringLiteral("QToolButton { border: none; font-size: 12px; font-weight: bold; color: %1; }")
+                                              .arg(color.name()));
+}
+
 void MessageInput::setSendBlocked(bool blocked)
 {
     sendBlocked = blocked;
@@ -290,6 +322,11 @@ void MessageInput::insertText(const QString &text)
 {
     textEdit->insertPlainText(text);
     textEdit->setFocus();
+}
+
+void MessageInput::insertMention(const QString &displayText, const QString &mentionText)
+{
+    autocomplete->insertMention(displayText, mentionText);
 }
 
 QRect MessageInput::pickerAnchor() const

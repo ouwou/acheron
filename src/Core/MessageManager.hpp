@@ -44,6 +44,7 @@ public:
 
     void setChannelResolver(std::function<QString(Snowflake)> resolver);
     void setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver);
+    void setRoleResolver(Markdown::RoleResolverFn resolver);
     void setEmojiManager(EmojiManager *manager);
 
     [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;
@@ -54,7 +55,7 @@ public:
     void requestLoadFuture(Snowflake channelId, Snowflake afterId);
     void requestLoadAround(Snowflake channelId, Snowflake messageId);
     void sendMessage(Snowflake channelId, const QString &content,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<PendingAttachment> &attachments = {});
     void cancelSend(Snowflake channelId, const QString &nonce);
 
