@@ -1500,6 +1500,10 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
+    connect(chatView, &ChatView::userMentionClicked, this, [this](Snowflake userId) {
+        if (currentInstance)
+            showUserProfile(currentInstance, userId, chatModel->getActiveGuildId());
+    });
     connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
         if (currentInstance)

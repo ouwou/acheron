@@ -395,6 +395,15 @@ void ChatView::openLink(const QString &url)
         return;
     }
 
+    const QLatin1String userMention("acheron://user/");
+    if (url.startsWith(userMention)) {
+        bool ok = false;
+        quint64 id = url.mid(userMention.size()).toULongLong(&ok);
+        if (ok)
+            emit userMentionClicked(Core::Snowflake(id));
+        return;
+    }
+
     if (auto link = Discord::ChannelLink::parse(url)) {
         if (link->messageId.isValid())
             emit messageLinkClicked(link->channelId, link->messageId);

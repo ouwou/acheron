@@ -15,6 +15,7 @@ private slots:
     void testUrl();
     void testSingleLink();
     void testEmojiSequences();
+    void testMentions();
 };
 
 static QString renderInline(const QString &source)
@@ -135,6 +136,16 @@ void TestMarkdown::testEmojiSequences()
     QCOMPARE(countUnicodeEmojisSegmented(thumbsUp + " " + family), 2);
     QCOMPARE(countUnicodeEmojisSegmented("x " + thumbsUp), -1);
     QCOMPARE(countUnicodeEmojisSegmented("   "), 0);
+}
+
+void TestMarkdown::testMentions()
+{
+    QCOMPARE(renderInline("<@123>"),
+             QStringLiteral("<a href=\"acheron://user/123\" class=\"mention\">@123</a>"));
+    QCOMPARE(renderInline("<@!123>"),
+             QStringLiteral("<a href=\"acheron://user/123\" class=\"mention\">@123</a>"));
+    QCOMPARE(renderInline("<#456>"),
+             QStringLiteral("<a href=\"acheron://channel/456\" class=\"mention\">#456</a>"));
 }
 
 QTEST_MAIN(TestMarkdown)

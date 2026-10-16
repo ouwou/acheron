@@ -158,7 +158,8 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
             else
                 displayName = node.content;
 
-            result += QString("<span class=\"mention\">@%1</span>")
+            result += QString("<a href=\"acheron://user/%1\" class=\"mention\">@%2</a>")
+                              .arg(node.content.toHtmlEscaped())
                               .arg(displayName.toHtmlEscaped());
             continue;
         }

@@ -139,6 +139,7 @@ signals:
     void reactionToggleRequested(Core::Snowflake channelId, Core::Snowflake messageId, const Acheron::Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Acheron::Discord::Client::ReactionLocation location);
     void reactorsRequested(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Acheron::Core::ReactionRef> &selected);
     void channelMentionClicked(Core::Snowflake channelId);
+    void userMentionClicked(Core::Snowflake userId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
     void inlineEditFinished();
