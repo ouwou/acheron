@@ -44,6 +44,7 @@ public:
 
     void setChannelResolver(std::function<QString(Snowflake)> resolver);
     void setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver);
+    void setRoleResolver(Markdown::RoleResolverFn resolver);
     void setEmojiManager(EmojiManager *manager);
 
     [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;

@@ -146,6 +146,20 @@ void TestMarkdown::testMentions()
              QStringLiteral("<a href=\"acheron://user/123\" class=\"mention\">@123</a>"));
     QCOMPARE(renderInline("<#456>"),
              QStringLiteral("<a href=\"acheron://channel/456\" class=\"mention\">#456</a>"));
+    QCOMPARE(renderInline("hi <@&789>"),
+             QStringLiteral("hi <span class=\"mention\">@789</span>"));
+    QCOMPARE(renderInline("@everyone and @here"),
+             QStringLiteral("<span class=\"mention\">@everyone</span> and <span class=\"mention\">@here</span>"));
+    QCOMPARE(renderInline("@heretic"), QStringLiteral("@heretic"));
+
+    Parser parser;
+    parser.setRoleResolver([](Acheron::Core::Snowflake roleId, Acheron::Core::Snowflake) {
+        return roleId == Acheron::Core::Snowflake(789) ? QStringLiteral("mods & <admins>") : QString();
+    });
+    ParseState state;
+    state.isInline = true;
+    QCOMPARE(parser.toHtml(parser.parse("<@&789>", state)),
+             QStringLiteral("<span class=\"mention\">@mods &amp; &lt;admins&gt;</span>"));
 }
 
 QTEST_MAIN(TestMarkdown)

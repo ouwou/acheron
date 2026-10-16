@@ -63,6 +63,12 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     messageManager->setChannelLinkResolver([this](const Markdown::ChannelLinkRef &ref) {
         return channelLinkParts(ref);
     });
+    messageManager->setRoleResolver([this](Snowflake roleId, Snowflake sourceChannelId) -> QString {
+        auto role = roleRepo.getRole(client->getGuildIdForChannel(sourceChannelId), roleId);
+        if (role && role->name.hasValue())
+            return role->name.get();
+        return QStringLiteral("deleted-role");
+    });
 
     permissionManager = new PermissionManager(info.id, this);
     readStateManager = new ReadStateManager(info.id, permissionManager, this);

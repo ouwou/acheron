@@ -137,6 +137,11 @@ void MessageManager::setChannelLinkResolver(Markdown::ChannelLinkResolverFn reso
     parser->setChannelLinkResolver(std::move(resolver));
 }
 
+void MessageManager::setRoleResolver(Markdown::RoleResolverFn resolver)
+{
+    parser->setRoleResolver(std::move(resolver));
+}
+
 void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)
 {
     parser->setChannelResolver([resolver](const QString &channelId) {
