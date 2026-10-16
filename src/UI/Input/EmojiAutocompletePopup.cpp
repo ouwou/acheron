@@ -18,7 +18,6 @@
 
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Manager.hpp"
-#include "MentionText.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -413,6 +412,13 @@ void EmojiAutocomplete::insertMention(const QString &displayText, const QString 
     UI::insertMention(cursor, displayText, mentionText, mentionFormat());
     editor->setTextCursor(cursor);
     editor->setFocus();
+}
+
+void EmojiAutocomplete::insertTextWithMentions(const QString &text, const MentionNameResolver &resolve)
+{
+    QTextCursor cursor = editor->textCursor();
+    insertWithMentions(cursor, text, resolve, mentionFormat());
+    editor->setTextCursor(cursor);
 }
 
 void EmojiAutocomplete::refresh()

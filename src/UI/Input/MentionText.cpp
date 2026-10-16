@@ -1,5 +1,6 @@
 #include "MentionText.hpp"
 
+#include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -18,15 +19,38 @@ QString plainFragmentText(QString text)
     return text;
 }
 
-} // namespace
-
-void insertMention(QTextCursor &cursor, const QString &displayText, const QString &mentionText, QTextCharFormat format)
+void insertMentionText(QTextCursor &cursor, const QString &displayText, const QString &mentionText, QTextCharFormat format)
 {
     format.setAnchor(true);
     format.setAnchorHref(mentionText);
     format.setProperty(DisplayTextProperty, displayText);
     cursor.insertText(displayText, format);
+}
+
+} // namespace
+
+void insertMention(QTextCursor &cursor, const QString &displayText, const QString &mentionText, QTextCharFormat format)
+{
+    insertMentionText(cursor, displayText, mentionText, std::move(format));
     cursor.insertText(QStringLiteral(" "), QTextCharFormat());
+}
+
+void insertWithMentions(QTextCursor &cursor, const QString &text, const MentionNameResolver &resolve, const QTextCharFormat &format)
+{
+    static const QRegularExpression mentionPattern(QStringLiteral(R"(<(@!?|@&|#)(\d+)>)"));
+    qsizetype last = 0;
+    for (auto it = mentionPattern.globalMatch(text); resolve && it.hasNext();) {
+        const QRegularExpressionMatch match = it.next();
+        const QString sigil = match.captured(1);
+        const QChar kind = sigil == QLatin1String("@&") ? QLatin1Char('&') : sigil.at(0);
+        const QString displayText = resolve(kind, Core::Snowflake(match.captured(2).toULongLong()));
+        if (displayText.isEmpty())
+            continue;
+        cursor.insertText(text.mid(last, match.capturedStart() - last), QTextCharFormat());
+        insertMentionText(cursor, displayText, match.captured(), format);
+        last = match.capturedEnd();
+    }
+    cursor.insertText(text.mid(last), QTextCharFormat());
 }
 
 QString toMessageText(const QTextDocument *document)

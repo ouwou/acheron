@@ -431,6 +431,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         return;
 
     messageInput->emojiAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->cancel();
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
     if (!accountNode) {
@@ -645,6 +646,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     chatModel->setAccount(currentInstance->accountId());
     messageInput->emojiAutocomplete()->cancel();
     messageInput->emojiAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
+    chatView->inlineEditAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
 
     forumModel->setAccount(currentInstance->accountId());
     forumModel->setManager(currentInstance->forums());
@@ -704,8 +707,10 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
                 chatModel->refreshUsersInView(userIds);
                 forumModel->refreshAuthors();
-                if (guildId == chatModel->getActiveGuildId())
+                if (guildId == chatModel->getActiveGuildId()) {
                     messageInput->emojiAutocomplete()->refreshResults();
+                    chatView->inlineEditAutocomplete()->refreshResults();
+                }
             });
 
     connect(currentInstance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
@@ -1296,7 +1301,7 @@ void MainWindow::setupUi()
         if (currentInstance)
             currentInstance->discord()->queryGuildMembers(memberQueryGuildId, memberQuery, MentionUserLimit);
     });
-    messageInput->emojiAutocomplete()->setProvider([this](QChar trigger, const QString &query) -> QList<Core::EmojiMatch> {
+    auto autocompleteProvider = [this](QChar trigger, const QString &query) -> QList<Core::EmojiMatch> {
         if (!currentInstance)
             return {};
         Snowflake channelId = chatModel->getActiveChannelId();
@@ -1314,7 +1319,9 @@ void MainWindow::setupUi()
             return userMentionMatches(currentInstance, channelId, guildId, query);
         }
         return currentInstance->emojis()->search(query, channelId);
-    });
+    };
+    messageInput->emojiAutocomplete()->setProvider(autocompleteProvider);
+    chatView->inlineEditAutocomplete()->setProvider(autocompleteProvider);
     typingIndicator = new TypingIndicator(rightSideWidget);
     slowModeIndicator = new SlowModeIndicator(rightSideWidget);
 
@@ -1626,6 +1633,24 @@ void MainWindow::setupUi()
     connect(chatView, &ChatView::userMentionClicked, this, [this](Snowflake userId) {
         if (currentInstance)
             showUserProfile(currentInstance, userId, chatModel->getActiveGuildId());
+    });
+    chatView->setMentionNameResolver([this](QChar kind, Snowflake id) -> QString {
+        if (!currentInstance)
+            return {};
+        const Snowflake guildId = chatModel->getActiveGuildId();
+        if (kind == '#') {
+            auto channel = currentInstance->getChannel(id);
+            return channel && channel->name.hasValue() ? QLatin1Char('#') + channel->name.get() : QString();
+        }
+        if (kind == '&') {
+            for (const auto &role : currentInstance->getRolesForGuild(guildId))
+                if (role.id.get() == id)
+                    return QLatin1Char('@') + role.name.get();
+            return {};
+        }
+        if (!currentInstance->users()->getUser(id))
+            return {};
+        return QLatin1Char('@') + currentInstance->users()->getDisplayName(id, guildId);
     });
     connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {

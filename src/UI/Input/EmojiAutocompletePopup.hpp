@@ -10,6 +10,7 @@
 
 #include "Core/Emoji/EmojiMatch.hpp"
 #include "Core/Snowflake.hpp"
+#include "MentionText.hpp"
 
 class QKeyEvent;
 class QLabel;
@@ -101,6 +102,7 @@ public:
     void cancel();
     void refreshResults();
     void insertMention(const QString &displayText, const QString &mentionText);
+    void insertTextWithMentions(const QString &text, const MentionNameResolver &resolve);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;

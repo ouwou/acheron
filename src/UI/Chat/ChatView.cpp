@@ -21,6 +21,7 @@
 #include "UI/Emoji/EmojiGlyphs.hpp"
 #include "UI/Emoji/EmojiPainting.hpp"
 #include "UI/ImageViewer.hpp"
+#include "UI/Input/EmojiAutocompletePopup.hpp"
 #include "UI/Input/TextEdgeNavigation.hpp"
 
 namespace Acheron {
@@ -127,6 +128,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     inlineEditWidget->setFrameStyle(QFrame::Box);
     inlineEditWidget->setLineWidth(2);
     inlineEditWidget->installEventFilter(this);
+    editAutocomplete = new EmojiAutocomplete(inlineEditWidget, inlineEditWidget);
 
     video = new InlineVideoController(this);
     animator = new FrameAnimator(this);
@@ -1211,6 +1213,11 @@ void ChatView::setCurrentUserId(Core::Snowflake userId)
     currentUserId = userId;
 }
 
+void ChatView::setMentionNameResolver(MentionNameResolver resolver)
+{
+    mentionNameResolver = std::move(resolver);
+}
+
 void ChatView::setCanPinMessages(bool canPin)
 {
     canPinMessages = canPin;
@@ -1514,7 +1521,8 @@ void ChatView::startInlineEdit(const QModelIndex &index)
 
         inlineEditWidget->setGeometry(editRect);
         inlineEditWidget->setFont(resolved.ctx.font);
-        inlineEditWidget->setPlainText(content);
+        inlineEditWidget->clear();
+        editAutocomplete->insertTextWithMentions(content, mentionNameResolver);
         inlineEditWidget->setVisible(true);
         inlineEditWidget->setFocus();
         inlineEditWidget->selectAll();
@@ -1549,7 +1557,7 @@ void ChatView::commitInlineEdit()
     if (!currentEditingIndex.isValid())
         return;
 
-    QString newContent = inlineEditWidget->toPlainText().trimmed();
+    QString newContent = toMessageText(inlineEditWidget->document()).trimmed();
     QString oldContent = currentEditingIndex.data(ChatModel::ContentRole).toString();
 
     auto *chatModel = qobject_cast<ChatModel *>(model());

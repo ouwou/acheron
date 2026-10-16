@@ -14,10 +14,12 @@
 #include "Core/MessageReactors.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Client.hpp"
+#include "UI/Input/MentionText.hpp"
 
 namespace Acheron {
 namespace UI {
 
+class EmojiAutocomplete;
 class FrameAnimator;
 class GifPlayback;
 class ImageViewer;
@@ -95,6 +97,8 @@ public:
     void setModel(QAbstractItemModel *model) override;
 
     void setCurrentUserId(Core::Snowflake userId);
+    void setMentionNameResolver(MentionNameResolver resolver);
+    [[nodiscard]] EmojiAutocomplete *inlineEditAutocomplete() const { return editAutocomplete; }
     void setCanPinMessages(bool canPin);
     void setCanManageMessages(bool canManage);
     void setCanAddReactions(bool canReact);
@@ -216,6 +220,8 @@ private:
     QPointer<Core::EmojiManager> emojis;
 
     QTextEdit *inlineEditWidget = nullptr;
+    EmojiAutocomplete *editAutocomplete = nullptr;
+    MentionNameResolver mentionNameResolver;
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;
     QModelIndex currentEditingIndex;
 

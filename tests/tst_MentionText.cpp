@@ -12,6 +12,7 @@ class TestMentionText : public QObject
 private slots:
     void testMentionsBecomeRaw();
     void testEditedMentionStaysPlain();
+    void testRawMentionsRoundTrip();
 };
 
 void TestMentionText::testMentionsBecomeRaw()
@@ -38,6 +39,25 @@ void TestMentionText::testEditedMentionStaysPlain()
     cursor.insertText(QStringLiteral("x"));
 
     QCOMPARE(toMessageText(&document), QStringLiteral("@bxob "));
+}
+
+void TestMentionText::testRawMentionsRoundTrip()
+{
+    const QString raw = QStringLiteral("hi <@!123> and <@&7>\nin <#456>, <@999> <:pepe:1>");
+    QTextDocument document;
+    QTextCursor cursor(&document);
+    insertWithMentions(cursor, raw, [](QChar kind, Acheron::Core::Snowflake id) -> QString {
+        if (kind == '@' && id == Acheron::Core::Snowflake(123))
+            return QStringLiteral("@bob");
+        if (kind == '&' && id == Acheron::Core::Snowflake(7))
+            return QStringLiteral("@mods");
+        if (kind == '#' && id == Acheron::Core::Snowflake(456))
+            return QStringLiteral("#general");
+        return {};
+    }, {});
+
+    QCOMPARE(document.toPlainText(), QStringLiteral("hi @bob and @mods\nin #general, <@999> <:pepe:1>"));
+    QCOMPARE(toMessageText(&document), raw);
 }
 
 QTEST_MAIN(TestMentionText)

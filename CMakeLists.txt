@@ -381,7 +381,7 @@ if(BUILD_TESTS)
     target_include_directories(TestMarkdown PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor/emoji-segmenter)
     add_test(NAME MarkdownTests COMMAND TestMarkdown)
 
-    qt_add_executable(TestMentionText tests/tst_MentionText.cpp src/UI/Input/MentionText.cpp)
+    qt_add_executable(TestMentionText tests/tst_MentionText.cpp src/UI/Input/MentionText.cpp src/Core/Snowflake.cpp)
     target_link_libraries(TestMentionText PRIVATE Qt::Gui Qt::Test)
     target_include_directories(TestMentionText PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME MentionTextTests COMMAND TestMentionText)
