@@ -55,7 +55,7 @@ public:
     void requestLoadFuture(Snowflake channelId, Snowflake afterId);
     void requestLoadAround(Snowflake channelId, Snowflake messageId);
     void sendMessage(Snowflake channelId, const QString &content,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<PendingAttachment> &attachments = {});
     void cancelSend(Snowflake channelId, const QString &nonce);
 

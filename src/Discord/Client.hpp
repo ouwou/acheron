@@ -116,7 +116,7 @@ public:
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<Core::PendingAttachment> &attachments = {});
     bool cancelMessageSend(const QString &nonce);
     void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);

@@ -1601,12 +1601,13 @@ void MainWindow::setupUi()
                     if (msgId == messageId) {
                         QString authorName = idx.data(ChatModel::UsernameRole).toString();
                         QString content = idx.data(ChatModel::ContentRole).toString();
-                        messageInput->setReplyTarget(messageId, authorName, content);
+                        const bool ownMessage = currentInstance && idx.data(ChatModel::UserIdRole).toULongLong() == currentInstance->accountId();
+                        messageInput->setReplyTarget(messageId, authorName, content, !ownMessage);
                         return;
                     }
                 }
                 // Fallback if message not found in model
-                messageInput->setReplyTarget(messageId, tr("Unknown"), QString());
+                messageInput->setReplyTarget(messageId, tr("Unknown"), QString(), true);
             });
 
     connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
@@ -3060,7 +3061,7 @@ bool MainWindow::sendFromChatInput(const QString &text, const QList<Core::Pendin
     Snowflake replyTo = messageInput->replyTargetMessageId();
     if (!chatModel->isAtLatest())
         chatView->jumpToPresent();
-    currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
+    currentInstance->messages()->sendMessage(channelId, text, replyTo, messageInput->replyMentionsAuthor(), attachments);
 
     int rateLimit = currentInstance->getChannelRateLimit(channelId);
     Snowflake userId = currentInstance->accountId();

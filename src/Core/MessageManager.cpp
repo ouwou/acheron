@@ -504,7 +504,7 @@ void MessageManager::onReactionChangeFailed(ReactionOp op, const ReactionChange 
 }
 
 void MessageManager::sendMessage(Snowflake channelId, const QString &content,
-                                 Snowflake replyToMessageId,
+                                 Snowflake replyToMessageId, bool mentionRepliedUser,
                                  const QList<PendingAttachment> &attachments)
 {
     if (emojiManager)
@@ -580,7 +580,7 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
         }
     }
 
-    client->sendMessage(channelId, content, nonce, replyToMessageId, outgoing);
+    client->sendMessage(channelId, content, nonce, replyToMessageId, mentionRepliedUser, outgoing);
 }
 
 void MessageManager::cancelSend(Snowflake channelId, const QString &nonce)
