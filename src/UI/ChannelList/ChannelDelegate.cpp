@@ -71,7 +71,7 @@ static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option
     int pillX = option.rect.left() - pillWidth;
     int pillY = option.rect.top() + (option.rect.height() - pillHeight) / 2;
 
-    painter->setBrush(option.palette.brightText().color());
+    painter->setBrush(option.palette.text().color());
     painter->setPen(Qt::NoPen);
     painter->drawRoundedRect(QRect(pillX, pillY, pillWidth * 2, pillHeight), pillWidth, pillWidth);
 }
@@ -527,15 +527,18 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
     // determine text color
     QColor textColor = option.palette.text().color();
+    const QColor readColor = option.palette.placeholderText().color();
     bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
     if (node->opensChat()) {
-        if (node->isMuted)
-            textColor = option.palette.text().color().darker(150);
-        else if (isSelected || node->isUnread)
-            textColor = option.palette.brightText().color();
+        if (node->isMuted) {
+            textColor = readColor;
+            textColor.setAlphaF(readColor.alphaF() / 2);
+        } else if (!isSelected && !node->isUnread) {
+            textColor = readColor;
+        }
     } else if (node->type == ChannelNode::Type::Server) {
-        if (node->isUnread && !node->isMuted)
-            textColor = option.palette.brightText().color();
+        if (!node->isUnread || node->isMuted)
+            textColor = readColor;
     } else if (node->type == ChannelNode::Type::Category) {
         if (node->isMuted)
             textColor = option.palette.text().color().darker(150);
