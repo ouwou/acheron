@@ -2,6 +2,7 @@
 
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -65,18 +66,9 @@ struct Free
 template <typename T>
 using Reply = std::unique_ptr<T, Free>;
 
-struct InputCloser
-{
-    void operator()(AVFormatContext *input) const { avformat_close_input(&input); }
-};
-struct PacketDeleter
-{
-    void operator()(AVPacket *packet) const { av_packet_free(&packet); }
-};
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
+using Media::FramePointer;
+using Media::InputPointer;
+using Media::PacketPointer;
 
 struct Display
 {
@@ -311,12 +303,7 @@ QString titleOf(const Display &display, const Atoms &atoms, xcb_window_t window)
     return title.isEmpty() ? QString::fromLatin1(text(display, window, XCB_ATOM_WM_NAME)) : QString::fromUtf8(title);
 }
 
-QString describeError(int error)
-{
-    char text[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(error, text, sizeof(text));
-    return QString::fromUtf8(text);
-}
+using Media::describeError;
 
 class Grabber final : public LinuxGrabber
 {
@@ -339,8 +326,8 @@ private:
     xcb_window_t window;
     QRect screen;
     int framerate;
-    std::unique_ptr<AVFormatContext, InputCloser> input;
-    std::unique_ptr<AVPacket, PacketDeleter> packet;
+    InputPointer input;
+    PacketPointer packet;
     // x11grab times each picture from when it was opened, and does not wait at all for a
     // reader that fell behind. This is never earlier than its time, so it does the waiting.
     Clock::time_point due;
@@ -567,7 +554,7 @@ QImage thumbnail(const CaptureSource &source, const QSize &bound)
         return {};
 
     Grabber grabber(source.id, THUMBNAIL_FRAMERATE);
-    const std::unique_ptr<AVFrame, FrameDeleter> frame(av_frame_alloc());
+    const FramePointer frame(av_frame_alloc());
     if (grabber.grab(frame.get(), THUMBNAIL_WAIT) != LinuxGrabber::Result::Frame)
         return {};
 

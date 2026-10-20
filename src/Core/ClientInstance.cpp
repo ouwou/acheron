@@ -14,7 +14,7 @@
 #include "Calls/CallStore.hpp"
 #include "Streams/StreamManager.hpp"
 #include "Streams/StreamPreviews.hpp"
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
 #include "Streams/StreamBroadcaster.hpp"
 #include "Video/CameraPipeline.hpp"
 #include "Video/CameraSender.hpp"
@@ -104,7 +104,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(voiceManager, &Audio::VoiceManager::voiceConnected, this, &ClientInstance::onVoiceConnected);
     connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
 #endif
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     streamWatch = new StreamWatcher(client, streamManager, voiceManager, info.id, info.proxy, this);
     streamBroadcast = new StreamBroadcaster(
             client, streamManager, voiceManager, info.id, info.proxy, [this] { return screenShareTerms(); }, this);
@@ -123,7 +123,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         voiceManager->setGatewaySessionId(gatewaySessionId);
 #endif
         callStore->reset();
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
         streamWatch->reset();
         streamWatch->setGatewaySessionId(gatewaySessionId);
         streamBroadcast->reset();
@@ -1470,7 +1470,7 @@ void ClientInstance::markCategoryAsRead(Snowflake guildId, Snowflake categoryId)
 
 ClientInstance::~ClientInstance()
 {
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     // It sends on the voice manager's connection and asks the broadcaster what is shared.
     delete cameraSend;
     cameraSend = nullptr;
@@ -1572,7 +1572,7 @@ StreamPreviews *ClientInstance::streamPreviews() const
     return streamPreviewCache;
 }
 
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
 StreamWatcher *ClientInstance::streamWatcher() const
 {
     return streamWatch;
@@ -1622,7 +1622,7 @@ ShareTerms ClientInstance::screenShareTerms()
 
 bool ClientInstance::selfVideoIn(Snowflake channelId) const
 {
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     return cameraSend && cameraSend->isOnIn(channelId);
 #else
     Q_UNUSED(channelId);

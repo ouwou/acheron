@@ -1,6 +1,7 @@
 #include "Core/Video/LinuxCapture.hpp"
 
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/PipeWireLibrary.hpp"
 
 #include <QCoreApplication>
@@ -414,11 +415,7 @@ private:
     std::shared_ptr<Source> source;
 };
 
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
+using Media::FramePointer;
 
 struct Pictures : std::enable_shared_from_this<Pictures>
 {

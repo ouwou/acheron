@@ -6,7 +6,7 @@
 #ifdef ACHERON_HAVE_MINIAUDIO
 #include "AudioPage.hpp"
 #endif
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
 #include "VideoPage.hpp"
 #endif
 
@@ -53,7 +53,7 @@ void SettingsWindow::setupUi()
 #ifdef ACHERON_HAVE_MINIAUDIO
     addPage(tr("Audio"), new AudioPage(this));
 #endif
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     addPage(tr("Video"), new VideoPage(this));
 #endif
 

@@ -8,7 +8,7 @@
 #include "VoiceEncryption.hpp"
 #include "RtpPacket.hpp"
 #include "Rtcp.hpp"
-#include "VideoSender.hpp"
+#include "VideoSendStream.hpp"
 
 #include "DaveSession.hpp"
 

@@ -1,4 +1,4 @@
-#include "VideoSender.hpp"
+#include "VideoSendStream.hpp"
 
 #include <QtEndian>
 

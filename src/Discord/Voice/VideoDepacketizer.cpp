@@ -461,36 +461,6 @@ QString describeFrame(VideoCodec codec, std::span<const uint8_t> frame)
     return QStringLiteral("%1 frame of %2 bytes%3; %4").arg(videoCodecName(codec)).arg(frame.size()).arg(units, describeEncryptionTrailer(frame));
 }
 
-VideoCodec videoCodecFromName(const QString &name)
-{
-    if (name == QLatin1String("H264"))
-        return VideoCodec::H264;
-    if (name == QLatin1String("H265"))
-        return VideoCodec::H265;
-    if (name == QLatin1String("VP8"))
-        return VideoCodec::VP8;
-    if (name == QLatin1String("AV1"))
-        return VideoCodec::AV1;
-    return VideoCodec::Unknown;
-}
-
-QString videoCodecName(VideoCodec codec)
-{
-    switch (codec) {
-    case VideoCodec::H264:
-        return QStringLiteral("H264");
-    case VideoCodec::H265:
-        return QStringLiteral("H265");
-    case VideoCodec::VP8:
-        return QStringLiteral("VP8");
-    case VideoCodec::AV1:
-        return QStringLiteral("AV1");
-    case VideoCodec::Unknown:
-        break;
-    }
-    return {};
-}
-
 bool startsKeyframe(VideoCodec codec, std::span<const uint8_t> payload)
 {
     switch (codec) {

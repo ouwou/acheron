@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/CaptureSources.hpp"
 
 #include <QPoint>
 #include <QRect>

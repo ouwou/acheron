@@ -13,6 +13,7 @@
 #include "Core/Snowflake.hpp"
 #include "Core/Streams/StreamManager.hpp"
 #include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/CaptureSources.hpp"
 #include "Core/Video/SendQuality.hpp"
 #include "Core/Video/SendRateController.hpp"
 #include "Discord/StreamKey.hpp"

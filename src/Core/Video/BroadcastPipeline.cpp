@@ -1,6 +1,7 @@
 #include "Core/Video/BroadcastPipeline.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoEncoder.hpp"
 #include "Core/Video/ScreenCapture.hpp"
@@ -41,11 +42,7 @@ constexpr int HIDDEN_BEFORE_PAUSED_MS = 200;
 constexpr int MIN_BITRATE = 50'000;
 constexpr int BITRATE_WHEN_NONE_GIVEN = 2'500'000;
 
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
+using Media::FramePointer;
 
 int usableBitrate(int wanted, int most)
 {

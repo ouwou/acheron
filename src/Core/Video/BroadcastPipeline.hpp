@@ -3,49 +3,16 @@
 #include <QImage>
 #include <QList>
 #include <QObject>
-#include <QRect>
 #include <QSize>
 #include <QString>
 
 #include <memory>
 
-#include "Discord/Voice/VideoReceiver.hpp"
-#include "Discord/Voice/VoiceEnums.hpp"
+#include "Discord/Voice/VideoFrame.hpp"
 
 namespace Acheron {
 namespace Core {
 namespace Video {
-
-// Something that can be shared: a screen, or one window.
-struct CaptureSource
-{
-    enum class Kind {
-        Screen,
-        Window,
-    };
-
-    // "screen:<n>", where n is stable for as long as the monitors stay as they are, or
-    // "window:<handle>".
-    QString id;
-    Kind kind = Kind::Screen;
-    // A screen's number, or a window's title.
-    QString name;
-    // In the desktop's own pixels.
-    QRect geometry;
-    // The process a window belongs to, which is whose sound goes with it. Zero for a screen.
-    quint32 processId = 0;
-};
-
-// False where this build or this machine cannot capture a screen at all, in which case nothing
-// offers to share one.
-[[nodiscard]] bool screenCaptureAvailable();
-[[nodiscard]] QList<CaptureSource> captureSources();
-// The same for single windows. A build or a Windows too old to capture one has none to offer.
-[[nodiscard]] bool windowCaptureAvailable();
-[[nodiscard]] QList<CaptureSource> captureWindows();
-// A still of the source as it is now, no larger than `bound`, for a picker. Null when it
-// cannot be had.
-[[nodiscard]] QImage captureThumbnail(const CaptureSource &source, const QSize &bound);
 
 struct BroadcastSettings
 {

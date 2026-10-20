@@ -7,7 +7,7 @@
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
 #include "Discord/Voice/VideoPacketizer.hpp"
-#include "Discord/Voice/VideoSender.hpp"
+#include "Discord/Voice/VideoSendStream.hpp"
 
 #include <bytes/bytes.h>
 #include <dave/dave_interfaces.h>

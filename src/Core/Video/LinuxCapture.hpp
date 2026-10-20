@@ -9,7 +9,7 @@
 #include <functional>
 #include <memory>
 
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/CaptureSources.hpp"
 
 class QObject;
 struct AVFrame;

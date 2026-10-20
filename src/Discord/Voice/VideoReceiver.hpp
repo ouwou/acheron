@@ -10,17 +10,11 @@
 #include "PacketBuffer.hpp"
 #include "Rtcp.hpp"
 #include "VideoDepacketizer.hpp"
+#include "VideoFrame.hpp"
 
 namespace Acheron {
 namespace Discord {
 namespace Voice {
-
-struct EncodedVideoFrame
-{
-    std::vector<uint8_t> data;
-    uint32_t rtpTimestamp = 0;
-    bool keyframe = false;
-};
 
 // Turns the RTP packets of one video SSRC into complete frames, in decode order. It holds
 // packets that arrive early, names the ones to ask the sender for again, and when a loss cannot

@@ -1,6 +1,7 @@
 #include "Core/Video/CameraCapture.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Video/CameraPipeline.hpp"
 
 #include <QCoreApplication>
@@ -83,27 +84,14 @@ constexpr int DEVICE_BUFFER_BYTES = 2 * 1280 * 720 * 2;
 // without waiting, this often.
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(1);
 
-struct InputCloser
-{
-    void operator()(AVFormatContext *input) const { avformat_close_input(&input); }
-};
-struct DecoderDeleter
-{
-    void operator()(AVCodecContext *decoder) const { avcodec_free_context(&decoder); }
-};
-struct PacketDeleter
-{
-    void operator()(AVPacket *packet) const { av_packet_free(&packet); }
-};
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
+using Media::FramePointer;
+using Media::InputPointer;
+using Media::PacketPointer;
 
 struct OpenCamera
 {
-    std::unique_ptr<AVFormatContext, InputCloser> input;
-    std::unique_ptr<AVCodecContext, DecoderDeleter> decoder;
+    InputPointer input;
+    Media::CodecContextPointer decoder;
     const char *sizeAskedFor = nullptr;
 };
 
@@ -398,9 +386,9 @@ void CameraCapture::run(const QString &deviceId)
     qCInfo(LogVideo).noquote() << "Camera" << (listed == cameras.end() ? id : listed->name) << "opened as" << openedMode << "when asked for" << (camera.sizeAskedFor ? camera.sizeAskedFor : "nothing");
     opened(openedMode);
 
-    const std::unique_ptr<AVPacket, PacketDeleter> packet(av_packet_alloc());
-    const std::unique_ptr<AVPacket, PacketDeleter> newer(av_packet_alloc());
-    const std::unique_ptr<AVFrame, FrameDeleter> decoded(av_frame_alloc());
+    const PacketPointer packet(av_packet_alloc());
+    const PacketPointer newer(av_packet_alloc());
+    const FramePointer decoded(av_frame_alloc());
     const AVCodecDescriptor *codec = avcodec_descriptor_get(camera.decoder->codec_id);
     const bool everyPictureStandsAlone = codec && (codec->props & AV_CODEC_PROP_INTRA_ONLY);
     CaptureClock clock;

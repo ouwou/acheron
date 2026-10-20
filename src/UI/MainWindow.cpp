@@ -56,7 +56,7 @@
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
 #include "StreamPreviewPopup.hpp"
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
 #include "CallView.hpp"
 #include "Core/Streams/StreamWatcher.hpp"
 #include "Core/Video/CallVideo.hpp"
@@ -1114,7 +1114,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
             });
 #endif
 
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     // A call has a video view for as long as it lasts. A new call, in another channel, gets
     // a new one.
     const quint64 accountId = static_cast<quint64>(instance->accountId());
@@ -1144,7 +1144,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 
 void MainWindow::updateCallHost()
 {
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     static constexpr int MIN_HEIGHT = 120;
 
     bool docked = false;
@@ -1189,7 +1189,7 @@ void MainWindow::updateCallHost()
 #endif
 }
 
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
 void MainWindow::removeCallView(quint64 accountId)
 {
     delete callViews.take(accountId).data();
@@ -1227,7 +1227,7 @@ CallView *MainWindow::ensureCallView(Core::ClientInstance *instance)
 
 void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
 {
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     auto *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
     if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
         return;
@@ -1255,7 +1255,7 @@ void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
 
 void MainWindow::onShowCallVideoRequested(const QModelIndex &proxyIndex)
 {
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     auto *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
     if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
         return;
@@ -1761,7 +1761,7 @@ void MainWindow::setupUi()
                 Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
 
                 std::function<void(QMenu &)> videoEntries;
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
                 ClientInstance *instance = session->client(accountNode->id);
                 const bool other = instance && node->parent && node->id != instance->accountId();
                 const bool live = other && proxyIndex.data(ChannelTreeModel::IsVoiceLiveRole).toBool();

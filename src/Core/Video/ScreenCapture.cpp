@@ -1,6 +1,7 @@
 #include "Core/Video/ScreenCapture.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Video/CardScaler.hpp"
 
 #include <QByteArray>
@@ -102,16 +103,6 @@ void setCaptureMethod(CaptureMethod method)
     QSettings().setValue(CAPTURE_METHOD_KEY, QString(stored));
 }
 
-QList<CaptureSource> captureSources()
-{
-    return captureSources(captureMethod());
-}
-
-QList<CaptureSource> captureWindows()
-{
-    return captureWindows(captureMethod());
-}
-
 #ifndef ACHERON_LINUX_SCREEN_CAPTURE
 bool isChosenByTheDesktop(const CaptureSource &)
 {
@@ -194,11 +185,7 @@ constexpr UINT RENDER_FULL_CONTENT = 2;
 // Set when graphics capture turned out to be missing something only a capture finds out.
 std::atomic<bool> graphicsCaptureRuledOut{ false };
 
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
+using Media::FramePointer;
 
 // For as long as one lives, its thread measures the desktop the way it asked to.
 class ThreadScaling
@@ -296,12 +283,7 @@ const Monitor *numberedMonitor(const std::vector<Monitor> &monitors, const QStri
     return listed ? &monitors[static_cast<size_t>(number)] : nullptr;
 }
 
-QString describeError(int error)
-{
-    char text[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(error, text, sizeof(text));
-    return QString::fromUtf8(text);
-}
+using Media::describeError;
 
 QSize evenSize(const QSize &size)
 {

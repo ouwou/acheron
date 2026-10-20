@@ -3,6 +3,7 @@
 #if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && defined(ACHERON_HAVE_AVFILTER)
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/LinuxCapture.hpp"
@@ -42,23 +43,14 @@ constexpr int STALLED_WAIT_MS = 50;
 constexpr int NOTHING_NEW_WAIT_MS = 25;
 constexpr QSize SMALLEST_WINDOW_PICTURE(160, 120);
 
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
+using Media::FramePointer;
 
 QString inContext(const char *text)
 {
     return QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", text);
 }
 
-QString describeError(int error)
-{
-    char text[AV_ERROR_MAX_STRING_SIZE] = {};
-    av_strerror(error, text, sizeof(text));
-    return QString::fromUtf8(text);
-}
+using Media::describeError;
 
 QSize evenSize(const QSize &size)
 {

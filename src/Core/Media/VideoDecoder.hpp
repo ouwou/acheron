@@ -11,7 +11,7 @@
 #include <mutex>
 #include <thread>
 
-#include "Discord/Voice/VideoReceiver.hpp"
+#include "Discord/Voice/VideoFrame.hpp"
 #include "Discord/Voice/VoiceEntities.hpp"
 
 struct AVBufferRef;

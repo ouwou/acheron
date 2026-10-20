@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "Discord/Voice/VideoReceiver.hpp"
+#include "Discord/Voice/VideoFrame.hpp"
 
 struct AVBSFContext;
 struct AVBufferRef;

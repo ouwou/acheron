@@ -7,7 +7,7 @@
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/TransportFeedback.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
-#include "Discord/Voice/VideoSender.hpp"
+#include "Discord/Voice/VideoSendStream.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 #include "Discord/Voice/VoiceEncryption.hpp"
 

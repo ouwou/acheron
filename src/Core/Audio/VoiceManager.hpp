@@ -124,7 +124,7 @@ public:
     void detachAudioSource(quint32 source);
     void setAudioSourceVolume(quint32 source, float volume);
 
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     // The cameras of the call this account is in.
     [[nodiscard]] CallVideo *video() const { return callVideo; }
 #endif

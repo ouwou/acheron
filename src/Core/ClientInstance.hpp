@@ -71,7 +71,7 @@ public:
 #ifndef ACHERON_NO_VOICE
     [[nodiscard]] Audio::VoiceManager *voice() const;
 #endif
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     [[nodiscard]] StreamWatcher *streamWatcher() const;
     [[nodiscard]] StreamBroadcaster *streamBroadcaster() const;
     [[nodiscard]] CameraSender *cameraSender() const;
@@ -221,7 +221,7 @@ private:
 #ifndef ACHERON_NO_VOICE
     Audio::VoiceManager *voiceManager;
 #endif
-#ifdef ACHERON_HAVE_STREAM_VIEW
+#ifdef ACHERON_HAVE_VIDEO
     StreamWatcher *streamWatch = nullptr;
     StreamBroadcaster *streamBroadcast = nullptr;
     CameraSender *cameraSend = nullptr;

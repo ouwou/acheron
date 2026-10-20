@@ -2,8 +2,9 @@
 
 #include <QList>
 
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/CaptureSources.hpp"
 #include "Core/Video/SendQuality.hpp"
+#include "Discord/Voice/VideoFrame.hpp"
 #include "UI/Dialogs/BasePopup.hpp"
 
 class QCheckBox;

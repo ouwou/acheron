@@ -175,10 +175,10 @@ include(lottie.cmake)
 # there for other things as well, and bring in what nothing else uses: Qt's OpenGL module,
 # which the video surface draws through where it can (Qt 5 has it in Gui and Widgets), and
 # ffmpeg's avfilter and avdevice, which ffmpeg.cmake takes where it finds them.
-set(ACHERON_VIDEO OFF)
+set(ACHERON_HAVE_VIDEO OFF)
 set(QT_OPENGL_LIBRARIES "")
 if(ENABLE_VIDEO AND ENABLE_VOICE AND TARGET ffmpeg)
-    set(ACHERON_VIDEO ON)
+    set(ACHERON_HAVE_VIDEO ON)
     if(QT_VERSION_MAJOR GREATER_EQUAL 6)
         find_package(Qt6 QUIET COMPONENTS OpenGL)
         if(NOT TARGET Qt6::OpenGL)
@@ -376,6 +376,43 @@ if(ENABLE_VOICE)
     list(APPEND PROJECT_SOURCES
         src/UI/VoiceStatusBar.cpp
         src/UI/VoiceWindow.cpp
+        src/Core/Audio/VoiceManager.cpp
+        src/Core/Audio/VoiceConnection.cpp
+        src/Core/Audio/AudioPipeline.cpp
+        src/Core/Audio/IAudioBackend.cpp
+        src/Core/Audio/MiniaudioAudioBackend.cpp
+        src/Core/Audio/OpusDecoder.cpp
+        src/Core/Audio/JitterBuffer.cpp
+        src/Core/Audio/AudioMixer.cpp
+        src/Core/Audio/NoiseSuppressor.cpp
+    )
+endif()
+
+if(ACHERON_HAVE_VIDEO)
+    list(APPEND PROJECT_SOURCES
+        src/Core/Streams/StreamSession.cpp
+        src/Core/Streams/StreamWatcher.cpp
+        src/Core/Streams/StreamBroadcaster.cpp
+        src/Core/Streams/StreamAudio.cpp
+        src/Core/Video/CameraSender.cpp
+        src/Core/Video/CallVideo.cpp
+        src/UI/CallView.cpp
+        src/UI/Settings/VideoPage.cpp
+        src/UI/ScreenSharePicker.cpp
+    )
+endif()
+
+# The RTC connection and, where the build has it, everything video needs below the program:
+# codecs, capture, the encode pipelines and the surface video is drawn on, with the few parts of
+# the program they stand on. The program and the tests take all of these from here.
+if(ENABLE_VOICE)
+    set(MEDIA_ENGINE_SOURCES
+        src/Core/Logging.cpp
+        src/Core/Snowflake.cpp
+        src/Core/OrderedJson.cpp
+        src/Core/ProxyConfig.cpp
+        src/Discord/CurlUtils.cpp
+        src/Discord/ClientIdentity.cpp
         src/Discord/Voice/VoiceGateway.cpp
         src/Discord/Voice/UdpTransport.cpp
         src/Discord/Voice/Socks5UdpAssociation.cpp
@@ -385,64 +422,60 @@ if(ENABLE_VOICE)
         src/Discord/Voice/DaveSession.cpp
         src/Discord/Voice/Rtcp.cpp
         src/Discord/Voice/SinkWants.cpp
-        src/Core/Audio/VoiceManager.cpp
-        src/Core/Audio/VoiceConnection.cpp
-        src/Core/Audio/AudioPipeline.cpp
-        src/Core/Audio/IAudioBackend.cpp
-        src/Core/Audio/MiniaudioAudioBackend.cpp
         src/Core/Audio/OpusEncoder.cpp
-        src/Core/Audio/OpusDecoder.cpp
-        src/Core/Audio/JitterBuffer.cpp
-        src/Core/Audio/AudioMixer.cpp
-        src/Core/Audio/NoiseSuppressor.cpp
-    )
-endif()
-
-if(ENABLE_VOICE AND NOT ACHERON_VIDEO)
-    list(APPEND PROJECT_SOURCES src/Discord/Voice/VoiceClientWithoutVideo.cpp)
-endif()
-
-if(ACHERON_VIDEO)
-    list(APPEND PROJECT_SOURCES
-        src/Discord/Voice/VoiceClientVideo.cpp
-        src/Discord/Voice/VideoDepacketizer.cpp
-        src/Discord/Voice/VideoReceiver.cpp
-        src/Discord/Voice/VideoPacketizer.cpp
-        src/Discord/Voice/VideoSender.cpp
-        src/Discord/Voice/SendSideEstimator.cpp
-        src/Discord/Voice/TransportFeedback.cpp
-        src/Core/Media/DecodeDemand.cpp
-        src/Core/Media/VideoDecoder.cpp
-        src/Core/Media/VideoEncoder.cpp
-        src/Core/Media/H264Sps.cpp
-        src/Core/Streams/StreamSession.cpp
-        src/Core/Streams/StreamWatcher.cpp
-        src/Core/Streams/StreamBroadcaster.cpp
-        src/Core/Streams/StreamAudio.cpp
-        src/Core/Audio/LoopbackCapture.cpp
-        src/Core/Video/BroadcastPipeline.cpp
-        src/Core/Video/ScreenCapture.cpp
-        src/Core/Video/CardScaler.cpp
-        src/Core/Video/CameraCapture.cpp
-        src/Core/Video/CameraPipeline.cpp
-        src/Core/Video/CameraSender.cpp
-        src/Core/Video/SendQuality.cpp
-        src/Core/Video/SendRateController.cpp
-        src/Core/Video/CallVideo.cpp
         src/Core/Video/TileVisibility.cpp
-        src/UI/Video/VideoSurface.cpp
-        src/UI/CallView.cpp
-        src/UI/Settings/VideoPage.cpp
-        src/UI/ScreenSharePicker.cpp
     )
-    if(WIN32)
-        list(APPEND PROJECT_SOURCES src/UI/Video/D3D11GlBridge.cpp)
+    if(ACHERON_HAVE_VIDEO)
+        list(APPEND MEDIA_ENGINE_SOURCES
+            src/Discord/Voice/VoiceClientVideo.cpp
+            src/Discord/Voice/VideoDepacketizer.cpp
+            src/Discord/Voice/VideoReceiver.cpp
+            src/Discord/Voice/VideoPacketizer.cpp
+            src/Discord/Voice/VideoSendStream.cpp
+            src/Discord/Voice/SendSideEstimator.cpp
+            src/Discord/Voice/TransportFeedback.cpp
+            src/Core/Media/RgbScaler.cpp
+            src/Core/Media/DecodeDemand.cpp
+            src/Core/Media/VideoDecoder.cpp
+            src/Core/Media/VideoEncoder.cpp
+            src/Core/Media/H264Sps.cpp
+            src/Core/Audio/LoopbackCapture.cpp
+            src/Core/Video/BroadcastPipeline.cpp
+            src/Core/Video/ScreenCapture.cpp
+            src/Core/Video/CardScaler.cpp
+            src/Core/Video/CameraCapture.cpp
+            src/Core/Video/CameraPipeline.cpp
+            src/Core/Video/SendQuality.cpp
+            src/Core/Video/SendRateController.cpp
+            src/UI/Video/VideoSurface.cpp
+        )
+        if(WIN32)
+            list(APPEND MEDIA_ENGINE_SOURCES src/UI/Video/D3D11GlBridge.cpp)
+        endif()
+        if(UNIX AND NOT APPLE)
+            list(APPEND MEDIA_ENGINE_SOURCES
+                src/UI/Video/DmabufGlBridge.cpp
+                src/Core/Video/ScreenCaptureLinux.cpp
+                src/Core/Video/X11Capture.cpp
+                src/Core/Video/PortalCapture.cpp
+            )
+        endif()
+    else()
+        list(APPEND MEDIA_ENGINE_SOURCES src/Discord/Voice/VoiceClientWithoutVideo.cpp)
     endif()
-    if(UNIX AND NOT APPLE)
-        list(APPEND PROJECT_SOURCES src/UI/Video/DmabufGlBridge.cpp)
-    endif()
-    if(UNIX AND NOT APPLE)
-        list(APPEND PROJECT_SOURCES src/Core/Video/ScreenCaptureLinux.cpp src/Core/Video/X11Capture.cpp src/Core/Video/PortalCapture.cpp)
+
+    list(REMOVE_ITEM PROJECT_SOURCES ${MEDIA_ENGINE_SOURCES})
+    add_library(acheron_media STATIC ${MEDIA_ENGINE_SOURCES})
+    target_include_directories(acheron_media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_definitions(acheron_media PRIVATE NOMINMAX)
+    target_link_libraries(acheron_media PUBLIC Qt::Core Qt::Gui Qt::Widgets Qt::Network CURL::libcurl ${SODIUM_TARGET} ${OPUS_TARGET} libdave MLSPP::mlspp)
+    if(ACHERON_HAVE_VIDEO)
+        target_include_directories(acheron_media PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
+        target_compile_definitions(acheron_media PUBLIC ACHERON_HAVE_FFMPEG)
+        target_link_libraries(acheron_media PUBLIC ffmpeg linuxcapture ${QT_OPENGL_LIBRARIES})
+        if(WIN32)
+            target_link_libraries(acheron_media PUBLIC ole32)
+        endif()
     endif()
 endif()
 
@@ -539,142 +572,34 @@ if(BUILD_TESTS)
     add_test(NAME CallTests COMMAND TestCalls)
 
     if(ENABLE_VOICE)
-        qt_add_executable(TestRtp tests/tst_Rtp.cpp src/Core/Logging.cpp
-            src/Discord/Voice/RtpPacket.cpp src/Discord/Voice/VoiceEncryption.cpp)
-        target_link_libraries(TestRtp PRIVATE Qt::Core Qt::Test ${SODIUM_TARGET})
-        target_include_directories(TestRtp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        add_test(NAME RtpTests COMMAND TestRtp)
+        # A test of the media engine, with what it takes of the program beside it.
+        function(add_media_test name ctest_name)
+            qt_add_executable(${name} ${ARGN})
+            target_link_libraries(${name} PRIVATE acheron_media Qt::Test)
+            target_compile_definitions(${name} PRIVATE NOMINMAX)
+            add_test(NAME ${ctest_name} COMMAND ${name})
+        endfunction()
 
-        qt_add_executable(TestOpusEncoder tests/tst_OpusEncoder.cpp src/Core/Logging.cpp src/Core/Audio/OpusEncoder.cpp)
-        target_link_libraries(TestOpusEncoder PRIVATE Qt::Core Qt::Test ${OPUS_TARGET})
-        target_include_directories(TestOpusEncoder PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        add_test(NAME OpusEncoderTests COMMAND TestOpusEncoder)
+        add_media_test(TestRtp RtpTests tests/tst_Rtp.cpp)
+        add_media_test(TestOpusEncoder OpusEncoderTests tests/tst_OpusEncoder.cpp)
+        add_media_test(TestUdpTransport UdpTransportTests tests/tst_UdpTransport.cpp)
+        add_media_test(TestSinkWants SinkWantsTests tests/tst_SinkWants.cpp)
+        add_media_test(TestVoiceClient VoiceClientTests tests/tst_VoiceClient.cpp)
 
-        qt_add_executable(TestUdpTransport tests/tst_UdpTransport.cpp src/Core/Logging.cpp
-            src/Core/ProxyConfig.cpp src/Discord/Voice/UdpTransport.cpp
-            src/Discord/Voice/Socks5UdpAssociation.cpp)
-        target_link_libraries(TestUdpTransport PRIVATE Qt::Core Qt::Network Qt::Test)
-        target_include_directories(TestUdpTransport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        add_test(NAME UdpTransportTests COMMAND TestUdpTransport)
-
-        qt_add_executable(TestSinkWants tests/tst_SinkWants.cpp src/Discord/Voice/SinkWants.cpp
-            src/Core/Video/TileVisibility.cpp src/Core/OrderedJson.cpp src/Core/Snowflake.cpp)
-        target_link_libraries(TestSinkWants PRIVATE Qt::Core Qt::Network Qt::Test)
-        target_include_directories(TestSinkWants PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        add_test(NAME SinkWantsTests COMMAND TestSinkWants)
-
-        qt_add_executable(TestVoiceClient tests/tst_VoiceClient.cpp src/Core/Logging.cpp
-            src/Core/OrderedJson.cpp src/Core/ProxyConfig.cpp src/Core/Snowflake.cpp
-            src/Discord/ClientIdentity.cpp src/Discord/CurlUtils.cpp
-            src/Discord/Voice/DaveSession.cpp src/Discord/Voice/Rtcp.cpp
-            src/Discord/Voice/RtpPacket.cpp src/Discord/Voice/SinkWants.cpp
-            src/Discord/Voice/Socks5UdpAssociation.cpp src/Discord/Voice/TransportFeedback.cpp
-            src/Discord/Voice/UdpTransport.cpp src/Discord/Voice/VideoDepacketizer.cpp
-            src/Discord/Voice/VideoReceiver.cpp src/Discord/Voice/VoiceClient.cpp
-            src/Discord/Voice/VoiceClientVideo.cpp src/Discord/Voice/SendSideEstimator.cpp
-            src/Discord/Voice/VideoPacketizer.cpp src/Discord/Voice/VideoSender.cpp
-            src/Discord/Voice/VoiceEncryption.cpp src/Discord/Voice/VoiceGateway.cpp)
-        target_link_libraries(TestVoiceClient PRIVATE Qt::Core Qt::Network Qt::Test CURL::libcurl ${SODIUM_TARGET} libdave MLSPP::mlspp)
-        target_include_directories(TestVoiceClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-        target_compile_definitions(TestVoiceClient PRIVATE NOMINMAX)
-        add_test(NAME VoiceClientTests COMMAND TestVoiceClient)
-
-        if(ACHERON_VIDEO)
-            qt_add_executable(TestLoopbackCapture tests/tst_LoopbackCapture.cpp src/Core/Logging.cpp src/Core/Audio/LoopbackCapture.cpp)
-            target_link_libraries(TestLoopbackCapture PRIVATE Qt::Core Qt::Test linuxcapture)
-            target_include_directories(TestLoopbackCapture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
-            if(WIN32)
-                target_link_libraries(TestLoopbackCapture PRIVATE ole32)
-            endif()
-            add_test(NAME LoopbackCaptureTests COMMAND TestLoopbackCapture)
-
-            qt_add_executable(TestH264Sps tests/tst_H264Sps.cpp src/Core/Media/H264Sps.cpp src/Core/Media/VideoEncoder.cpp src/Discord/Voice/VideoDepacketizer.cpp src/Core/Logging.cpp)
-            target_link_libraries(TestH264Sps PRIVATE Qt::Core Qt::Gui Qt::Network Qt::Test ffmpeg)
-            target_compile_definitions(TestH264Sps PRIVATE ACHERON_HAVE_FFMPEG)
-            target_include_directories(TestH264Sps PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME H264SpsTests COMMAND TestH264Sps)
-
-            qt_add_executable(TestRtpVideo tests/tst_RtpVideo.cpp src/Discord/Voice/RtpPacket.cpp
-                src/Discord/Voice/VideoDepacketizer.cpp src/Discord/Voice/VideoReceiver.cpp
-                src/Discord/Voice/Rtcp.cpp src/Discord/Voice/TransportFeedback.cpp)
-            target_link_libraries(TestRtpVideo PRIVATE Qt::Core Qt::Test ffmpeg libdave MLSPP::mlspp)
-            target_include_directories(TestRtpVideo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME RtpVideoTests COMMAND TestRtpVideo)
-
-            qt_add_executable(TestVideoDecode tests/tst_VideoDecode.cpp src/Core/Media/VideoDecoder.cpp
-                src/Core/Logging.cpp src/Core/OrderedJson.cpp src/Core/Snowflake.cpp
-                src/Discord/Voice/RtpPacket.cpp src/Discord/Voice/VideoDepacketizer.cpp
-                src/Discord/Voice/VideoReceiver.cpp src/Discord/Voice/Rtcp.cpp)
-            target_link_libraries(TestVideoDecode PRIVATE Qt::Core Qt::Network Qt::Test ffmpeg)
-            target_include_directories(TestVideoDecode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME VideoDecodeTests COMMAND TestVideoDecode)
-
-            qt_add_executable(TestVideoSend tests/tst_VideoSend.cpp src/Discord/Voice/RtpPacket.cpp
-                src/Discord/Voice/VideoPacketizer.cpp src/Discord/Voice/VideoSender.cpp
-                src/Discord/Voice/VideoDepacketizer.cpp src/Discord/Voice/SendSideEstimator.cpp
-                src/Discord/Voice/Rtcp.cpp src/Discord/Voice/TransportFeedback.cpp)
-            target_link_libraries(TestVideoSend PRIVATE Qt::Core Qt::Test ffmpeg libdave MLSPP::mlspp)
-            target_include_directories(TestVideoSend PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME VideoSendTests COMMAND TestVideoSend)
-
-            qt_add_executable(TestSendSideEstimator tests/tst_SendSideEstimator.cpp
-                src/Discord/Voice/SendSideEstimator.cpp src/Discord/Voice/Rtcp.cpp
-                src/Discord/Voice/TransportFeedback.cpp)
-            target_link_libraries(TestSendSideEstimator PRIVATE Qt::Core Qt::Test)
-            target_include_directories(TestSendSideEstimator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME SendSideEstimatorTests COMMAND TestSendSideEstimator)
-
-            qt_add_executable(TestVideoEncode tests/tst_VideoEncode.cpp src/Core/Media/VideoEncoder.cpp
-                src/Core/Media/H264Sps.cpp src/Core/Media/VideoDecoder.cpp src/Core/Media/RgbScaler.cpp
-                src/Core/Video/BroadcastPipeline.cpp src/Core/Video/ScreenCapture.cpp src/Core/Video/CardScaler.cpp
-                src/Core/Logging.cpp src/Core/OrderedJson.cpp src/Core/Snowflake.cpp
-                src/Discord/Voice/RtpPacket.cpp src/Discord/Voice/VideoDepacketizer.cpp
-                src/Discord/Voice/VideoReceiver.cpp src/Discord/Voice/Rtcp.cpp)
-            target_link_libraries(TestVideoEncode PRIVATE Qt::Core Qt::Gui Qt::Network Qt::Test ffmpeg linuxcapture)
-            target_compile_definitions(TestVideoEncode PRIVATE ACHERON_HAVE_FFMPEG NOMINMAX)
-            target_include_directories(TestVideoEncode PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME VideoEncodeTests COMMAND TestVideoEncode)
-
+        if(ACHERON_HAVE_VIDEO)
+            add_media_test(TestLoopbackCapture LoopbackCaptureTests tests/tst_LoopbackCapture.cpp)
+            add_media_test(TestH264Sps H264SpsTests tests/tst_H264Sps.cpp)
+            add_media_test(TestRtpVideo RtpVideoTests tests/tst_RtpVideo.cpp)
+            add_media_test(TestVideoDecode VideoDecodeTests tests/tst_VideoDecode.cpp)
+            add_media_test(TestVideoSend VideoSendTests tests/tst_VideoSend.cpp)
+            add_media_test(TestSendSideEstimator SendSideEstimatorTests tests/tst_SendSideEstimator.cpp)
+            add_media_test(TestVideoEncode VideoEncodeTests tests/tst_VideoEncode.cpp)
+            add_media_test(TestCameraCapture CameraCaptureTests tests/tst_CameraCapture.cpp)
+            add_media_test(TestVideoSurface VideoSurfaceTests tests/tst_VideoSurface.cpp)
             if(UNIX AND NOT APPLE)
-                target_sources(TestVideoEncode PRIVATE src/Core/Video/ScreenCaptureLinux.cpp src/Core/Video/X11Capture.cpp src/Core/Video/PortalCapture.cpp)
-
-                qt_add_executable(TestX11Capture tests/tst_X11Capture.cpp src/Core/Video/X11Capture.cpp
-                    src/Core/Media/RgbScaler.cpp src/Core/Logging.cpp)
-                target_link_libraries(TestX11Capture PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg linuxcapture)
-                target_compile_definitions(TestX11Capture PRIVATE ACHERON_HAVE_FFMPEG)
-                target_include_directories(TestX11Capture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-                add_test(NAME X11CaptureTests COMMAND TestX11Capture)
-
-                qt_add_executable(TestPortalCapture tests/tst_PortalCapture.cpp src/Core/Video/PortalCapture.cpp
-                    src/Core/Media/RgbScaler.cpp src/Core/Logging.cpp)
-                target_link_libraries(TestPortalCapture PRIVATE Qt::Core Qt::Gui Qt::Test ffmpeg linuxcapture)
-                target_compile_definitions(TestPortalCapture PRIVATE ACHERON_HAVE_FFMPEG)
-                target_include_directories(TestPortalCapture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-                add_test(NAME PortalCaptureTests COMMAND TestPortalCapture)
+                add_media_test(TestX11Capture X11CaptureTests tests/tst_X11Capture.cpp)
+                add_media_test(TestPortalCapture PortalCaptureTests tests/tst_PortalCapture.cpp)
             endif()
-
-            qt_add_executable(TestCameraCapture tests/tst_CameraCapture.cpp src/Core/Video/CameraCapture.cpp
-                src/Core/Video/CameraPipeline.cpp src/Core/Media/VideoEncoder.cpp
-                src/Core/Media/H264Sps.cpp src/Core/Media/VideoDecoder.cpp src/Core/Media/RgbScaler.cpp
-                src/Core/Logging.cpp src/Core/OrderedJson.cpp src/Core/Snowflake.cpp
-                src/Discord/Voice/RtpPacket.cpp src/Discord/Voice/VideoDepacketizer.cpp
-                src/Discord/Voice/VideoReceiver.cpp src/Discord/Voice/Rtcp.cpp)
-            target_link_libraries(TestCameraCapture PRIVATE Qt::Core Qt::Gui Qt::Network Qt::Test ffmpeg)
-            target_compile_definitions(TestCameraCapture PRIVATE ACHERON_HAVE_FFMPEG NOMINMAX)
-            target_include_directories(TestCameraCapture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME CameraCaptureTests COMMAND TestCameraCapture)
-
-            qt_add_executable(TestVideoSurface tests/tst_VideoSurface.cpp src/UI/Video/VideoSurface.cpp src/Core/Media/RgbScaler.cpp)
-            target_compile_definitions(TestVideoSurface PRIVATE ACHERON_HAVE_FFMPEG)
-            if(WIN32)
-                target_sources(TestVideoSurface PRIVATE src/UI/Video/D3D11GlBridge.cpp)
-            endif()
-            if(UNIX AND NOT APPLE)
-                target_sources(TestVideoSurface PRIVATE src/UI/Video/DmabufGlBridge.cpp)
-            endif()
-            target_link_libraries(TestVideoSurface PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt::Network Qt::Test ffmpeg ${QT_OPENGL_LIBRARIES})
-            target_include_directories(TestVideoSurface PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            add_test(NAME VideoSurfaceTests COMMAND TestVideoSurface)
         endif()
     endif()
 
@@ -726,13 +651,17 @@ if(BUILD_TESTS)
     endif()
 endif()
 
-qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${PROJECT_NAME})
+set(_translated_targets ${PROJECT_NAME})
+if(TARGET acheron_media)
+    list(APPEND _translated_targets acheron_media)
+endif()
+qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${_translated_targets})
 
 if(NOT MSVC AND QT_VERSION_MAJOR LESS 6)
     get_property(_qt5_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     foreach(_qt5_target ${_qt5_targets})
         get_target_property(_qt5_target_type ${_qt5_target} TYPE)
-        if(_qt5_target_type STREQUAL "EXECUTABLE")
+        if(_qt5_target_type STREQUAL "EXECUTABLE" OR _qt5_target STREQUAL "acheron_media")
             target_compile_options(${_qt5_target} PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
         endif()
     endforeach()
@@ -746,6 +675,13 @@ if (MSVC)
     if(QT_VERSION_MAJOR LESS 6)
         target_compile_options(${PROJECT_NAME} PRIVATE
             "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+    endif()
+
+    if(TARGET acheron_media)
+        target_compile_options(acheron_media PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi> /utf-8)
+        if(QT_VERSION_MAJOR LESS 6)
+            target_compile_options(acheron_media PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+        endif()
     endif()
 
     if(BUILD_TESTS)
@@ -803,11 +739,7 @@ if(UNIX AND NOT APPLE AND OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$")
     target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--exclude-libs,libcrypto.a:libssl.a")
 endif()
 if(ENABLE_VOICE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        ${SODIUM_TARGET}
-        ${OPUS_TARGET}
-        libdave
-    )
+    target_link_libraries(${PROJECT_NAME} PRIVATE acheron_media)
 
     if(ENABLE_RNNOISE)
         target_link_libraries(${PROJECT_NAME} PRIVATE rnnoise)
@@ -822,12 +754,8 @@ if(TARGET ffmpeg)
     target_link_libraries(${PROJECT_NAME} PRIVATE ffmpeg)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_FFMPEG)
 endif()
-if(ACHERON_VIDEO)
-    if(WIN32)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ole32)
-    endif()
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_STREAM_VIEW)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${QT_OPENGL_LIBRARIES} linuxcapture)
+if(ACHERON_HAVE_VIDEO)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HAVE_VIDEO)
 endif()
 if(TARGET lottie)
     target_link_libraries(${PROJECT_NAME} PRIVATE lottie)

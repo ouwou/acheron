@@ -6,21 +6,11 @@
 #include <span>
 #include <vector>
 
+#include "VideoFrame.hpp"
+
 namespace Acheron {
 namespace Discord {
 namespace Voice {
-
-enum class VideoCodec {
-    Unknown,
-    H264,
-    H265,
-    VP8,
-    AV1,
-};
-
-// Codec names as the voice gateway spells them.
-[[nodiscard]] VideoCodec videoCodecFromName(const QString &name);
-[[nodiscard]] QString videoCodecName(VideoCodec codec);
 
 // Whether an RTP payload carries the beginning of a key frame: its parameter sets, or the start
 // of its picture. It need not be the frame's first packet, since a sender may put other units,
