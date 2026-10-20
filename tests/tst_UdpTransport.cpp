@@ -181,6 +181,7 @@ private slots:
     void socks5DropsFragmentsAndUnwrappedDatagrams();
     void socks5SendsNothingBeforeAssociationOrAfterItFails();
     void socks5ReportsRelayLossAfterDiscovery();
+    void anHttpProxyCarriesNothing();
 };
 
 void TestUdpTransport::directDiscoveryThenPacketsBothWays()
@@ -385,6 +386,28 @@ void TestUdpTransport::socks5ReportsRelayLossAfterDiscovery()
     transport.send(*packet);
     QTest::qWait(200);
     QCOMPARE(server.received.size(), 1);
+}
+
+void TestUdpTransport::anHttpProxyCarriesNothing()
+{
+    FakeMediaServer server;
+    ProxyConfig config;
+    config.type = ProxyConfig::Type::Http;
+    config.host = LOOPBACK.toString();
+    config.port = 8080;
+
+    UdpTransport transport{ config };
+    QSignalSpy failed(&transport, &UdpTransport::ipDiscoveryFailed);
+    transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
+
+    PacketPool::Handle packet = transport.acquirePacket();
+    QVERIFY(packet->append(bytesOf(rtpLikePayload('h'))));
+    transport.send(*packet);
+
+    QTRY_COMPARE(failed.size(), 1);
+    QTest::qWait(200);
+    QVERIFY(server.received.isEmpty());
+    QVERIFY(!transport.isBound());
 }
 
 QTEST_GUILESS_MAIN(TestUdpTransport)

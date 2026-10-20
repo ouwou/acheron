@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -149,6 +150,7 @@ public:
     }
 
     [[nodiscard]] QString endpoint() const { return QStringLiteral("127.0.0.1:%1").arg(gateway.serverPort()); }
+    [[nodiscard]] quint16 gatewayPort() const { return gateway.serverPort(); }
 
     [[nodiscard]] QList<QJsonObject> received(int opcode) const { return receivedByOpcode.value(opcode); }
     // The same messages as the client wrote them, for what depends on the order of their keys.
@@ -257,11 +259,15 @@ public:
     // One past the highest of the server's own packet numbers the client has reported on.
     int acknowledgedUpTo = 0;
     int undecryptable = 0;
+    // Where the gateway's connections and the media datagrams came from.
+    QList<quint16> gatewayPeerPorts;
+    QSet<quint16> mediaSenderPorts;
 
 private:
     void onGatewayConnection()
     {
         socket = gateway.nextPendingConnection();
+        gatewayPeerPorts.append(socket->peerPort());
         connect(socket, &QTcpSocket::readyRead, this, &FakeVoiceServer::onGatewayBytes);
     }
 
@@ -356,6 +362,7 @@ private:
             QHostAddress from;
             quint16 fromPort = 0;
             media.readDatagram(datagram.data(), datagram.size(), &from, &fromPort);
+            mediaSenderPorts.insert(fromPort);
             const std::span<const uint8_t> bytes(reinterpret_cast<const uint8_t *>(datagram.constData()), static_cast<size_t>(datagram.size()));
 
             constexpr int IP_DISCOVERY_SIZE = 74;
@@ -465,6 +472,162 @@ private:
     quint16 nextTransportSequence = 0;
 };
 
+// A SOCKS5 proxy without authentication that does for an RTC connection what an account's proxy
+// does: CONNECT for the gateway's WebSocket and UDP ASSOCIATE for the media, relaying IPv4
+// datagrams both ways. It notes what it carried.
+class FakeSocks5Proxy : public QObject
+{
+public:
+    FakeSocks5Proxy()
+    {
+        control.listen(QHostAddress::LocalHost);
+        relay.bind(QHostAddress(QHostAddress::LocalHost));
+        connect(&control, &QTcpServer::newConnection, this, &FakeSocks5Proxy::onConnection);
+        connect(&relay, &QUdpSocket::readyRead, this, &FakeSocks5Proxy::onRelayData);
+    }
+
+    [[nodiscard]] Core::ProxyConfig config() const
+    {
+        Core::ProxyConfig proxy;
+        proxy.type = Core::ProxyConfig::Type::Socks5;
+        proxy.host = QStringLiteral("127.0.0.1");
+        proxy.port = control.serverPort();
+        return proxy;
+    }
+
+    [[nodiscard]] quint16 relayPort() const { return relay.localPort(); }
+
+    // The ports CONNECT was asked for, and the local ports of the connections it made for them.
+    QList<quint16> connectedTo;
+    QList<quint16> onwardPorts;
+    bool associated = false;
+    int datagramsToServer = 0;
+    int datagramsToClient = 0;
+
+private:
+    enum class Stage {
+        Greeting,
+        Request,
+        Tunnelling,
+        Associated,
+    };
+
+    struct Control
+    {
+        QTcpSocket *client = nullptr;
+        QTcpSocket *onward = nullptr;
+        QByteArray buffer;
+        Stage stage = Stage::Greeting;
+    };
+
+    void onConnection()
+    {
+        while (QTcpSocket *client = control.nextPendingConnection()) {
+            auto state = std::make_shared<Control>();
+            state->client = client;
+            connect(client, &QTcpSocket::readyRead, this, [this, state] { onControlData(state); });
+        }
+    }
+
+    void onControlData(const std::shared_ptr<Control> &shared)
+    {
+        Control &state = *shared;
+        state.buffer.append(state.client->readAll());
+
+        if (state.stage == Stage::Greeting) {
+            if (state.buffer.size() < 2 || state.buffer.size() < 2 + static_cast<uint8_t>(state.buffer.at(1)))
+                return;
+            state.buffer.remove(0, 2 + static_cast<uint8_t>(state.buffer.at(1)));
+            state.client->write(QByteArray("\x05\x00", 2));
+            state.stage = Stage::Request;
+        }
+
+        if (state.stage == Stage::Request) {
+            if (state.buffer.size() < 5)
+                return;
+            const char command = state.buffer.at(1);
+            const char addressType = state.buffer.at(3);
+            int addressSize = 4;
+            int addressOffset = 4;
+            if (addressType == 0x03) {
+                addressSize = static_cast<uint8_t>(state.buffer.at(4));
+                addressOffset = 5;
+            } else if (addressType == 0x04) {
+                addressSize = 16;
+            }
+            const int requestSize = addressOffset + addressSize + 2;
+            if (state.buffer.size() < requestSize)
+                return;
+            const QByteArray address = state.buffer.mid(addressOffset, addressSize);
+            const quint16 port = qFromBigEndian<quint16>(state.buffer.constData() + addressOffset + addressSize);
+            state.buffer.remove(0, requestSize);
+
+            QByteArray reply("\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00", 10);
+            if (command == 0x03) {
+                qToBigEndian(relay.localPort(), reply.data() + 8);
+                state.client->write(reply);
+                state.stage = Stage::Associated;
+                associated = true;
+                return;
+            }
+
+            const QString host = addressType == 0x01 ? QHostAddress(qFromBigEndian<quint32>(address.constData())).toString() : QString::fromLatin1(address);
+            state.onward = new QTcpSocket(this);
+            QTcpSocket *client = state.client;
+            QTcpSocket *onward = state.onward;
+            connect(onward, &QTcpSocket::connected, this, [this, shared, port, reply] {
+                connectedTo.append(port);
+                onwardPorts.append(shared->onward->localPort());
+                shared->client->write(reply);
+                shared->stage = Stage::Tunnelling;
+                shared->onward->write(shared->buffer);
+                shared->buffer.clear();
+            });
+            connect(onward, &QTcpSocket::readyRead, client, [client, onward] { client->write(onward->readAll()); });
+            connect(onward, &QTcpSocket::disconnected, client, &QTcpSocket::disconnectFromHost);
+            connect(client, &QTcpSocket::disconnected, onward, &QTcpSocket::disconnectFromHost);
+            onward->connectToHost(host, port);
+            return;
+        }
+
+        if (state.stage == Stage::Tunnelling) {
+            state.onward->write(state.buffer);
+            state.buffer.clear();
+        }
+    }
+
+    void onRelayData()
+    {
+        constexpr int RELAY_HEADER_SIZE = 10;
+        while (relay.hasPendingDatagrams()) {
+            QByteArray datagram(static_cast<int>(relay.pendingDatagramSize()), Qt::Uninitialized);
+            quint16 senderPort = 0;
+            relay.readDatagram(datagram.data(), datagram.size(), nullptr, &senderPort);
+
+            if (destinations.contains(senderPort)) {
+                QByteArray header("\x00\x00\x00\x01\x7f\x00\x00\x01\x00\x00", RELAY_HEADER_SIZE);
+                qToBigEndian(senderPort, header.data() + 8);
+                relay.writeDatagram(header + datagram, QHostAddress(QHostAddress::LocalHost), clientPort);
+                datagramsToClient++;
+                continue;
+            }
+
+            clientPort = senderPort;
+            if (datagram.size() < RELAY_HEADER_SIZE || datagram.at(3) != 0x01)
+                continue;
+            const quint16 destination = qFromBigEndian<quint16>(datagram.constData() + 8);
+            destinations.insert(destination);
+            relay.writeDatagram(datagram.mid(RELAY_HEADER_SIZE), QHostAddress(QHostAddress::LocalHost), destination);
+            datagramsToServer++;
+        }
+    }
+
+    QTcpServer control;
+    QUdpSocket relay;
+    quint16 clientPort = 0;
+    QSet<quint16> destinations;
+};
+
 struct FrameSeen
 {
     quint64 userId = 0;
@@ -548,10 +711,11 @@ struct Call
         StreamWithSound,
     };
 
-    explicit Call(bool sendsVideo = false, Kind kind = Kind::Voice)
+    explicit Call(bool sendsVideo = false, Kind kind = Kind::Voice, const Core::ProxyConfig &proxy = {})
     {
         ConnectionParams params;
         params.endpoint = server.endpoint();
+        params.proxy = proxy;
         params.gatewayScheme = QStringLiteral("ws");
         params.token = QStringLiteral("token");
         params.serverId = Core::Snowflake(1);
@@ -692,6 +856,9 @@ private slots:
 
     void sharedSoundIsAnnouncedOnceAndMarkedAtEveryRun();
     void aStreamWithoutSoundSendsNoAudio();
+
+    void aProxiedConnectionReachesTheServerThroughTheProxyAlone_data();
+    void aProxiedConnectionReachesTheServerThroughTheProxyAlone();
 };
 
 void TestVoiceClient::connectsAndSaysWhatItCanReceive()
@@ -1713,6 +1880,45 @@ void TestVoiceClient::aStreamWithoutSoundSendsNoAudio()
 
     QVERIFY(call.server.rtp.isEmpty());
     QVERIFY(call.server.received(5).isEmpty());
+    QCOMPARE(call.server.undecryptable, 0);
+}
+
+void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone_data()
+{
+    QTest::addColumn<bool>("streamWithSound");
+    QTest::newRow("camera on a voice connection") << false;
+    QTest::newRow("screen share with its sound") << true;
+}
+
+void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
+{
+    QFETCH(bool, streamWithSound);
+    const Call::Kind kind = streamWithSound ? Call::Kind::StreamWithSound : Call::Kind::Voice;
+
+    FakeSocks5Proxy proxy;
+    Call call(true, kind, proxy.config());
+    QTRY_VERIFY(call.isUp());
+
+    QCOMPARE(proxy.connectedTo, QList<quint16>{ call.server.gatewayPort() });
+    QCOMPARE(call.server.gatewayPeerPorts, proxy.onwardPorts);
+    QVERIFY(proxy.associated);
+
+    call.receiveAliceAndBob();
+    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
+    QTRY_COMPARE(call.framesFrom(ALICE), 1);
+
+    call.startVideo();
+    call.client->sendVideoFrame(videoFrame(20000, true, 123456));
+    if (streamWithSound) {
+        call.client->beginSoundshare();
+        call.client->sendAudio(QByteArray(40, 'a'));
+    }
+    QTRY_VERIFY(call.server.rtp.size() >= 18);
+    QTRY_VERIFY(call.server.acknowledgedUpTo > 0);
+
+    QCOMPARE(call.server.mediaSenderPorts, QSet<quint16>{ proxy.relayPort() });
+    QVERIFY(proxy.datagramsToServer > 0);
+    QVERIFY(proxy.datagramsToClient > 0);
     QCOMPARE(call.server.undecryptable, 0);
 }
 
