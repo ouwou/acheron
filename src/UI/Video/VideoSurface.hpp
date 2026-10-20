@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QPixmap>
 #include <QTimer>
 #include <QWidget>
@@ -12,6 +13,12 @@ class QPainter;
 
 namespace Acheron {
 namespace UI {
+
+class GlVideoLayer;
+class VideoFrameStore;
+
+// Drawn over video, so it does not follow the theme: the green Discord rings a speaker with.
+inline const QColor SPEAKING_RING(0x23, 0xA5, 0x5A);
 
 // Shows one decoded video. Where the machine can, the picture is converted and scaled by the
 // graphics card, from textures it is uploaded as or, when the decoder left it on the card,
@@ -78,8 +85,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
-    class Sink;
-    class GlLayer;
+    friend class GlVideoLayer;
+    friend class VideoFrameStore;
 
     void onFrameArrived();
     void reportGeometry(bool evenIfUnchanged = false);
@@ -93,11 +100,11 @@ private:
     void paintOverlays(QPainter &painter, bool hasPicture, bool withSpeakingRing);
     [[nodiscard]] bool hasOverlaysBesideTheRing(bool hasPicture) const;
 
-    std::shared_ptr<Sink> frameSink;
+    std::shared_ptr<VideoFrameStore> frameSink;
     bool usesGpu = false;
     // The layer is a window with an OpenGL context of its own. A surface has one while it has
     // a picture to draw there, which a tile showing an avatar never does.
-    GlLayer *glLayer = nullptr;
+    GlVideoLayer *glLayer = nullptr;
     QWidget *glContainer = nullptr;
     QTimer rescaleTimer;
     QTimer notShownTimer;

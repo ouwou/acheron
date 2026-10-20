@@ -1495,7 +1495,7 @@ void ClientInstance::stop()
     emojiManager->savePendingUsage();
 
     if (isInVoice()) {
-        discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false, selfVideoIn(Snowflake::Invalid));
+        leaveVoice();
 #ifndef ACHERON_NO_VOICE
         voiceManager->disconnect();
 #endif
@@ -1621,14 +1621,19 @@ ShareTerms ClientInstance::screenShareTerms()
 }
 #endif
 
-bool ClientInstance::selfVideoIn(Snowflake channelId) const
+void ClientInstance::joinVoice(Snowflake guildId, Snowflake channelId)
 {
 #ifdef ACHERON_HAVE_VIDEO
-    return cameraSend && cameraSend->isOnIn(channelId);
+    const bool cameraOn = cameraSend && cameraSend->isOnIn(channelId);
 #else
-    Q_UNUSED(channelId);
-    return false;
+    const bool cameraOn = false;
 #endif
+    discord()->sendVoiceStateUpdate(guildId, channelId, false, false, cameraOn);
+}
+
+void ClientInstance::leaveVoice()
+{
+    discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false, false);
 }
 
 #ifndef ACHERON_NO_VOICE

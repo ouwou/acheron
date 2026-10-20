@@ -102,6 +102,8 @@ public:
     [[nodiscard]] State state() const { return currentState; }
     [[nodiscard]] bool isSharing() const { return currentState != State::Idle; }
     [[nodiscard]] Video::SendQuality quality() const { return sendQuality; }
+    // Whether what is being shared, or was last, is a window rather than a screen.
+    [[nodiscard]] bool sharesWindow() const { return source.kind == Video::CaptureSource::Kind::Window; }
     [[nodiscard]] Stats stats() const;
     // The capture's latest small picture. Null until there is one.
     [[nodiscard]] QImage preview() const { return latestPreview; }

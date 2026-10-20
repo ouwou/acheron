@@ -76,9 +76,9 @@ public:
     [[nodiscard]] StreamBroadcaster *streamBroadcaster() const;
     [[nodiscard]] CameraSender *cameraSender() const;
 #endif
-    // What a voice state update that puts the account in `channelId` says of its camera: on
-    // only when it is on in that channel. Leaving, or going anywhere else, turns it off.
-    [[nodiscard]] bool selfVideoIn(Snowflake channelId) const;
+    // Unmuted and undeafened, with the camera on only if it is on in that channel already.
+    void joinVoice(Snowflake guildId, Snowflake channelId);
+    void leaveVoice();
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
     [[nodiscard]] QList<Discord::Role> getMemberRolesSorted(Snowflake guildId, Snowflake userId);

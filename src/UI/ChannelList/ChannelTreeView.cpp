@@ -19,6 +19,12 @@ static bool isAlwaysExpanded(ChannelNode::Type type)
     return type == ChannelNode::Type::Forum;
 }
 
+// A voice participant's row whose `role` is set, such as IsVoiceLiveRole.
+static bool isParticipantWith(const QModelIndex &proxyIndex, int role)
+{
+    return proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(role).toBool();
+}
+
 ChannelTreeView::ChannelTreeView(QWidget *parent)
     : QTreeView(parent)
 {
@@ -54,9 +60,7 @@ void ChannelTreeView::leaveEvent(QEvent *event)
 
 void ChannelTreeView::setHoveredLiveParticipant(const QModelIndex &proxyIndex)
 {
-    const bool isLiveParticipant = proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(ChannelTreeModel::IsVoiceLiveRole).toBool();
-
-    if (!isLiveParticipant) {
+    if (!isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceLiveRole)) {
         liveHoverDelay.stop();
         pendingLiveHover = QPersistentModelIndex();
         if (shownLiveHover.isValid()) {
@@ -160,12 +164,12 @@ void ChannelTreeView::mousePressEvent(QMouseEvent *event)
 void ChannelTreeView::mouseDoubleClickEvent(QMouseEvent *event)
 {
     const QModelIndex proxyIndex = indexAt(event->pos());
-    if (event->button() == Qt::LeftButton && proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(ChannelTreeModel::IsVoiceLiveRole).toBool()) {
+    if (event->button() == Qt::LeftButton && isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceLiveRole)) {
         emit watchStreamRequested(proxyIndex);
         event->accept();
         return;
     }
-    if (event->button() == Qt::LeftButton && proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(ChannelTreeModel::IsVoiceVideoRole).toBool()) {
+    if (event->button() == Qt::LeftButton && isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceVideoRole)) {
         emit showCallVideoRequested(proxyIndex);
         event->accept();
         return;

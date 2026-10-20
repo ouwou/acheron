@@ -57,7 +57,7 @@
 #include "Dialogs/UserProfilePopup.hpp"
 #include "StreamPreviewPopup.hpp"
 #ifdef ACHERON_HAVE_VIDEO
-#include "CallView.hpp"
+#include "Call/CallView.hpp"
 #include "Core/Streams/StreamWatcher.hpp"
 #include "Core/Video/CallVideo.hpp"
 #endif
@@ -292,6 +292,11 @@ MainWindow::~MainWindow()
 {
     for (const QPointer<GuildSettingsWindow> &window : std::as_const(guildSettingsWindows))
         delete window.data();
+#ifdef ACHERON_HAVE_VIDEO
+    // A view in its own window is not a child of this one.
+    for (const QPointer<CallView> &view : std::as_const(callViews))
+        delete view.data();
+#endif
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -1108,7 +1113,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 QPushButton *reconnect = box->addButton(tr("Reconnect"), QMessageBox::AcceptRole);
                 connect(reconnect, &QPushButton::clicked, box, [instance, channelId, guildId]() {
                     if (instance)
-                        instance->discord()->sendVoiceStateUpdate(guildId, channelId, false, false, instance->selfVideoIn(channelId));
+                        instance->joinVoice(guildId, channelId);
                 });
                 box->open();
             });
@@ -1116,28 +1121,30 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 
 #ifdef ACHERON_HAVE_VIDEO
     // A call has a video view for as long as it lasts. A new call, in another channel, gets
-    // a new one.
+    // a new one; connecting again to the same channel keeps it.
     const quint64 accountId = static_cast<quint64>(instance->accountId());
     connect(instance->voice(), &Core::Audio::VoiceManager::voiceConnected, this,
             [this, accountId, instance = QPointer<ClientInstance>(instance)] {
+                if (!instance)
+                    return;
+                const CallView *existing = callViews.value(accountId);
+                if (existing && existing->channelId() == instance->voiceChannelId())
+                    return;
                 removeCallView(accountId);
-                if (instance)
-                    ensureCallView(instance);
+                ensureCallView(instance);
             });
     connect(instance->voice(), &Core::Audio::VoiceManager::voiceDisconnected, this, [this, accountId] { removeCallView(accountId); });
     connect(instance, &QObject::destroyed, this, [this, accountId] { removeCallView(accountId); });
     if (instance->isInVoice())
         ensureCallView(instance);
 
-    // Watching a stream brings its tile into sight.
+    // Watching a stream brings the call into sight. The view itself enlarges the stream.
     connect(instance->streamWatcher(), &Core::StreamWatcher::sessionOpened, this,
-            [this, instance = QPointer<ClientInstance>(instance)](Core::StreamSession *streamSession) {
+            [this, instance = QPointer<ClientInstance>(instance)] {
                 if (!instance)
                     return;
-                if (CallView *view = ensureCallView(instance)) {
+                if (CallView *view = ensureCallView(instance))
                     view->reveal();
-                    view->setFocusedTile(QStringLiteral("stream:%1").arg(quint64(streamSession->key().ownerId)));
-                }
             });
 #endif
 }
@@ -1190,9 +1197,13 @@ void MainWindow::updateCallHost()
 }
 
 #ifdef ACHERON_HAVE_VIDEO
+// Later, since what asks for it may be the view's own menu or a slot of the view.
 void MainWindow::removeCallView(quint64 accountId)
 {
-    delete callViews.take(accountId).data();
+    if (CallView *view = callViews.take(accountId)) {
+        view->hide();
+        view->deleteLater();
+    }
     updateCallHost();
 }
 
@@ -1225,21 +1236,30 @@ CallView *MainWindow::ensureCallView(Core::ClientInstance *instance)
 }
 #endif
 
-void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
+std::optional<MainWindow::ParticipantRow> MainWindow::participantRowAt(const QModelIndex &proxyIndex) const
 {
-#ifdef ACHERON_HAVE_VIDEO
-    auto *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
+    ChannelNode *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
     if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
-        return;
+        return std::nullopt;
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
     Core::ClientInstance *instance = accountNode ? session->client(accountNode->id) : nullptr;
-    if (!instance || node->id == instance->accountId())
-        return;
+    if (!instance)
+        return std::nullopt;
 
     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
-    const Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-    const Discord::StreamKey key = Discord::StreamKey::forChannel(guildId, node->parent->id, node->id);
+    return ParticipantRow{ instance, node->id, node->parent->id, guildNode ? guildNode->id : Snowflake::Invalid };
+}
+
+void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
+{
+#ifdef ACHERON_HAVE_VIDEO
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (!row || row->userId == row->instance->accountId())
+        return;
+
+    Core::ClientInstance *instance = row->instance;
+    const Discord::StreamKey key = Discord::StreamKey::forChannel(row->guildId, row->channelId, row->userId);
     if (instance->streamWatcher()->canWatch(key)) {
         instance->streamWatcher()->watch(key);
         return;
@@ -1256,15 +1276,10 @@ void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
 void MainWindow::onShowCallVideoRequested(const QModelIndex &proxyIndex)
 {
 #ifdef ACHERON_HAVE_VIDEO
-    auto *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
-    if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
-        return;
-
-    ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
-    Core::ClientInstance *instance = accountNode ? session->client(accountNode->id) : nullptr;
     // Cameras are only received by someone in the call.
-    if (instance && instance->voiceChannelId() == node->parent->id) {
-        if (CallView *view = ensureCallView(instance))
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (row && row->instance->voiceChannelId() == row->channelId) {
+        if (CallView *view = ensureCallView(row->instance))
             view->reveal();
     }
 #else
@@ -1281,18 +1296,12 @@ void MainWindow::onLiveParticipantHoverChanged(const QModelIndex &proxyIndex)
         return;
     }
 
-    auto *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
-    if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (!row)
         return;
-
-    ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
-    Core::ClientInstance *instance = accountNode ? session->client(accountNode->id) : nullptr;
-    if (!instance)
-        return;
-
-    const Snowflake channelId = node->parent->id;
-    ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
-    const Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
+    Core::ClientInstance *instance = row->instance;
+    const Snowflake channelId = row->channelId;
+    const Snowflake guildId = row->guildId;
 
     // Mirrors the official client: a preview is looked up only by someone who could join the
     // channel, or is already in it.
@@ -1301,9 +1310,9 @@ void MainWindow::onLiveParticipantHoverChanged(const QModelIndex &proxyIndex)
     if (!streamPreviewPopup)
         streamPreviewPopup = new StreamPreviewPopup(session->getImageManager(), this);
 
-    const QRect row = channelTree->visualRect(proxyIndex);
-    const QRect rowOnScreen(channelTree->viewport()->mapToGlobal(row.topLeft()), row.size());
-    streamPreviewPopup->showFor(mayLook ? instance->streamPreviews() : nullptr, instance->accountId(), Discord::StreamKey::forChannel(guildId, channelId, node->id).toString(), rowOnScreen);
+    const QRect rowArea = channelTree->visualRect(proxyIndex);
+    const QRect rowOnScreen(channelTree->viewport()->mapToGlobal(rowArea.topLeft()), rowArea.size());
+    streamPreviewPopup->showFor(mayLook ? instance->streamPreviews() : nullptr, instance->accountId(), Discord::StreamKey::forChannel(guildId, channelId, row->userId).toString(), rowOnScreen);
 #else
     Q_UNUSED(proxyIndex);
 #endif
@@ -1322,7 +1331,7 @@ void MainWindow::setupUi()
     connect(voiceStatusBar, &VoiceStatusBar::disconnectRequested, this, [this]() {
         for (const auto &inst : session->getClients()) {
             if (inst && inst->isInVoice()) {
-                inst->discord()->sendVoiceStateUpdate(inst->voiceGuildId(), Snowflake::Invalid, false, false, inst->selfVideoIn(Snowflake::Invalid));
+                inst->leaveVoice();
                 break;
             }
         }
@@ -1874,7 +1883,7 @@ void MainWindow::setupUi()
 
                 if (isDM) {
                     qCInfo(LogVoice) << "Joining DM call" << node->name << node->id;
-                    instance->discord()->sendVoiceStateUpdate(Snowflake::Invalid, node->id, false, false, instance->selfVideoIn(node->id));
+                    instance->joinVoice(Snowflake::Invalid, node->id);
                 } else {
                     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
                     if (!guildNode)
@@ -1882,7 +1891,7 @@ void MainWindow::setupUi()
 
                     qCInfo(LogVoice) << "Joining voice channel" << node->name << node->id
                                      << "in guild" << guildNode->id;
-                    instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, false, false, instance->selfVideoIn(node->id));
+                    instance->joinVoice(guildNode->id, node->id);
                 }
             });
 
@@ -1902,7 +1911,7 @@ void MainWindow::setupUi()
                     return;
 
                 qCInfo(LogVoice) << "Disconnecting from voice";
-                instance->discord()->sendVoiceStateUpdate(instance->voiceGuildId(), Snowflake::Invalid, false, false, instance->selfVideoIn(Snowflake::Invalid));
+                instance->leaveVoice();
             });
 #endif
 

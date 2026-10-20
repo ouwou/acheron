@@ -139,6 +139,16 @@ private:
     void onWatchStreamRequested(const QModelIndex &proxyIndex);
     void onShowCallVideoRequested(const QModelIndex &proxyIndex);
 
+    // A voice participant's row in the channel tree, and the account whose tree it is in.
+    struct ParticipantRow
+    {
+        Core::ClientInstance *instance = nullptr;
+        Core::Snowflake userId;
+        Core::Snowflake channelId;
+        Core::Snowflake guildId;
+    };
+    [[nodiscard]] std::optional<ParticipantRow> participantRowAt(const QModelIndex &proxyIndex) const;
+
 private:
     void setupUi();
     void setupMenu();

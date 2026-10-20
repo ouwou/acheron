@@ -395,7 +395,11 @@ if(ACHERON_HAVE_VIDEO)
         src/Core/Streams/StreamAudio.cpp
         src/Core/Video/CameraSender.cpp
         src/Core/Video/CallVideo.cpp
-        src/UI/CallView.cpp
+        src/UI/Call/CallView.cpp
+        src/UI/Call/CallControlsBar.cpp
+        src/UI/Call/CallStats.cpp
+        src/UI/Call/CallTile.cpp
+        src/UI/Call/CallTileModel.cpp
         src/UI/Settings/VideoPage.cpp
         src/UI/ScreenSharePicker.cpp
     )
@@ -454,10 +458,13 @@ if(ENABLE_VOICE)
             src/Core/Video/SendQuality.cpp
             src/Core/Video/SendRateController.cpp
             src/UI/Video/VideoSurface.cpp
+            src/UI/Video/VideoFrameStore.cpp
+            src/UI/Video/GlVideoLayer.cpp
         )
         if(WIN32)
             list(APPEND MEDIA_ENGINE_SOURCES
                 src/UI/Video/D3D11GlBridge.cpp
+                src/UI/Video/CardWorker.cpp
                 src/Core/Video/ScreenCaptureWindows.cpp
                 src/Core/Video/Windows/CardPictures.cpp
                 src/Core/Video/Windows/GraphicsCaptureSession.cpp
@@ -576,6 +583,11 @@ if(BUILD_TESTS)
     target_link_libraries(TestDecodeDemand PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestDecodeDemand PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME DecodeDemandTests COMMAND TestDecodeDemand)
+
+    qt_add_executable(TestCallTiles tests/tst_CallTiles.cpp src/UI/Call/CallTileModel.cpp src/Core/Snowflake.cpp)
+    target_link_libraries(TestCallTiles PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestCallTiles PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME CallTilesTests COMMAND TestCallTiles)
 
     qt_add_executable(TestCalls tests/tst_Calls.cpp src/Core/Calls/CallStore.cpp
         src/Core/OrderedJson.cpp src/Core/Snowflake.cpp)
@@ -697,7 +709,7 @@ if (MSVC)
     endif()
 
     if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs TestVoicePayloads TestStreams TestCalls TestDecodeDemand TestSendQuality)
+        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs TestVoicePayloads TestStreams TestCalls TestDecodeDemand TestCallTiles TestSendQuality)
         if(TARGET TestApng)
             list(APPEND _msvc_test_targets TestApng TestClips TestMediaInput)
         endif()
