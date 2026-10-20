@@ -71,10 +71,10 @@ public:
     [[nodiscard]] bool isSelfDeafened() const { return selfDeaf; }
     [[nodiscard]] bool isSelfVideo() const { return selfVideo; }
 
-    // The voice connection's client, for what else is sent on that connection (the account's
-    // camera). It lives on the connection's thread and goes when the connection does:
-    // rtcClientCreated announces each one before it starts, and rtcClientClosing its end.
-    [[nodiscard]] Discord::Voice::VoiceClient *rtcClient() const { return voiceClient; }
+    // The voice connection, for what else is sent on it (the account's camera). It goes when
+    // the call does: rtcConnectionCreated announces each one before it starts, and
+    // rtcConnectionClosing its end.
+    [[nodiscard]] VoiceConnection *rtcConnection() const { return voiceConnection; }
 
     // The codecs voice connections offer to send video with, which is the camera: those this
     // machine has turned out to encode, as far as the camera can be sent with them. A
@@ -139,9 +139,9 @@ public:
 signals:
     void voiceConnected();
     void voiceDisconnected();
-    void rtcClientCreated(Discord::Voice::VoiceClient *client);
-    // The client can still be called, and is stopped and destroyed straight after.
-    void rtcClientClosing();
+    void rtcConnectionCreated(Acheron::Core::Audio::VoiceConnection *connection);
+    // The connection can still be called, and is stopped straight after.
+    void rtcConnectionClosing();
     // Another session of this account joined voice while this client was connected, which ends
     // this client's connection without it having asked to leave.
     void takenOverByAnotherSession(Snowflake channelId, Snowflake guildId);
@@ -235,7 +235,6 @@ private:
     QHash<quint32, AudioSource> audioSources;
     void feedAudioSourceToPipeline(quint32 source);
     CallVideo *callVideo = nullptr;
-    unsigned int voiceGeneration = 0;
 
     mutable std::unique_ptr<IAudioBackend> audioBackend;
 };

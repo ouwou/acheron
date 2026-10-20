@@ -19,6 +19,10 @@
 namespace Acheron {
 namespace Core {
 
+namespace Audio {
+class VoiceConnection;
+}
+
 // The cameras of the voice call this account is in. It knows who is sending video, decodes the
 // ones a tile is shown for, and tells the server how much of each is wanted.
 class CallVideo : public QObject
@@ -29,8 +33,8 @@ public:
     ~CallVideo() override;
 
     // Follows one voice connection, on which this account is `ownUserId`. Call before the
-    // client starts, and detach() once it has stopped.
-    void attach(Discord::Voice::VoiceClient *client, Snowflake ownUserId);
+    // connection starts, and detach() once it has stopped.
+    void attach(Audio::VoiceConnection *connection, Snowflake ownUserId);
     void detach();
 
     [[nodiscard]] QList<Snowflake> senders() const;
@@ -76,7 +80,7 @@ private:
 
     void scheduleReplan();
 
-    Discord::Voice::VoiceClient *client = nullptr;
+    Audio::VoiceConnection *connection = nullptr;
     QHash<Snowflake, QList<Discord::Voice::VideoLayer>> layersByUser;
     QHash<Snowflake, Tile> tiles;
     TileVisibility visibility;

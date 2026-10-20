@@ -565,9 +565,9 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
     voiceConnection = new VoiceConnection(params, this);
     voiceClient = voiceConnection->client();
 #ifdef ACHERON_HAVE_VIDEO
-    callVideo->attach(voiceClient, accountId);
+    callVideo->attach(voiceConnection, accountId);
 #endif
-    emit rtcClientCreated(voiceClient);
+    emit rtcConnectionCreated(voiceConnection);
     audioPipeline = new AudioPipeline;
 
 #ifdef Q_OS_WIN
@@ -613,15 +613,12 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                     ap->setSsrcUserId(data.audioSsrc, data.userId.get());
             });
 
-    // guard new connections (against eg channel moves)
-    unsigned int gen = voiceGeneration;
-
     // Who is in the call is who has a voice state in the channel, and besides them anyone the
     // voice server has connected whose voice state has not arrived (the official client's
     // RTCConnectionDesyncStore, 584569.js).
-    connect(voiceClient, &Discord::Voice::VoiceClient::clientReachedServer,
-            this, [this, gen](Snowflake userId) {
-                if (gen != voiceGeneration || !userId.isValid() || userId == accountId)
+    connect(voiceConnection, &VoiceConnection::clientReachedServer,
+            this, [this](Snowflake userId) {
+                if (!userId.isValid() || userId == accountId)
                     return;
                 populateParticipantsFromCache();
                 if (participants.contains(userId))
@@ -632,10 +629,8 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                 emit participantJoined(userId);
             });
 
-    connect(voiceClient, &Discord::Voice::VoiceClient::clientDisconnected,
-            this, [this, gen](Snowflake userId) {
-                if (gen != voiceGeneration)
-                    return;
+    connect(voiceConnection, &VoiceConnection::clientDisconnected,
+            this, [this](Snowflake userId) {
                 if (audioPipeline)
                     QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, userId]() { p->removeUser(userId); });
 
@@ -655,10 +650,8 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                 }
             });
 
-    connect(voiceClient, &Discord::Voice::VoiceClient::speakingReceived,
-            this, [this, gen](const Discord::Voice::SpeakingData &data) {
-                if (gen != voiceGeneration)
-                    return;
+    connect(voiceConnection, &VoiceConnection::speakingReceived,
+            this, [this](const Discord::Voice::SpeakingData &data) {
                 if (!data.userId.hasValue() || !data.userId->isValid())
                     return;
                 Snowflake userId = data.userId.get();
@@ -673,33 +666,16 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 
     connect(audioPipeline, &AudioPipeline::userAudioLevelChanged, this, &VoiceManager::userAudioLevelChanged);
 
-    connect(voiceClient, &Discord::Voice::VoiceClient::connected,
-            this, [this, gen]() {
-                if (gen != voiceGeneration)
-                    return;
-                onVoiceClientConnected();
-            });
-
-    connect(voiceClient, &Discord::Voice::VoiceClient::disconnected, this, [this, gen]() {
-                if (gen != voiceGeneration)
-                    return;
-                onVoiceClientDisconnected(); }, Qt::QueuedConnection);
-
-    connect(voiceClient, &Discord::Voice::VoiceClient::stateChanged,
-            this, [this, gen](Discord::Voice::VoiceClient::State state) {
-                if (gen != voiceGeneration)
-                    return;
-                onVoiceClientStateChanged(state);
-            });
+    connect(voiceConnection, &VoiceConnection::connected, this, &VoiceManager::onVoiceClientConnected);
+    connect(voiceConnection, &VoiceConnection::disconnected, this, &VoiceManager::onVoiceClientDisconnected);
+    connect(voiceConnection, &VoiceConnection::stateChanged, this, &VoiceManager::onVoiceClientStateChanged);
 
     connect(audioPipeline, &AudioPipeline::audioLevelChanged, this, &VoiceManager::audioLevelChanged);
 
     connect(audioPipeline, &AudioPipeline::speakingChanged, this, &VoiceManager::speakingChanged);
 
-    connect(voiceClient, &Discord::Voice::VoiceClient::privacyCodeChanged,
-            this, [this, gen](const QString &code) {
-                if (gen != voiceGeneration)
-                    return;
+    connect(voiceConnection, &VoiceConnection::privacyCodeChanged,
+            this, [this](const QString &code) {
                 cachedPrivacyCode = code;
                 emit privacyCodeChanged(code);
             });
@@ -751,8 +727,8 @@ void VoiceManager::setEncodableVideoCodecs(const QList<Discord::Voice::VideoCode
     if (codecs == encodableVideoCodecs)
         return;
     encodableVideoCodecs = codecs;
-    if (voiceClient)
-        QMetaObject::invokeMethod(voiceClient, [client = voiceClient, codecs] { client->offerVideoEncoding(codecs); });
+    if (voiceConnection)
+        voiceConnection->run([codecs](Discord::Voice::VoiceClient *client) { client->offerVideoEncoding(codecs); });
 }
 
 void VoiceManager::stopVoiceThread()
@@ -760,8 +736,7 @@ void VoiceManager::stopVoiceThread()
     if (!voiceConnection)
         return;
 
-    emit rtcClientClosing();
-    voiceGeneration++;
+    emit rtcConnectionClosing();
     bool hadParticipants = !participants.isEmpty();
     participants.clear();
     mutedUsers.clear();
@@ -778,7 +753,8 @@ void VoiceManager::stopVoiceThread()
     delete audioPipeline;
     audioPipeline = nullptr;
 
-    delete voiceConnection;
+    // Not deleted here: this may be one of its own signals.
+    voiceConnection->deleteLater();
     voiceConnection = nullptr;
     voiceClient = nullptr;
 

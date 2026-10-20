@@ -25,8 +25,9 @@ namespace Core {
 class StreamBroadcaster;
 
 namespace Audio {
+class VoiceConnection;
 class VoiceManager;
-}
+} // namespace Audio
 
 namespace Video {
 class CameraPipeline;
@@ -112,8 +113,8 @@ signals:
     void failed(const QString &reason);
 
 private slots:
-    void onRtcClientCreated(Discord::Voice::VoiceClient *client);
-    void onRtcClientClosing();
+    void onRtcConnectionCreated(Acheron::Core::Audio::VoiceConnection *connection);
+    void onRtcConnectionClosing();
     void onVoiceDisconnected();
     void onVoiceMembershipChanged();
     void onOwnVoiceStateChanged();
@@ -121,16 +122,15 @@ private slots:
     void onScreenShareChanged();
     void onCodecTimedOut();
     void applyPlan();
-
-private:
-    void onRtcStateChanged(Discord::Voice::VoiceClient::State state);
-    void onSendCodecChanged(Discord::Voice::VideoCodec codec);
-    void onSendStats(const Discord::Voice::VideoSendStats &stats);
+    void onRtcStateChanged(Acheron::Discord::Voice::VoiceClient::State state);
+    void onSendCodecChanged(Acheron::Discord::Voice::VideoCodec codec);
+    void onSendStats(const Acheron::Discord::Voice::VideoSendStats &stats);
     void onSendLayersKnown(const QList<int> &qualities);
     void onKeyframeRequested(int quality);
     void onReceiversChanged(int count, int quality);
-    void onWantsReceived(int want, int quality);
 
+private:
+    void onWantsReceived(int want, int quality);
     void onEncodersKnown(const QList<Discord::Voice::VideoCodec> &codecs);
     void onPipelineStarted(const QSize &encodedSize);
     void onPreviewReady(const QImage &preview);
@@ -159,15 +159,10 @@ private:
     Snowflake cameraChannelId;
     QString deviceId;
     bool encodersKnown = false;
-    // Told apart from the attempt that a late answer about the encoders belongs to.
-    quint64 attempt = 0;
+    quint64 encoderProbeAttempt = 0;
 
-    // The voice connection's client, on the connection's thread. Null between connections.
-    Discord::Voice::VoiceClient *rtc = nullptr;
-    // Count the voice connections and the pipelines, so that what a closed one still had on
-    // its way here is told from the current one's and dropped.
-    quint64 connectionSerial = 0;
-    quint64 pipelineSerial = 0;
+    // The voice connection. Null between connections.
+    Audio::VoiceConnection *rtc = nullptr;
     bool rtcConnected = false;
     Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;

@@ -1,5 +1,6 @@
 #include "Core/Video/CameraSender.hpp"
 
+#include "Core/Audio/VoiceConnection.hpp"
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/Logging.hpp"
 #include "Core/Media/CodecSupport.hpp"
@@ -32,16 +33,18 @@ CameraSender::CameraSender(Discord::Client *client, Audio::VoiceManager *voice, 
     codecTimeout.setInterval(CODEC_TIMEOUT_MS);
     connect(&codecTimeout, &QTimer::timeout, this, &CameraSender::onCodecTimedOut);
 
-    connect(voice, &Audio::VoiceManager::rtcClientCreated, this, &CameraSender::onRtcClientCreated);
-    connect(voice, &Audio::VoiceManager::rtcClientClosing, this, &CameraSender::onRtcClientClosing);
+    connect(voice, &Audio::VoiceManager::rtcConnectionCreated, this, &CameraSender::onRtcConnectionCreated);
+    connect(voice, &Audio::VoiceManager::rtcConnectionClosing, this, &CameraSender::onRtcConnectionClosing);
     connect(voice, &Audio::VoiceManager::voiceDisconnected, this, &CameraSender::onVoiceDisconnected);
     connect(voice, &Audio::VoiceManager::channelVoiceMemberChanged, this, &CameraSender::onVoiceMembershipChanged);
     connect(voice, &Audio::VoiceManager::participantVoiceStateChanged, this, &CameraSender::onOwnVoiceStateChanged);
     connect(voice, &Audio::VoiceManager::speakingChanged, this, &CameraSender::onSpeakingChanged);
     connect(screenShare, &StreamBroadcaster::stateChanged, this, &CameraSender::onScreenShareChanged);
 
-    if (voice->rtcClient())
-        onRtcClientCreated(voice->rtcClient());
+    if (voice->rtcConnection()) {
+        onRtcConnectionCreated(voice->rtcConnection());
+        rtcConnected = voice->isConnected();
+    }
 }
 
 CameraSender::~CameraSender()
@@ -127,8 +130,8 @@ void CameraSender::turnOn(const QString &wantedDeviceId)
     setState(State::Starting);
     sendVoiceState();
 
-    Media::whenSendCodecsKnown(this, [this, thisAttempt = ++attempt](const QList<VideoCodec> &codecs) {
-        if (thisAttempt == attempt)
+    Media::whenSendCodecsKnown(this, [this, asked = ++encoderProbeAttempt](const QList<VideoCodec> &codecs) {
+        if (asked == encoderProbeAttempt)
             onEncodersKnown(codecs);
     });
 }
@@ -155,13 +158,13 @@ void CameraSender::end(bool tellGateway, State endState)
     if (!isOn())
         return;
 
-    attempt++;
+    encoderProbeAttempt++;
     encodersKnown = false;
     codecTimeout.stop();
     planTimer.stop();
 
     if (rtc)
-        QMetaObject::invokeMethod(rtc, [connection = rtc] { connection->stopVideo(); });
+        rtc->run([](VoiceClient *connection) { connection->stopVideo(); });
     videoAnnounced = false;
     stopPipeline();
     latestPreview = QImage();
@@ -238,54 +241,28 @@ void CameraSender::onScreenShareChanged()
     applyPlan();
 }
 
-void CameraSender::onRtcClientCreated(VoiceClient *created)
+void CameraSender::onRtcConnectionCreated(Audio::VoiceConnection *connection)
 {
-    onRtcClientClosing();
+    onRtcConnectionClosing();
 
-    rtc = created;
-    const quint64 serial = ++connectionSerial;
-
-    // The client's signals come from its own thread, so each arrives here later, and may
-    // arrive after its connection has been replaced: the number tells those apart.
-    connect(rtc, &VoiceClient::stateChanged, this, [this, serial](VoiceClient::State state) {
-        if (serial == connectionSerial)
-            onRtcStateChanged(state);
-    });
-    connect(rtc, &VoiceClient::videoSendCodecChanged, this, [this, serial](VideoCodec codec) {
-        if (serial == connectionSerial)
-            onSendCodecChanged(codec);
-    });
-    connect(rtc, &VoiceClient::videoSendStatsUpdated, this, [this, serial](const VideoSendStats &sent) {
-        if (serial == connectionSerial)
-            onSendStats(sent);
-    });
-    connect(rtc, &VoiceClient::videoSendLayersKnown, this, [this, serial](const QList<int> &qualities) {
-        if (serial == connectionSerial)
-            onSendLayersKnown(qualities);
-    });
-    connect(rtc, &VoiceClient::videoKeyframeRequested, this, [this, serial](int quality) {
-        if (serial == connectionSerial)
-            onKeyframeRequested(quality);
-    });
-    connect(rtc, &VoiceClient::videoReceiversChanged, this, [this, serial](int count, int quality) {
-        if (serial == connectionSerial)
-            onReceiversChanged(count, quality);
-    });
-    connect(rtc, &VoiceClient::videoWantsReceived, this, [this, serial](int want, int, int quality) {
-        if (serial == connectionSerial)
-            onWantsReceived(want, quality);
-    });
+    rtc = connection;
+    connect(rtc, &Audio::VoiceConnection::stateChanged, this, &CameraSender::onRtcStateChanged);
+    connect(rtc, &Audio::VoiceConnection::videoSendCodecChanged, this, &CameraSender::onSendCodecChanged);
+    connect(rtc, &Audio::VoiceConnection::videoSendStatsUpdated, this, &CameraSender::onSendStats);
+    connect(rtc, &Audio::VoiceConnection::videoSendLayersKnown, this, &CameraSender::onSendLayersKnown);
+    connect(rtc, &Audio::VoiceConnection::videoKeyframeRequested, this, &CameraSender::onKeyframeRequested);
+    connect(rtc, &Audio::VoiceConnection::videoReceiversChanged, this, &CameraSender::onReceiversChanged);
+    connect(rtc, &Audio::VoiceConnection::videoWantsReceived, this, [this](int want, int, int quality) { onWantsReceived(want, quality); });
     sendFramesToRtc();
 }
 
-void CameraSender::onRtcClientClosing()
+void CameraSender::onRtcConnectionClosing()
 {
     if (!rtc)
         return;
 
     QObject::disconnect(framesToRtc);
     QObject::disconnect(rtc, nullptr, this, nullptr);
-    connectionSerial++;
     rtc = nullptr;
     rtcConnected = false;
     videoAnnounced = false;
@@ -391,23 +368,16 @@ void CameraSender::startPipeline()
 
     pipeline = std::make_unique<Video::CameraPipeline>();
     pipelineCodec = sendCodec;
-    const quint64 serial = ++pipelineSerial;
-    connect(pipeline.get(), &Video::CameraPipeline::started, this, [this, serial](const QSize &size, int, int layer) {
-        if (serial == pipelineSerial && layer == FULL)
+    // In the pipeline's own context, so that what it had on its way when it was let go of
+    // goes with it.
+    Video::CameraPipeline *started = pipeline.get();
+    connect(started, &Video::CameraPipeline::started, started, [this](const QSize &size, int, int layer) {
+        if (layer == FULL)
             onPipelineStarted(size);
     });
-    connect(pipeline.get(), &Video::CameraPipeline::previewReady, this, [this, serial](const QImage &preview) {
-        if (serial == pipelineSerial)
-            onPreviewReady(preview);
-    });
-    connect(pipeline.get(), &Video::CameraPipeline::failed, this, [this, serial](const QString &reason) {
-        if (serial == pipelineSerial)
-            onPipelineFailed(reason);
-    });
-    connect(pipeline.get(), &Video::CameraPipeline::statsUpdated, this, [this, serial](const Video::BroadcastStats &encoder, int layer) {
-        if (serial == pipelineSerial)
-            onPipelineStats(encoder, layer);
-    });
+    connect(started, &Video::CameraPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
+    connect(started, &Video::CameraPipeline::failed, started, [this](const QString &reason) { onPipelineFailed(reason); });
+    connect(started, &Video::CameraPipeline::statsUpdated, started, [this](const Video::BroadcastStats &encoder, int layer) { onPipelineStats(encoder, layer); });
     sendFramesToRtc();
 
     for (Layer &layer : layers)
@@ -434,7 +404,6 @@ void CameraSender::stopPipeline()
     if (!pipeline)
         return;
 
-    pipelineSerial++;
     planTimer.stop();
     QObject::disconnect(framesToRtc);
     pipeline->stop();
@@ -453,7 +422,8 @@ void CameraSender::sendFramesToRtc()
     if (!pipeline || !rtc)
         return;
 
-    framesToRtc = connect(pipeline.get(), &Video::CameraPipeline::frameEncoded, rtc, [connection = rtc, secondQuality = layers[SECOND].quality](const Video::EncodedFramePointer &frame, int layer) {
+    VoiceClient *client = rtc->client();
+    framesToRtc = connect(pipeline.get(), &Video::CameraPipeline::frameEncoded, client, [connection = client, secondQuality = layers[SECOND].quality](const Video::EncodedFramePointer &frame, int layer) {
         connection->sendVideoFrame(*frame, layer == SECOND ? secondQuality : VoiceClient::FULL_QUALITY);
     });
 }
@@ -498,7 +468,7 @@ void CameraSender::announceVideo()
     description.secondLayerMaxBitrate = layers[SECOND].plan.maxBitrate();
 
     videoAnnounced = true;
-    QMetaObject::invokeMethod(rtc, [connection = rtc, description, bitrate = layers[FULL].asked.bitrate, secondBitrate = layers[SECOND].asked.bitrate, secondQuality = layers[SECOND].quality] {
+    rtc->run([description, bitrate = layers[FULL].asked.bitrate, secondBitrate = layers[SECOND].asked.bitrate, secondQuality = layers[SECOND].quality](VoiceClient *connection) {
         connection->startVideo(description);
         connection->setVideoBitrate(bitrate);
         connection->setVideoBitrate(secondBitrate, secondQuality);
@@ -529,7 +499,7 @@ void CameraSender::applyPlan()
         if (wanted.bitrate != layer.asked.bitrate) {
             pipeline->setBitrate(wanted.bitrate, index);
             if (rtc)
-                QMetaObject::invokeMethod(rtc, [connection = rtc, bitrate = wanted.bitrate, quality = layer.quality] { connection->setVideoBitrate(bitrate, quality); });
+                rtc->run([bitrate = wanted.bitrate, quality = layer.quality](VoiceClient *connection) { connection->setVideoBitrate(bitrate, quality); });
         }
         if (wanted.size != layer.asked.size || wanted.framerate != layer.asked.framerate)
             pipeline->setEncoding(wanted.size, wanted.framerate, index);

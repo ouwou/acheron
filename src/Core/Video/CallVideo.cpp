@@ -1,5 +1,7 @@
 #include "CallVideo.hpp"
 
+#include "Core/Audio/VoiceConnection.hpp"
+
 #include <QSettings>
 
 #include <algorithm>
@@ -57,17 +59,17 @@ void CallVideo::setMaxDecoders(int decoders)
     QSettings().setValue(MAX_DECODERS_KEY, std::max(1, decoders));
 }
 
-void CallVideo::attach(VoiceClient *voiceClient, Snowflake ownUserId)
+void CallVideo::attach(Audio::VoiceConnection *voiceConnection, Snowflake ownUserId)
 {
     detach();
-    client = voiceClient;
+    connection = voiceConnection;
     ownUser = ownUserId;
 
-    connect(client, &VoiceClient::remoteVideoLayersChanged, this, &CallVideo::onLayersChanged);
-    connect(client, &VoiceClient::clientReachedServer, this, &CallVideo::onUserReachedServer);
-    connect(client, &VoiceClient::clientDisconnected, this, &CallVideo::onUserLeftServer);
-    connect(client, &VoiceClient::connected, this, &CallVideo::scheduleReplan);
-    client->setVideoFrameHandler([this](Snowflake userId, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
+    connect(connection, &Audio::VoiceConnection::remoteVideoLayersChanged, this, &CallVideo::onLayersChanged);
+    connect(connection, &Audio::VoiceConnection::clientReachedServer, this, &CallVideo::onUserReachedServer);
+    connect(connection, &Audio::VoiceConnection::clientDisconnected, this, &CallVideo::onUserLeftServer);
+    connect(connection, &Audio::VoiceConnection::connected, this, &CallVideo::scheduleReplan);
+    connection->client()->setVideoFrameHandler([this](Snowflake userId, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
         std::shared_ptr<Media::VideoDecoder> decoder;
         {
             std::lock_guard lock(decoderMutex);
@@ -82,9 +84,9 @@ void CallVideo::attach(VoiceClient *voiceClient, Snowflake ownUserId)
 
 void CallVideo::detach()
 {
-    if (client)
-        client->disconnect(this);
-    client = nullptr;
+    if (connection)
+        connection->disconnect(this);
+    connection = nullptr;
     othersOnServer.clear();
     replanTimer.stop();
     expiryTimer.stop();
@@ -200,13 +202,13 @@ Media::VideoDecoder::Stats CallVideo::decoderStats(Snowflake userId) const
 
 void CallVideo::scheduleReplan()
 {
-    if (client && !replanTimer.isActive())
+    if (connection && !replanTimer.isActive())
         replanTimer.start();
 }
 
 void CallVideo::replan()
 {
-    if (!client)
+    if (!connection)
         return;
 
     const qint64 now = clock.elapsed();
@@ -257,8 +259,11 @@ void CallVideo::replan()
             // A camera is at most 720p, which one thread decodes with room to spare.
             auto decoder = std::make_shared<Media::VideoDecoder>(onCard, 1);
             decoder->setSink(tiles.value(it.key()).sink);
-            decoder->setKeyframeRequester([target = client, userId = it.key()] { QMetaObject::invokeMethod(target, [target, userId] { target->requestVideoKeyframeFrom(userId); }); });
-            decoder->setCodecFailureHandler([target = client](Discord::Voice::VideoCodec codec) { QMetaObject::invokeMethod(target, [target, codec] { target->withdrawVideoCodec(codec); }); });
+            // The decoders go before the client does: detach() is called once the connection
+            // has stopped, which is before it is let go of.
+            VoiceClient *client = connection->client();
+            decoder->setKeyframeRequester([client, userId = it.key()] { QMetaObject::invokeMethod(client, [client, userId] { client->requestVideoKeyframeFrom(userId); }); });
+            decoder->setCodecFailureHandler([client](Discord::Voice::VideoCodec codec) { QMetaObject::invokeMethod(client, [client, codec] { client->withdrawVideoCodec(codec); }); });
             decoders.emplace(key, std::move(decoder));
         }
     }
@@ -267,7 +272,7 @@ void CallVideo::replan()
     QSet<quint32> deliver;
     for (quint32 ssrc : plan.deliver)
         deliver.insert(ssrc);
-    QMetaObject::invokeMethod(client, [target = client, wants = plan.wants, deliver] { target->setVideoPlan(wants, deliver); });
+    connection->run([wants = plan.wants, deliver](VoiceClient *client) { client->setVideoPlan(wants, deliver); });
 
     if (visibility.hasPendingExpiry(now))
         expiryTimer.start();
