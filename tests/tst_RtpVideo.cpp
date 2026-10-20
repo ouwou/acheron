@@ -237,6 +237,7 @@ private slots:
     void transportFeedbackCarriesLongAndBackwardGaps();
     void transportFeedbackReportsEachPacketOnce();
     void transportFeedbackAcrossTheSequenceWrap();
+    void transportFeedbackLeavesOutALateArrival();
 };
 
 void TestRtpVideo::h264AgainstFfmpeg()
@@ -923,6 +924,23 @@ void TestRtpVideo::transportFeedbackAcrossTheSequenceWrap()
 
     QCOMPARE(feedback.write(buffer, 1, 2), 28);
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("ffff0003"));
+}
+
+void TestRtpVideo::transportFeedbackLeavesOutALateArrival()
+{
+    uint8_t buffer[128];
+    TransportFeedback feedback;
+    feedback.onPacket(100, 64000);
+    feedback.onPacket(102, 64250);
+    QCOMPARE(feedback.write(buffer, 1, 2), 24);
+
+    // 101 turns up after the report that called it missing, and 103 after it. The next report
+    // is of 103 alone, not of 101 with 102 missing.
+    feedback.onPacket(101, 64500);
+    feedback.onPacket(103, 64750);
+    QCOMPARE(feedback.write(buffer, 1, 2), 24);
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("00670001"));
+    QVERIFY(!feedback.hasPending());
 }
 
 QTEST_GUILESS_MAIN(TestRtpVideo)

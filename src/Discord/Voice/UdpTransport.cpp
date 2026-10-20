@@ -136,12 +136,12 @@ void UdpTransport::send(PacketBuffer &packet)
     if (!socket)
         return;
 
-    if (!association) {
+    if (!relayed()) {
         socket->writeDatagram(reinterpret_cast<const char *>(packet.data()), packet.size(), serverAddress, serverPort);
         return;
     }
 
-    if (!association->isEstablished() || relayHeaderSize <= 0)
+    if (!association || !association->isEstablished() || relayHeaderSize <= 0)
         return;
 
     if (!Socks5UdpAssociation::wrap(packet, { relayHeader, static_cast<size_t>(relayHeaderSize) }))
@@ -162,8 +162,10 @@ quint16 UdpTransport::localPort() const
 
 void UdpTransport::onReadyRead()
 {
-    const QHostAddress expectedSender = association ? association->relayAddress() : serverAddress;
-    const quint16 expectedPort = association ? association->relayPort() : serverPort;
+    if (relayed() && !association)
+        return;
+    const QHostAddress expectedSender = relayed() ? association->relayAddress() : serverAddress;
+    const quint16 expectedPort = relayed() ? association->relayPort() : serverPort;
 
     while (socket && socket->hasPendingDatagrams()) {
         PacketPool::Handle packet = pool.acquire();
@@ -178,7 +180,7 @@ void UdpTransport::onReadyRead()
             continue;
         }
 
-        if (association && !Socks5UdpAssociation::unwrap(*packet))
+        if (relayed() && !Socks5UdpAssociation::unwrap(*packet))
             continue;
 
         if (discoveryPending && packet->size() >= IP_DISCOVERY_PACKET_SIZE)

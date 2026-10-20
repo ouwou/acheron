@@ -1,6 +1,7 @@
 #include "Core/Media/VideoEncoder.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/H264Sps.hpp"
 #include "Core/Media/HardwareDevices.hpp"
 
@@ -154,6 +155,9 @@ constexpr double TRIAL_MOST_OF_THE_RATE = 2.0;
 constexpr double TRIAL_LEAST_OF_THE_RATE = 0.25;
 // Many times what opening the slowest encoder and encoding the trial's pictures takes.
 constexpr std::chrono::seconds TRIAL_TIME_ALLOWED(10);
+// How long an encoder that had been taking pictures on the card gets them in memory after it
+// turns one down.
+constexpr std::chrono::seconds CARD_FRAMES_RETRY_AFTER(30);
 
 struct Nal
 {
@@ -383,28 +387,30 @@ bool encodesTrialPictures(const VideoEncoderCandidate &candidate)
     settings.encoderName = QString::fromLatin1(candidate.label);
     VideoEncoder encoder(settings);
 
-    AVFrame *picture = av_frame_alloc();
+    const FramePointer picture(av_frame_alloc());
+    if (!picture)
+        return false;
     picture->format = encoder.softwareFormat();
     picture->width = TRIAL_WIDTH;
     picture->height = TRIAL_HEIGHT;
-    bool worked = av_frame_get_buffer(picture, 0) >= 0;
+    bool worked = av_frame_get_buffer(picture.get(), 0) >= 0;
 
     std::vector<EncodedVideoFrame> frames;
     size_t settledBytes = 0;
     for (int index = 0; worked && index < TRIAL_PICTURES; index++) {
-        av_frame_make_writable(picture);
-        paintTrialPicture(picture, index);
+        if (av_frame_make_writable(picture.get()) < 0)
+            return false;
+        paintTrialPicture(picture.get(), index);
 
         const int64_t timestamp = int64_t(index) * RTP_CLOCK / settings.framerate;
         const size_t before = frames.size();
-        worked = encoder.encode(picture, timestamp, frames) == VideoEncoder::Outcome::Encoded;
+        worked = encoder.encode(picture.get(), timestamp, frames) == VideoEncoder::Outcome::Encoded;
         // A frame that comes out a picture late would stay late for as long as the stream runs.
         for (size_t i = before; i < frames.size(); i++) {
             worked = worked && frames[i].rtpTimestamp == static_cast<uint32_t>(timestamp);
             settledBytes += index >= TRIAL_SETTLING ? frames[i].data.size() : 0;
         }
     }
-    av_frame_free(&picture);
     if (!worked || frames.empty() || !frames.front().keyframe || frames.size() + TRIAL_DROPS_ALLOWED < TRIAL_PICTURES)
         return false;
 
@@ -442,28 +448,19 @@ bool encodesTrialPicturesInTime(const VideoEncoderCandidate &candidate)
     return false;
 }
 
-// Whether the encoder opens and encodes on this machine: tried once, and remembered.
+// Whether the encoder opens and encodes on this machine: tried once, and remembered. A trial
+// holds up only those asking about the same encoder.
 bool candidateWorks(const VideoEncoderCandidate &candidate)
 {
-    enum class Verdict {
-        Untried,
-        Works,
-        Broken,
-    };
-    struct Verdicts
-    {
-        std::mutex mutex;
-        std::array<Verdict, CANDIDATES.size()> of = {};
-    };
-    static Verdicts verdicts;
+    static std::array<std::once_flag, CANDIDATES.size()> tried;
+    static std::array<bool, CANDIDATES.size()> works = {};
 
-    std::lock_guard lock(verdicts.mutex);
-    Verdict &verdict = verdicts.of[static_cast<size_t>(&candidate - CANDIDATES.data())];
-    if (verdict == Verdict::Untried) {
-        verdict = encodesTrialPicturesInTime(candidate) ? Verdict::Works : Verdict::Broken;
-        qCInfo(LogVideo) << "Encoder" << candidate.label << (verdict == Verdict::Works ? "works" : "does not work on this machine");
-    }
-    return verdict == Verdict::Works;
+    const size_t index = static_cast<size_t>(&candidate - CANDIDATES.data());
+    std::call_once(tried[index], [&candidate, index] {
+        works[index] = encodesTrialPicturesInTime(candidate);
+        qCInfo(LogVideo) << "Encoder" << candidate.label << (works[index] ? "works" : "does not work on this machine");
+    });
+    return works[index];
 }
 
 } // namespace
@@ -596,7 +593,8 @@ QSize VideoEncoder::codedSize(const QSize &size) const
 
 bool VideoEncoder::takesCardFrames() const
 {
-    return candidate && candidate->takesCardFrames && !cardFramesRefused;
+    const bool refused = cardFramesRefusedUntil && std::chrono::steady_clock::now() < *cardFramesRefusedUntil;
+    return candidate && candidate->takesCardFrames && !refused;
 }
 
 bool VideoEncoder::takesRgbCardFrames() const
@@ -645,6 +643,7 @@ VideoEncoder::Outcome VideoEncoder::encode(AVFrame *frame, int64_t timestamp, st
         return Outcome::Failed;
 
     const bool rgbOnCard = onCard && reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data)->sw_format != AV_PIX_FMT_NV12;
+    bool freshStartTried = false;
     while (candidate) {
         if (onCard && !(rgbOnCard ? takesRgbCardFrames() : takesCardFrames()))
             return Outcome::CardFramesRefused;
@@ -653,15 +652,19 @@ VideoEncoder::Outcome VideoEncoder::encode(AVFrame *frame, int64_t timestamp, st
 
         // One that had been working gets a fresh start on the same picture. One that fails
         // again straight away is at fault, unless the picture came on the card: that it turns
-        // those down says nothing about what it does with pictures from memory.
-        const bool hadBeenWorking = framesSinceOpen >= TRIAL_FRAMES;
+        // those down says nothing about what it does with pictures from memory. Nor is it at
+        // fault for turning down a size it has not had before, such as a window's new one.
+        const bool hadBeenWorking = framesByThisEncoder >= TRIAL_FRAMES;
         close();
-        if (hadBeenWorking)
+        if (hadBeenWorking && !std::exchange(freshStartTried, true))
             continue;
         if (onCard) {
-            cardFramesRefused = true;
+            const auto now = std::chrono::steady_clock::now();
+            cardFramesRefusedUntil = cardFramesByThisEncoder > 0 ? now + CARD_FRAMES_RETRY_AFTER : std::chrono::steady_clock::time_point::max();
             return Outcome::CardFramesRefused;
         }
+        if (hadBeenWorking && QSize(frame->width, frame->height) != lastEncodedSize)
+            return Outcome::SizeRefused;
         moveToNextEncoder();
     }
     return Outcome::Failed;
@@ -677,7 +680,9 @@ void VideoEncoder::moveToNextEncoder()
                 candidate = next;
         }
     }
-    cardFramesRefused = false;
+    cardFramesRefusedUntil.reset();
+    cardFramesByThisEncoder = 0;
+    framesByThisEncoder = 0;
     qCWarning(LogVideo) << "Encoder" << failed->label << "failed;" << (candidate ? "using" : "no other encoder for") << (candidate ? QString::fromLatin1(candidate->label) : Discord::Voice::videoCodecName(failed->codec));
 }
 
@@ -710,15 +715,19 @@ bool VideoEncoder::encodeWithOpenEncoder(AVFrame *frame, int64_t timestamp, std:
     av_frame_unref(uploaded);
     if (sent < 0)
         return false;
-    keyframeWanted = false;
     awaited++;
 
     const size_t before = out.size();
     if (!collect(out))
         return false;
     framesSinceOpen++;
+    framesByThisEncoder++;
+    cardFramesByThisEncoder += onCard ? 1 : 0;
+    lastEncodedSize = QSize(frame->width, frame->height);
 
+    // Asked for until the picture comes out, which is the next one when nothing has yet.
     if (out.size() > before) {
+        keyframeWanted = false;
         if (out[before].keyframe)
             lastKeyframeAt = timestamp;
         else if (keyframe) {

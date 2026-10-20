@@ -27,8 +27,7 @@ struct Monitor
     int output = 0;
     HMONITOR handle = nullptr;
     QRect geometry;
-    // Turned a quarter, in which case Windows hands its picture over lying on its side.
-    bool onItsSide = false;
+    // Turned a quarter or a half from the way it stands.
     bool turned = false;
 };
 

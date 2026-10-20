@@ -636,14 +636,19 @@ void streamHasPictures(void *shared)
     while (pw_buffer *buffer = pw_stream_dequeue_buffer(pictures->stream)) {
         FramePointer picture = pictureIn(buffer->buffer, pictures);
         CardPicture *card = cardPictureOf(picture.get());
+        // Two buffers are always left with the compositor: with one it waits for each picture's
+        // buffer to come back before it can draw the next, and with none it stops. A picture on
+        // the card whose buffer cannot be kept goes back with it, unused, since the compositor
+        // draws the next picture into it.
+        const bool keepsBuffer = card && static_cast<int>(pictures->kept.size()) + 3 <= pictures->buffers;
+        if (card && !keepsBuffer)
+            passedOver.push_back(std::move(picture));
         if (picture) {
             if (CardPicture *before = cardPictureOf(pictures->newest.get()))
                 returnBuffer(pictures, std::exchange(before->number, 0));
             passedOver.push_back(std::exchange(pictures->newest, std::move(picture)));
         }
-        // Two buffers are always left with the compositor: with one it waits for each picture's
-        // buffer to come back before it can draw the next, and with none it stops.
-        if (card && static_cast<int>(pictures->kept.size()) + 3 <= pictures->buffers) {
+        if (keepsBuffer) {
             card->number = ++pictures->lastKept;
             pictures->kept.emplace_back(card->number, buffer);
         } else {

@@ -239,16 +239,23 @@ void ScreenCapture::configure(const Request &wanted)
     retryAt = {};
     closed = false;
     failed = false;
-    cardScalingFailed = false;
+    cardScalingResumesAt.reset();
     failureText.clear();
 
     backends = std::make_unique<Backends>();
     backends->window = windowOf(request.sourceId);
     backends->skipsUnchanged = QSettings().value(QStringLiteral("video/skip_unchanged_pictures"), true).toBool();
-    if (usesGraphicsCapture(request.method, backends->window != nullptr))
+    // ddagrab hands over a turned screen's picture as the screen has it, on its side or upside
+    // down, which graphics capture turns upright.
+    const std::vector<Monitor> monitors = backends->window ? std::vector<Monitor>() : attachedMonitors();
+    const Monitor *monitor = monitorOf(monitors, request.sourceId);
+    const bool turned = monitor && monitor->turned;
+    if (usesGraphicsCapture(request.method, backends->window != nullptr) || (turned && graphicsCaptureUsable()))
         path = Path::GraphicsCapture;
     else
         path = backends->window ? Path::WindowByDuplication : Path::Duplication;
+    if (turned && path == Path::Duplication)
+        qCWarning(LogVideo) << request.sourceId << "is turned, and without graphics capture its picture is sent the way the screen has it";
 }
 
 bool ScreenCapture::deliversOnlyChanges() const
@@ -356,7 +363,7 @@ void ScreenCapture::delivered()
 // screen's own, stay on the card for it.
 bool ScreenCapture::scalesOnCard() const
 {
-    return request.keepOnCard && !cardScalingFailed && CardScaler::usable();
+    return request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
 }
 
 // `area` of a picture on the card made `placed` of the one that is sent, which stays on the
@@ -366,7 +373,7 @@ bool ScreenCapture::scaleOnCard(const AVFrame *from, const QRect &area, const QS
     const CardScaler::Output output = { size, request.bt601Only || !Media::usesBt709AtHeight(size.height()), request.rgbOnCard };
     if (backends->scaler.scale(from, area, output, placed, into))
         return true;
-    cardScalingFailed = true;
+    suspendCardScaling();
     return false;
 }
 

@@ -41,8 +41,7 @@ std::vector<Monitor> attachedMonitors()
                 monitor.output = static_cast<int>(outputIndex);
                 monitor.handle = description.Monitor;
                 monitor.geometry = QRect(mode.dmPosition.x, mode.dmPosition.y, static_cast<int>(mode.dmPelsWidth), static_cast<int>(mode.dmPelsHeight));
-                monitor.onItsSide = description.Rotation == DXGI_MODE_ROTATION_ROTATE90 || description.Rotation == DXGI_MODE_ROTATION_ROTATE270;
-                monitor.turned = monitor.onItsSide || description.Rotation == DXGI_MODE_ROTATION_ROTATE180;
+                monitor.turned = description.Rotation == DXGI_MODE_ROTATION_ROTATE90 || description.Rotation == DXGI_MODE_ROTATION_ROTATE180 || description.Rotation == DXGI_MODE_ROTATION_ROTATE270;
                 found.push_back(monitor);
             }
             output->Release();

@@ -43,7 +43,10 @@ constexpr std::array HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TY
 // How often each codec's hardware decoder has failed to get going on a frame that software
 // then decoded. After a second time, later decoders do not try it.
 constexpr int HARDWARE_FAILURES_TOLERATED = 1;
-std::array<std::atomic<int>, 5> hardwareFailures = {};
+std::array<std::atomic<int>, Discord::Voice::VIDEO_CODEC_COUNT> hardwareFailures = {};
+// A decoder whose hardware failed after it had been working tries it again at a key frame
+// this long after.
+constexpr std::chrono::seconds HARDWARE_RETRY_AFTER(60);
 
 std::atomic<int> &hardwareFailuresOf(VideoCodec codec)
 {
@@ -331,7 +334,8 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
 {
     close();
 
-    const bool tryHardware = hardwareAllowed && !hardwareRuledOut && hardwareFailuresOf(codec) <= HARDWARE_FAILURES_TOLERATED;
+    const bool ruledOut = hardwareRuledOutUntil && std::chrono::steady_clock::now() < *hardwareRuledOutUntil;
+    const bool tryHardware = hardwareAllowed && !ruledOut && hardwareFailuresOf(codec) <= HARDWARE_FAILURES_TOLERATED;
     if (!(tryHardware && openHardware(codec)) && !openSoftware(codec)) {
         qCWarning(LogVideo) << "No decoder could be opened for" << Discord::Voice::videoCodecName(codec);
         return false;
@@ -340,6 +344,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     openCodec = codec;
     awaitingKeyframe = true;
     framesSinceOpen = 0;
+    hardwareProven = false;
     describeDecoder();
     return true;
 }
@@ -360,6 +365,10 @@ bool VideoDecoder::openHardware(Discord::Voice::VideoCodec codec)
             continue;
 
         AVCodecContext *candidate = avcodec_alloc_context3(decoder);
+        if (!candidate) {
+            av_buffer_unref(&device);
+            continue;
+        }
         hardwarePixelFormat = format;
         candidate->opaque = &hardwarePixelFormat;
         candidate->get_format = chooseFormat;
@@ -436,7 +445,13 @@ void VideoDecoder::reportUndecodableFrame()
 
 void VideoDecoder::decode(Queued &queued)
 {
+    if (queued.codec != openCodec && queued.codec == unopenableCodec) {
+        std::lock_guard lock(mutex);
+        counters.dropped++;
+        return;
+    }
     if (queued.codec != openCodec && !open(queued.codec)) {
+        unopenableCodec = queued.codec;
         std::function<void(Discord::Voice::VideoCodec)> handler;
         {
             std::lock_guard lock(mutex);
@@ -445,6 +460,13 @@ void VideoDecoder::decode(Queued &queued)
         if (handler)
             handler(queued.codec);
         return;
+    }
+    unopenableCodec.reset();
+
+    const bool hardwareMayBeTried = hardwareRuledOutUntil && std::chrono::steady_clock::now() >= *hardwareRuledOutUntil;
+    if (hardwareMayBeTried && queued.frame.keyframe && !hardwareDevice) {
+        hardwareRuledOutUntil.reset();
+        open(openCodec);
     }
 
     if (awaitingKeyframe && !queued.frame.keyframe) {
@@ -467,16 +489,20 @@ void VideoDecoder::decode(Queued &queued)
 
     const Discord::Voice::VideoCodec codec = openCodec;
     const QString hardware = QString::fromUtf8(hardwareName);
-    hardwareRuledOut = true;
+    // One that had been working is tried again in a while, and does not count against the
+    // codec's hardware for other decoders.
+    const bool wasProven = hardwareProven;
+    hardwareRuledOutUntil = std::chrono::steady_clock::now() + HARDWARE_RETRY_AFTER;
     if (open(codec) && queued.frame.keyframe) {
         if (decodeWithOpenDecoder(queued.frame, size)) {
             qCWarning(LogVideo) << "Hardware decoding of" << Discord::Voice::videoCodecName(codec) << "through" << hardware << "failed on a frame software decodes; using software";
-            hardwareFailuresOf(codec)++;
+            if (!wasProven)
+                hardwareFailuresOf(codec)++;
             return;
         }
         // Software cannot decode the frame either, so the stream was at fault and not the
         // hardware, which gets the next key frame.
-        hardwareRuledOut = false;
+        hardwareRuledOutUntil.reset();
         close();
     }
     reportUndecodableFrame();
@@ -535,6 +561,7 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         if (sink)
             sink->present(output);
         framesSinceOpen++;
+        hardwareProven = hardwareProven || (hardwareDevice && framesSinceOpen >= HARDWARE_TRIAL_FRAMES);
 
         {
             std::lock_guard lock(mutex);

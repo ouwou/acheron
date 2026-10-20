@@ -130,6 +130,16 @@ ScreenCapture::Status ScreenCapture::giveUpOrRetry(const QString &reason, bool c
     return Status::Stalled;
 }
 
+void ScreenCapture::suspendCardScaling()
+{
+    cardScalingResumesAt = CaptureClock::now() + std::chrono::milliseconds(CARD_SCALING_RETRY_MS);
+}
+
+bool ScreenCapture::cardScalingSuspended() const
+{
+    return cardScalingResumesAt && CaptureClock::now() < *cardScalingResumesAt;
+}
+
 #if !defined(ACHERON_WINDOWS_SCREEN_CAPTURE) && !defined(ACHERON_LINUX_SCREEN_CAPTURE)
 
 struct ScreenCapture::Backends

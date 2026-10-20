@@ -16,6 +16,7 @@ enum class VideoCodec {
     VP8,
     AV1,
 };
+constexpr size_t VIDEO_CODEC_COUNT = static_cast<size_t>(VideoCodec::AV1) + 1;
 
 // Codec names as the voice gateway spells them.
 [[nodiscard]] inline VideoCodec videoCodecFromName(const QString &name)

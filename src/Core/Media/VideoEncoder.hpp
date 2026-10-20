@@ -5,7 +5,9 @@
 #include <QString>
 
 #include <array>
+#include <chrono>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "Discord/Voice/VideoFrame.hpp"
@@ -137,6 +139,9 @@ public:
         // The picture was on the graphics card and the encoder cannot take it from there. Nothing
         // is held against the encoder: the same picture in system memory is to be sent instead.
         CardFramesRefused,
+        // An encoder that works will not take a picture of this size. Nothing was encoded, and
+        // the next picture is tried as usual.
+        SizeRefused,
         // No encoder is left that works.
         Failed,
     };
@@ -216,13 +221,20 @@ private:
     AVBSFContext *colourDescriber = nullptr;
     AVPacket *asEncoded = nullptr;
 
-    bool cardFramesRefused = false;
+    // An encoder that never took a picture on the card turns them down for good; one that had
+    // been taking them is tried with them again later, since the card may have been taken away
+    // only for a moment.
+    std::optional<std::chrono::steady_clock::time_point> cardFramesRefusedUntil;
+    quint64 cardFramesByThisEncoder = 0;
     bool keyframeWanted = false;
     bool reopenWanted = false;
     // The rate last asked for when `settings.bitrate` was last chosen.
     int bitrateChosenFor = 0;
     int awaited = 0;
     quint64 framesSinceOpen = 0;
+    // Across reopens, until another encoder takes over.
+    quint64 framesByThisEncoder = 0;
+    QSize lastEncodedSize;
     int64_t lastKeyframeAt = 0;
     EncodedFrameFinisher finisher;
 

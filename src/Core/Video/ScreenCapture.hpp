@@ -124,6 +124,7 @@ public:
     [[nodiscard]] QString captureName() const;
 
     static constexpr int RETRY_INTERVAL_MS = 250;
+    static constexpr int CARD_SCALING_RETRY_MS = 30'000;
     static constexpr int GIVE_UP_AFTER_MS = 5000;
     // How long a window's size has to hold before the picture is made anew for it, so that
     // dragging an edge does not start the encoder over at every step.
@@ -162,6 +163,11 @@ private:
     // Tries again in a while, or gives up when the source has failed for long enough, with
     // `reason`. `clockStartsOver` counts the failure as the first of a new run.
     Status giveUpOrRetry(const QString &reason, bool clockStartsOver);
+    // The card stopped scaling in the middle of this capture, which goes on in software for a
+    // while: a card that only turned down one picture, or was taken away for a moment, is
+    // tried again after.
+    void suspendCardScaling();
+    [[nodiscard]] bool cardScalingSuspended() const;
 
     Request request;
     std::unique_ptr<Backends> backends;
@@ -171,8 +177,7 @@ private:
     bool picturesWanted = true;
     std::function<bool()> stillWanted;
     bool everDelivered = false;
-    // The card stopped scaling in the middle of this capture, which goes on in software.
-    bool cardScalingFailed = false;
+    std::optional<std::chrono::steady_clock::time_point> cardScalingResumesAt;
     std::optional<std::chrono::steady_clock::time_point> failingSince;
     std::chrono::steady_clock::time_point retryAt;
     bool closed = false;

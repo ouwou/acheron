@@ -70,8 +70,11 @@ void TransportFeedback::onPacket(uint16_t transportSequence, qint64 arrivalUs)
     if (highestSequence >= 0 && std::llabs(sequence - highestSequence) > MAX_SEQUENCE_JUMP) {
         arrivals.clear();
         highestSequence = -1;
+        reportedUpTo = -1;
         sequence = unwrap(transportSequence);
     }
+    if (sequence < reportedUpTo)
+        return;
     if (sequence > highestSequence)
         highestSequence = sequence;
     arrivals.emplace(sequence, arrivalUs);
@@ -160,6 +163,7 @@ int TransportFeedback::write(std::span<uint8_t> out, uint32_t senderSsrc, uint32
         *p++ = i + 1 == padding ? static_cast<uint8_t>(padding) : 0;
 
     arrivals.erase(arrivals.begin(), next);
+    reportedUpTo = baseSequence + static_cast<qint64>(statuses.size());
     return size;
 }
 

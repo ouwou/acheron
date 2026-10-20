@@ -40,6 +40,9 @@ private:
     // Arrival time of each packet not yet reported, by unwrapped sequence number.
     std::map<qint64, qint64> arrivals;
     qint64 highestSequence = -1;
+    // Every packet before this one has been reported, as received or not. One that arrives
+    // after its report is not reported again, as libwebrtc does not.
+    qint64 reportedUpTo = -1;
     uint8_t feedbackCount = 0;
 };
 

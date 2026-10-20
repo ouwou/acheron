@@ -5,6 +5,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <optional>
 
 namespace Acheron {
 namespace Core {
@@ -24,6 +25,15 @@ const char *const MAX_DECODERS_KEY = "video/max_decoders";
 // memory. A decoder stays as it was made when what is asked of its sender changes later.
 constexpr int MOST_ASKED_OF_A_PICTURE_DECODED_IN_MEMORY = 70;
 
+// The setting, read once, since every plan asks for it.
+std::optional<int> knownMaxDecoders;
+// Every one there is, so that a change to the setting is planned for at once. The UI thread's.
+QList<CallVideo *> &allCallVideos()
+{
+    static QList<CallVideo *> instances;
+    return instances;
+}
+
 } // namespace
 
 CallVideo::CallVideo(QObject *parent)
@@ -42,21 +52,28 @@ CallVideo::CallVideo(QObject *parent)
     // Hidden tiles lose their video as time passes, with nothing else to prompt a new plan.
     expiryTimer.setInterval(1000);
     connect(&expiryTimer, &QTimer::timeout, this, &CallVideo::replan);
+    allCallVideos().append(this);
 }
 
 CallVideo::~CallVideo()
 {
+    allCallVideos().removeAll(this);
     detach();
 }
 
 int CallVideo::maxDecoders()
 {
-    return std::max(1, QSettings().value(MAX_DECODERS_KEY, DEFAULT_MAX_DECODERS).toInt());
+    if (!knownMaxDecoders)
+        knownMaxDecoders = std::max(1, QSettings().value(MAX_DECODERS_KEY, DEFAULT_MAX_DECODERS).toInt());
+    return *knownMaxDecoders;
 }
 
 void CallVideo::setMaxDecoders(int decoders)
 {
-    QSettings().setValue(MAX_DECODERS_KEY, std::max(1, decoders));
+    knownMaxDecoders = std::max(1, decoders);
+    QSettings().setValue(MAX_DECODERS_KEY, *knownMaxDecoders);
+    for (CallVideo *video : std::as_const(allCallVideos()))
+        video->scheduleReplan();
 }
 
 void CallVideo::attach(Audio::VoiceConnection *voiceConnection, Snowflake ownUserId)

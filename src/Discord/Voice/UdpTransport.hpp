@@ -61,6 +61,9 @@ private:
     quint32 ssrc = 0;
     bool discoveryPending = false;
 
+    // Through the SOCKS5 proxy, and never past it, whether or not its association is up.
+    [[nodiscard]] bool relayed() const { return proxy.type == Core::ProxyConfig::Type::Socks5; }
+
     Core::ProxyConfig proxy;
     Socks5UdpAssociation *association = nullptr;
     uint8_t relayHeader[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE] = {};

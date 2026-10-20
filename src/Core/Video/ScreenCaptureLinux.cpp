@@ -295,7 +295,7 @@ void ScreenCapture::configure(const Request &wanted)
     retryAt = {};
     closed = false;
     failed = false;
-    cardScalingFailed = false;
+    cardScalingResumesAt.reset();
     failureText.clear();
     backends = std::make_unique<Backends>();
 }
@@ -342,7 +342,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     if (!state.grabber) {
         if (waitedForRetry(retryAt))
             return Status::Stalled;
-        state.grabbedOnCard = request.keepOnCard && !cardScalingFailed && CardScaler::usable();
+        state.grabbedOnCard = request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
         state.grabber = isFromPipeWire(request.sourceId) ? PortalCapture::open(request.sourceId, request.framerate, state.grabbedOnCard) : X11Capture::open(request.sourceId, request.framerate);
         state.announced = QSize();
         state.openedAt = Clock::now();
@@ -375,6 +375,13 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         return afterFailure(AVERROR(EIO));
     }
 
+    // The source is still read, so that its pictures do not pile up, and found to be there.
+    if (!picturesWanted) {
+        av_frame_unref(captured);
+        delivered();
+        return Status::NoFrame;
+    }
+
     const bool onCard = captured->format == AV_PIX_FMT_DRM_PRIME;
     if (!onCard)
         av_frame_apply_cropping(captured, AV_FRAME_CROP_UNALIGNED);
@@ -393,8 +400,11 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         av_frame_unref(state.mapped.get());
         av_frame_unref(captured);
         if (!scaled) {
-            qCInfo(LogVideo) << "The graphics card would not take or scale the desktop's pictures of" << request.sourceId << "; capturing them into memory";
-            cardScalingFailed = true;
+            if (fillsItsPicture)
+                qCInfo(LogVideo) << "The graphics card would not take or scale the desktop's pictures of" << request.sourceId << "; capturing them into memory for a while";
+            else
+                qCInfo(LogVideo) << request.sourceId << "is smaller than is sent, which only memory can make up; capturing it into memory for a while";
+            suspendCardScaling();
             tearDown();
             return Status::NoFrame;
         }

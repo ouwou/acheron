@@ -3,6 +3,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <optional>
 
 namespace Acheron {
 namespace Discord {
@@ -216,19 +217,28 @@ static void readReportBlocks(const uint8_t *packet, size_t size, size_t blocksAt
     }
 }
 
+// Three bytes from `p`: an 18-bit mantissa under a 6-bit exponent, as REMB has it. Empty when it
+// says more than 64 bits hold.
+static std::optional<uint64_t> readPackedRate(const uint8_t *p)
+{
+    const uint64_t mantissa = (static_cast<uint64_t>(p[0] & 0x03) << 16) | (static_cast<uint64_t>(p[1]) << 8) | p[2];
+    const int exponent = p[0] >> 2;
+    const uint64_t rate = mantissa << exponent;
+    if (rate >> exponent != mantissa)
+        return std::nullopt;
+    return rate;
+}
+
 static void readReceiverEstimate(const uint8_t *p, size_t size, ReceivedRtcp &received)
 {
     if (size < RECEIVER_ESTIMATE_SIZE || size < RECEIVER_ESTIMATE_SIZE + size_t(4) * p[16] || !std::equal(p + 12, p + 16, RECEIVER_ESTIMATE_NAME))
         return;
 
-    // An 18-bit mantissa under a 6-bit exponent, which can say more than 64 bits hold.
-    const uint64_t mantissa = (static_cast<uint64_t>(p[17] & 0x03) << 16) | (static_cast<uint64_t>(p[18]) << 8) | p[19];
-    const int exponent = p[17] >> 2;
-    const uint64_t rate = mantissa << exponent;
-    if (rate >> exponent != mantissa)
+    const std::optional<uint64_t> rate = readPackedRate(p + 17);
+    if (!rate)
         return;
     received.hasReceiverEstimate = true;
-    received.receiverEstimateBitsPerSecond = std::max(received.receiverEstimateBitsPerSecond, rate);
+    received.receiverEstimateBitsPerSecond = std::max(received.receiverEstimateBitsPerSecond, *rate);
 }
 
 ReceivedRtcp parseRtcp(std::span<const uint8_t> compound)
@@ -259,11 +269,11 @@ ReceivedRtcp parseRtcp(std::span<const uint8_t> compound)
         } else if (p[1] == TYPE_RECEIVER_REPORT) {
             readReportBlocks(p, size, RECEIVER_REPORT_BLOCKS_AT, received.receptionReports);
         } else if (p[1] == TYPE_APPLICATION && size >= INBOUND_ESTIMATE_SIZE && std::equal(p + 8, p + 12, INBOUND_ESTIMATE_NAME)) {
-            // The rate is an 18-bit mantissa under a 6-bit exponent, as in REMB.
-            const uint32_t rate = (static_cast<uint32_t>(p[20]) << 16) | (static_cast<uint32_t>(p[21]) << 8) | p[22];
-            received.hasInboundEstimate = true;
-            received.inboundBitsPerSecond = static_cast<uint64_t>(rate & 0x3FFFF) << (rate >> 18);
-            received.inboundLoss = p[23] / 256.0;
+            if (const std::optional<uint64_t> rate = readPackedRate(p + 20)) {
+                received.hasInboundEstimate = true;
+                received.inboundBitsPerSecond = *rate;
+                received.inboundLoss = p[23] / 256.0;
+            }
         } else if (p[1] == TYPE_APPLICATION && size >= APPLICATION_HEADER_SIZE && std::equal(p + 8, p + 12, RECEIVER_COUNT_NAME)) {
             received.receiverCounts.push_back({ qFromBigEndian<uint32_t>(p + 4), p[0] & 0x1F });
         } else if (p[1] == TYPE_APPLICATION && size >= APPLICATION_HEADER_SIZE && std::equal(p + 8, p + 12, VIDEO_RESET_NAME)) {

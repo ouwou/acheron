@@ -468,7 +468,9 @@ bool CardScaler::Card::build(const AVFrame *from)
 
     refused = "it made no video processor";
     source = avfilter_graph_alloc_filter(graph, avfilter_get_by_name("buffer"), "in");
-    AVBufferSrcParameters *parameters = av_buffersrc_parameters_alloc();
+    AVBufferSrcParameters *parameters = source ? av_buffersrc_parameters_alloc() : nullptr;
+    if (!parameters)
+        return false;
     parameters->format = AV_PIX_FMT_VAAPI;
     parameters->width = from->width;
     parameters->height = from->height;

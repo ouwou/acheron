@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 #include "Discord/Voice/VideoFrame.hpp"
@@ -143,7 +144,12 @@ private:
     const char *hardwareName = nullptr;
     bool hardwareAllowed;
     int softwareThreads;
-    bool hardwareRuledOut = false;
+    // After its hardware decoder failed on a frame, this decoder decodes in software until then.
+    std::optional<std::chrono::steady_clock::time_point> hardwareRuledOutUntil;
+    // Whether the hardware decoder now open has got through its trial.
+    bool hardwareProven = false;
+    // A codec no decoder could be opened for, whose frames are dropped until another comes.
+    std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
 

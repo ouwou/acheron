@@ -110,6 +110,12 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
     quint64 bytesLately = 0;
 
     while (thread.isCurrent(session)) {
+        // An encoder that turned pictures on the card down for a while takes them again.
+        if (!request.keepOnCard && encoder.takesCardFrames()) {
+            request.keepOnCard = true;
+            screen.configure(request);
+        }
+
         // With nobody watching, a picture is only wanted for a preview.
         const bool suspendedNow = suspended;
         const bool pictureWanted = !suspendedNow || !announcedSize.isValid() || !sincePreview.isValid() || sincePreview.elapsed() >= PREVIEW_INTERVAL_MS;
@@ -193,6 +199,8 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
                 emit pipeline->failed(noEncoderFor(settings.codec));
                 return;
             }
+            if (outcome == Media::VideoEncoder::Outcome::SizeRefused && size != announcedSize)
+                qCInfo(LogVideo) << "The encoder will not take" << size << "; nothing is sent until the source changes size again";
         }
         wasSuspended = suspendedNow;
 

@@ -386,7 +386,10 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         if (keyframeWanted[static_cast<size_t>(index)].exchange(false) || std::exchange(layer.wasSuspended, false))
             layer.encoder->requestKeyframe();
         encoded.clear();
-        if (layer.encoder->encode(picture, timestamp, encoded) != Media::VideoEncoder::Outcome::Encoded) {
+        const Media::VideoEncoder::Outcome outcome = layer.encoder->encode(picture, timestamp, encoded);
+        if (outcome == Media::VideoEncoder::Outcome::SizeRefused)
+            return true;
+        if (outcome != Media::VideoEncoder::Outcome::Encoded) {
             emit pipeline->failed(noEncoder);
             return false;
         }
