@@ -250,7 +250,7 @@ void TestX11Capture::screensAreListedTheSameEveryTime()
     QVERIFY(!screens.isEmpty());
     for (int i = 0; i < screens.size(); i++) {
         qInfo() << screens[i].id << screens[i].name << screens[i].geometry;
-        QCOMPARE(screens[i].id, QStringLiteral("screen:%1").arg(i));
+        QVERIFY(screens[i].id.size() > QStringLiteral("screen:").size() && screens[i].id.startsWith(QStringLiteral("screen:")));
         QCOMPARE(screens[i].name, QStringLiteral("Screen %1").arg(i + 1));
         QCOMPARE(screens[i].kind, CaptureSource::Kind::Screen);
         QCOMPARE(screens[i].processId, 0u);
@@ -869,9 +869,9 @@ void TestX11Capture::aClosedWindowEndsItsCapture()
 void TestX11Capture::aSourceThatIsNotThereFails_data()
 {
     QTest::addColumn<QString>("id");
-    QTest::newRow("a screen past the last") << QStringLiteral("screen:99");
-    QTest::newRow("a screen before the first") << QStringLiteral("screen:-1");
-    QTest::newRow("a screen without a number") << QStringLiteral("screen:");
+    QTest::newRow("a screen that is not attached") << QStringLiteral("screen:NOT-ATTACHED-1");
+    QTest::newRow("a screen by its old number") << QStringLiteral("screen:0");
+    QTest::newRow("a screen without a name") << QStringLiteral("screen:");
     QTest::newRow("a window that was never opened") << (connection ? QStringLiteral("window:%1").arg(xcb_generate_id(connection)) : QString());
     QTest::newRow("no window") << QStringLiteral("window:0");
     QTest::newRow("neither") << QStringLiteral("pipewire:1");

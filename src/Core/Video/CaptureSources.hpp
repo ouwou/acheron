@@ -22,7 +22,7 @@ struct CaptureSource
         Window,
     };
 
-    // "screen:<n>", where n is stable for as long as the monitors stay as they are, or
+    // "screen:<output name>", which stays the same screen while others come and go, or
     // "window:<handle>".
     QString id;
     Kind kind = Kind::Screen;

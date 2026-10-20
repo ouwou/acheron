@@ -2611,7 +2611,9 @@ void TestVideoEncode::screensAreListedWithThumbnails()
 
     const QSize bound(320, 180);
     for (int i = 0; i < sources.size(); i++) {
-        QCOMPARE(sources[i].id, QStringLiteral("screen:%1").arg(i));
+        QVERIFY(sources[i].id.size() > QStringLiteral("screen:").size() && sources[i].id.startsWith(QStringLiteral("screen:")));
+        for (int j = 0; j < i; j++)
+            QVERIFY(sources[j].id != sources[i].id);
         QVERIFY(!sources[i].name.isEmpty());
         QVERIFY(sources[i].geometry.width() >= 320 && sources[i].geometry.height() >= 200);
 

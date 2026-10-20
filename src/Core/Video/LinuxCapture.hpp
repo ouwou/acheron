@@ -45,7 +45,7 @@ public:
 };
 
 // An X11 display's screens and windows, listed through xcb and captured by ffmpeg's x11grab.
-// Source ids are "screen:<n>" and "window:<id>".
+// Source ids are "screen:<RandR monitor name>" and "window:<id>".
 namespace X11Capture {
 
 // False without an X server that shows the desktop: none at all, or Xwayland.

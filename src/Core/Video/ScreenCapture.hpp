@@ -159,6 +159,9 @@ private:
     void tearDown();
     void delivered();
     Status afterFailure(int error);
+    // Tries again in a while, or gives up when the source has failed for long enough, with
+    // `reason`. `clockStartsOver` counts the failure as the first of a new run.
+    Status giveUpOrRetry(const QString &reason, bool clockStartsOver);
 
     Request request;
     std::unique_ptr<Backends> backends;

@@ -37,6 +37,11 @@ public:
         // What everything else is playing.
         AllButProcessTree,
     };
+    struct Target
+    {
+        quint32 processId = 0;
+        Scope scope = Scope::ProcessTree;
+    };
 
     explicit LoopbackCapture(QObject *parent = nullptr);
     ~LoopbackCapture() override;

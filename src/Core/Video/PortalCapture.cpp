@@ -2,6 +2,7 @@
 
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
 #include "Core/Media/FfmpegPointers.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 #include "Core/Media/PipeWireLibrary.hpp"
 
 #include <QCoreApplication>
@@ -244,7 +245,7 @@ public:
                 close();
         });
         deadline.setSingleShot(true);
-        connect(&deadline, &QTimer::timeout, this, [this] { fail(QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop did not answer when asked what to share.")); });
+        connect(&deadline, &QTimer::timeout, this, [this] { fail(captureText("The desktop did not answer when asked what to share.")); });
     }
 
     void begin()
@@ -271,7 +272,7 @@ private slots:
         if (!receiver || response == CALLED_OFF_BY_THE_USER)
             return fail(QString());
         if (response != 0)
-            return fail(QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop did not hand anything over to share."));
+            return fail(captureText("The desktop did not hand anything over to share."));
 
         const QVariant session = QVariant::fromValue(QDBusObjectPath(handle));
         if (step == Step::CreateSession) {
@@ -290,7 +291,7 @@ private slots:
         if (source)
             source->closed = true;
         else
-            fail(QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop ended the sharing before it began."));
+            fail(captureText("The desktop ended the sharing before it began."));
     }
 
 private:
@@ -342,7 +343,7 @@ private:
             finished->deleteLater();
             const QDBusPendingReply<QDBusObjectPath> reply = *finished;
             if (reply.isError())
-                fail(QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop could not be asked what to share (%1).").arg(reply.error().message()));
+                fail(captureText("The desktop could not be asked what to share (%1).").arg(reply.error().message()));
             // A portal older than 0.9 names its requests itself.
             else if (request == expected && reply.value().path() != expected)
                 listenTo(reply.value().path());
@@ -363,7 +364,7 @@ private:
             if (!receiver || !chosen || remote < 0 || stream.node == 0) {
                 if (remote >= 0)
                     ::close(remote);
-                return fail(receiver ? QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop did not hand its pictures over.") : QString());
+                return fail(receiver ? captureText("The desktop did not hand its pictures over.") : QString());
             }
 
             source = std::make_shared<Source>();
@@ -375,7 +376,7 @@ private:
             CaptureSource picked;
             picked.id = registered(source);
             picked.kind = kind;
-            picked.name = kind == CaptureSource::Kind::Window ? QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "Window") : QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "Screen");
+            picked.name = kind == CaptureSource::Kind::Window ? captureText("Window") : captureText("Screen");
             picked.geometry = QRect(QPoint(0, 0), stream.size);
             finish(picked, QString(), nextToken);
         });
@@ -806,11 +807,11 @@ public:
                 return Result::Closed;
             // A stream's first consumer settles its buffers for every other, whatever those offer.
             if (pictures->memory == SPA_DATA_DmaBuf && !pictures->takesCardBuffers) {
-                failureText = QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "Another program has the desktop keep these pictures on the graphics card.");
+                failureText = captureText("Another program has the desktop keep these pictures on the graphics card.");
                 return Result::Failed;
             }
             if (!connected || pictures->ended || (!pictures->streamed && now - opened > START_LIMIT)) {
-                failureText = pictures->error.isEmpty() ? QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop is not sending its pictures.") : QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The desktop is not sending its pictures (%1).").arg(pictures->error);
+                failureText = pictures->error.isEmpty() ? captureText("The desktop is not sending its pictures.") : captureText("The desktop is not sending its pictures (%1).").arg(pictures->error);
                 return Result::Failed;
             }
             if (pictures->newest && now >= due)

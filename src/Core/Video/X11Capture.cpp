@@ -3,9 +3,9 @@
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 
 #include <QByteArray>
-#include <QCoreApplication>
 
 #include <algorithm>
 #include <cstdlib>
@@ -177,17 +177,30 @@ std::vector<xcb_randr_monitor_info_t> monitorsOf(const Display &display)
     return monitors;
 }
 
-std::vector<QRect> screenAreas(const Display &display)
+QByteArray monitorName(const Display &display, const xcb_randr_monitor_info_t &monitor)
 {
-    std::vector<QRect> areas;
+    const Reply<xcb_get_atom_name_reply_t> name(xcb_get_atom_name_reply(display, xcb_get_atom_name(display, monitor.name), nullptr));
+    return name ? QByteArray(xcb_get_atom_name_name(name.get()), xcb_get_atom_name_name_length(name.get())) : QByteArray();
+}
+
+// A screen by the name of the output it is on, which stays its own while others come and go.
+struct ScreenArea
+{
+    QString name;
+    QRect area;
+};
+
+std::vector<ScreenArea> screenAreas(const Display &display)
+{
+    std::vector<ScreenArea> areas;
     for (const xcb_randr_monitor_info_t &monitor : monitorsOf(display))
-        areas.push_back(QRect(monitor.x, monitor.y, monitor.width, monitor.height));
+        areas.push_back({ QString::fromLatin1(monitorName(display, monitor)), QRect(monitor.x, monitor.y, monitor.width, monitor.height) });
     if (!areas.empty())
         return areas;
 
     const Reply<xcb_get_geometry_reply_t> whole(xcb_get_geometry_reply(display, xcb_get_geometry(display, display.root), nullptr));
     if (whole)
-        areas.push_back(QRect(0, 0, whole->width, whole->height));
+        areas.push_back({ QStringLiteral("root"), QRect(0, 0, whole->width, whole->height) });
     return areas;
 }
 
@@ -200,8 +213,7 @@ bool isXwayland(const Display &display)
         return true;
 
     for (const xcb_randr_monitor_info_t &monitor : monitorsOf(display)) {
-        const Reply<xcb_get_atom_name_reply_t> name(xcb_get_atom_name_reply(display, xcb_get_atom_name(display, monitor.name), nullptr));
-        if (name && QByteArray(xcb_get_atom_name_name(name.get()), xcb_get_atom_name_name_length(name.get())).startsWith("XWAYLAND"))
+        if (monitorName(display, monitor).startsWith("XWAYLAND"))
             return true;
     }
     return false;
@@ -357,19 +369,18 @@ Grabber::Grabber(const QString &sourceId, int framerate) : display(connectToDisp
         return;
     }
 
-    const std::vector<QRect> screens = screenAreas(display);
-    bool numbered = false;
-    const int number = sourceId.mid(SCREEN_ID_PREFIX.size()).toInt(&numbered);
-    if (sourceId.startsWith(SCREEN_ID_PREFIX) && numbered && number >= 0 && number < static_cast<int>(screens.size()))
-        screen = screens[static_cast<size_t>(number)];
-    else
+    for (const ScreenArea &each : screenAreas(display)) {
+        if (!each.name.isEmpty() && sourceId == SCREEN_ID_PREFIX + each.name)
+            screen = each.area;
+    }
+    if (screen.isEmpty())
         fail(AVERROR(ENODEV));
 }
 
 LinuxGrabber::Result Grabber::fail(int error)
 {
     input.reset();
-    const QString reason = window ? QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The window can no longer be captured (%1).") : QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "The screen can no longer be captured (%1).");
+    const QString reason = window ? captureText("The window can no longer be captured (%1).") : captureText("The screen can no longer be captured (%1).");
     failureText = reason.arg(describeError(error));
     return Result::Failed;
 }
@@ -510,12 +521,12 @@ QList<CaptureSource> screens()
     const Display display = connectToDisplay();
     if (!display)
         return sources;
-    const std::vector<QRect> areas = screenAreas(display);
+    const std::vector<ScreenArea> areas = screenAreas(display);
     for (size_t i = 0; i < areas.size(); i++) {
         CaptureSource source;
-        source.id = SCREEN_ID_PREFIX + QString::number(i);
-        source.name = QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", "Screen %1").arg(i + 1);
-        source.geometry = areas[i];
+        source.id = SCREEN_ID_PREFIX + areas[i].name;
+        source.name = captureText("Screen %1").arg(i + 1);
+        source.geometry = areas[i].area;
         sources.append(source);
     }
     return sources;

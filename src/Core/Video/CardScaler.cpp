@@ -32,16 +32,25 @@ namespace Acheron {
 namespace Core {
 namespace Video {
 
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(ACHERON_HAVE_AVFILTER)
 
 namespace {
 
+// Whether the card has scaled a picture, or refused to in a way it will go on refusing.
 enum class Verdict {
     Untried,
     Works,
     RuledOut,
 };
 std::atomic<Verdict> verdict{ Verdict::Untried };
+
+} // namespace
+
+#endif
+
+#ifdef Q_OS_WIN
+
+namespace {
 
 // A window that moves from screen to screen brings a size of texture with every screen.
 constexpr size_t MOST_PROCESSORS = 4;
@@ -379,17 +388,6 @@ bool CardScaler::scale(const AVFrame *from, const QRect &area, const Output &out
 }
 
 #elif defined(ACHERON_HAVE_AVFILTER)
-
-namespace {
-
-enum class Verdict {
-    Untried,
-    Works,
-    RuledOut,
-};
-std::atomic<Verdict> verdict{ Verdict::Untried };
-
-} // namespace
 
 struct CardScaler::Card
 {

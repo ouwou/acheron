@@ -6,11 +6,11 @@
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Media/RgbScaler.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/LinuxCapture.hpp"
 #include "Core/Video/PictureConverter.hpp"
 
-#include <QCoreApplication>
 #include <QSettings>
 
 #include <algorithm>
@@ -29,7 +29,7 @@ namespace Video {
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
+using Clock = CaptureClock;
 
 const QLatin1String PORTAL_SCREEN_ID("portal:screen");
 const QLatin1String PORTAL_WINDOW_ID("portal:window");
@@ -39,28 +39,9 @@ const char *const PORTAL_SCREEN_TOKEN_KEY = "video/portal_screen_token";
 const char *const PORTAL_WINDOW_TOKEN_KEY = "video/portal_window_token";
 const QLatin1String PIPEWIRE_ID_PREFIX("pipewire:");
 const QLatin1String WINDOW_ID_PREFIX("window:");
-constexpr int STALLED_WAIT_MS = 50;
-constexpr int NOTHING_NEW_WAIT_MS = 25;
-constexpr QSize SMALLEST_WINDOW_PICTURE(160, 120);
-
-using Media::FramePointer;
-
-QString inContext(const char *text)
-{
-    return QCoreApplication::translate("Acheron::Core::Video::BroadcastPipeline", text);
-}
 
 using Media::describeError;
-
-QSize evenSize(const QSize &size)
-{
-    return QSize(std::max(2, size.width() & ~1), std::max(2, size.height() & ~1));
-}
-
-QSize pictureSizeFor(const QSize &own)
-{
-    return evenSize(own).expandedTo(SMALLEST_WINDOW_PICTURE);
-}
+using Media::FramePointer;
 
 bool isFromPipeWire(const QString &sourceId)
 {
@@ -77,7 +58,7 @@ CaptureSource chosenInTheDesktopsDialog(CaptureSource::Kind kind)
     CaptureSource choice;
     choice.kind = kind;
     choice.id = kind == CaptureSource::Kind::Window ? PORTAL_WINDOW_ID : PORTAL_SCREEN_ID;
-    choice.name = kind == CaptureSource::Kind::Window ? inContext("Window") : inContext("Screen");
+    choice.name = kind == CaptureSource::Kind::Window ? captureText("Window") : captureText("Screen");
     return choice;
 }
 
@@ -101,24 +82,9 @@ QList<CaptureSource> offeredByTheDesktop(CaptureSource::Kind kind)
 
     CaptureSource again = offered.first();
     again.id = kind == CaptureSource::Kind::Window ? PORTAL_WINDOW_AGAIN_ID : PORTAL_SCREEN_AGAIN_ID;
-    again.name = kind == CaptureSource::Kind::Window ? inContext("Window shared last time") : inContext("Screen shared last time");
+    again.name = kind == CaptureSource::Kind::Window ? captureText("Window shared last time") : captureText("Screen shared last time");
     offered.append(again);
     return offered;
-}
-
-bool waitedForRetry(Clock::time_point retryAt)
-{
-    const auto now = Clock::now();
-    if (now >= retryAt)
-        return false;
-    std::this_thread::sleep_for(std::min<Clock::duration>(retryAt - now, std::chrono::milliseconds(STALLED_WAIT_MS)));
-    return true;
-}
-
-void markColours(AVFrame *picture, bool bt601)
-{
-    picture->colorspace = bt601 ? AVCOL_SPC_SMPTE170M : AVCOL_SPC_BT709;
-    picture->color_range = AVCOL_RANGE_MPEG;
 }
 
 AVPixelFormat formatOfFourcc(uint32_t fourcc)
@@ -315,7 +281,7 @@ QSize encodeSizeOf(const CaptureSource &source, int maxHeight)
     if (isChosenByTheDesktop(source))
         return {};
     const QSize own = isFromPipeWire(source.id) ? PortalCapture::sizeOf(source) : X11Capture::sizeOf(source);
-    return own.isEmpty() ? QSize() : encodeSizeFor(pictureSizeFor(own), maxHeight);
+    return own.isEmpty() ? QSize() : encodeSizeFor(windowPictureSize(own), maxHeight);
 }
 
 ScreenCapture::ScreenCapture() : backends(std::make_unique<Backends>()) {}
@@ -359,21 +325,10 @@ void ScreenCapture::tearDown()
 
 ScreenCapture::Status ScreenCapture::afterFailure(int error)
 {
-    const QString reason = backends->lastFailure.isEmpty() ? inContext("The screen can no longer be captured (%1).").arg(describeError(error)) : backends->lastFailure;
+    const QString reason = backends->lastFailure.isEmpty() ? captureText("The screen can no longer be captured (%1).").arg(describeError(error)) : backends->lastFailure;
     backends->lastFailure.clear();
     tearDown();
-
-    const auto now = Clock::now();
-    if (!failingSince)
-        failingSince = now;
-    if (now - *failingSince >= std::chrono::milliseconds(GIVE_UP_AFTER_MS)) {
-        failed = true;
-        failureText = reason;
-        qCWarning(LogVideo) << "Giving up on capturing" << request.sourceId << ":" << reason;
-        return Status::Failed;
-    }
-    retryAt = now + std::chrono::milliseconds(RETRY_INTERVAL_MS);
-    return Status::Stalled;
+    return giveUpOrRetry(reason, false);
 }
 
 ScreenCapture::Status ScreenCapture::read(AVFrame *into)
@@ -424,7 +379,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     if (!onCard)
         av_frame_apply_cropping(captured, AV_FRAME_CROP_UNALIGNED);
     const QSize ownSize(captured->width - static_cast<int>(captured->crop_left + captured->crop_right), captured->height - static_cast<int>(captured->crop_top + captured->crop_bottom));
-    const QSize pictureSize = pictureSizeFor(ownSize);
+    const QSize pictureSize = windowPictureSize(ownSize);
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
     const bool bt601 = request.bt601Only || !Media::usesBt709AtHeight(size.height());
     const bool fillsItsPicture = ownSize.width() >= pictureSize.width() && ownSize.height() >= pictureSize.height();

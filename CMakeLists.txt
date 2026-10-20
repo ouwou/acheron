@@ -442,6 +442,8 @@ if(ENABLE_VOICE)
             src/Core/Media/VideoEncoder.cpp
             src/Core/Media/H264Sps.cpp
             src/Core/Audio/LoopbackCapture.cpp
+            src/Core/Audio/LoopbackCaptureWindows.cpp
+            src/Core/Audio/LoopbackCapturePipeWire.cpp
             src/Core/Streams/StreamConnection.cpp
             src/Core/Video/ScreenPipeline.cpp
             src/Core/Video/EncodePipeline.cpp
@@ -454,7 +456,15 @@ if(ENABLE_VOICE)
             src/UI/Video/VideoSurface.cpp
         )
         if(WIN32)
-            list(APPEND MEDIA_ENGINE_SOURCES src/UI/Video/D3D11GlBridge.cpp)
+            list(APPEND MEDIA_ENGINE_SOURCES
+                src/UI/Video/D3D11GlBridge.cpp
+                src/Core/Video/ScreenCaptureWindows.cpp
+                src/Core/Video/Windows/CardPictures.cpp
+                src/Core/Video/Windows/GraphicsCaptureSession.cpp
+                src/Core/Video/Windows/Monitors.cpp
+                src/Core/Video/Windows/WindowDrawer.cpp
+                src/Core/Video/Windows/WindowQueries.cpp
+            )
         endif()
         if(UNIX AND NOT APPLE)
             list(APPEND MEDIA_ENGINE_SOURCES
