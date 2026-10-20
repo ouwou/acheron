@@ -44,15 +44,26 @@ void VideoReceiver::noteArrival(uint32_t timestamp, qint64 nowMs)
     haveTransit = true;
 }
 
-void VideoReceiver::insert(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, bool retransmission)
+void VideoReceiver::insert(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, Arrival arrival)
 {
     if (!payload || payload->size() == 0)
         return;
+    counters.bytes += static_cast<quint64>(payload->size());
+    take(sequence, timestamp, marker, std::move(payload), nowMs, arrival);
+}
+
+void VideoReceiver::skip(uint16_t sequence, uint32_t timestamp, qint64 nowMs)
+{
+    take(sequence, timestamp, false, {}, nowMs, Arrival::FirstTime);
+}
+
+void VideoReceiver::take(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, Arrival arrival)
+{
+    const bool retransmission = arrival == Arrival::Retransmitted;
     lastPacketMs = nowMs;
 
     qint64 unwrapped = unwrap(sequence);
     counters.packets++;
-    counters.bytes += static_cast<quint64>(payload->size());
 
     const bool farFromExpected = highestSequence >= 0 && std::abs(unwrapped - highestSequence) > MAX_SEQUENCE_JUMP;
     const bool continuesNewNumbering = farFromExpected && sequenceAfterFarPacket == sequence;
@@ -99,12 +110,12 @@ void VideoReceiver::insert(uint16_t sequence, uint32_t timestamp, bool marker, P
     // The frame begins at its first packet, which may come before this one: senders put
     // delimiters and the like ahead of the parameter sets.
     qint64 frameStart = unwrapped;
-    for (auto earlier = held.find(frameStart - 1); earlier != held.end() && earlier->second.timestamp == timestamp; earlier = held.find(frameStart - 1))
+    for (auto earlier = held.find(frameStart - 1); earlier != held.end() && earlier->second.payload && earlier->second.timestamp == timestamp; earlier = held.find(frameStart - 1))
         frameStart--;
     // A packet that starts the picture but brings no parameter sets is only taken as the
     // start when the packet before it is here to show that nothing of the frame was missed.
     // Right after subscribing, the parameter sets may have gone by already.
-    const bool startKnown = startsWithParameterSets(videoCodec, payload->bytes()) || held.count(frameStart - 1);
+    const bool startKnown = payload && (startsWithParameterSets(videoCodec, payload->bytes()) || held.count(frameStart - 1));
 
     if (keyframeWanted && startKnown && startsKeyframe(videoCodec, payload->bytes())) {
         keyframeWanted = false;
@@ -147,6 +158,11 @@ void VideoReceiver::assemble()
         auto first = held.find(nextSequence);
         if (first == held.end())
             return;
+        if (!first->second.payload) {
+            held.erase(first);
+            nextSequence++;
+            continue;
+        }
 
         // A frame is every packet sharing a timestamp; its last one carries the marker.
         payloads.clear();
@@ -155,7 +171,7 @@ void VideoReceiver::assemble()
         for (auto it = first; it != held.end(); ++it) {
             if (it->first != nextSequence + static_cast<qint64>(payloads.size()))
                 return;
-            if (it->second.timestamp != first->second.timestamp) {
+            if (!it->second.payload || it->second.timestamp != first->second.timestamp) {
                 complete = true;
                 break;
             }

@@ -289,13 +289,13 @@ struct Written
 
     [[nodiscard]] uint16_t transportSequence() const
     {
-        const Bytes value = extension(VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION);
+        const Bytes value = extension(TRANSPORT_SEQUENCE_EXTENSION);
         return value.size() == 2 ? qFromBigEndian<uint16_t>(value.data()) : 0;
     }
 
     [[nodiscard]] uint32_t sendTime() const
     {
-        const Bytes value = extension(VideoSendStream::ABS_SEND_TIME_EXTENSION);
+        const Bytes value = extension(ABS_SEND_TIME_EXTENSION);
         return value.size() == 3 ? (uint32_t(value[0]) << 16) | (uint32_t(value[1]) << 8) | value[2] : 0xFFFFFFFF;
     }
 };
@@ -1207,9 +1207,9 @@ void TestVideoSend::packetsAreNumberedMarkedAndExtended()
         QVERIFY(packet.header.extension);
         QCOMPARE(packet.clearSize, VideoSendStream::CLEAR_SIZE);
         QCOMPARE(packet.extensions.size(), size_t(VideoSendStream::EXTENSIONS_SIZE));
-        QCOMPARE(packet.extension(VideoSendStream::TRANSMISSION_OFFSET_EXTENSION), (Bytes{ 0, 0, 0 }));
-        QCOMPARE(packet.extension(VideoSendStream::ABS_SEND_TIME_EXTENSION).size(), size_t(3));
-        QCOMPARE(packet.extension(VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION).size(), size_t(2));
+        QCOMPARE(packet.extension(TRANSMISSION_OFFSET_EXTENSION), (Bytes{ 0, 0, 0 }));
+        QCOMPARE(packet.extension(ABS_SEND_TIME_EXTENSION).size(), size_t(3));
+        QCOMPARE(packet.extension(TRANSPORT_SEQUENCE_EXTENSION).size(), size_t(2));
         // Nothing but those three: no MID, no RID.
         for (uint8_t other : { 1, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14 })
             QVERIFY(packet.extension(other).empty());
@@ -1309,12 +1309,12 @@ void TestVideoSend::noPacketIsLargerThanTheLimit()
     const std::vector<Written> repeated = drain(sender, 0);
     QCOMPARE(repeated.size(), packets.size());
     for (size_t i = 0; i < repeated.size(); i++) {
-        QCOMPARE(repeated[i].size, packets[i].size + VideoSendStream::RTX_HEADER_SIZE);
+        QCOMPARE(repeated[i].size, packets[i].size + RTX_HEADER_SIZE);
         QVERIFY(repeated[i].size <= VideoSendStream::MAX_PACKET_SIZE);
         QCOMPARE(repeated[i].header.payloadType, RTX_PAYLOAD_TYPE);
         QCOMPARE(repeated[i].header.marker, packets[i].header.marker);
         QCOMPARE(qFromBigEndian<uint16_t>(repeated[i].payload.data()), packets[i].header.sequence);
-        QCOMPARE(Bytes(repeated[i].payload.begin() + VideoSendStream::RTX_HEADER_SIZE, repeated[i].payload.end()), packets[i].payload);
+        QCOMPARE(Bytes(repeated[i].payload.begin() + RTX_HEADER_SIZE, repeated[i].payload.end()), packets[i].payload);
     }
 
     Bytes reassembled;

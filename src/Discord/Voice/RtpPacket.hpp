@@ -61,6 +61,14 @@ struct RtpExtension
     std::span<const uint8_t> value;
 };
 
+// The header extensions every video packet carries, by the ids Discord gives them.
+inline constexpr uint8_t TRANSMISSION_OFFSET_EXTENSION = 2;
+inline constexpr uint8_t ABS_SEND_TIME_EXTENSION = 3;
+inline constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
+
+// A retransmission's payload opens with the sequence number the packet first had (RFC 4588).
+inline constexpr int RTX_HEADER_SIZE = 2;
+
 // Looks one element up in a block of one-byte-form extension elements (RFC 8285).
 [[nodiscard]] std::span<const uint8_t> findRtpExtension(std::span<const uint8_t> elements, uint8_t id);
 

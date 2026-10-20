@@ -293,8 +293,7 @@ void VideoSendStream::onReceptionReport(const ReceptionReport &report, qint64 no
     const auto answered = std::find_if(sentReports.begin(), sentReports.end(), [&report](const SentReport &sent) { return sent.compactNtp == report.lastSenderReport; });
     if (answered == sentReports.end())
         return;
-    // The receiver says how long it held the report, in units of 1/65536 of a second.
-    const qint64 heldUs = static_cast<qint64>(report.delaySinceLastSenderReport) * 1000000 / 65536;
+    const qint64 heldUs = fromCompactNtpDelay(report.delaySinceLastSenderReport);
     counters.roundTripMs = static_cast<int>(std::max<qint64>(0, nowUs - answered->sentUs - heldUs) / 1000);
 }
 

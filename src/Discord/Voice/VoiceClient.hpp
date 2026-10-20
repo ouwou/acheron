@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QElapsedTimer>
 #include <QHash>
 #include <QObject>
 #include <QSet>
@@ -11,18 +10,15 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <span>
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "PacketBuffer.hpp"
 #include "RtpPacket.hpp"
-#include "SendSideEstimator.hpp"
 #include "SinkWants.hpp"
-#include "TransportFeedback.hpp"
-#include "VideoReceiver.hpp"
+#include "VideoFrame.hpp"
 #include "VoiceEnums.hpp"
 #include "VoiceEntities.hpp"
 
@@ -34,7 +30,6 @@ class VoiceGateway;
 class UdpTransport;
 class VoiceEncryption;
 class DaveSession;
-class VideoSendStream;
 
 // What one connection has received of remote video, summed over its senders.
 struct VideoReceiveStats
@@ -245,107 +240,41 @@ signals:
 
 private slots:
     void onGatewayConnected();
-    void onGatewayDisconnected(VoiceCloseCode code, const QString &reason);
-    void onGatewayReady(const VoiceReady &data);
-    void onSessionDescription(const SessionDescription &desc);
-    void onSessionUpdated(const SessionUpdate &update);
-    void onMediaSinkWants(const MediaSinkWants &wants);
-    void onSpeaking(const SpeakingData &data);
+    void onGatewayDisconnected(Acheron::Discord::Voice::VoiceCloseCode code, const QString &reason);
+    void onGatewayReady(const Acheron::Discord::Voice::VoiceReady &data);
+    void onSessionDescription(const Acheron::Discord::Voice::SessionDescription &desc);
+    void onSessionUpdated(const Acheron::Discord::Voice::SessionUpdate &update);
+    void onMediaSinkWants(const Acheron::Discord::Voice::MediaSinkWants &wants);
+    void onSpeaking(const Acheron::Discord::Voice::SpeakingData &data);
     void onClientsConnect(const QStringList &userIds);
-    void onClientConnect(const ClientConnectData &data);
-    void onClientDisconnect(Core::Snowflake userId);
+    void onClientConnect(const Acheron::Discord::Voice::ClientConnectData &data);
+    void onClientDisconnect(Acheron::Core::Snowflake userId);
     void onGatewayResumed();
     void onIpDiscovered(const QString &ip, int port);
     void onIpDiscoveryFailed(const QString &error);
     void onRelayLost(const QString &error);
 
 private:
+    class VideoReceivePath;
+    class VideoSendPath;
+
     void setState(State state);
     void sendSilence();
     void cleanupTransport();
-    void cleanupVideo();
-    void readVideoPayloadTypes();
     void ensureDaveSession(uint16_t protocolVersion);
 
     void onPacket(PacketPool::Handle packet);
     void receiveRtcp(PacketPool::Handle packet);
     void receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet);
-    // Takes the packet's place in the server's numbering of everything it sends this way,
-    // from its decrypted header extensions, for the feedback that goes back.
     void noteTransportSequence(std::span<const uint8_t> extensions);
     // Replaces the packet with its end-to-end decrypted contents.
     bool daveDecryptAudio(quint32 ssrc, PacketPool::Handle &packet);
 
-    struct RemoteVideo
-    {
-        Core::Snowflake userId;
-        quint32 rtxSsrc = 0;
-        std::unique_ptr<VideoReceiver> receiver;
-    };
-
-    void receiveVideo(const ParsedRtp &rtp, PacketPool::Handle packet, VideoCodec codec, bool retransmission);
-    void deliverVideoFrames(quint32 ssrc, RemoteVideo &video);
-    bool daveDecryptVideo(quint32 ssrc, std::vector<uint8_t> &frame);
-    void applyRemoteVideo(const ClientConnectData &data);
-    void removeRemoteVideo(Core::Snowflake userId);
-    void planSingleSenders();
-    void applyVideoPlan();
-    void startVideoTimer();
-    void onVideoTick();
-    void sendVideoWants();
-
-    // One encoding of the video this client sends, on SSRCs of its own. A stream's connection
-    // has one. A voice connection's camera has the full picture, and may have a second beside
-    // it.
-    struct LocalVideoLayer
-    {
-        int quality = FULL_QUALITY;
-        quint32 ssrc = 0;
-        quint32 rtxSsrc = 0;
-        std::unique_ptr<VideoSendStream> sender;
-        // What the layer is being encoded at, once its sender has said. Zero until then,
-        // when the most that was announced for it stands in.
-        int bitrate = 0;
-        // Negative until the server has said.
-        int receivers = -1;
-        // Something of the layer did not go out (there was no end-to-end key for it yet, or
-        // the codec changed under it), so what follows builds on pictures nobody was sent
-        // and is held back until a key frame comes.
-        bool awaitsKeyframe = false;
-        qint64 keyframeAskedMs = -1;
-        bool keyframeAskWaiting = false;
-        quint64 bytesAtSendReport = 0;
-    };
-
-    void takeLocalVideoStreams(const VoiceReady &ready);
-    [[nodiscard]] LocalVideoLayer *localLayer(int quality);
-    [[nodiscard]] LocalVideoLayer *localLayerOf(quint32 ssrc);
-    [[nodiscard]] const LocalVideoLayer *fullLayer() const;
-    [[nodiscard]] int announcedMaxBitrate(const LocalVideoLayer &layer) const;
-    [[nodiscard]] quint32 localVideoSsrc() const;
+    // A video codec that is neither encoded nor decoded any more is left out, as the official
+    // client leaves it out.
     [[nodiscard]] QList<Codec> offeredCodecs() const;
     void sendOfferedCodecs();
-    void setVideoSendCodec(const QString &name);
-    // Points the sender at the codec in use, making it first if need be. False when video
-    // cannot be sent with that codec.
-    bool prepareVideoSender();
-    void registerLocalVideoWithDave();
-    void announceLocalVideo(bool on);
-    bool daveEncryptVideo(std::span<const uint8_t> frame, quint32 ssrc, std::vector<uint8_t> &encrypted);
-    void startVideoPacing();
-    void onVideoPaceTick();
-    void onVideoSendReportTick();
-    void receiveVideoFeedback(const ReceivedRtcp &received);
-    void noteVideoReceivers(LocalVideoLayer &layer, int receivers);
-    void paceVideoByBitrate();
-    void receiveVideoAfresh(quint32 ssrc);
-    // Of every layer, of those held back for want of one, and of those whose turn was put off.
-    void askForLocalKeyframe();
-    void askForAwaitedLocalKeyframes();
-    void askForWaitingLocalKeyframes();
-    void askLayerForKeyframe(LocalVideoLayer &layer);
 
-private:
     VoiceGateway *gateway = nullptr;
     UdpTransport *udpTransport = nullptr;
 
@@ -370,6 +299,8 @@ private:
     // protocol selection
     QString selectedMode;
     QByteArray sessionKey;
+    // SELECT_PROTOCOL went out before the codecs offered for encoding were all known.
+    bool codecsChangedSinceOffered = false;
 
     std::unique_ptr<VoiceEncryption> encryption;
     QTimer *keepaliveTimer = nullptr;
@@ -385,78 +316,11 @@ private:
     std::set<std::string> connectedUserIds;
     QHash<quint32, uint64_t> ssrcToUserIdMap;
 
-    // The codec behind each payload type this client offered, for video and for its RTX.
-    QHash<int, VideoCodec> videoPayloadTypes;
-    QHash<int, VideoCodec> rtxPayloadTypes;
-    // Remote video by its SSRC, and each RTX SSRC's primary.
-    std::unordered_map<quint32, RemoteVideo> remoteVideos;
-    QHash<quint32, quint32> rtxToPrimary;
-    QHash<Core::Snowflake, QList<VideoLayer>> remoteLayers;
-    // What the server is asked for, and the SSRCs whose video is received and handed on.
-    MediaSinkWants plannedWants;
-    QSet<quint32> deliveredSsrcs;
-    bool explicitVideoPlan = false;
-    bool videoDroppedAwaitingDaveKeys = false;
-    VideoFrameHandler videoFrameHandler;
-    QTimer *videoTimer = nullptr;
-    QElapsedTimer videoClock;
-    qint64 videoReportedMs = 0;
-    int wantedPixelCount = 0;
-    bool videoWanted = true;
-    QByteArray sentVideoWants;
-    quint64 videoDecryptFailures = 0;
-
-    // Which packets arrived and when, for the server's estimate of what this connection can
-    // carry. Without it the server holds every stream at a low bitrate.
-    TransportFeedback transportFeedback;
-    qint64 transportReportedMs = 0;
-    quint32 transportMediaSsrc = 0;
-
-    struct HeardSenderReport
-    {
-        quint32 compactNtp = 0;
-        qint64 arrivalUs = 0;
-    };
-    QHash<quint32, HeardSenderReport> senderReports;
-    quint64 serverEstimateBps = 0;
-    double serverLossFraction = 0;
-
-    // The video layers READY gave this client to send on, as it described them and as they
-    // are sent.
-    QList<StreamDescription> localVideoStreams;
-    std::vector<LocalVideoLayer> localLayers;
-    VideoCodec sendCodec = VideoCodec::Unknown;
-    // The codec the server last named, which is taken up once this client offers to encode it.
-    QString serverVideoCodec;
-    // SELECT_PROTOCOL went out before the codecs offered for encoding were all known.
-    bool codecsChangedSinceOffered = false;
-    // Set while video is started.
-    std::optional<LocalVideoDescription> localVideo;
-    // The layers as VIDEO last described them, which is how they are named again, inactive,
-    // when video goes off.
-    QList<StreamDescription> announcedVideoStreams;
-    QTimer *videoPaceTimer = nullptr;
-    QTimer *videoSendReportTimer = nullptr;
-    QTimer *localKeyframeTimer = nullptr;
-    quint64 localKeyframeRequests = 0;
-    quint64 videoReceiverEstimateBps = 0;
-    // Numbers every video packet of the connection, and judges the way from the server's
-    // reports on them.
-    SendSideEstimator sendEstimator;
-    quint64 reportedDelayEstimateBps = 0;
-    qint64 videoSendReportedUs = 0;
+    // Present on a connection that declared video, and only there.
+    std::unique_ptr<VideoReceivePath> receivedVideo;
+    std::unique_ptr<VideoSendPath> sentVideo;
 
     static constexpr int KEEPALIVE_INTERVAL_MS = 10000;
-    static constexpr int VIDEO_SEND_REPORT_INTERVAL_MS = 1000;
-    // An encoder asked for key frames faster than this only makes the stream worse.
-    static constexpr int LOCAL_KEYFRAME_INTERVAL_MS = 300;
-    static constexpr int VIDEO_TICK_MS = 20;
-    static constexpr int VIDEO_REPORT_INTERVAL_MS = 1000;
-    static constexpr int TRANSPORT_FEEDBACK_INTERVAL_MS = 100;
-    // A delay estimate this much under the one last passed on is passed on at once.
-    static constexpr double DELAY_ESTIMATE_STEP = 0.95;
-    // The header extension that carries a packet's transport-wide sequence number.
-    static constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
 };
 
 } // namespace Voice

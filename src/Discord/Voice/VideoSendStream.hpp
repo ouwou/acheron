@@ -129,14 +129,8 @@ public:
     static constexpr int ROUND_TRIP_MARGIN_MS = 5;
 
     static constexpr int CLEAR_SIZE = RtpHeader::FIXED_SIZE + RtpHeader::EXTENSION_PREAMBLE_SIZE;
-    // The header extensions every video packet carries, by the ids Discord gives them.
-    static constexpr uint8_t TRANSMISSION_OFFSET_EXTENSION = 2;
-    static constexpr uint8_t ABS_SEND_TIME_EXTENSION = 3;
-    static constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
-    // Those three as one-byte-form elements, padded to whole words.
+    // The three header extensions as one-byte-form elements, padded to whole words.
     static constexpr int EXTENSIONS_SIZE = 12;
-    // A retransmission's payload opens with the sequence number the packet first had.
-    static constexpr int RTX_HEADER_SIZE = 2;
 
 private:
     struct Packet

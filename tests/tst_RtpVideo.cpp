@@ -180,7 +180,7 @@ struct Feed
         PacketPool::Handle packet = pool.acquire();
         const Bytes bytes = payload(first, keyframe, static_cast<uint8_t>(sequence));
         packet->append(bytes);
-        receiver.insert(sequence, timestamp, last, std::move(packet), now, retransmission);
+        receiver.insert(sequence, timestamp, last, std::move(packet), now, retransmission ? VideoReceiver::Arrival::Retransmitted : VideoReceiver::Arrival::FirstTime);
     }
 
     // Sends frame number `index` (three packets, sequence numbers from `base`), leaving out `skip`.
@@ -219,6 +219,7 @@ private slots:
     void reorderedPacketsAreHeld();
     void lostPacketIsRequestedAndAccepted();
     void unrepairedLossWaitsForAKeyframe();
+    void paddingOnTheStreamLeavesNoGap();
     void sequenceNumbersWrap();
     void aStrayPacketDoesNotRestartTheStream();
     void aSenderThatRestartsItsNumberingIsFollowed();
@@ -620,6 +621,25 @@ void TestRtpVideo::unrepairedLossWaitsForAKeyframe()
     QCOMPARE(frames.size(), size_t(2));
     QVERIFY(frames[0].keyframe);
     QCOMPARE(frames[0].rtpTimestamp, 4000u);
+}
+
+void TestRtpVideo::paddingOnTheStreamLeavesNoGap()
+{
+    Feed feed;
+    feed.sendFrame(0, 100, true);
+    // The frame after the padding, which comes late: until then its frame waits behind a gap.
+    for (int i = 0; i < 3; i++)
+        feed.send(static_cast<uint16_t>(104 + i), 1000, i == 0, i == 2, false);
+    QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
+
+    feed.receiver.skip(103, 0, feed.now);
+    QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
+
+    feed.now += VideoReceiver::NACK_GIVE_UP_MS + 1;
+    const VideoReceiver::Feedback feedback = feed.receiver.poll(feed.now);
+    QVERIFY(feedback.nacks.empty());
+    QVERIFY(!feedback.keyframeRequest);
+    QCOMPARE(feed.receiver.stats().resyncs, quint64(0));
 }
 
 void TestRtpVideo::sequenceNumbersWrap()

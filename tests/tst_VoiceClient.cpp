@@ -9,6 +9,7 @@
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/TransportFeedback.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
+#include "Discord/Voice/VideoReceiver.hpp"
 #include "Discord/Voice/VideoSendStream.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 #include "Discord/Voice/VoiceEncryption.hpp"
@@ -41,7 +42,6 @@ constexpr int H264_PAYLOAD_TYPE = 103;
 constexpr int H264_RTX_PAYLOAD_TYPE = 104;
 constexpr int H265_PAYLOAD_TYPE = 105;
 constexpr int AV1_PAYLOAD_TYPE = 107;
-constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
 constexpr int PACKETS_PER_FRAME = 3;
 
 constexpr quint64 ALICE = 1001;
@@ -73,7 +73,7 @@ struct RtpSeen
 // fixed point.
 double sendTimeOf(const RtpSeen &packet)
 {
-    const std::span<const uint8_t> time = findRtpExtension(packet.extensions, VideoSendStream::ABS_SEND_TIME_EXTENSION);
+    const std::span<const uint8_t> time = findRtpExtension(packet.extensions, ABS_SEND_TIME_EXTENSION);
     return time.size() == 3 ? ((time[0] << 16) | (time[1] << 8) | time[2]) / 262144.0 : -1.0;
 }
 
@@ -1203,7 +1203,7 @@ void TestVoiceClient::eachLayerIsAStreamOfItsOwnUnderOneNumbering()
             ofTheFull++;
         else
             secondSequence = packet.header.sequence;
-        const std::span<const uint8_t> number = findRtpExtension(packet.extensions, VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION);
+        const std::span<const uint8_t> number = findRtpExtension(packet.extensions, TRANSPORT_SEQUENCE_EXTENSION);
         QCOMPARE(number.size(), size_t(2));
         numbers.insert(qFromBigEndian<quint16>(number.data()));
     }
@@ -1317,11 +1317,11 @@ void TestVoiceClient::aFrameArrivesAsPacketsThatReassemble()
         QVERIFY(packet.size <= VideoSendStream::MAX_PACKET_SIZE);
 
         // One numbering for everything this connection sends of video, beginning at one.
-        const std::span<const uint8_t> transportSequence = findRtpExtension(packet.extensions, VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION);
+        const std::span<const uint8_t> transportSequence = findRtpExtension(packet.extensions, TRANSPORT_SEQUENCE_EXTENSION);
         QCOMPARE(transportSequence.size(), size_t(2));
         QCOMPARE(int(qFromBigEndian<quint16>(transportSequence.data())), i + 1);
-        QCOMPARE(findRtpExtension(packet.extensions, VideoSendStream::ABS_SEND_TIME_EXTENSION).size(), size_t(3));
-        QCOMPARE(findRtpExtension(packet.extensions, VideoSendStream::TRANSMISSION_OFFSET_EXTENSION).size(), size_t(3));
+        QCOMPARE(findRtpExtension(packet.extensions, ABS_SEND_TIME_EXTENSION).size(), size_t(3));
+        QCOMPARE(findRtpExtension(packet.extensions, TRANSMISSION_OFFSET_EXTENSION).size(), size_t(3));
     }
     QCOMPARE(call.reassembled(VideoCodec::VP8, OWN_VIDEO_SSRC), frame.data);
 }
@@ -1388,7 +1388,7 @@ void TestVoiceClient::aNackBringsThePacketBackOnTheRetransmissionStream()
     QCOMPARE(Bytes(repeated.payload.begin() + 2, repeated.payload.end()), lost.payload);
     QVERIFY(repeated.size <= VideoSendStream::MAX_PACKET_SIZE);
 
-    const std::span<const uint8_t> transportSequence = findRtpExtension(repeated.extensions, VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION);
+    const std::span<const uint8_t> transportSequence = findRtpExtension(repeated.extensions, TRANSPORT_SEQUENCE_EXTENSION);
     QCOMPARE(transportSequence.size(), size_t(2));
     QCOMPARE(int(qFromBigEndian<quint16>(transportSequence.data())), 5);
 }
@@ -1575,7 +1575,7 @@ void TestVoiceClient::aWayFoundToFallBehindIsSaidAtOnce()
     TransportFeedback server;
     double throughAt = 0;
     for (const RtpSeen &packet : std::as_const(call.server.rtp)) {
-        const std::span<const uint8_t> number = findRtpExtension(packet.extensions, VideoSendStream::TRANSPORT_SEQUENCE_EXTENSION);
+        const std::span<const uint8_t> number = findRtpExtension(packet.extensions, TRANSPORT_SEQUENCE_EXTENSION);
         QCOMPARE(number.size(), size_t(2));
         throughAt = std::max(throughAt, sendTimeOf(packet)) + packet.size * 8 / carried;
         server.onPacket(qFromBigEndian<quint16>(number.data()), static_cast<qint64>((throughAt + 100) * 1e6));

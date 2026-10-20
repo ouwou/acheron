@@ -4,7 +4,8 @@
 #include "VoiceEncryption.hpp"
 #include "RtpPacket.hpp"
 #include "Rtcp.hpp"
-#include "VideoSendStream.hpp"
+#include "VideoReceivePath.hpp"
+#include "VideoSendPath.hpp"
 
 #include "DaveSession.hpp"
 
@@ -80,7 +81,10 @@ VoiceClient::VoiceClient(const ConnectionParams &params, QObject *parent)
     qRegisterMetaType<VideoCodec>();
     qRegisterMetaType<QList<VideoLayer>>();
 
-    readVideoPayloadTypes();
+    if (params.video.value_or(false)) {
+        receivedVideo = std::make_unique<VideoReceivePath>(*this);
+        sentVideo = std::make_unique<VideoSendPath>(*this);
+    }
 }
 
 VoiceClient::~VoiceClient()
@@ -184,9 +188,8 @@ void VoiceClient::stop()
     unrouted = {};
 
     localSsrc = 0;
-    localVideoStreams.clear();
-    localLayers.clear();
-    sendCodec = VideoCodec::Unknown;
+    if (sentVideo)
+        sentVideo = std::make_unique<VideoSendPath>(*this);
     selectedMode.clear();
     sessionKey.clear();
 
@@ -205,7 +208,10 @@ void VoiceClient::cleanupTransport()
     }
 
     // The receivers hold packets from the transport's pool.
-    cleanupVideo();
+    if (receivedVideo)
+        receivedVideo->reset();
+    if (sentVideo)
+        sentVideo->reset();
 
     encryption.reset();
 
@@ -246,7 +252,8 @@ void VoiceClient::onGatewayReady(const VoiceReady &data)
                      << "modes =" << data.modes.get();
 
     localSsrc = data.ssrc;
-    takeLocalVideoStreams(data);
+    if (sentVideo)
+        sentVideo->takeStreams(data);
     serverIp = data.ip;
     serverPort = data.port;
     serverModes = data.modes;
@@ -308,7 +315,8 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
     rtpEpoch = std::chrono::steady_clock::now();
 
     // Whoever starts video from connected() has to find the codec already known.
-    setVideoSendCodec(desc.videoCodec.valueOr(QString()));
+    if (sentVideo)
+        sentVideo->setServerCodec(desc.videoCodec.valueOr(QString()));
 
     setState(State::Connected);
     emit connected();
@@ -316,9 +324,8 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
     if (std::exchange(codecsChangedSinceOffered, false))
         sendOfferedCodecs();
 
-    if (!videoPayloadTypes.isEmpty())
-        startVideoTimer();
-    sendVideoWants();
+    if (receivedVideo)
+        receivedVideo->onConnected();
 
     // send silence so discord sends us audio immediately
     sendSilence();
@@ -452,14 +459,8 @@ void VoiceClient::onPacket(PacketPool::Handle packet)
         return;
     }
 
-    if (auto video = videoPayloadTypes.constFind(payloadType); video != videoPayloadTypes.constEnd()) {
-        receiveVideo(*rtp, std::move(packet), video.value(), false);
+    if (receivedVideo && receivedVideo->receive(*rtp, packet))
         return;
-    }
-    if (auto rtx = rtxPayloadTypes.constFind(payloadType); rtx != rtxPayloadTypes.constEnd()) {
-        receiveVideo(*rtp, std::move(packet), rtx.value(), true);
-        return;
-    }
 
     // Nothing this client plays, but the server numbers these too: it tries the link with
     // padding under a payload type of its own, and a packet not reported counts as lost.
@@ -479,30 +480,24 @@ void VoiceClient::receiveRtcp(PacketPool::Handle packet)
     }
 
     const ReceivedRtcp received = parseRtcp(packet->bytes());
-    receiveVideoFeedback(received);
-    for (uint32_t ssrc : received.videoResets)
-        receiveVideoAfresh(ssrc);
-    if (videoClock.isValid()) {
-        const qint64 now = videoClock.nsecsElapsed() / 1000;
-        for (const ReceivedRtcp::SenderReport &report : received.senderReports)
-            senderReports.insert(report.ssrc, { report.compactNtp, now });
-    }
+    if (sentVideo)
+        sentVideo->receiveRtcp(received);
+    if (receivedVideo)
+        receivedVideo->receiveRtcp(received);
     for (const ReceptionReport &report : received.receptionReports) {
         // Whether what this client sends is arriving is otherwise only known to the people
         // who cannot hear it.
         if (report.ssrc == localSsrc)
             qCDebug(LogVoice) << "Server's report on our audio: has up to sequence" << (report.highestSequence & 0xFFFF) << "of" << static_cast<uint16_t>(rtpSequence - 1) << "sent, lost in all" << report.cumulativeLost << "lost lately" << report.fractionLost / 256.0;
     }
-    if (received.hasInboundEstimate) {
-        if (received.inboundBitsPerSecond != serverEstimateBps)
-            qCDebug(LogVoice) << "Server's estimate of the way here:" << received.inboundBitsPerSecond << "bps, loss" << received.inboundLoss;
-        serverEstimateBps = received.inboundBitsPerSecond;
-        serverLossFraction = received.inboundLoss;
-    }
 }
 
-// A video codec that is neither encoded nor decoded any more is left out, as the official
-// client leaves it out.
+void VoiceClient::noteTransportSequence(std::span<const uint8_t> extensions)
+{
+    if (receivedVideo)
+        receivedVideo->noteTransportSequence(extensions);
+}
+
 QList<Codec> VoiceClient::offeredCodecs() const
 {
     QList<Codec> codecs = { Codec::opus() };
@@ -516,6 +511,123 @@ QList<Codec> VoiceClient::offeredCodecs() const
 void VoiceClient::sendOfferedCodecs()
 {
     gateway->sendSessionUpdate(offeredCodecs());
+}
+
+void VoiceClient::offerVideoEncoding(const QList<VideoCodec> &encodable)
+{
+    bool changed = false;
+    for (Codec &offered : params.videoCodecs) {
+        const bool encoded = encodable.contains(videoCodecFromName(offered.name));
+        if (offered.encode.valueOr(false) == encoded)
+            continue;
+        offered.encode = encoded;
+        changed = true;
+    }
+    if (!changed)
+        return;
+
+    if (currentState == State::WaitingForSession)
+        codecsChangedSinceOffered = true;
+    if (currentState != State::Connected)
+        return;
+
+    sendOfferedCodecs();
+    // The server may have named this codec already, when it could not be taken up.
+    if (sentVideo)
+        sentVideo->retakeServerCodec();
+}
+
+void VoiceClient::withdrawVideoCodec(VideoCodec codec)
+{
+    bool changed = false;
+    for (Codec &offered : params.videoCodecs) {
+        if (videoCodecFromName(offered.name) != codec || !offered.decode.valueOr(false))
+            continue;
+        offered.decode = false;
+        changed = true;
+    }
+    if (!changed || !gateway || currentState != State::Connected)
+        return;
+
+    qCWarning(LogVoice) << "Withdrawing" << videoCodecName(codec) << "from the codecs this client decodes";
+    sendOfferedCodecs();
+}
+
+void VoiceClient::setVideoFrameHandler(VideoFrameHandler handler)
+{
+    if (receivedVideo)
+        receivedVideo->setFrameHandler(std::move(handler));
+}
+
+void VoiceClient::setVideoWants(int pixelCount, bool wanted)
+{
+    if (receivedVideo)
+        receivedVideo->setWants(pixelCount, wanted);
+}
+
+void VoiceClient::setVideoPlan(const MediaSinkWants &wants, const QSet<quint32> &deliver)
+{
+    if (receivedVideo)
+        receivedVideo->setPlan(wants, deliver);
+}
+
+void VoiceClient::requestVideoKeyframeFrom(Core::Snowflake userId)
+{
+    if (receivedVideo)
+        receivedVideo->requestKeyframeFrom(userId);
+}
+
+void VoiceClient::requestVideoKeyframeFromEveryone()
+{
+    if (receivedVideo)
+        receivedVideo->requestKeyframeFromEveryone();
+}
+
+VideoCodec VoiceClient::videoSendCodec() const
+{
+    return sentVideo ? sentVideo->codec() : VideoCodec::Unknown;
+}
+
+void VoiceClient::startVideo(const LocalVideoDescription &description)
+{
+    if (sentVideo)
+        sentVideo->start(description);
+}
+
+void VoiceClient::describeVideo(const LocalVideoDescription &description)
+{
+    if (sentVideo)
+        sentVideo->describe(description);
+}
+
+void VoiceClient::setVideoBitrate(int bitsPerSecond, int quality)
+{
+    if (sentVideo)
+        sentVideo->setBitrate(bitsPerSecond, quality);
+}
+
+void VoiceClient::stopVideo()
+{
+    if (sentVideo)
+        sentVideo->stop();
+}
+
+void VoiceClient::sendVideoFrame(const EncodedVideoFrame &frame, int quality)
+{
+    if (sentVideo)
+        sentVideo->sendFrame(frame, quality);
+}
+
+void VoiceClient::onSessionUpdated(const SessionUpdate &update)
+{
+    if (sentVideo && update.videoCodec.hasValue())
+        sentVideo->setServerCodec(update.videoCodec.get());
+}
+
+void VoiceClient::onMediaSinkWants(const MediaSinkWants &wants)
+{
+    if (sentVideo)
+        sentVideo->onMediaSinkWants(wants);
 }
 
 void VoiceClient::receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet)
@@ -670,7 +782,8 @@ void VoiceClient::onClientConnect(const ClientConnectData &data)
         if (daveSession)
             daveSession->addConnectedUser(uid);
     }
-    applyRemoteVideo(data);
+    if (receivedVideo)
+        receivedVideo->onClientConnect(data);
     emit clientConnected(data);
 }
 
@@ -682,18 +795,15 @@ void VoiceClient::onClientDisconnect(Core::Snowflake uid)
     if (daveSession)
         daveSession->removeConnectedUser(uidStr);
 
-    const bool hadVideo = remoteLayers.contains(uid);
-    removeRemoteVideo(uid);
-    if (hadVideo) {
-        emit remoteVideoLayersChanged(uid, {});
-        emit remoteVideoChanged(uid, false, 0, 0, 0);
-    }
+    if (receivedVideo)
+        receivedVideo->onClientDisconnect(uid);
 
-    for (auto it = ssrcToUserIdMap.begin(); it != ssrcToUserIdMap.end(); ++it) {
-        if (it.value() == static_cast<quint64>(uid)) {
-            ssrcToUserIdMap.erase(it);
-            break;
-        }
+    // Audio, video and every encoding of the video come from SSRCs of their own.
+    for (auto it = ssrcToUserIdMap.begin(); it != ssrcToUserIdMap.end();) {
+        if (it.value() == static_cast<quint64>(uid))
+            it = ssrcToUserIdMap.erase(it);
+        else
+            ++it;
     }
 
     emit clientDisconnected(uid);
@@ -765,7 +875,8 @@ void VoiceClient::ensureDaveSession(uint16_t protocolVersion)
 
     daveSession = std::make_unique<DaveSession>(params.channelId, params.userId, ssrcToUserIdMap, this);
     daveSession->setLocalSsrc(localSsrc);
-    registerLocalVideoWithDave();
+    if (sentVideo)
+        sentVideo->registerWithDave();
 
     for (const auto &uid : connectedUserIds)
         daveSession->addConnectedUser(uid);
@@ -782,13 +893,17 @@ void VoiceClient::ensureDaveSession(uint16_t protocolVersion)
     connect(daveSession.get(), &DaveSession::sendInvalidCommitWelcome,
             gateway, &VoiceGateway::sendDaveInvalidCommitWelcome);
 
-    connect(daveSession.get(), &DaveSession::newKeysNeedKeyframe, this, &VoiceClient::askForLocalKeyframe);
+    connect(daveSession.get(), &DaveSession::newKeysNeedKeyframe, this, [this] {
+        if (sentVideo)
+            sentVideo->askEveryLayerForKeyframe();
+    });
 
     connect(daveSession.get(), &DaveSession::daveStateChanged,
             this, [this](bool enabled) {
-                if (std::exchange(videoDroppedAwaitingDaveKeys, false))
-                    requestVideoKeyframeFromEveryone();
-                askForAwaitedLocalKeyframes();
+                if (receivedVideo)
+                    receivedVideo->onDaveStateChanged();
+                if (sentVideo)
+                    sentVideo->askAwaitingLayersForKeyframe();
                 if (enabled) {
                     auto auth = daveSession->lastEpochAuthenticator();
                     if (!auth.empty())

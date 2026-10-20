@@ -44,6 +44,11 @@ public:
         quint64 resyncs = 0;
     };
 
+    enum class Arrival {
+        FirstTime,
+        Retransmitted,
+    };
+
     VideoReceiver(uint32_t ssrc, VideoCodec codec);
 
     [[nodiscard]] uint32_t ssrc() const { return mediaSsrc; }
@@ -51,7 +56,10 @@ public:
 
     // `payload` holds exactly the RTP payload: header, extensions and padding already removed,
     // and for a retransmission the original sequence number restored.
-    void insert(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, bool retransmission = false);
+    void insert(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, Arrival arrival = Arrival::FirstTime);
+    // A packet of nothing but padding, which a sender may send on the stream itself. It takes
+    // a sequence number like any other, and nothing is missing where it was.
+    void skip(uint16_t sequence, uint32_t timestamp, qint64 nowMs);
 
     [[nodiscard]] std::vector<EncodedVideoFrame> takeFrames();
     [[nodiscard]] Feedback poll(qint64 nowMs);
@@ -77,6 +85,7 @@ public:
 private:
     struct Held
     {
+        // None for padding.
         PacketPool::Handle payload;
         uint32_t timestamp = 0;
         bool marker = false;
@@ -90,6 +99,7 @@ private:
     };
 
     [[nodiscard]] qint64 unwrap(uint16_t sequence) const;
+    void take(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, Arrival arrival);
     void assemble();
     void resync();
     void noteArrival(uint32_t timestamp, qint64 nowMs);

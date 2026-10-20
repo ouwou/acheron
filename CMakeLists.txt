@@ -421,19 +421,20 @@ if(ENABLE_VOICE)
         src/Discord/Voice/DaveSession.cpp
         src/Discord/Voice/Rtcp.cpp
         src/Discord/Voice/SinkWants.cpp
+        src/Discord/Voice/VideoReceivePath.cpp
+        src/Discord/Voice/VideoSendPath.cpp
+        src/Discord/Voice/VideoDepacketizer.cpp
+        src/Discord/Voice/VideoReceiver.cpp
+        src/Discord/Voice/VideoPacketizer.cpp
+        src/Discord/Voice/VideoSendStream.cpp
+        src/Discord/Voice/SendSideEstimator.cpp
+        src/Discord/Voice/TransportFeedback.cpp
         src/Core/Audio/VoiceConnection.cpp
         src/Core/Audio/OpusEncoder.cpp
         src/Core/Video/TileVisibility.cpp
     )
     if(ACHERON_HAVE_VIDEO)
         list(APPEND MEDIA_ENGINE_SOURCES
-            src/Discord/Voice/VoiceClientVideo.cpp
-            src/Discord/Voice/VideoDepacketizer.cpp
-            src/Discord/Voice/VideoReceiver.cpp
-            src/Discord/Voice/VideoPacketizer.cpp
-            src/Discord/Voice/VideoSendStream.cpp
-            src/Discord/Voice/SendSideEstimator.cpp
-            src/Discord/Voice/TransportFeedback.cpp
             src/Core/Media/RgbScaler.cpp
             src/Core/Media/CodecSupport.cpp
             src/Core/Media/DecodeDemand.cpp
@@ -463,8 +464,6 @@ if(ENABLE_VOICE)
                 src/Core/Video/PortalCapture.cpp
             )
         endif()
-    else()
-        list(APPEND MEDIA_ENGINE_SOURCES src/Discord/Voice/VoiceClientWithoutVideo.cpp)
     endif()
 
     list(REMOVE_ITEM PROJECT_SOURCES ${MEDIA_ENGINE_SOURCES})

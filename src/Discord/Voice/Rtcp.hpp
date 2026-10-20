@@ -51,6 +51,18 @@ int writeSenderReport(std::span<uint8_t> out, const SenderInfo &info);
     return static_cast<uint32_t>(ntpTime >> 16);
 }
 
+// How long a receiver held the sender report it answers, as its reception report states it: in
+// units of 1/65536 of a second.
+[[nodiscard]] constexpr uint32_t toCompactNtpDelay(int64_t microseconds)
+{
+    return static_cast<uint32_t>(microseconds * 65536 / 1000000);
+}
+
+[[nodiscard]] constexpr int64_t fromCompactNtpDelay(uint32_t delay)
+{
+    return static_cast<int64_t>(delay) * 1000000 / 65536;
+}
+
 // What a receiver takes from the control packets the server sends it.
 struct ReceivedRtcp
 {
