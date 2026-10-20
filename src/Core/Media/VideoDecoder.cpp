@@ -5,6 +5,7 @@
 
 #include <QElapsedTimer>
 #include <QSettings>
+#include <QStringList>
 
 #include <algorithm>
 #include <array>
@@ -12,6 +13,7 @@
 #include <map>
 #include <span>
 #include <utility>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -33,12 +35,43 @@ const char *const HARDWARE_DECODE_KEY = "video/hardware_decode";
 // Hardware devices in the order they are tried. Direct3D 11 does not decode video before
 // Windows 8, which is what DXVA2 is there for.
 #if defined(Q_OS_WIN)
-constexpr std::array HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2 };
+constexpr std::array DEFAULT_HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_D3D11VA, AV_HWDEVICE_TYPE_DXVA2 };
 #elif defined(Q_OS_MACOS)
-constexpr std::array HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_VIDEOTOOLBOX };
+constexpr std::array DEFAULT_HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_VIDEOTOOLBOX };
 #else
-constexpr std::array HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_CUDA };
+constexpr std::array DEFAULT_HARDWARE_DEVICES = { AV_HWDEVICE_TYPE_VAAPI, AV_HWDEVICE_TYPE_CUDA };
 #endif
+
+// TEMPORARY (Windows 7 bring-up): ACHERON_HW_DECODE_DEVICES=dxva2,d3d11va replaces the order,
+// so that DXVA2 can be tried on a machine that would take Direct3D 11.
+const std::vector<AVHWDeviceType> &hardwareDevices()
+{
+    static const std::vector<AVHWDeviceType> devices = [] {
+        std::vector<AVHWDeviceType> chosen(DEFAULT_HARDWARE_DEVICES.begin(), DEFAULT_HARDWARE_DEVICES.end());
+        const QByteArray asked = qgetenv("ACHERON_HW_DECODE_DEVICES");
+        if (!asked.isEmpty()) {
+            chosen.clear();
+            for (const QByteArray &name : asked.split(',')) {
+                const AVHWDeviceType type = av_hwdevice_find_type_by_name(name.trimmed().constData());
+                if (type != AV_HWDEVICE_TYPE_NONE)
+                    chosen.push_back(type);
+            }
+        }
+        QStringList names;
+        for (const AVHWDeviceType type : chosen)
+            names << QString::fromUtf8(av_hwdevice_get_type_name(type));
+        qCInfo(LogVideo).noquote() << "[hwdiag] hardware decoding devices, in the order tried:" << names.join(QStringLiteral(", "));
+        return chosen;
+    }();
+    return devices;
+}
+
+QString errorText(int code)
+{
+    char text[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(code, text, sizeof(text));
+    return QString::fromUtf8(text);
+}
 
 // How often each codec's hardware decoder has failed to get going on a frame that software
 // then decoded. After a second time, later decoders do not try it.
@@ -119,14 +152,20 @@ AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats
 {
     const int wanted = *static_cast<const int *>(context->opaque);
     const AVPixelFormat *software = nullptr;
+    AVPixelFormat chosen = AV_PIX_FMT_NONE;
+    QStringList offered;
     for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; format++) {
-        if (*format == wanted)
-            return *format;
+        offered << QString::fromUtf8(av_get_pix_fmt_name(*format));
+        if (*format == wanted && chosen == AV_PIX_FMT_NONE)
+            chosen = *format;
         const AVPixFmtDescriptor *description = av_pix_fmt_desc_get(*format);
         if (!software && description && !(description->flags & AV_PIX_FMT_FLAG_HWACCEL))
             software = format;
     }
-    return software ? *software : AV_PIX_FMT_NONE;
+    if (chosen == AV_PIX_FMT_NONE && software)
+        chosen = *software;
+    qCInfo(LogVideo).noquote() << "[hwdiag]" << context->codec->name << context->coded_width << "x" << context->coded_height << "profile" << context->profile << "level" << context->level << "sw format" << av_get_pix_fmt_name(context->sw_pix_fmt) << "offers" << offered.join(QLatin1Char(' ')) << "| wanted" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(wanted)) << "| took" << av_get_pix_fmt_name(chosen) << (chosen == wanted ? "" : "(THE CARD WAS TURNED DOWN FOR THIS STREAM)");
+    return chosen;
 }
 
 AVCodecContext *openSoftwareDecoder(const AVCodec *decoder, int threads = 1)
@@ -179,8 +218,12 @@ AVBufferRef *sharedHardwareDevice(AVHWDeviceType type)
     auto it = devices.byType.find(type);
     if (it == devices.byType.end()) {
         AVBufferRef *device = nullptr;
-        if (!hardwareDeviceCanBeAskedFor(type) || av_hwdevice_ctx_create(&device, type, nullptr, nullptr, 0) < 0)
+        QElapsedTimer timer;
+        timer.start();
+        const int created = hardwareDeviceCanBeAskedFor(type) ? av_hwdevice_ctx_create(&device, type, nullptr, nullptr, 0) : AVERROR(ENOSYS);
+        if (created < 0)
             device = nullptr;
+        qCInfo(LogVideo).noquote() << "[hwdiag] hardware device" << av_hwdevice_get_type_name(type) << (device ? QStringLiteral("made in %1 ms").arg(timer.elapsed()) : QStringLiteral("could not be made: ") + errorText(created));
         it = devices.byType.emplace(type, device).first;
     }
     return it->second ? av_buffer_ref(it->second) : nullptr;
@@ -194,7 +237,7 @@ bool hardwareDecoderExists(VideoCodec codec)
     if (!decoder)
         return false;
 
-    for (const AVHWDeviceType type : HARDWARE_DEVICES) {
+    for (const AVHWDeviceType type : hardwareDevices()) {
         if (hardwareFormat(decoder, type) == AV_PIX_FMT_NONE)
             continue;
         AVBufferRef *device = sharedHardwareDevice(type);
@@ -360,7 +403,9 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     openCodec = codec;
     awaitingKeyframe = true;
     framesSinceOpen = 0;
+    decodeErrorsLogged = 0;
     describeDecoder();
+    qCInfo(LogVideo).noquote() << "[hwdiag] decoding" << Discord::Voice::videoCodecName(codec) << "with" << counters.decoderName << "(hardware allowed:" << hardwareAllowed << ", ruled out:" << hardwareRuledOut << ", earlier failures:" << hardwareFailuresOf(codec).load() << ")";
     return true;
 }
 
@@ -370,10 +415,12 @@ bool VideoDecoder::openHardware(Discord::Voice::VideoCodec codec)
     if (!decoder)
         return false;
 
-    for (const AVHWDeviceType type : HARDWARE_DEVICES) {
+    for (const AVHWDeviceType type : hardwareDevices()) {
         const AVPixelFormat format = hardwareFormat(decoder, type);
-        if (format == AV_PIX_FMT_NONE)
+        if (format == AV_PIX_FMT_NONE) {
+            qCInfo(LogVideo).noquote() << "[hwdiag]" << decoder->name << "has no" << av_hwdevice_get_type_name(type) << "support in this ffmpeg";
             continue;
+        }
 
         AVBufferRef *device = sharedHardwareDevice(type);
         if (!device)
@@ -390,11 +437,13 @@ bool VideoDecoder::openHardware(Discord::Voice::VideoCodec codec)
         candidate->flags |= AV_CODEC_FLAG_LOW_DELAY;
         candidate->thread_count = 1;
         candidate->extra_hw_frames = EXTRA_HARDWARE_FRAMES;
-        if (avcodec_open2(candidate, decoder, nullptr) < 0) {
+        if (const int opened = avcodec_open2(candidate, decoder, nullptr); opened < 0) {
+            qCWarning(LogVideo).noquote() << "[hwdiag]" << decoder->name << "did not open with" << av_hwdevice_get_type_name(type) << ":" << errorText(opened);
             avcodec_free_context(&candidate);
             av_buffer_unref(&device);
             continue;
         }
+        qCInfo(LogVideo).noquote() << "[hwdiag]" << decoder->name << "opened with" << av_hwdevice_get_type_name(type) << "for" << av_get_pix_fmt_name(format);
 
         context = candidate;
         hardwareDevice = device;
@@ -515,8 +564,10 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
 
     const int sent = avcodec_send_packet(context, packet);
     av_packet_unref(packet);
-    if (sent < 0)
+    if (sent < 0) {
+        logDecodeError("sending a frame", sent);
         return false;
+    }
     awaitingKeyframe = false;
 
     std::shared_ptr<VideoFrameSink> sink;
@@ -529,21 +580,37 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         const int received = avcodec_receive_frame(context, decoded);
         if (received == AVERROR(EAGAIN) || received == AVERROR_EOF)
             return true;
-        if (received < 0)
+        if (received < 0) {
+            logDecodeError("receiving a picture", received);
             return false;
+        }
 
         const AVFrame *output = decoded;
         if (hardwareDevice) {
             // A decoder that turned the hardware format down for this stream is decoding in
             // software with none of a software decoder's threads, so it is replaced.
             bool failed = decoded->format != hardwarePixelFormat;
+            if (failed)
+                qCWarning(LogVideo).noquote() << "[hwdiag]" << context->codec->name << "gave a picture in" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(decoded->format)) << "instead of" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(hardwarePixelFormat));
             // The picture is on the graphics card. It is brought into memory unless whoever
             // shows it can take it from there.
-            if (!failed && !(sink && sink->acceptsHardwareFrames(decoded->format))) {
+            const bool readBack = !failed && !(sink && sink->acceptsHardwareFrames(decoded->format));
+            if (readBack) {
+                QElapsedTimer readBackTimer;
+                readBackTimer.start();
                 av_frame_unref(downloaded);
-                failed = av_hwframe_transfer_data(downloaded, decoded, 0) < 0;
+                const int transferred = av_hwframe_transfer_data(downloaded, decoded, 0);
+                failed = transferred < 0;
+                if (failed)
+                    logDecodeError("reading a picture back from the card", transferred);
                 av_frame_copy_props(downloaded, decoded);
                 output = downloaded;
+                const double readBackMs = static_cast<double>(readBackTimer.nsecsElapsed()) / 1e6;
+                averageReadBackMs += (readBackMs - averageReadBackMs) / (framesSinceOpen == 0 ? 1.0 : 30.0);
+            }
+            if (framesSinceOpen == 0 && !failed) {
+                const auto *frames = decoded->hw_frames_ctx ? reinterpret_cast<const AVHWFramesContext *>(decoded->hw_frames_ctx->data) : nullptr;
+                qCInfo(LogVideo).noquote() << "[hwdiag] first picture from" << hardwareName << ":" << decoded->width << "x" << decoded->height << "surfaces" << (frames ? av_get_pix_fmt_name(frames->sw_format) : "?") << "pool" << (frames ? frames->initial_pool_size : -1) << (readBack ? QStringLiteral("read back as %1 in %2 ms").arg(QString::fromUtf8(av_get_pix_fmt_name(static_cast<AVPixelFormat>(downloaded->format)))).arg(averageReadBackMs, 0, 'f', 2) : QStringLiteral("left on the card for the surface"));
             }
             if (failed) {
                 av_frame_unref(decoded);
@@ -564,8 +631,31 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
             const double elapsedMs = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             counters.averageDecodeMs += (elapsedMs - counters.averageDecodeMs) / 30.0;
         }
+        logSummaryNow();
         av_frame_unref(decoded);
     }
+}
+
+void VideoDecoder::logDecodeError(const char *what, int code)
+{
+    if (decodeErrorsLogged >= 10)
+        return;
+    decodeErrorsLogged++;
+    qCWarning(LogVideo).noquote() << "[hwdiag]" << (context ? context->codec->name : "decoder") << (hardwareName ? hardwareName : "software") << "failed" << what << ":" << errorText(code) << "after" << framesSinceOpen << "pictures";
+}
+
+void VideoDecoder::logSummaryNow()
+{
+    static constexpr qint64 SUMMARY_EVERY_MS = 10000;
+    if (!summaryTimer.isValid()) {
+        summaryTimer.start();
+        return;
+    }
+    if (summaryTimer.elapsed() < SUMMARY_EVERY_MS)
+        return;
+    summaryTimer.restart();
+    const Stats now = stats();
+    qCInfo(LogVideo).noquote() << "[hwdiag] decoder" << now.decoderName << now.width << "x" << now.height << ": decoded" << now.decoded << "dropped" << now.dropped << "errors" << now.errors << "queues discarded" << now.queuesDiscarded << "backlog" << now.backlogMs << "ms, decode" << QString::number(now.averageDecodeMs, 'f', 2) << "ms" << (hardwareDevice ? QStringLiteral("(read back %1 ms)").arg(averageReadBackMs, 0, 'f', 2) : QString());
 }
 
 } // namespace Media

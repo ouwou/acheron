@@ -4,6 +4,9 @@
 #include "Core/Session.hpp"
 #include "Core/Logging.hpp"
 #include "Core/Theme/Manager.hpp"
+#ifdef ACHERON_HAVE_STREAM_VIEW
+#include "Core/Media/HardwareDiagnostics.hpp"
+#endif
 
 #include <curl/curl.h>
 
@@ -94,6 +97,12 @@ int main(int argc, char *argv[])
 
     qCInfo(LogCore) << "Starting Acheron...";
 
+#ifdef ACHERON_HAVE_STREAM_VIEW
+    if (Core::Media::onlyDiagnosticsWereAskedFor(app.arguments()))
+        Core::Media::runOnlyDiagnosticsAndExit();
+    Core::Media::startHardwareDiagnostics();
+#endif
+
 #ifdef Q_OS_WINDOWS
     int emojiFontId = QFontDatabase::addApplicationFont(
             QCoreApplication::applicationDirPath() + "/fonts/TwemojiCOLRv0.ttf");
@@ -130,6 +139,10 @@ int main(int argc, char *argv[])
     Storage::DatabaseManager::instance().shutdown();
 
     curl_global_cleanup();
+
+#ifdef ACHERON_HAVE_STREAM_VIEW
+    Core::Media::finishHardwareDiagnostics();
+#endif
 
     Core::Logger::cleanup();
 

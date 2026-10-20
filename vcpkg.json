@@ -23,9 +23,11 @@
           "name": "ffmpeg",
           "default-features": false,
           "features": [
+            "amf",
             "avcodec",
             "avformat",
             "dav1d",
+            "nvcodec",
             "openssl",
             "swresample",
             "swscale",
@@ -55,6 +57,10 @@
     {
       "name": "openssl",
       "version": "3.0.7"
+    },
+    {
+      "name": "ffnvcodec",
+      "version": "11.1.5.3"
     }
   ]
 }

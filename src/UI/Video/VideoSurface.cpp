@@ -3,6 +3,7 @@
 #include "D3D11GlBridge.hpp"
 #include "DmabufGlBridge.hpp"
 
+#include "Core/Logging.hpp"
 #include "Core/Media/RgbScaler.hpp"
 
 #include <QFontDatabase>
@@ -779,6 +780,16 @@ protected:
         program->bindAttributeLocation("position", 0);
         program->bindAttributeLocation("texcoord", 1);
         usable = usable && program->link();
+
+        // TEMPORARY (Windows 7 bring-up).
+        static std::once_flag describedGl;
+        std::call_once(describedGl, [this] {
+            const auto text = [this](GLenum name) { return QString::fromLatin1(reinterpret_cast<const char *>(glGetString(name))); };
+            qCInfo(LogVideo).noquote() << "[hwdiag] OpenGL for video:" << text(GL_VENDOR) << "|" << text(GL_RENDERER) << "|" << text(GL_VERSION) << "| GLSL" << text(GL_SHADING_LANGUAGE_VERSION) << "| ES" << context()->isOpenGLES() << "| YUV shader" << (usable ? "works" : "FAILED: " + program->log());
+#ifdef Q_OS_WIN
+            qCInfo(LogVideo).noquote() << "[hwdiag] pictures on the card drawn directly:" << (QSettings().value(DIRECT_FRAMES_KEY, true).toBool() ? "allowed" : "turned off") << ", WGL_NV_DX_interop2" << (D3D11GlBridge::contextSupportsIt() ? "present" : "absent (pictures are read back and uploaded)");
+#endif
+        });
 
         // A texture that is already RGB: the overlays, and a picture made on the card.
         static const char *const PLAIN_FRAGMENT = R"(

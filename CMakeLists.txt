@@ -414,6 +414,7 @@ if(ACHERON_VIDEO)
         src/Core/Media/DecodeDemand.cpp
         src/Core/Media/VideoDecoder.cpp
         src/Core/Media/VideoEncoder.cpp
+        src/Core/Media/HardwareDiagnostics.cpp
         src/Core/Media/H264Sps.cpp
         src/Core/Streams/StreamSession.cpp
         src/Core/Streams/StreamWatcher.cpp
@@ -664,7 +665,7 @@ if(BUILD_TESTS)
             target_include_directories(TestCameraCapture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
             add_test(NAME CameraCaptureTests COMMAND TestCameraCapture)
 
-            qt_add_executable(TestVideoSurface tests/tst_VideoSurface.cpp src/UI/Video/VideoSurface.cpp src/Core/Media/RgbScaler.cpp)
+            qt_add_executable(TestVideoSurface tests/tst_VideoSurface.cpp src/UI/Video/VideoSurface.cpp src/Core/Media/RgbScaler.cpp src/Core/Logging.cpp)
             target_compile_definitions(TestVideoSurface PRIVATE ACHERON_HAVE_FFMPEG)
             if(WIN32)
                 target_sources(TestVideoSurface PRIVATE src/UI/Video/D3D11GlBridge.cpp)

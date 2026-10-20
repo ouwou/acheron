@@ -465,8 +465,10 @@ bool candidateWorks(const VideoEncoderCandidate &candidate)
     std::lock_guard lock(verdicts.mutex);
     Verdict &verdict = verdicts.of[static_cast<size_t>(&candidate - CANDIDATES.data())];
     if (verdict == Verdict::Untried) {
+        QElapsedTimer trialTimer;
+        trialTimer.start();
         verdict = encodesTrialPicturesInTime(candidate) ? Verdict::Works : Verdict::Broken;
-        qCInfo(LogVideo) << "Encoder" << candidate.label << (verdict == Verdict::Works ? "works" : "does not work on this machine");
+        qCInfo(LogVideo) << "Encoder" << candidate.label << (verdict == Verdict::Works ? "works" : "does not work on this machine") << "[hwdiag] trial took" << trialTimer.elapsed() << "ms";
     }
     return verdict == Verdict::Works;
 }

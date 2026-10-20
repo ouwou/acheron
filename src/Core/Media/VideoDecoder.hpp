@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QString>
 
@@ -126,6 +127,9 @@ private:
     void startOverAtNextKeyframe();
     void reportUndecodableFrame();
     void describeDecoder();
+    // TEMPORARY (Windows 7 bring-up): "[hwdiag]" lines in the log.
+    void logDecodeError(const char *what, int code);
+    void logSummaryNow();
 
     mutable std::mutex mutex;
     std::condition_variable wake;
@@ -151,6 +155,9 @@ private:
     bool hardwareRuledOut = false;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
+    double averageReadBackMs = 0;
+    int decodeErrorsLogged = 0;
+    QElapsedTimer summaryTimer;
 
     std::thread thread;
 };
