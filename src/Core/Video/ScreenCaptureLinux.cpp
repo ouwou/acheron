@@ -5,6 +5,7 @@
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/HardwareDevices.hpp"
+#include "Core/Media/RgbScaler.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/LinuxCapture.hpp"
 #include "Core/Video/PictureConverter.hpp"
@@ -38,7 +39,6 @@ const char *const PORTAL_SCREEN_TOKEN_KEY = "video/portal_screen_token";
 const char *const PORTAL_WINDOW_TOKEN_KEY = "video/portal_window_token";
 const QLatin1String PIPEWIRE_ID_PREFIX("pipewire:");
 const QLatin1String WINDOW_ID_PREFIX("window:");
-constexpr int HD_HEIGHT = 720;
 constexpr int STALLED_WAIT_MS = 50;
 constexpr int NOTHING_NEW_WAIT_MS = 25;
 constexpr QSize SMALLEST_WINDOW_PICTURE(160, 120);
@@ -426,7 +426,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     const QSize ownSize(captured->width - static_cast<int>(captured->crop_left + captured->crop_right), captured->height - static_cast<int>(captured->crop_top + captured->crop_bottom));
     const QSize pictureSize = pictureSizeFor(ownSize);
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
-    const bool bt601 = request.bt601Only || size.height() < HD_HEIGHT;
+    const bool bt601 = request.bt601Only || !Media::usesBt709AtHeight(size.height());
     const bool fillsItsPicture = ownSize.width() >= pictureSize.width() && ownSize.height() >= pictureSize.height();
 
     if (std::exchange(state.announced, size) != size)

@@ -7,7 +7,7 @@
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Media/VideoDecoder.hpp"
 #include "Core/Media/VideoEncoder.hpp"
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/ScreenPipeline.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/ScreenCapture.hpp"
 #include "HardwareTests.hpp"
@@ -709,19 +709,19 @@ Decoded decodeAll(VideoCodec codec, const std::vector<EncodedVideoFrame> &frames
 // What a pipeline said while it ran, and when each of its frames came.
 struct PipelineRecord
 {
-    explicit PipelineRecord(Core::Video::BroadcastPipeline &pipeline)
+    explicit PipelineRecord(Core::Video::ScreenPipeline &pipeline)
     {
-        using Core::Video::BroadcastPipeline;
+        using Core::Video::ScreenPipeline;
         clock.start();
-        QObject::connect(&pipeline, &BroadcastPipeline::started, &here, [this](const QSize &size, int) { starts.append(size); });
-        QObject::connect(&pipeline, &BroadcastPipeline::frameEncoded, &here, [this](const Core::Video::EncodedFramePointer &frame) {
+        QObject::connect(&pipeline, &ScreenPipeline::started, &here, [this](const QSize &size, int) { starts.append(size); });
+        QObject::connect(&pipeline, &ScreenPipeline::frameEncoded, &here, [this](const Core::Video::EncodedFramePointer &frame) {
             frames.push_back(frame);
             arrivedAt.push_back(clock.elapsed());
         });
-        QObject::connect(&pipeline, &BroadcastPipeline::statsUpdated, &here, [this](const Core::Video::BroadcastStats &update) { stats.append(update); });
-        QObject::connect(&pipeline, &BroadcastPipeline::captureStalled, &here, [this](bool stalled) { stalls.append(stalled); });
-        QObject::connect(&pipeline, &BroadcastPipeline::sourceClosed, &here, [this] { closes++; });
-        QObject::connect(&pipeline, &BroadcastPipeline::failed, &here, [this](const QString &reason) { failures.append(reason); });
+        QObject::connect(&pipeline, &ScreenPipeline::statsUpdated, &here, [this](const Core::Video::PipelineStats &update) { stats.append(update); });
+        QObject::connect(&pipeline, &ScreenPipeline::captureStalled, &here, [this](bool stalled) { stalls.append(stalled); });
+        QObject::connect(&pipeline, &ScreenPipeline::sourceClosed, &here, [this] { closes++; });
+        QObject::connect(&pipeline, &ScreenPipeline::failed, &here, [this](const QString &reason) { failures.append(reason); });
     }
 
     [[nodiscard]] std::vector<Core::Video::EncodedFramePointer> framesBefore(size_t end) const
@@ -743,7 +743,7 @@ struct PipelineRecord
     std::vector<Core::Video::EncodedFramePointer> frames;
     std::vector<qint64> arrivedAt;
     QList<QSize> starts;
-    QList<Core::Video::BroadcastStats> stats;
+    QList<Core::Video::PipelineStats> stats;
     QList<bool> stalls;
     QStringList failures;
     int closes = 0;
@@ -758,7 +758,7 @@ struct PathCounts
     qint64 drawn = -1;
 };
 
-PathCounts pathCounts(const Core::Video::BroadcastStats &stats)
+PathCounts pathCounts(const Core::Video::PipelineStats &stats)
 {
     static const QRegularExpression pattern(QStringLiteral("ddagrab (\\d+) \\+ PrintWindow (\\d+) frames"));
     const QRegularExpressionMatch match = pattern.match(stats.encoderName);
@@ -2725,31 +2725,31 @@ void TestVideoEncode::thePipelineSharesTheScreen()
         QSKIP("a screen of this size is not shared in this codec, whose encoder would add black to it");
     const VideoCodec codec = shared.contains(encoderCase.codec) ? encoderCase.codec : shared.first();
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     QObject here;
     std::vector<EncodedFramePointer> frames;
     QList<QSize> starts;
     QList<QImage> previews;
-    QList<BroadcastStats> stats;
+    QList<PipelineStats> stats;
     QList<bool> stalls;
     QStringList failures;
-    connect(&pipeline, &BroadcastPipeline::started, &here, [&](const QSize &size, int framerate) {
+    connect(&pipeline, &ScreenPipeline::started, &here, [&](const QSize &size, int framerate) {
         QCOMPARE(framerate, FRAMERATE);
         starts.append(size);
     });
-    connect(&pipeline, &BroadcastPipeline::frameEncoded, &here, [&](const EncodedFramePointer &frame) { frames.push_back(frame); });
-    connect(&pipeline, &BroadcastPipeline::previewReady, &here, [&](const QImage &preview) { previews.append(preview); });
-    connect(&pipeline, &BroadcastPipeline::statsUpdated, &here, [&](const BroadcastStats &update) { stats.append(update); });
-    connect(&pipeline, &BroadcastPipeline::captureStalled, &here, [&](bool stalled) { stalls.append(stalled); });
-    connect(&pipeline, &BroadcastPipeline::failed, &here, [&](const QString &reason) { failures.append(reason); });
+    connect(&pipeline, &ScreenPipeline::frameEncoded, &here, [&](const EncodedFramePointer &frame) { frames.push_back(frame); });
+    connect(&pipeline, &ScreenPipeline::previewReady, &here, [&](const QImage &preview) { previews.append(preview); });
+    connect(&pipeline, &ScreenPipeline::statsUpdated, &here, [&](const PipelineStats &update) { stats.append(update); });
+    connect(&pipeline, &ScreenPipeline::captureStalled, &here, [&](bool stalled) { stalls.append(stalled); });
+    connect(&pipeline, &ScreenPipeline::failed, &here, [&](const QString &reason) { failures.append(reason); });
 
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = source.id;
     settings.maxHeight = encoderCase.detail;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
 
     QElapsedTimer sinceStart;
     sinceStart.start();
@@ -2808,7 +2808,7 @@ void TestVideoEncode::thePipelineSharesTheScreen()
     // Two more, so that the last is of a second in which somebody was watching all along.
     const int statsBefore = static_cast<int>(stats.size());
     QTRY_VERIFY_WITH_TIMEOUT(stats.size() >= statsBefore + 2, 3500);
-    const BroadcastStats lastStats = stats.last();
+    const PipelineStats lastStats = stats.last();
     qInfo().noquote() << QStringLiteral("pipeline: %1, hardware %2, %3x%4, captured %5 fps, %6 ms in the encoder a picture, %7 frames, %8 dropped").arg(lastStats.encoderName).arg(lastStats.hardware).arg(lastStats.encodedSize.width()).arg(lastStats.encodedSize.height()).arg(lastStats.capturedFps, 0, 'f', 1).arg(lastStats.averageEncodeMs, 0, 'f', 2).arg(lastStats.framesEncoded).arg(lastStats.framesDropped);
     QCOMPARE(lastStats.encodedSize, expectedSize);
 #ifdef Q_OS_WIN
@@ -3154,19 +3154,19 @@ void TestVideoEncode::aScreenThatIsNotThereFails()
     if (encodable.isEmpty())
         QSKIP("this machine has no encoder");
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     QObject here;
     QStringList failures;
     int framesSeen = 0;
     int starts = 0;
-    connect(&pipeline, &BroadcastPipeline::failed, &here, [&](const QString &reason) { failures.append(reason); });
-    connect(&pipeline, &BroadcastPipeline::frameEncoded, &here, [&](const EncodedFramePointer &) { framesSeen++; });
-    connect(&pipeline, &BroadcastPipeline::started, &here, [&](const QSize &, int) { starts++; });
+    connect(&pipeline, &ScreenPipeline::failed, &here, [&](const QString &reason) { failures.append(reason); });
+    connect(&pipeline, &ScreenPipeline::frameEncoded, &here, [&](const EncodedFramePointer &) { framesSeen++; });
+    connect(&pipeline, &ScreenPipeline::started, &here, [&](const QSize &, int) { starts++; });
 
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = QStringLiteral("screen:99");
     settings.codec = encodable.first();
-    settings.bitrate = 1'000'000;
+    settings.bitrateBps = 1'000'000;
     pipeline.start(settings);
 
     // Not at once: a screen may be away for a moment and come back.
@@ -3194,12 +3194,12 @@ void TestVideoEncode::aPipeWireStreamThatIsNotThereFails()
     const auto release = qScopeGuard([&neverThere] { PortalCapture::release(neverThere.id); });
 
     for (const QString &sourceId : { neverThere.id, QStringLiteral("pipewire:987654") }) {
-        BroadcastPipeline pipeline;
+        ScreenPipeline pipeline;
         PipelineRecord record(pipeline);
-        BroadcastSettings settings;
+        ScreenSettings settings;
         settings.sourceId = sourceId;
         settings.codec = encodable.first();
-        settings.bitrate = 1'000'000;
+        settings.bitrateBps = 1'000'000;
         pipeline.start(settings);
 
         QTest::qWait(1000);
@@ -3255,15 +3255,15 @@ void TestVideoEncode::picturesTheDesktopLeavesOnTheCardAreSharedFromThere()
         QSKIP(NO_PIPEWIRE);
 
     const Heard log;
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = desktop.source().id;
     settings.maxHeight = encoderCase.detail;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 20 || !record.failures.isEmpty(), "fewer than 20 frames in 4 s", 4000);
     QVERIFY2(record.failures.isEmpty(), qPrintable(record.failures.join(QLatin1Char(';'))));
@@ -3277,7 +3277,7 @@ void TestVideoEncode::picturesTheDesktopLeavesOnTheCardAreSharedFromThere()
     QTest::qWait(1500);
     const double cpuPerFrame = (processCpuMs() - cpuBefore) / static_cast<double>(std::max<size_t>(1, record.frames.size() - framesBefore));
     QTRY_VERIFY_WITH_TIMEOUT(record.stats.size() >= 2, 2500);
-    const BroadcastStats last = record.stats.last();
+    const PipelineStats last = record.stats.last();
     pipeline.stop();
     QTest::qWait(300);
 
@@ -3345,15 +3345,15 @@ void TestVideoEncode::theRealScreenIsSharedOnTheCardAndInMemory()
             const QSize expectedSize = encodeSizeFor(screen.geometry.size(), maxHeight);
             QCOMPARE(encodeSizeOf(screen, maxHeight), expectedSize);
             const Heard log;
-            BroadcastPipeline pipeline;
+            ScreenPipeline pipeline;
             PipelineRecord record(pipeline);
-            BroadcastSettings settings;
+            ScreenSettings settings;
             settings.sourceId = screen.id;
             settings.maxHeight = maxHeight;
             settings.framerate = FRAMERATE;
             settings.codec = codec;
-            settings.bitrate = 2'500'000;
-            settings.maxBitrate = 4'000'000;
+            settings.bitrateBps = 2'500'000;
+            settings.maxBitrateBps = 4'000'000;
             pipeline.start(settings);
 
             // A screen that shows nothing new is sent a couple of times a second.
@@ -3371,7 +3371,7 @@ void TestVideoEncode::theRealScreenIsSharedOnTheCardAndInMemory()
             const size_t framesInTheMeantime = record.frames.size() - framesBefore;
             const double cpuPerFrame = (processCpuMs() - cpuBefore) / static_cast<double>(std::max<size_t>(1, framesInTheMeantime));
             QTRY_VERIFY_WITH_TIMEOUT(!record.stats.isEmpty(), 2500);
-            const BroadcastStats last = record.stats.last();
+            const PipelineStats last = record.stats.last();
             pipeline.stop();
             QTest::qWait(300);
 
@@ -3751,15 +3751,15 @@ void theWindowIsSharedFromX11(int maxHeight)
     QCOMPARE(encodeSizeOf(source, maxHeight), firstSize);
 
     setCaptureMethod(CaptureMethod::X11);
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = source.id;
     settings.maxHeight = maxHeight;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 20 || !record.failures.isEmpty() || record.closes > 0, "fewer than 20 frames in 4 s", 4000);
@@ -3923,15 +3923,15 @@ void aTinyWindowIsSharedFromX11OnBlack()
     QTRY_COMPARE(window.insideOnScreen().size(), TINY_WINDOW);
     QCOMPARE(encodeSizeOf(window.source(), 0), SMALLEST_PICTURE);
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = window.sourceId();
     settings.maxHeight = 0;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 20 || !record.failures.isEmpty(), "fewer than 20 frames in 4 s", 4000);
     QVERIFY2(record.failures.isEmpty(), qPrintable(record.failures.join(QLatin1Char(';'))));
@@ -4006,15 +4006,15 @@ void TestVideoEncode::thePipelineSharesAWindow()
     QCOMPARE(firstSize != window.insideOnScreen().size(), maxHeight != 0);
 
     setCaptureMethod(method);
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = window.sourceId();
     settings.maxHeight = maxHeight;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 20 || !record.failures.isEmpty() || record.closes > 0, "fewer than 20 frames in 4 s", 4000);
@@ -4261,15 +4261,15 @@ void TestVideoEncode::thePipelineSharesAWindow()
     QCOMPARE(encodeSizeOf(window.source(), maxHeight), firstSize);
 
     setCaptureMethod(method);
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = window.source().id;
     settings.maxHeight = maxHeight;
     settings.framerate = FRAMERATE;
     settings.codec = codec;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 20 || !record.failures.isEmpty() || record.closes > 0, "fewer than 20 frames in 4 s", 4000);
@@ -4378,15 +4378,15 @@ void whatAv1WouldPadIsHeldBackOfAWindowFromX11()
     QCOMPARE(encodeSizeOf(source, 0), padded);
     QCOMPARE(encodeSizeOf(source, 360), encodeSizeFor(padded, 360));
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = source.id;
     settings.maxHeight = 0;
     settings.framerate = FRAMERATE;
     settings.codec = VideoCodec::AV1;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(!record.starts.isEmpty() || !record.failures.isEmpty(), "the size was not reported", 4000);
@@ -4452,15 +4452,15 @@ void TestVideoEncode::thePipelineHoldsBackWhatItsEncoderWouldPad()
     QCOMPARE(encodeSizeOf(source, 0), padded);
     QCOMPARE(encodeSizeOf(source, 360), encodeSizeFor(padded, 360));
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = source.id;
     settings.maxHeight = 0;
     settings.framerate = FRAMERATE;
     settings.codec = VideoCodec::AV1;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(!record.starts.isEmpty() || !record.failures.isEmpty(), "the size was not reported", 4000);
@@ -4502,15 +4502,15 @@ void TestVideoEncode::thePipelineHoldsBackWhatItsEncoderWouldPad()
     QCOMPARE(encodeSizeOf(window.source(), 0), padded);
     QCOMPARE(encodeSizeOf(window.source(), 360), encodeSizeFor(padded, 360));
 
-    BroadcastPipeline pipeline;
+    ScreenPipeline pipeline;
     PipelineRecord record(pipeline);
-    BroadcastSettings settings;
+    ScreenSettings settings;
     settings.sourceId = window.source().id;
     settings.maxHeight = 0;
     settings.framerate = FRAMERATE;
     settings.codec = VideoCodec::AV1;
-    settings.bitrate = 2'500'000;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = 2'500'000;
+    settings.maxBitrateBps = 4'000'000;
     pipeline.start(settings);
 
     QTRY_VERIFY2_WITH_TIMEOUT(!record.starts.isEmpty() || !record.failures.isEmpty(), "the size was not reported", 4000);

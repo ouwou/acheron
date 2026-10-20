@@ -2,6 +2,7 @@
 
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
+#include "Core/Media/RgbScaler.hpp"
 #include "Core/Video/CardScaler.hpp"
 
 #include <QByteArray>
@@ -159,7 +160,6 @@ using Clock = std::chrono::steady_clock;
 
 const QLatin1String SCREEN_ID_PREFIX("screen:");
 const QLatin1String WINDOW_ID_PREFIX("window:");
-constexpr int HD_HEIGHT = 720;
 constexpr int STALLED_WAIT_MS = 50;
 // How long a read of graphics capture waits past the time a picture was due before it says
 // that nothing new has come.
@@ -571,9 +571,9 @@ public:
         changed.notify_all();
     }
 
-    // False when the window would not draw or had not within `limit`, in which case what it
-    // draws later is thrown away.
-    bool draw(std::chrono::milliseconds limit)
+    // False when the window would not draw or had not within `limit`, or is no longer wanted,
+    // in which case what it draws later is thrown away.
+    bool draw(std::chrono::milliseconds limit, const std::function<bool()> &stillWanted = {})
     {
         std::unique_lock lock(mutex);
         if (drawing)
@@ -589,7 +589,13 @@ public:
 
         drawing = true;
         changed.notify_all();
-        changed.wait_for(lock, limit, [this] { return !drawing; });
+        const auto giveUpAt = std::chrono::steady_clock::now() + limit;
+        while (drawing && (!stillWanted || stillWanted())) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= giveUpAt)
+                break;
+            changed.wait_for(lock, std::min<std::chrono::steady_clock::duration>(giveUpAt - now, std::chrono::milliseconds(STALLED_WAIT_MS)), [this] { return !drawing; });
+        }
         return !drawing && drew;
     }
 
@@ -1325,7 +1331,7 @@ bool ScreenCapture::scalesOnCard() const
 // card. False when the card would not, after which this capture scales in software.
 bool ScreenCapture::scaleOnCard(const AVFrame *from, const QRect &area, const QSize &size, const QRect &placed, AVFrame *into)
 {
-    const CardScaler::Output output = { size, request.bt601Only || size.height() < HD_HEIGHT, request.rgbOnCard };
+    const CardScaler::Output output = { size, request.bt601Only || !Media::usesBt709AtHeight(size.height()), request.rgbOnCard };
     if (backends->scaler.scale(from, area, output, placed, into))
         return true;
     cardScalingFailed = true;
@@ -1422,7 +1428,7 @@ ScreenCapture::Status ScreenCapture::deliverFromCard(AVFrame *captured, AVFrame 
     const QSize ownSize(captured->width, captured->height);
     const QSize size = encodeSizeFor(ownSize, request.maxHeight);
     const char *wentOn = "read back and scaled in software";
-    const bool bt601 = request.bt601Only || size.height() < HD_HEIGHT;
+    const bool bt601 = request.bt601Only || !Media::usesBt709AtHeight(size.height());
     if (request.keepOnCard && request.rgbOnCard && size == ownSize) {
         wentOn = "kept on the graphics card as it is";
         av_frame_move_ref(into, captured);
@@ -1486,7 +1492,7 @@ ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
         else if (staysOnCard)
             ready = av_hwframe_get_buffer(state.pool, card, 0) >= 0 && av_hwframe_transfer_data(card, bgra, 0) >= 0;
 
-        const bool bt601 = !staysOnCard && (request.bt601Only || size.height() < HD_HEIGHT);
+        const bool bt601 = !staysOnCard && (request.bt601Only || !Media::usesBt709AtHeight(size.height()));
         if (ready && scaledOnCard)
             ready = scaleOnCard(card, wholeOf(card), size, QRect(QPoint(0, 0), size), into);
         else if (ready && staysOnCard)
@@ -1618,7 +1624,7 @@ ScreenCapture::Drawing ScreenCapture::drawnByItself(const QRect &client)
     Backends &state = *backends;
     if (!state.drawer)
         state.drawer = WindowDrawer::start(state.window, true);
-    if (!state.drawer->draw(std::chrono::milliseconds(DRAWING_LIMIT_MS)))
+    if (!state.drawer->draw(std::chrono::milliseconds(DRAWING_LIMIT_MS), stillWanted))
         return Drawing::Failed;
     state.drawer->drawPointer(client);
 

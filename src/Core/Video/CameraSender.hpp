@@ -11,7 +11,7 @@
 #include <memory>
 
 #include "Core/Snowflake.hpp"
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/EncodePipeline.hpp"
 #include "Core/Video/SendQuality.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 
@@ -56,7 +56,7 @@ public:
 
     struct Stats
     {
-        Video::BroadcastStats encoder;
+        Video::PipelineStats encoder;
         Discord::Voice::VideoSendStats network;
         // What the encoder is asked for, in bits per second.
         int targetBitrate = 0;
@@ -69,7 +69,7 @@ public:
 
         // The second layer, where the connection has one: the same again for it.
         bool hasSecondLayer = false;
-        Video::BroadcastStats secondEncoder;
+        Video::PipelineStats secondEncoder;
         int secondTargetBitrate = 0;
         int secondReceivers = -1;
         int secondServedWant = 100;
@@ -135,7 +135,7 @@ private:
     void onPipelineStarted(const QSize &encodedSize);
     void onPreviewReady(const QImage &preview);
     void onPipelineFailed(const QString &reason);
-    void onPipelineStats(const Video::BroadcastStats &stats, int layer);
+    void onPipelineStats(const Video::PipelineStats &stats, int layer);
 
     void setState(State state);
     void end(bool tellGateway, State endState);
@@ -177,7 +177,7 @@ private:
         // As the server counts them; negative until it has said.
         int receivers = -1;
         bool suspended = false;
-        Video::BroadcastStats encoderStats;
+        Video::PipelineStats encoderStats;
     };
     static constexpr int FULL = 0;
     static constexpr int SECOND = 1;

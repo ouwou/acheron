@@ -513,7 +513,7 @@ struct PipelineRecord
                 firstFrameAt = clock.elapsed();
         });
         QObject::connect(&pipeline, &CameraPipeline::previewReady, &here, [this](const QImage &preview) { previews.append(preview); });
-        QObject::connect(&pipeline, &CameraPipeline::statsUpdated, &here, [this](const BroadcastStats &update, int layer) {
+        QObject::connect(&pipeline, &CameraPipeline::statsUpdated, &here, [this](const PipelineStats &update, int layer) {
             if (layer != 0)
                 return;
             stats.append(update);
@@ -554,7 +554,7 @@ struct PipelineRecord
     QList<Start> secondStarts;
     QList<QImage> previews;
     QList<Start> starts;
-    QList<BroadcastStats> stats;
+    QList<PipelineStats> stats;
     QList<qint64> statsAt;
     QStringList failures;
 };
@@ -574,8 +574,8 @@ CameraSettings settingsFor(VideoCodec codec, const QSize &encodeSize, int framer
     settings.codec = codec;
     settings.encodeSize = encodeSize;
     settings.framerate = framerate;
-    settings.bitrate = BITRATE;
-    settings.maxBitrate = 4'000'000;
+    settings.bitrateBps = BITRATE;
+    settings.maxBitrateBps = 4'000'000;
     return settings;
 }
 
@@ -1440,8 +1440,8 @@ void TestCameraCapture::theBitrateIsFollowed()
     PipelineRecord record(pipeline);
     CameraSettings settings = settingsFor(codec, QSize(640, 360), 30);
     // More than the most allowed, which is then what is used.
-    settings.bitrate = 9'000'000;
-    settings.maxBitrate = BITRATE;
+    settings.bitrateBps = 9'000'000;
+    settings.maxBitrateBps = BITRATE;
     pipeline.start(settings);
     QTRY_VERIFY2_WITH_TIMEOUT(!record.frames.empty() || !record.failures.isEmpty(), "no frame in 5 s", 5000);
     QVERIFY2(record.failures.isEmpty(), qPrintable(record.failures.join(QLatin1Char(';'))));
@@ -1484,7 +1484,7 @@ void TestCameraCapture::statisticsComeEverySecond()
         const qint64 apart = record.statsAt[i] - record.statsAt[i - 1];
         QVERIFY2(apart > 800 && apart < 1300, qPrintable(QString::number(apart)));
     }
-    const BroadcastStats last = record.stats[2];
+    const PipelineStats last = record.stats[2];
     qInfo().noquote() << QStringLiteral("statistics: %1, hardware %2, %3x%4, captured %5 fps, encoded %6 fps, %7 ms in the encoder a picture, %8 bits a second, %9 frames").arg(last.encoderName).arg(last.hardware).arg(last.encodedSize.width()).arg(last.encodedSize.height()).arg(last.capturedFps, 0, 'f', 1).arg(last.encodedFps, 0, 'f', 1).arg(last.averageEncodeMs, 0, 'f', 2).arg(last.bitrateBps).arg(last.framesEncoded);
     QVERIFY(last.encoderName.endsWith(QStringLiteral(", from a synthetic camera")));
     QVERIFY(!last.encoderName.startsWith(QStringLiteral("no encoder yet")));

@@ -377,7 +377,7 @@ void CameraSender::startPipeline()
     });
     connect(started, &Video::CameraPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
     connect(started, &Video::CameraPipeline::failed, started, [this](const QString &reason) { onPipelineFailed(reason); });
-    connect(started, &Video::CameraPipeline::statsUpdated, started, [this](const Video::BroadcastStats &encoder, int layer) { onPipelineStats(encoder, layer); });
+    connect(started, &Video::CameraPipeline::statsUpdated, started, [this](const Video::PipelineStats &encoder, int layer) { onPipelineStats(encoder, layer); });
     sendFramesToRtc();
 
     for (Layer &layer : layers)
@@ -389,9 +389,9 @@ void CameraSender::startPipeline()
     settings.codec = sendCodec;
     settings.encodeSize = full.asked.size;
     settings.framerate = full.asked.framerate;
-    settings.bitrate = full.asked.bitrate;
+    settings.bitrateBps = full.asked.bitrate;
     // The most the camera is ever sent at, whichever row of the ladder it starts on.
-    settings.maxBitrate = Video::CAMERA_MAX_BITRATE;
+    settings.maxBitrateBps = Video::CAMERA_MAX_BITRATE;
     // The second layer is encoded once someone is known to receive it.
     pipeline->setEncoding(second.asked.size, second.asked.framerate, SECOND);
     pipeline->setBitrate(second.asked.bitrate, SECOND);
@@ -450,7 +450,7 @@ void CameraSender::onPipelineFailed(const QString &reason)
     fail(tr("Your camera was turned off: %1").arg(reason));
 }
 
-void CameraSender::onPipelineStats(const Video::BroadcastStats &encoder, int layer)
+void CameraSender::onPipelineStats(const Video::PipelineStats &encoder, int layer)
 {
     if (layer == FULL || layer == SECOND)
         layers[static_cast<size_t>(layer)].encoderStats = encoder;

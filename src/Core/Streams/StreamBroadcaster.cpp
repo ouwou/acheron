@@ -493,27 +493,27 @@ void StreamBroadcaster::startPipeline()
     limits = Video::bitrateLimits(sendQuality);
     rate.restart(limits.min, limits.max);
 
-    pipeline = std::make_unique<Video::BroadcastPipeline>();
+    pipeline = std::make_unique<Video::ScreenPipeline>();
     // In the pipeline's own context, so that what it had on its way when it was let go of
     // goes with it.
-    Video::BroadcastPipeline *started = pipeline.get();
-    connect(started, &Video::BroadcastPipeline::started, started, [this](const QSize &size, int framerate) { onPipelineStarted(size, framerate); });
-    connect(started, &Video::BroadcastPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
-    connect(started, &Video::BroadcastPipeline::captureStalled, started, [this](bool stalled) { onCaptureStalled(stalled); });
-    connect(started, &Video::BroadcastPipeline::sourceClosed, started, [this] { onSourceClosed(); });
-    connect(started, &Video::BroadcastPipeline::failed, started, [this](const QString &reason) { onPipelineFailed(reason); });
-    connect(started, &Video::BroadcastPipeline::statsUpdated, started, [this](const Video::BroadcastStats &encoder) { onPipelineStats(encoder); });
+    Video::ScreenPipeline *started = pipeline.get();
+    connect(started, &Video::ScreenPipeline::started, started, [this](const QSize &size, int framerate) { onPipelineStarted(size, framerate); });
+    connect(started, &Video::ScreenPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
+    connect(started, &Video::ScreenPipeline::captureStalled, started, [this](bool stalled) { onCaptureStalled(stalled); });
+    connect(started, &Video::ScreenPipeline::sourceClosed, started, [this] { onSourceClosed(); });
+    connect(started, &Video::ScreenPipeline::failed, started, [this](const QString &reason) { onPipelineFailed(reason); });
+    connect(started, &Video::ScreenPipeline::statsUpdated, started, [this](const Video::PipelineStats &encoder) { onPipelineStats(encoder); });
     sendFramesToRtc();
 
-    Video::BroadcastSettings settings;
+    Video::ScreenSettings settings;
     settings.sourceId = source.id;
     settings.maxHeight = sendQuality.height;
     settings.framerate = sendQuality.framerate;
     settings.codec = sendCodec;
-    settings.bitrate = rate.bitrate();
-    settings.maxBitrate = limits.max;
+    settings.bitrateBps = rate.bitrate();
+    settings.maxBitrateBps = limits.max;
     pipeline->start(settings);
-    appliedBitrate = settings.bitrate;
+    appliedBitrate = settings.bitrateBps;
     sinceBitrateApplied.start();
     tellBitrate();
 }
@@ -542,7 +542,7 @@ void StreamBroadcaster::sendFramesToRtc()
         return;
 
     VoiceClient *connection = rtc->connection()->client();
-    framesToRtc = connect(pipeline.get(), &Video::BroadcastPipeline::frameEncoded, connection, [connection](const Video::EncodedFramePointer &frame) {
+    framesToRtc = connect(pipeline.get(), &Video::ScreenPipeline::frameEncoded, connection, [connection](const Video::EncodedFramePointer &frame) {
         connection->sendVideoFrame(*frame);
     });
 }
@@ -589,7 +589,7 @@ void StreamBroadcaster::onPipelineFailed(const QString &reason)
     fail(tr("Screen sharing stopped: %1").arg(reason));
 }
 
-void StreamBroadcaster::onPipelineStats(const Video::BroadcastStats &encoder)
+void StreamBroadcaster::onPipelineStats(const Video::PipelineStats &encoder)
 {
     encoderStats = encoder;
 }

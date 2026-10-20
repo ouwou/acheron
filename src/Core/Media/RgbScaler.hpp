@@ -15,7 +15,9 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-// Untagged video is taken as BT.709 at HD sizes and BT.601 below, as players do.
+// Untagged video is taken as BT.709 at HD sizes and BT.601 below, as players do, which is also
+// what a picture that is sent is made in where its codec cannot say.
+[[nodiscard]] bool usesBt709AtHeight(int height);
 [[nodiscard]] bool usesBt709(const AVFrame *frame);
 [[nodiscard]] bool isFullRange(const AVFrame *frame);
 

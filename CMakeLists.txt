@@ -442,7 +442,8 @@ if(ENABLE_VOICE)
             src/Core/Media/H264Sps.cpp
             src/Core/Audio/LoopbackCapture.cpp
             src/Core/Streams/StreamConnection.cpp
-            src/Core/Video/BroadcastPipeline.cpp
+            src/Core/Video/ScreenPipeline.cpp
+            src/Core/Video/EncodePipeline.cpp
             src/Core/Video/ScreenCapture.cpp
             src/Core/Video/CardScaler.cpp
             src/Core/Video/CameraCapture.cpp

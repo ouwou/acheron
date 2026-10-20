@@ -4,6 +4,7 @@
 #include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoEncoder.hpp"
 #include "Core/Video/CameraCapture.hpp"
+#include "Core/Video/EncodeThread.hpp"
 
 #include <QElapsedTimer>
 #include <QSettings>
@@ -12,12 +13,9 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <deque>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -36,15 +34,11 @@ namespace {
 using Discord::Voice::EncodedVideoFrame;
 using Discord::Voice::VideoCodec;
 using Clock = std::chrono::steady_clock;
+using Media::FramePointer;
 
 constexpr int PREVIEWS_PER_SECOND = 15;
 constexpr QSize PREVIEW_BOUND(640, 360);
 constexpr int STATS_INTERVAL_MS = 1000;
-constexpr int HD_HEIGHT = 720;
-constexpr int MIN_BITRATE = 50'000;
-constexpr int BITRATE_WHEN_NONE_GIVEN = 2'500'000;
-
-using Media::FramePointer;
 
 struct Encoding
 {
@@ -54,19 +48,10 @@ struct Encoding
 
 struct Asked
 {
-    int bitrate = 0;
+    int bitrateBps = 0;
     // Set when a size and frame rate were asked for, also the ones there already are.
     std::optional<Encoding> encoding;
 };
-
-int usableBitrate(int wanted, int most)
-{
-    if (wanted <= 0)
-        wanted = BITRATE_WHEN_NONE_GIVEN;
-    if (most > 0)
-        wanted = std::min(wanted, most);
-    return std::max(wanted, MIN_BITRATE);
-}
 
 // The camera's picture inside the size to encode: never stretched and never enlarged, so a
 // camera of another shape is sent smaller than asked, and both sides even.
@@ -115,7 +100,7 @@ public:
     // Null when the picture could not be converted. `camera` itself when it is already as wanted.
     AVFrame *make(AVFrame *camera, const QSize &size, int format, bool bt601Only)
     {
-        const Conversion wanted{ camera->width, camera->height, camera->format, Media::usesBt709(camera), Media::isFullRange(camera), size, format, !bt601Only && size.height() >= HD_HEIGHT };
+        const Conversion wanted{ camera->width, camera->height, camera->format, Media::usesBt709(camera), Media::isFullRange(camera), size, format, !bt601Only && Media::usesBt709AtHeight(size.height()) };
         if (wanted.changesNothing())
             return camera;
         if (wanted != configuredFor && !configure(wanted))
@@ -191,31 +176,12 @@ private:
     FramePointer made{ av_frame_alloc() };
 };
 
-// The camera's picture for its owner to look at, each in an image of its own.
-class PreviewMaker
-{
-public:
-    QImage make(const AVFrame *camera)
-    {
-        const QSize full(camera->width, camera->height);
-        const bool fits = full.width() <= PREVIEW_BOUND.width() && full.height() <= PREVIEW_BOUND.height();
-        const QSize size = fits ? full : full.scaled(PREVIEW_BOUND, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
-        if (image.size() != size)
-            image = Media::RgbScaler::allocate(size, QImage::Format_RGB32);
-        return scaler.scale(camera, image) ? image : QImage();
-    }
-
-private:
-    Media::RgbScaler scaler;
-    QImage image;
-};
-
-Media::VideoEncoder::Settings encoderSettings(const CameraSettings &settings, int framerate, int bitrate)
+Media::VideoEncoder::Settings encoderSettings(const CameraSettings &settings, int framerate, int bitrateBps)
 {
     Media::VideoEncoder::Settings encoding;
     encoding.codec = settings.codec;
     encoding.framerate = framerate;
-    encoding.bitrate = bitrate;
+    encoding.bitrate = bitrateBps;
     encoding.keyframeIntervalMs = settings.keyframeIntervalMs;
     encoding.content = Media::VideoEncoder::Content::Camera;
     return encoding;
@@ -238,76 +204,55 @@ void setPreferredCamera(const QString &deviceId)
 class CameraPipeline::Worker
 {
 public:
-    explicit Worker(CameraPipeline *pipeline) : pipeline(pipeline), thread([this] { run(); })
+    explicit Worker(CameraPipeline *pipeline) : pipeline(pipeline)
     {
         // Every layer but the first waits to be asked for.
         for (int layer = 1; layer < LAYERS; layer++)
             suspended[static_cast<size_t>(layer)] = true;
     }
 
-    ~Worker()
-    {
-        {
-            std::lock_guard lock(mutex);
-            quitting = true;
-            generation++;
-        }
-        wake.notify_all();
-        thread.join();
-    }
-
     void start(const CameraSettings &settings)
     {
-        {
-            std::lock_guard lock(mutex);
-            wanted = settings;
-            requests[0].encodingWanted.reset();
-            generation++;
-        }
-        wake.notify_all();
-    }
-
-    void stop()
-    {
-        std::lock_guard lock(mutex);
-        wanted.reset();
-        generation++;
+        thread.change([this](std::optional<CameraSettings> &) { requests[0].encodingWanted.reset(); });
+        thread.start(settings);
     }
 
     // A camera that has not been opened yet opens with what is asked for here.
-    void setBitrate(int newBitrate, int layer)
+    void setBitrate(int bitrateBps, int layer)
     {
-        std::lock_guard lock(mutex);
-        Requests &asked = requests[static_cast<size_t>(layer)];
-        if (wanted && layer == 0) {
-            wanted->bitrate = newBitrate;
-        } else if (asked.bitrate != newBitrate) {
-            asked.bitrate = newBitrate;
-            asked.changes++;
-        }
+        thread.change([&](std::optional<CameraSettings> &pending) {
+            Requests &asked = requests[static_cast<size_t>(layer)];
+            if (pending && layer == 0) {
+                pending->bitrateBps = bitrateBps;
+            } else if (asked.bitrateBps != bitrateBps) {
+                asked.bitrateBps = bitrateBps;
+                asked.changes++;
+            }
+        });
     }
 
     void setEncoding(const QSize &size, int framerate, int layer)
     {
-        std::lock_guard lock(mutex);
-        Requests &asked = requests[static_cast<size_t>(layer)];
-        if (wanted && layer == 0) {
-            wanted->encodeSize = size;
-            wanted->framerate = framerate;
-        } else {
-            asked.encodingWanted = Encoding{ size, std::max(1, framerate) };
-            asked.changes++;
-        }
+        thread.change([&](std::optional<CameraSettings> &pending) {
+            Requests &asked = requests[static_cast<size_t>(layer)];
+            if (pending && layer == 0) {
+                pending->encodeSize = size;
+                pending->framerate = framerate;
+            } else {
+                asked.encodingWanted = Encoding{ size, std::max(1, framerate) };
+                asked.changes++;
+            }
+        });
     }
 
     std::array<std::atomic<bool>, LAYERS> keyframeWanted{};
     std::array<std::atomic<bool>, LAYERS> suspended{};
 
 private:
-    // What has been asked of one layer since its last picture.
+    // What has been asked of one layer since its last picture, guarded by the thread's lock.
     struct Requests
     {
-        int bitrate = 0;
+        int bitrateBps = 0;
         std::optional<Encoding> encodingWanted;
         quint64 changes = 0;
         quint64 changesAtLastPicture = 0;
@@ -319,7 +264,7 @@ private:
         explicit Layer(const Encoding &encoding) : encoding(encoding), thinner(encoding.framerate) {}
 
         Encoding encoding;
-        int sendingBitrate = 0;
+        int sendingBitrateBps = 0;
         // Made when the layer is first asked for.
         std::optional<Media::VideoEncoder> encoder;
         EncodePictureMaker pictures;
@@ -332,63 +277,30 @@ private:
         quint64 bytesLately = 0;
     };
 
-    void run();
     void capture(const CameraSettings &settings, quint64 session);
     [[nodiscard]] std::optional<Asked> takeAsked(int layer);
-    [[nodiscard]] int64_t timestampOf(Clock::time_point capturedAt);
 
     CameraPipeline *pipeline;
-    std::mutex mutex;
-    std::condition_variable wake;
-    std::optional<CameraSettings> wanted;
     std::array<Requests, LAYERS> requests;
-    bool quitting = false;
-    // Moves on with every start and stop; a capture ends when it is no longer its own.
-    std::atomic<quint64> generation{ 0 };
+    RtpClock clock;
 
-    // Timestamps run on from one capture to the next, so that a restarted one never goes back.
-    const Clock::time_point origin = Clock::now();
-    int64_t lastTimestamp = -1;
-
-    std::thread thread;
+public:
+    CaptureThread<CameraSettings> thread{ [this](const CameraSettings &settings, quint64 session) { capture(settings, session); },
+                                          [this](const CameraSettings &settings) { requests[0].bitrateBps = settings.bitrateBps; } };
 };
-
-void CameraPipeline::Worker::run()
-{
-    for (;;) {
-        CameraSettings settings;
-        quint64 session = 0;
-        {
-            std::unique_lock lock(mutex);
-            wake.wait(lock, [this] { return quitting || wanted; });
-            if (quitting)
-                return;
-            settings = *wanted;
-            wanted.reset();
-            requests[0].bitrate = settings.bitrate;
-            session = generation;
-        }
-        capture(settings, session);
-    }
-}
 
 // What is asked of a layer now, once a picture has come with nothing new asked for since the
 // picture before it. A new bit rate and a new size asked for one after the other are each a
 // new start for the encoder, and a key frame: taken together like this they are one.
 std::optional<Asked> CameraPipeline::Worker::takeAsked(int layer)
 {
-    std::lock_guard lock(mutex);
-    Requests &asked = requests[static_cast<size_t>(layer)];
-    if (asked.changes != std::exchange(asked.changesAtLastPicture, asked.changes))
-        return std::nullopt;
-    return Asked{ asked.bitrate, std::exchange(asked.encodingWanted, std::nullopt) };
-}
-
-int64_t CameraPipeline::Worker::timestampOf(Clock::time_point capturedAt)
-{
-    const int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(capturedAt - origin).count();
-    lastTimestamp = std::max(lastTimestamp + 1, microseconds * 9 / 100);
-    return lastTimestamp;
+    std::optional<Asked> taken;
+    thread.change([&](std::optional<CameraSettings> &) {
+        Requests &asked = requests[static_cast<size_t>(layer)];
+        if (asked.changes == std::exchange(asked.changesAtLastPicture, asked.changes))
+            taken = Asked{ asked.bitrateBps, std::exchange(asked.encodingWanted, std::nullopt) };
+    });
+    return taken;
 }
 
 void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 session)
@@ -399,8 +311,8 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
     for (int index = 0; index < LAYERS; index++)
         layers.emplace_back(Encoding{ settings.encodeSize, std::max(1, settings.framerate) });
     for (Layer &layer : layers)
-        layer.sendingBitrate = usableBitrate(settings.bitrate, settings.maxBitrate);
-    layers[0].encoder.emplace(encoderSettings(settings, layers[0].encoding.framerate, layers[0].sendingBitrate));
+        layer.sendingBitrateBps = usableBitrate(settings.bitrateBps, settings.maxBitrateBps);
+    layers[0].encoder.emplace(encoderSettings(settings, layers[0].encoding.framerate, layers[0].sendingBitrateBps));
     if (!layers[0].encoder->hasEncoder()) {
         emit pipeline->failed(noEncoder);
         return;
@@ -413,7 +325,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
     }
 
     const FramePointer frame(av_frame_alloc());
-    PreviewMaker previews;
+    PreviewMaker previews(PREVIEW_BOUND);
     FrameThinner previewThinner(PREVIEWS_PER_SECOND);
     std::vector<EncodedVideoFrame> encoded;
     QElapsedTimer sinceStats;
@@ -424,14 +336,14 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
     const auto encodeLayer = [&](int index, Clock::time_point capturedAt, int64_t timestamp) {
         Layer &layer = layers[static_cast<size_t>(index)];
         const std::optional<Asked> asked = takeAsked(index);
-        if (asked && asked->bitrate > 0)
-            layer.sendingBitrate = usableBitrate(asked->bitrate, settings.maxBitrate);
+        if (asked && asked->bitrateBps > 0)
+            layer.sendingBitrateBps = usableBitrate(asked->bitrateBps, settings.maxBitrateBps);
         // VideoEncoder has no way to be given a new frame rate, so a new one is made, which
         // starts with a key frame as a new size would anyway.
         if (asked && asked->encoding) {
             layer.encoding = *asked->encoding;
             if (layer.encoder)
-                layer.encoder.emplace(encoderSettings(settings, layer.encoding.framerate, layer.sendingBitrate));
+                layer.encoder.emplace(encoderSettings(settings, layer.encoding.framerate, layer.sendingBitrateBps));
             layer.thinner = FrameThinner(layer.encoding.framerate);
         }
 
@@ -439,7 +351,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         if (!layer.encoder) {
             if (suspendedNow)
                 return true;
-            layer.encoder.emplace(encoderSettings(settings, layer.encoding.framerate, layer.sendingBitrate));
+            layer.encoder.emplace(encoderSettings(settings, layer.encoding.framerate, layer.sendingBitrateBps));
             if (!layer.encoder->hasEncoder()) {
                 emit pipeline->failed(noEncoder);
                 return false;
@@ -470,7 +382,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
             return false;
         }
 
-        layer.encoder->setBitrate(layer.sendingBitrate);
+        layer.encoder->setBitrate(layer.sendingBitrateBps);
         if (keyframeWanted[static_cast<size_t>(index)].exchange(false) || std::exchange(layer.wasSuspended, false))
             layer.encoder->requestKeyframe();
         encoded.clear();
@@ -490,7 +402,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         return true;
     };
 
-    while (generation == session) {
+    while (thread.isCurrent(session)) {
         if (sinceStats.elapsed() >= STATS_INTERVAL_MS) {
             const double seconds = static_cast<double>(sinceStats.restart()) / 1000.0;
             for (int index = 0; index < LAYERS; index++) {
@@ -498,7 +410,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
                 if (!layer.encoder)
                     continue;
                 const Media::VideoEncoder::Stats &encoderStats = layer.encoder->stats();
-                BroadcastStats stats;
+                PipelineStats stats;
                 // The camera's mode goes into the name for want of a place of its own in the statistics.
                 stats.encoderName = QStringLiteral("%1, from %2").arg(encoderStats.encoderName.isEmpty() ? QStringLiteral("no encoder yet") : encoderStats.encoderName, camera->description());
                 stats.hardware = encoderStats.hardware;
@@ -519,6 +431,8 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         av_frame_unref(frame.get());
         Clock::time_point capturedAt;
         const CameraFrameSource::Status status = camera->read(frame.get(), capturedAt);
+        if (!thread.isCurrent(session))
+            return;
         if (status == CameraFrameSource::Status::Ended) {
             emit pipeline->failed(camera->failure());
             return;
@@ -533,7 +447,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
                 emit pipeline->previewReady(preview);
         }
 
-        const int64_t timestamp = timestampOf(capturedAt);
+        const int64_t timestamp = clock.timestampOf(capturedAt);
         for (int index = 0; index < LAYERS; index++) {
             if (!encodeLayer(index, capturedAt, timestamp))
                 return;
@@ -541,12 +455,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
     }
 }
 
-CameraPipeline::CameraPipeline(QObject *parent) : QObject(parent)
-{
-    qRegisterMetaType<EncodedFramePointer>("Acheron::Core::Video::EncodedFramePointer");
-    qRegisterMetaType<BroadcastStats>("Acheron::Core::Video::BroadcastStats");
-    worker = std::make_unique<Worker>(this);
-}
+CameraPipeline::CameraPipeline(QObject *parent) : EncodePipeline(parent), worker(std::make_unique<Worker>(this)) {}
 
 CameraPipeline::~CameraPipeline() = default;
 
@@ -557,7 +466,7 @@ void CameraPipeline::start(const CameraSettings &settings)
 
 void CameraPipeline::stop()
 {
-    worker->stop();
+    worker->thread.stop();
 }
 
 void CameraPipeline::requestKeyframe(int layer)
@@ -566,10 +475,10 @@ void CameraPipeline::requestKeyframe(int layer)
         worker->keyframeWanted[static_cast<size_t>(layer)] = true;
 }
 
-void CameraPipeline::setBitrate(int bitrate, int layer)
+void CameraPipeline::setBitrate(int bitrateBps, int layer)
 {
     if (layer >= 0 && layer < LAYERS)
-        worker->setBitrate(bitrate, layer);
+        worker->setBitrate(bitrateBps, layer);
 }
 
 void CameraPipeline::setEncoding(const QSize &encodeSize, int framerate, int layer)

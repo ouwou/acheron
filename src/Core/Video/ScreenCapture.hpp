@@ -6,6 +6,7 @@
 #include <QString>
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -110,6 +111,9 @@ public:
     // is still there. What a picture costs to scale and convert is left out, and each read
     // says there is nothing new.
     void setPicturesWanted(bool wanted) { picturesWanted = wanted; }
+    // Asked, any number of times a second, while a read waits for a window that may have
+    // stopped answering: once it says no, the read stops waiting and says nothing came.
+    void setStillWanted(std::function<bool()> wanted) { stillWanted = std::move(wanted); }
     [[nodiscard]] QString failure() const { return failureText; }
 
     // Whether a picture comes only when the source shows something new. The last one may
@@ -162,6 +166,7 @@ private:
     AVFilterGraph *graph = nullptr;
     AVFilterContext *sink = nullptr;
     bool picturesWanted = true;
+    std::function<bool()> stillWanted;
     bool everDelivered = false;
     // The card stopped scaling in the middle of this capture, which goes on in software.
     bool cardScalingFailed = false;

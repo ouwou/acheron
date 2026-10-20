@@ -25,13 +25,18 @@ bool isYuv(int format)
 
 } // namespace
 
+bool usesBt709AtHeight(int height)
+{
+    return height >= HD_HEIGHT;
+}
+
 bool usesBt709(const AVFrame *frame)
 {
     if (frame->colorspace == AVCOL_SPC_BT709)
         return true;
     if (frame->colorspace == AVCOL_SPC_BT470BG || frame->colorspace == AVCOL_SPC_SMPTE170M)
         return false;
-    return frame->height >= HD_HEIGHT;
+    return usesBt709AtHeight(frame->height);
 }
 
 bool isFullRange(const AVFrame *frame)

@@ -13,8 +13,8 @@
 #include "Core/Snowflake.hpp"
 #include "Core/Streams/StreamConnection.hpp"
 #include "Core/Streams/StreamManager.hpp"
-#include "Core/Video/BroadcastPipeline.hpp"
 #include "Core/Video/CaptureSources.hpp"
+#include "Core/Video/ScreenPipeline.hpp"
 #include "Core/Video/SendQuality.hpp"
 #include "Core/Video/SendRateController.hpp"
 #include "Discord/StreamKey.hpp"
@@ -75,7 +75,7 @@ public:
 
     struct Stats
     {
-        Video::BroadcastStats encoder;
+        Video::PipelineStats encoder;
         Discord::Voice::VideoSendStats network;
         // What the encoder is asked for, in bits per second.
         int targetBitrate = 0;
@@ -159,7 +159,7 @@ private:
     void onCaptureStalled(bool stalled);
     void onSourceClosed();
     void onPipelineFailed(const QString &reason);
-    void onPipelineStats(const Video::BroadcastStats &stats);
+    void onPipelineStats(const Video::PipelineStats &stats);
     void onSoundCaptureFailed(const QString &reason);
 
     void setState(State state);
@@ -225,7 +225,7 @@ private:
     std::unique_ptr<Audio::LoopbackCapture> soundCapture;
     bool soundCaptureFailed = false;
 
-    std::unique_ptr<Video::BroadcastPipeline> pipeline;
+    std::unique_ptr<Video::ScreenPipeline> pipeline;
     QMetaObject::Connection framesToRtc;
     bool pipelineStarted = false;
     QSize encodedSize;
@@ -240,7 +240,7 @@ private:
 
     StreamPreviewUploader *previewUploader;
     QImage latestPreview;
-    Video::BroadcastStats encoderStats;
+    Video::PipelineStats encoderStats;
     Discord::Voice::VideoSendStats networkStats;
 
     QTimer startTimeout;

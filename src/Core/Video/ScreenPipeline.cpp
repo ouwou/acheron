@@ -1,28 +1,15 @@
-#include "Core/Video/BroadcastPipeline.hpp"
+#include "Core/Video/ScreenPipeline.hpp"
 
 #include "Core/Logging.hpp"
-#include "Core/Media/FfmpegPointers.hpp"
-#include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoEncoder.hpp"
+#include "Core/Video/EncodeThread.hpp"
 #include "Core/Video/ScreenCapture.hpp"
 
 #include <QElapsedTimer>
 
-#include <algorithm>
 #include <atomic>
-#include <chrono>
-#include <condition_variable>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <thread>
 #include <utility>
 #include <vector>
-
-extern "C" {
-#include <libavutil/frame.h>
-#include <libavutil/hwcontext.h>
-}
 
 namespace Acheron {
 namespace Core {
@@ -39,152 +26,50 @@ constexpr int STATS_INTERVAL_MS = 1000;
 // How long a window has to have been hidden before its share is paused. One that is being
 // closed is hidden for a moment first, and that is the end of the share and not a pause.
 constexpr int HIDDEN_BEFORE_PAUSED_MS = 200;
-constexpr int MIN_BITRATE = 50'000;
-constexpr int BITRATE_WHEN_NONE_GIVEN = 2'500'000;
 
-using Media::FramePointer;
-
-int usableBitrate(int wanted, int most)
+QString noEncoderFor(VideoCodec codec)
 {
-    if (wanted <= 0)
-        wanted = BITRATE_WHEN_NONE_GIVEN;
-    if (most > 0)
-        wanted = std::min(wanted, most);
-    return std::max(wanted, MIN_BITRATE);
+    return ScreenPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(codec));
 }
-
-// Small stills of what is being captured, each in an image of its own.
-class PreviewMaker
-{
-public:
-    QImage make(const AVFrame *frame)
-    {
-        const AVFrame *picture = frame;
-        if (frame->hw_frames_ctx) {
-            av_frame_unref(downloaded.get());
-            if (av_hwframe_transfer_data(downloaded.get(), frame, 0) < 0)
-                return {};
-            av_frame_copy_props(downloaded.get(), frame);
-            picture = downloaded.get();
-        }
-
-        const QSize full(picture->width, picture->height);
-        const bool fits = full.width() <= PREVIEW_BOUND.width() && full.height() <= PREVIEW_BOUND.height();
-        const QSize size = fits ? full : full.scaled(PREVIEW_BOUND, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
-        if (image.size() != size)
-            image = Media::RgbScaler::allocate(size, QImage::Format_RGB32);
-        const bool scaled = scaler.scale(picture, image);
-        av_frame_unref(downloaded.get());
-        return scaled ? image : QImage();
-    }
-
-private:
-    Media::RgbScaler scaler;
-    QImage image;
-    FramePointer downloaded{ av_frame_alloc() };
-};
 
 } // namespace
 
-class BroadcastPipeline::Worker
+class ScreenPipeline::Worker
 {
 public:
-    explicit Worker(BroadcastPipeline *pipeline) : pipeline(pipeline), thread([this] { run(); }) {}
-
-    ~Worker()
+    struct Start
     {
-        {
-            std::lock_guard lock(mutex);
-            quitting = true;
-            generation++;
-        }
-        wake.notify_all();
-        thread.join();
-    }
+        ScreenSettings settings;
+        CaptureMethod method = CaptureMethod::Auto;
+    };
 
-    void start(const BroadcastSettings &settings)
-    {
-        const CaptureMethod method = captureMethod();
-        {
-            std::lock_guard lock(mutex);
-            wanted = settings;
-            wantedMethod = method;
-            bitrate = settings.bitrate;
-            generation++;
-        }
-        wake.notify_all();
-    }
-
-    void stop()
-    {
-        std::lock_guard lock(mutex);
-        wanted.reset();
-        generation++;
-    }
+    explicit Worker(ScreenPipeline *pipeline) : pipeline(pipeline) {}
 
     std::atomic<bool> keyframeWanted{ false };
     std::atomic<bool> suspended{ false };
-    std::atomic<int> bitrate{ 0 };
+    std::atomic<int> bitrateBps{ 0 };
 
 private:
-    void run();
-    void capture(const BroadcastSettings &settings, CaptureMethod method, quint64 session);
-    [[nodiscard]] int64_t nextTimestamp();
+    void capture(const ScreenSettings &settings, CaptureMethod method, quint64 session);
 
-    BroadcastPipeline *pipeline;
-    std::mutex mutex;
-    std::condition_variable wake;
-    std::optional<BroadcastSettings> wanted;
-    CaptureMethod wantedMethod = CaptureMethod::Auto;
-    bool quitting = false;
-    // Moves on with every start and stop; a capture ends when it is no longer its own.
-    std::atomic<quint64> generation{ 0 };
+    ScreenPipeline *pipeline;
+    RtpClock clock;
 
-    // Timestamps run on from one capture to the next, so that a restarted one never goes back.
-    const std::chrono::steady_clock::time_point origin = std::chrono::steady_clock::now();
-    int64_t lastTimestamp = -1;
-
-    std::thread thread;
+public:
+    CaptureThread<Start> thread{ [this](const Start &start, quint64 session) { capture(start.settings, start.method, session); } };
 };
 
-void BroadcastPipeline::Worker::run()
-{
-    for (;;) {
-        BroadcastSettings settings;
-        CaptureMethod method = CaptureMethod::Auto;
-        quint64 session = 0;
-        {
-            std::unique_lock lock(mutex);
-            wake.wait(lock, [this] { return quitting || wanted; });
-            if (quitting)
-                return;
-            settings = *wanted;
-            method = wantedMethod;
-            wanted.reset();
-            session = generation;
-        }
-        capture(settings, method, session);
-    }
-}
-
-int64_t BroadcastPipeline::Worker::nextTimestamp()
-{
-    const int64_t microseconds = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - origin).count();
-    lastTimestamp = std::max(lastTimestamp + 1, microseconds * 9 / 100);
-    return lastTimestamp;
-}
-
-void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, CaptureMethod method, quint64 session)
+void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMethod method, quint64 session)
 {
     Media::VideoEncoder::Settings encoding;
     encoding.codec = settings.codec;
     encoding.framerate = std::max(1, settings.framerate);
-    encoding.bitrate = usableBitrate(bitrate, settings.maxBitrate);
+    encoding.bitrate = usableBitrate(bitrateBps, settings.maxBitrateBps);
     encoding.keyframeIntervalMs = settings.keyframeIntervalMs;
     encoding.content = Media::VideoEncoder::Content::Screen;
     Media::VideoEncoder encoder(encoding);
     if (!encoder.hasEncoder()) {
-        emit pipeline->failed(BroadcastPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(settings.codec)));
+        emit pipeline->failed(noEncoderFor(settings.codec));
         return;
     }
 
@@ -199,11 +84,13 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
     request.bt601Only = settings.codec == VideoCodec::VP8;
     ScreenCapture screen;
     screen.configure(request);
+    // A window that has stopped answering is not waited for once this capture is over.
+    screen.setStillWanted([this, session] { return thread.isCurrent(session); });
 
-    const FramePointer frame(av_frame_alloc());
+    const Media::FramePointer frame(av_frame_alloc());
     // The last picture of a source that has one only when it shows something new.
-    const FramePointer kept(av_frame_alloc());
-    PreviewMaker previews;
+    const Media::FramePointer kept(av_frame_alloc());
+    PreviewMaker previews(PREVIEW_BOUND);
     QImage preview;
     bool previewIsOfThisPicture = false;
     std::vector<EncodedVideoFrame> encoded;
@@ -222,12 +109,14 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
     int encodedLately = 0;
     quint64 bytesLately = 0;
 
-    while (generation == session) {
+    while (thread.isCurrent(session)) {
         // With nobody watching, a picture is only wanted for a preview.
         const bool suspendedNow = suspended;
         const bool pictureWanted = !suspendedNow || !announcedSize.isValid() || !sincePreview.isValid() || sincePreview.elapsed() >= PREVIEW_INTERVAL_MS;
         screen.setPicturesWanted(pictureWanted);
         const ScreenCapture::Status status = screen.read(frame.get());
+        if (!thread.isCurrent(session))
+            return;
         if (status == ScreenCapture::Status::Failed) {
             emit pipeline->failed(screen.failure());
             return;
@@ -275,7 +164,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
             continue;
         sincePicture.start();
 
-        const int64_t timestamp = nextTimestamp();
+        const int64_t timestamp = clock.timestampOf(std::chrono::steady_clock::now());
         const QSize size(picture->width, picture->height);
         capturedLately++;
 
@@ -286,7 +175,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
 
         const bool keyframeAsked = keyframeWanted.exchange(false);
         if (!suspendedNow && !heldBack) {
-            encoder.setBitrate(usableBitrate(bitrate, settings.maxBitrate));
+            encoder.setBitrate(usableBitrate(bitrateBps, settings.maxBitrateBps));
             if (keyframeAsked || wasSuspended)
                 encoder.requestKeyframe();
 
@@ -301,7 +190,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
                 continue;
             }
             if (outcome == Media::VideoEncoder::Outcome::Failed) {
-                emit pipeline->failed(BroadcastPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(settings.codec)));
+                emit pipeline->failed(noEncoderFor(settings.codec));
                 return;
             }
         }
@@ -311,7 +200,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
         if (std::exchange(announcedSize, size) != size) {
             if (heldBack)
                 qCInfo(LogVideo) << "Not encoding" << Discord::Voice::videoCodecName(settings.codec) << "at" << size << "which its encoder would code as" << codedSize;
-            emit pipeline->started(size, encoding.framerate);
+            emit pipeline->started(size, encoding.framerate, 0);
         }
 
         if (!suspendedNow && !heldBack) {
@@ -320,7 +209,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
                 framesEncoded++;
                 encodedLately++;
                 bytesLately += each.data.size();
-                emit pipeline->frameEncoded(std::make_shared<const EncodedVideoFrame>(std::move(each)));
+                emit pipeline->frameEncoded(std::make_shared<const EncodedVideoFrame>(std::move(each)), 0);
             }
         }
 
@@ -336,7 +225,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
         if (sinceStats.elapsed() >= STATS_INTERVAL_MS) {
             const double seconds = static_cast<double>(sinceStats.restart()) / 1000.0;
             const Media::VideoEncoder::Stats &encoderStats = encoder.stats();
-            BroadcastStats stats;
+            PipelineStats stats;
             // The capture goes into the name for want of a place of its own in the statistics.
             QString encoderName = encoderStats.encoderName.isEmpty() ? QStringLiteral("no encoder yet") : encoderStats.encoderName;
             if (heldBack)
@@ -350,7 +239,7 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
             stats.bitrateBps = static_cast<quint64>(static_cast<double>(bytesLately) * 8.0 / seconds);
             stats.framesEncoded = framesEncoded;
             stats.framesDropped = framesDropped;
-            emit pipeline->statsUpdated(stats);
+            emit pipeline->statsUpdated(stats, 0);
             capturedLately = 0;
             encodedLately = 0;
             bytesLately = 0;
@@ -360,36 +249,32 @@ void BroadcastPipeline::Worker::capture(const BroadcastSettings &settings, Captu
     }
 }
 
-BroadcastPipeline::BroadcastPipeline(QObject *parent) : QObject(parent)
+ScreenPipeline::ScreenPipeline(QObject *parent) : EncodePipeline(parent), worker(std::make_unique<Worker>(this)) {}
+
+ScreenPipeline::~ScreenPipeline() = default;
+
+void ScreenPipeline::start(const ScreenSettings &settings)
 {
-    qRegisterMetaType<EncodedFramePointer>("Acheron::Core::Video::EncodedFramePointer");
-    qRegisterMetaType<BroadcastStats>("Acheron::Core::Video::BroadcastStats");
-    worker = std::make_unique<Worker>(this);
+    worker->bitrateBps = settings.bitrateBps;
+    worker->thread.start({ settings, captureMethod() });
 }
 
-BroadcastPipeline::~BroadcastPipeline() = default;
-
-void BroadcastPipeline::start(const BroadcastSettings &settings)
+void ScreenPipeline::stop()
 {
-    worker->start(settings);
+    worker->thread.stop();
 }
 
-void BroadcastPipeline::stop()
-{
-    worker->stop();
-}
-
-void BroadcastPipeline::requestKeyframe()
+void ScreenPipeline::requestKeyframe()
 {
     worker->keyframeWanted = true;
 }
 
-void BroadcastPipeline::setBitrate(int bitrate)
+void ScreenPipeline::setBitrate(int bitrateBps)
 {
-    worker->bitrate = bitrate;
+    worker->bitrateBps = bitrateBps;
 }
 
-void BroadcastPipeline::setEncodingSuspended(bool suspended)
+void ScreenPipeline::setEncodingSuspended(bool suspended)
 {
     worker->suspended = suspended;
 }

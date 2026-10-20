@@ -73,7 +73,7 @@ QImage mirrored(const QImage &picture)
 }
 
 // What a screen share and a camera both have to say of what they send.
-QStringList sendStatsLines(const Core::Video::BroadcastStats &encoder, const Discord::Voice::VideoSendStats &network, int targetBitrate, int receivers)
+QStringList sendStatsLines(const Core::Video::PipelineStats &encoder, const Discord::Voice::VideoSendStats &network, int targetBitrate, int receivers)
 {
     QStringList lines;
     const QString encoderName = encoder.encoderName.isEmpty() ? CallView::tr("starting") : encoder.encoderName;
