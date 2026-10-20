@@ -203,7 +203,7 @@ public:
     static constexpr int FULL_QUALITY = 100;
 
 signals:
-    void stateChanged(State newState);
+    void stateChanged(Acheron::Discord::Voice::VoiceClient::State newState);
     void connected();
     void disconnected();
     // The gateway socket dropped and is being reopened.
@@ -232,14 +232,14 @@ signals:
     // Once a second while video is being sent.
     void videoSendStatsUpdated(const Acheron::Discord::Voice::VideoSendStats &stats);
 
-    void speakingReceived(const SpeakingData &data);
-    void clientConnected(const ClientConnectData &data);
+    void speakingReceived(const Acheron::Discord::Voice::SpeakingData &data);
+    void clientConnected(const Acheron::Discord::Voice::ClientConnectData &data);
     // The voice server says this user is connected to it, whatever the main gateway has said
     // of their voice state.
-    void clientReachedServer(Core::Snowflake userId);
-    void clientDisconnected(Core::Snowflake userId);
+    void clientReachedServer(Acheron::Core::Snowflake userId);
+    void clientDisconnected(Acheron::Core::Snowflake userId);
 
-    void audioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+    void audioReceived(quint32 ssrc, quint16 sequence, quint32 timestamp, const QByteArray &opusData);
 
     void privacyCodeChanged(const QString &code);
 

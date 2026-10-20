@@ -41,14 +41,6 @@ StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *str
     startTimeout.setInterval(START_TIMEOUT_MS);
     connect(&startTimeout, &QTimer::timeout, this, &StreamBroadcaster::onStartTimedOut);
 
-    connectTimeout.setSingleShot(true);
-    connectTimeout.setInterval(CONNECT_TIMEOUT_MS);
-    connect(&connectTimeout, &QTimer::timeout, this, &StreamBroadcaster::onConnectTimedOut);
-
-    reconnectDelay.setSingleShot(true);
-    reconnectDelay.setInterval(RECONNECT_DELAY_MS);
-    connect(&reconnectDelay, &QTimer::timeout, this, &StreamBroadcaster::onReconnectDelayOver);
-
     codecTimeout.setSingleShot(true);
     codecTimeout.setInterval(CODEC_TIMEOUT_MS);
     connect(&codecTimeout, &QTimer::timeout, this, &StreamBroadcaster::onCodecTimedOut);
@@ -153,8 +145,8 @@ void StreamBroadcaster::start(const Video::CaptureSource &chosen, const Video::S
     abandonedStreamKey.clear();
     setState(State::Starting);
 
-    Media::whenSendCodecsKnown(this, [this, asked = ++attempt](const QList<VideoCodec> &codecs) {
-        if (asked == attempt)
+    Media::whenSendCodecsKnown(this, [this, asked = ++encoderProbeAttempt](const QList<VideoCodec> &codecs) {
+        if (asked == encoderProbeAttempt)
             sendCreate(codecs);
     });
 }
@@ -195,23 +187,22 @@ void StreamBroadcaster::end(bool tellGateway)
     if (!isSharing())
         return;
 
-    attempt++;
+    encoderProbeAttempt++;
     startTimeout.stop();
-    connectTimeout.stop();
     previewUploader->stop();
 
-    disconnectRtc(true);
+    if (rtc) {
+        if (Audio::VoiceConnection *connection = rtc->connection())
+            rtc->close([client = connection->client()] { client->stopVideo(); });
+        // Not deleted here: this may be one of its own signals.
+        std::exchange(rtc, nullptr)->deleteLater();
+    }
     if (tellGateway && createSent)
         client->sendStreamDelete(streamKey.toString());
     stopPipeline();
     Video::releaseSource(source);
 
     createSent = false;
-    rtcServerId = Snowflake::Invalid;
-    rtcChannelId = Snowflake::Invalid;
-    endpoint.clear();
-    token.clear();
-    reconnects = 0;
     sendCodec = VideoCodec::Unknown;
     receivers = -1;
     captureStalled = false;
@@ -240,17 +231,6 @@ void StreamBroadcaster::onStartTimedOut()
     // The official client gives up here without a word to the gateway.
     abandonedStreamKey = streamKey.toString();
     fail(tr("Discord did not answer the request to share your screen."), false);
-}
-
-void StreamBroadcaster::onConnectTimedOut()
-{
-    fail(tr("The screen share could not connect to Discord's video server."));
-}
-
-void StreamBroadcaster::onReconnectDelayOver()
-{
-    if (currentState == State::Reconnecting && !endpoint.isEmpty())
-        connectRtc();
 }
 
 void StreamBroadcaster::onCodecTimedOut()
@@ -294,35 +274,10 @@ void StreamBroadcaster::onStreamChanged(const QString &changedKey)
 
     if (currentState == State::Starting) {
         startTimeout.stop();
-        connectTimeout.start();
         setState(State::Connecting);
+        openRtc();
     }
-
-    switch (record->state) {
-    case StreamRecord::State::AwaitingEndpoint:
-        // The server is moving the stream; the next update says where to.
-        if (connection && !endpoint.isEmpty()) {
-            disconnectRtc(false);
-            endpoint.clear();
-            setState(State::Reconnecting);
-        }
-        break;
-    case StreamRecord::State::Reconnecting:
-        disconnectRtc(false);
-        endpoint.clear();
-        setState(State::Reconnecting);
-        break;
-    case StreamRecord::State::Ready:
-        if (connection && record->endpoint == endpoint && record->token == token)
-            break;
-        rtcServerId = record->rtcServerId;
-        rtcChannelId = record->rtcChannelId;
-        endpoint = record->endpoint;
-        token = record->token;
-        reconnects = 0;
-        connectRtc();
-        break;
-    }
+    rtc->apply(*record);
 }
 
 void StreamBroadcaster::onStreamEnded(const QString &endedKey, StreamEndReason reason)
@@ -343,88 +298,74 @@ void StreamBroadcaster::onStreamEnded(const QString &endedKey, StreamEndReason r
     }
 }
 
-void StreamBroadcaster::connectRtc()
+void StreamBroadcaster::openRtc()
 {
-    disconnectRtc(false);
+    const StreamConnection::Account account{ accountId, gatewaySessionId, proxy };
+    rtc = new StreamConnection(
+            account,
+            [this](Discord::Voice::ConnectionParams &params) {
+                params.videoCodecs = Media::offeredVideoCodecs(offeredCodecs);
+                params.sendsAudio = sendsSound();
+            },
+            this);
+    connect(rtc, &StreamConnection::opened, this, &StreamBroadcaster::onRtcOpened);
+    connect(rtc, &StreamConnection::closed, this, &StreamBroadcaster::onRtcClosed);
+    connect(rtc, &StreamConnection::reconnecting, this, &StreamBroadcaster::onRtcReconnecting);
+    connect(rtc, &StreamConnection::failed, this, &StreamBroadcaster::onRtcFailed);
+    connect(rtc, &StreamConnection::pingRequested, this, [this] { client->sendStreamPing(streamKey.toString()); });
+}
 
-    Discord::Voice::ConnectionParams params;
-    params.endpoint = endpoint;
-    params.token = token;
-    params.serverId = rtcServerId;
-    // A stream's RTC channel is the id one below its RTC server when the gateway names none.
-    params.channelId = rtcChannelId.isValid() ? rtcChannelId : Snowflake(static_cast<quint64>(rtcServerId) - 1);
-    params.userId = accountId;
-    params.sessionId = gatewaySessionId;
-    params.proxy = proxy;
-    params.video = true;
-    Discord::Voice::StreamDescription screen;
-    screen.type = QStringLiteral("screen");
-    screen.rid = QStringLiteral("100");
-    screen.quality = 100;
-    params.streams = { screen };
-    params.videoCodecs = Media::offeredVideoCodecs(offeredCodecs);
-    params.sendsAudio = audioWanted && Audio::processLoopbackAvailable();
-    params.streamContext = true;
-
-    connection = new Audio::VoiceConnection(params, this);
-    VoiceClient *rtc = connection->client();
-    const quint64 serial = ++connectionSerial;
-    if (params.sendsAudio) {
-        streamAudio = std::make_unique<StreamAudio>(rtc, std::max(StreamAudio::MIN_BITRATE, voice->opusBitrate()));
+void StreamBroadcaster::onRtcOpened(Audio::VoiceConnection *connection)
+{
+    if (sendsSound()) {
+        streamAudio = std::make_unique<StreamAudio>(connection->client(), std::max(StreamAudio::MIN_BITRATE, voice->opusBitrate()));
         connection->adopt(streamAudio.get());
     }
 
-    // The client's signals are taken on its own thread and passed on from there with the
-    // connection's number. A queued call still arrives after its connection has been closed,
-    // and sender() cannot tell it from the next connection's: it is a pointer to an object
-    // that is gone. The client is stopped, on its thread, before this object goes.
-    connect(rtc, &VoiceClient::stateChanged, rtc, [this, serial](VoiceClient::State state) {
-        deliverFromRtc(serial, [this, state] { onRtcStateChanged(state); });
-    });
-    connect(rtc, &VoiceClient::disconnected, rtc, [this, serial] {
-        deliverFromRtc(serial, [this] { onRtcDisconnected(); });
-    });
-    connect(rtc, &VoiceClient::videoSendCodecChanged, rtc, [this, serial](VideoCodec codec) {
-        deliverFromRtc(serial, [this, codec] { onSendCodecChanged(codec); });
-    });
-    connect(rtc, &VoiceClient::videoSendStatsUpdated, rtc, [this, serial](const VideoSendStats &sent) {
-        deliverFromRtc(serial, [this, sent] { onSendStats(sent); });
-    });
-    connect(rtc, &VoiceClient::videoKeyframeRequested, rtc, [this, serial] {
-        deliverFromRtc(serial, [this] { onKeyframeRequested(); });
-    });
-    connect(rtc, &VoiceClient::videoReceiversChanged, rtc, [this, serial](int count) {
-        deliverFromRtc(serial, [this, count] { onReceiversChanged(count); });
-    });
-    connect(rtc, &VoiceClient::videoWantsReceived, rtc, [this, serial](int, int pixelCount) {
-        deliverFromRtc(serial, [this, pixelCount] { onWantsReceived(pixelCount); });
-    });
+    connect(connection, &Audio::VoiceConnection::stateChanged, this, &StreamBroadcaster::onRtcStateChanged);
+    connect(connection, &Audio::VoiceConnection::videoSendCodecChanged, this, &StreamBroadcaster::onSendCodecChanged);
+    connect(connection, &Audio::VoiceConnection::videoSendStatsUpdated, this, &StreamBroadcaster::onSendStats);
+    connect(connection, &Audio::VoiceConnection::videoKeyframeRequested, this, &StreamBroadcaster::onKeyframeRequested);
+    connect(connection, &Audio::VoiceConnection::videoReceiversChanged, this, &StreamBroadcaster::onReceiversChanged);
+    connect(connection, &Audio::VoiceConnection::videoWantsReceived, this, [this](int, int pixelCount) { onWantsReceived(pixelCount); });
     sendFramesToRtc();
-
-    if (!connection->start())
-        fail(tr("This account's proxy cannot carry video, so the screen share was stopped."));
 }
 
-void StreamBroadcaster::disconnectRtc(bool announceStop)
+bool StreamBroadcaster::sendsSound() const
 {
-    if (!connection)
-        return;
+    return audioWanted && Audio::processLoopbackAvailable();
+}
 
+void StreamBroadcaster::onRtcClosed()
+{
     rtcConnected = false;
     videoAnnounced = false;
-    reconnectDelay.stop();
+    serverCodec = VideoCodec::Unknown;
     codecTimeout.stop();
-    connectionSerial++;
-
-    VoiceClient *rtc = connection->client();
     QObject::disconnect(framesToRtc);
     soundCapture.reset();
-    connection->stop(announceStop ? std::function<void()>([rtc] { rtc->stopVideo(); }) : std::function<void()>());
     streamAudio.reset();
-    delete connection;
-    connection = nullptr;
-
     applySuspension();
+}
+
+void StreamBroadcaster::onRtcReconnecting()
+{
+    setState(State::Reconnecting);
+}
+
+void StreamBroadcaster::onRtcFailed(StreamConnection::Failure failure)
+{
+    switch (failure) {
+    case StreamConnection::Failure::TimedOut:
+        fail(tr("The screen share could not connect to Discord's video server."));
+        break;
+    case StreamConnection::Failure::Lost:
+        fail(tr("The screen share lost its connection to Discord's video server."));
+        break;
+    case StreamConnection::Failure::ProxyRefused:
+        fail(tr("This account's proxy cannot carry video, so the screen share was stopped."));
+        break;
+    }
 }
 
 void StreamBroadcaster::startSoundCapture()
@@ -445,10 +386,8 @@ void StreamBroadcaster::startSoundCapture()
 
     soundCapture = std::make_unique<Audio::LoopbackCapture>();
     connect(soundCapture.get(), &Audio::LoopbackCapture::frameCaptured, streamAudio.get(), &StreamAudio::onFrameCaptured);
-    connect(soundCapture.get(), &Audio::LoopbackCapture::failed, this, [this, serial = connectionSerial](const QString &reason) {
-        if (serial == connectionSerial)
-            onSoundCaptureFailed(reason);
-    });
+    // Context the capture, so that a failure it had on its way when it was let go of goes with it.
+    connect(soundCapture.get(), &Audio::LoopbackCapture::failed, soundCapture.get(), [this](const QString &reason) { onSoundCaptureFailed(reason); });
     if (ofProgram)
         soundCapture->start(source.processId, Audio::LoopbackCapture::Scope::ProcessTree);
     else
@@ -464,58 +403,39 @@ void StreamBroadcaster::onSoundCaptureFailed(const QString &reason)
     emit stateChanged();
 }
 
-void StreamBroadcaster::deliverFromRtc(quint64 serial, std::function<void()> deliver)
-{
-    QMetaObject::invokeMethod(this, [this, serial, deliver = std::move(deliver)] {
-        if (serial == connectionSerial)
-            deliver();
-    });
-}
-
+// Reached on the first connection and again whenever the client has resumed a dropped one,
+// which has forgotten what it was told of the video.
 void StreamBroadcaster::onRtcStateChanged(VoiceClient::State state)
 {
-    // Reached on the first connection and again whenever the client has resumed a dropped one.
     if (state != VoiceClient::State::Connected)
         return;
 
     rtcConnected = true;
-    reconnects = 0;
     videoAnnounced = false;
     startSoundCapture();
-
-    VoiceClient *rtc = connection->client();
-    QMetaObject::invokeMethod(rtc, [this, rtc, serial = connectionSerial] {
-        const VideoCodec codec = rtc->videoSendCodec();
-        deliverFromRtc(serial, [this, codec] { onSendCodecChanged(codec); });
-    });
+    useServerCodec();
 }
 
-void StreamBroadcaster::onRtcDisconnected()
-{
-    qCWarning(LogVoice) << "Screen share" << streamKey.toString() << "lost its RTC connection";
-    disconnectRtc(false);
-
-    if (++reconnects > MAX_RECONNECTS) {
-        fail(tr("The screen share lost its connection to Discord's video server."));
-        return;
-    }
-    setState(State::Reconnecting);
-    client->sendStreamPing(streamKey.toString());
-    reconnectDelay.start();
-}
-
+// The server names the codec as the session is described, which is before the connection is up.
 void StreamBroadcaster::onSendCodecChanged(VideoCodec codec)
 {
-    if (!rtcConnected || codec == VideoCodec::Unknown)
+    serverCodec = codec;
+    if (rtcConnected)
+        useServerCodec();
+}
+
+void StreamBroadcaster::useServerCodec()
+{
+    if (serverCodec == VideoCodec::Unknown)
         return;
 
     codecTimeout.stop();
-    if (pipeline && codec == sendCodec) {
+    if (pipeline && serverCodec == sendCodec) {
         if (pipelineStarted && !videoAnnounced)
             announceVideo();
         return;
     }
-    sendCodec = codec;
+    sendCodec = serverCodec;
     startPipeline();
 }
 
@@ -529,10 +449,9 @@ void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
 
     qCInfo(LogVoice) << "Screen share" << streamKey.toString() << "withdraws AV1: its encoder would add black to" << size;
     offeredCodecs = fit;
-    if (!connection)
+    if (!rtc || !rtc->connection())
         return;
-    VoiceClient *rtc = connection->client();
-    QMetaObject::invokeMethod(rtc, [rtc, fit] { rtc->offerVideoEncoding(fit); });
+    rtc->connection()->run([fit](VoiceClient *connection) { connection->offerVideoEncoding(fit); });
     if (!fit.contains(sendCodec))
         codecTimeout.start();
 }
@@ -575,31 +494,15 @@ void StreamBroadcaster::startPipeline()
     rate.restart(limits.min, limits.max);
 
     pipeline = std::make_unique<Video::BroadcastPipeline>();
-    const quint64 serial = ++pipelineSerial;
-    connect(pipeline.get(), &Video::BroadcastPipeline::started, this, [this, serial](const QSize &size, int framerate) {
-        if (serial == pipelineSerial)
-            onPipelineStarted(size, framerate);
-    });
-    connect(pipeline.get(), &Video::BroadcastPipeline::previewReady, this, [this, serial](const QImage &preview) {
-        if (serial == pipelineSerial)
-            onPreviewReady(preview);
-    });
-    connect(pipeline.get(), &Video::BroadcastPipeline::captureStalled, this, [this, serial](bool stalled) {
-        if (serial == pipelineSerial)
-            onCaptureStalled(stalled);
-    });
-    connect(pipeline.get(), &Video::BroadcastPipeline::sourceClosed, this, [this, serial] {
-        if (serial == pipelineSerial)
-            onSourceClosed();
-    });
-    connect(pipeline.get(), &Video::BroadcastPipeline::failed, this, [this, serial](const QString &reason) {
-        if (serial == pipelineSerial)
-            onPipelineFailed(reason);
-    });
-    connect(pipeline.get(), &Video::BroadcastPipeline::statsUpdated, this, [this, serial](const Video::BroadcastStats &encoder) {
-        if (serial == pipelineSerial)
-            onPipelineStats(encoder);
-    });
+    // In the pipeline's own context, so that what it had on its way when it was let go of
+    // goes with it.
+    Video::BroadcastPipeline *started = pipeline.get();
+    connect(started, &Video::BroadcastPipeline::started, started, [this](const QSize &size, int framerate) { onPipelineStarted(size, framerate); });
+    connect(started, &Video::BroadcastPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
+    connect(started, &Video::BroadcastPipeline::captureStalled, started, [this](bool stalled) { onCaptureStalled(stalled); });
+    connect(started, &Video::BroadcastPipeline::sourceClosed, started, [this] { onSourceClosed(); });
+    connect(started, &Video::BroadcastPipeline::failed, started, [this](const QString &reason) { onPipelineFailed(reason); });
+    connect(started, &Video::BroadcastPipeline::statsUpdated, started, [this](const Video::BroadcastStats &encoder) { onPipelineStats(encoder); });
     sendFramesToRtc();
 
     Video::BroadcastSettings settings;
@@ -620,7 +523,6 @@ void StreamBroadcaster::stopPipeline()
     if (!pipeline)
         return;
 
-    pipelineSerial++;
     bitrateSettle.stop();
     QObject::disconnect(framesToRtc);
     pipeline->stop();
@@ -636,12 +538,12 @@ void StreamBroadcaster::stopPipeline()
 void StreamBroadcaster::sendFramesToRtc()
 {
     QObject::disconnect(framesToRtc);
-    if (!pipeline || !connection)
+    if (!pipeline || !rtc || !rtc->connection())
         return;
 
-    VoiceClient *rtc = connection->client();
-    framesToRtc = connect(pipeline.get(), &Video::BroadcastPipeline::frameEncoded, rtc, [rtc](const Video::EncodedFramePointer &frame) {
-        rtc->sendVideoFrame(*frame);
+    VoiceClient *connection = rtc->connection()->client();
+    framesToRtc = connect(pipeline.get(), &Video::BroadcastPipeline::frameEncoded, connection, [connection](const Video::EncodedFramePointer &frame) {
+        connection->sendVideoFrame(*frame);
     });
 }
 
@@ -707,17 +609,15 @@ LocalVideoDescription StreamBroadcaster::videoDescription() const
 
 void StreamBroadcaster::announceVideo()
 {
-    VoiceClient *rtc = connection->client();
     announced = videoDescription();
     videoAnnounced = true;
-    QMetaObject::invokeMethod(rtc, [rtc, description = announced] { rtc->startVideo(description); });
+    rtc->connection()->run([description = announced](VoiceClient *connection) { connection->startVideo(description); });
     tellBitrate();
     applySuspension();
     // What was encoded before the client took the announcement was dropped by it, and that
     // included the frame every viewer needs first.
     pipeline->requestKeyframe();
 
-    connectTimeout.stop();
     previewUploader->start(streamKey.toString());
     setState(State::Live);
 }
@@ -731,8 +631,7 @@ void StreamBroadcaster::describeVideoIfChanged()
         return;
 
     announced = description;
-    VoiceClient *rtc = connection->client();
-    QMetaObject::invokeMethod(rtc, [rtc, description] { rtc->describeVideo(description); });
+    rtc->connection()->run([description](VoiceClient *connection) { connection->describeVideo(description); });
 }
 
 void StreamBroadcaster::refreshLimits()
@@ -771,10 +670,9 @@ void StreamBroadcaster::applyBitrate()
 
 void StreamBroadcaster::tellBitrate()
 {
-    if (!connection || appliedBitrate <= 0)
+    if (!rtc || !rtc->connection() || appliedBitrate <= 0)
         return;
-    VoiceClient *rtc = connection->client();
-    QMetaObject::invokeMethod(rtc, [rtc, bitrate = appliedBitrate] { rtc->setVideoBitrate(bitrate); });
+    rtc->connection()->run([bitrate = appliedBitrate](VoiceClient *connection) { connection->setVideoBitrate(bitrate); });
 }
 
 // Nothing is encoded while nobody is there to receive it, as in the official client. Only once

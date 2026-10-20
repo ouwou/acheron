@@ -12,6 +12,17 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
+namespace {
+
+// curl calls this while it connects and while it waits, and gives up when it says so: a
+// connection that is stopped while its proxy or its server keeps it waiting goes at once.
+int abortOnceStopped(void *gateway, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    return static_cast<const VoiceGateway *>(gateway)->isStopping() ? 1 : 0;
+}
+
+} // namespace
+
 VoiceGateway::VoiceGateway(const ConnectionParams &params, QObject *parent)
     : QObject(parent), params(params)
 {
@@ -44,7 +55,10 @@ void VoiceGateway::stop()
 void VoiceGateway::hardStop()
 {
     shouldReconnect = false;
-    running = false;
+    {
+        std::lock_guard lock(heartbeatMutex);
+        running = false;
+    }
 
     heartbeatCv.notify_all();
     if (networkThread.joinable())
@@ -365,6 +379,9 @@ void VoiceGateway::networkLoop()
 
         curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortOnceStopped);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, this);
         CurlUtils::applyCommonOptions(curl);
         CurlUtils::applyProxy(curl, params.proxy);
 
@@ -382,7 +399,7 @@ void VoiceGateway::networkLoop()
                 int delay = 1000 + (std::rand() % 4000);
                 qCInfo(LogVoice) << "Voice reconnect attempt" << reconnectAttempts
                                  << "in" << delay << "ms";
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                waitUnlessStopped(std::chrono::milliseconds(delay));
                 shouldReconnect = true;
                 continue;
             }
@@ -522,7 +539,7 @@ void VoiceGateway::networkLoop()
             qCInfo(LogVoice) << "Voice reconnecting in" << delay << "ms (attempt"
                              << reconnectAttempts << ")";
             emit reconnecting(reconnectAttempts, maxReconnectAttempts);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            waitUnlessStopped(std::chrono::milliseconds(delay));
         }
 
     } while (shouldReconnect && running && reconnectAttempts < maxReconnectAttempts);
@@ -534,6 +551,12 @@ void VoiceGateway::networkLoop()
     heartbeatCv.notify_all();
     if (heartbeatThread.joinable())
         heartbeatThread.join();
+}
+
+void VoiceGateway::waitUnlessStopped(std::chrono::milliseconds delay)
+{
+    std::unique_lock lock(heartbeatMutex);
+    heartbeatCv.wait_for(lock, delay, [this] { return !running; });
 }
 
 void VoiceGateway::heartbeatLoop()

@@ -69,6 +69,12 @@ QList<StreamDescription> cameraStreams(bool withSecondLayer)
 VoiceClient::VoiceClient(const ConnectionParams &params, QObject *parent)
     : QObject(parent), params(params)
 {
+    // What its gateway emits from the thread curl runs on, and what it emits itself, both of
+    // which go to other threads. Qt 6 registers these by itself, and Qt 5 drops them unregistered.
+    qRegisterMetaType<VoiceCloseCode>();
+    qRegisterMetaType<VoiceClient::State>();
+    qRegisterMetaType<Core::Snowflake>();
+    qRegisterMetaType<SpeakingData>();
     qRegisterMetaType<VideoReceiveStats>();
     qRegisterMetaType<VideoSendStats>();
     qRegisterMetaType<VideoCodec>();

@@ -419,3 +419,5 @@ struct VoiceResumeData : Core::JsonUtils::JsonObject
 } // namespace Voice
 } // namespace Discord
 } // namespace Acheron
+
+Q_DECLARE_METATYPE(Acheron::Discord::Voice::SpeakingData)

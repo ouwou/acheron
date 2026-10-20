@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -42,10 +43,12 @@ public:
     void sendDaveInvalidCommitWelcome(int transitionId);
 
     [[nodiscard]] uint64_t currentGeneration() const { return generation.load(); }
+    // Once hardStop() has been called. Any thread.
+    [[nodiscard]] bool isStopping() const { return !running; }
 
 signals:
     void connected();
-    void disconnected(VoiceCloseCode code, const QString &reason);
+    void disconnected(Acheron::Discord::Voice::VoiceCloseCode code, const QString &reason);
     void reconnecting(int attempt, int maxAttempts);
 
     void helloReceived(int heartbeatInterval);
@@ -90,6 +93,8 @@ private:
 
     void networkLoop();
     void heartbeatLoop();
+    // Returns early when hardStop() is called meanwhile.
+    void waitUnlessStopped(std::chrono::milliseconds delay);
 
 private:
     ConnectionParams params;

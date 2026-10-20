@@ -2,6 +2,8 @@
 // that lives in this file: a WebSocket and a UDP socket on the loopback interface that speak
 // just enough of Discord's side to bring a connection up, send it video and take video from it.
 
+#include "Core/Audio/VoiceConnection.hpp"
+#include "Core/Streams/StreamConnection.hpp"
 #include "Discord/Voice/DaveSession.hpp"
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
@@ -172,6 +174,18 @@ public:
         socket->write(frame);
     }
 
+    // Closes the gateway socket with a code the client does not resume after.
+    void closeWith(quint16 code)
+    {
+        QByteArray frame = QByteArray::fromHex("8802");
+        frame.append(char(code >> 8));
+        frame.append(char(code & 0xFF));
+        socket->write(frame);
+        socket->disconnectFromHost();
+    }
+
+    [[nodiscard]] int gatewayConnections() const { return static_cast<int>(gatewayPeerPorts.size()); }
+
     void announceVideo(quint64 userId, quint32 ssrc, quint32 rtxSsrc)
     {
         const QJsonObject stream{ { "type", "video" }, { "rid", "100" }, { "ssrc", qint64(ssrc) }, { "rtx_ssrc", qint64(rtxSsrc) }, { "active", true }, { "quality", 100 } };
@@ -250,6 +264,8 @@ public:
     QJsonArray readyStreams;
     QString videoCodec = QStringLiteral("VP8");
     int daveProtocolVersion = 0;
+    // Closes every connection as it identifies, so that none comes up.
+    bool dropOnIdentify = false;
 
     QList<RtpSeen> rtp;
     QList<ReceivedRtcp::SenderReport> senderReports;
@@ -267,6 +283,9 @@ private:
     void onGatewayConnection()
     {
         socket = gateway.nextPendingConnection();
+        upgraded = false;
+        incoming.clear();
+        cipher.reset();
         gatewayPeerPorts.append(socket->peerPort());
         connect(socket, &QTcpSocket::readyRead, this, &FakeVoiceServer::onGatewayBytes);
     }
@@ -341,7 +360,9 @@ private:
         textByOpcode[opcode].append(text);
 
         const QString mode = encryptionModeToString(EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE);
-        if (opcode == IDENTIFY) {
+        if (opcode == IDENTIFY && dropOnIdentify) {
+            closeWith(4014);
+        } else if (opcode == IDENTIFY) {
             send(2, QJsonObject{ { "ssrc", 777 }, { "ip", "127.0.0.1" }, { "port", media.localPort() }, { "modes", QJsonArray{ mode } }, { "streams", readyStreams } });
         } else if (opcode == SELECT_PROTOCOL) {
             const QByteArray key(32, char(0x42));
@@ -820,7 +841,11 @@ class TestVoiceClient : public QObject
 {
     Q_OBJECT
 private slots:
-    void initTestCase() { QVERIFY(VoiceEncryption::initialize()); }
+    void initTestCase()
+    {
+        QVERIFY(VoiceEncryption::initialize());
+        qRegisterMetaType<Core::StreamConnection::Failure>();
+    }
 
     void connectsAndSaysWhatItCanReceive();
     void aVoiceConnectionDeclaresOneCameraLayer();
@@ -859,6 +884,13 @@ private slots:
 
     void aProxiedConnectionReachesTheServerThroughTheProxyAlone_data();
     void aProxiedConnectionReachesTheServerThroughTheProxyAlone();
+
+    void aStreamConnectionIsMadeWhereTheGatewaySays();
+    void aDroppedStreamConnectionIsMadeAgainAfterAPing();
+    void aStreamConnectionDroppingEveryTimeIsGivenUpOn();
+    void aStreamThatMovesIsFollowed();
+    void aStreamConnectionNotUpInTimeFails();
+    void aStreamConnectionRefusesAProxyThatCannotCarryIt();
 };
 
 void TestVoiceClient::connectsAndSaysWhatItCanReceive()
@@ -1920,6 +1952,165 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
     QVERIFY(proxy.datagramsToServer > 0);
     QVERIFY(proxy.datagramsToClient > 0);
     QCOMPARE(call.server.undecryptable, 0);
+}
+
+namespace {
+
+Core::StreamRecord readyAt(const FakeVoiceServer &server, const QString &token = QStringLiteral("token"))
+{
+    Core::StreamRecord record;
+    record.state = Core::StreamRecord::State::Ready;
+    record.rtcServerId = Core::Snowflake(500);
+    record.endpoint = server.endpoint();
+    record.token = token;
+    return record;
+}
+
+std::unique_ptr<Core::StreamConnection> streamConnection(const Core::ProxyConfig &proxy = {})
+{
+    const Core::StreamConnection::Account account{ Core::Snowflake(3), QStringLiteral("session"), proxy };
+    return std::make_unique<Core::StreamConnection>(account, [](ConnectionParams &params) { params.gatewayScheme = QStringLiteral("ws"); });
+}
+
+Core::StreamConnection::Failure failureOf(const QSignalSpy &failed)
+{
+    return failed.first().first().value<Core::StreamConnection::Failure>();
+}
+
+} // namespace
+
+void TestVoiceClient::aStreamConnectionIsMadeWhereTheGatewaySays()
+{
+    FakeVoiceServer server;
+    const auto rtc = streamConnection();
+    QSignalSpy opened(rtc.get(), &Core::StreamConnection::opened);
+    QSignalSpy connected(rtc.get(), &Core::StreamConnection::connected);
+
+    rtc->apply(readyAt(server));
+    QTRY_COMPARE(connected.size(), 1);
+    QCOMPARE(opened.size(), 1);
+    QVERIFY(rtc->isConnected());
+
+    // Named by the gateway's RTC server, in the channel one below it.
+    const QList<QJsonObject> identify = server.received(0);
+    QCOMPARE(identify.size(), 1);
+    QCOMPARE(identify.first()["server_id"].toString(), QStringLiteral("500"));
+    QCOMPARE(identify.first()["channel_id"].toString(), QStringLiteral("499"));
+    QCOMPARE(identify.first()["streams"].toArray().first().toObject()["type"].toString(), QStringLiteral("screen"));
+
+    // The same place again changes nothing.
+    rtc->apply(readyAt(server));
+    QTest::qWait(200);
+    QCOMPARE(opened.size(), 1);
+    QCOMPARE(server.gatewayConnections(), 1);
+}
+
+void TestVoiceClient::aDroppedStreamConnectionIsMadeAgainAfterAPing()
+{
+    FakeVoiceServer server;
+    const auto rtc = streamConnection();
+    QSignalSpy connected(rtc.get(), &Core::StreamConnection::connected);
+    QSignalSpy reconnecting(rtc.get(), &Core::StreamConnection::reconnecting);
+    QSignalSpy pings(rtc.get(), &Core::StreamConnection::pingRequested);
+    QSignalSpy closed(rtc.get(), &Core::StreamConnection::closed);
+
+    rtc->apply(readyAt(server));
+    QTRY_COMPARE(connected.size(), 1);
+
+    server.closeWith(4014);
+    QTRY_COMPARE(reconnecting.size(), 1);
+    QCOMPARE(pings.size(), 1);
+    QCOMPARE(closed.size(), 1);
+    QVERIFY(!rtc->isConnected());
+
+    // The gateway answers the ping with the same place before the delay is over. That makes
+    // the one connection, and the delay running out after it does not make another.
+    rtc->apply(readyAt(server));
+    QTRY_COMPARE(connected.size(), 2);
+    QTest::qWait(Core::StreamConnection::RECONNECT_DELAY_MS + 300);
+    QCOMPARE(server.gatewayConnections(), 2);
+    QCOMPARE(connected.size(), 2);
+    QVERIFY(rtc->isConnected());
+}
+
+void TestVoiceClient::aStreamConnectionDroppingEveryTimeIsGivenUpOn()
+{
+    FakeVoiceServer server;
+    const auto rtc = streamConnection();
+    QSignalSpy opened(rtc.get(), &Core::StreamConnection::opened);
+    QSignalSpy failed(rtc.get(), &Core::StreamConnection::failed);
+    QSignalSpy pings(rtc.get(), &Core::StreamConnection::pingRequested);
+
+    // Every connection drops before it is up, and the gateway names the same place again
+    // whenever it is pinged, as it does: that does not make the count of drops start over.
+    server.dropOnIdentify = true;
+    QObject::connect(rtc.get(), &Core::StreamConnection::pingRequested, rtc.get(), [&rtc, &server] { rtc->apply(readyAt(server)); });
+
+    rtc->apply(readyAt(server));
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 20000);
+    QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::Lost);
+    QCOMPARE(pings.size(), Core::StreamConnection::MAX_RECONNECTS);
+    QCOMPARE(opened.size(), Core::StreamConnection::MAX_RECONNECTS + 1);
+    QVERIFY(!rtc->connection());
+}
+
+void TestVoiceClient::aStreamThatMovesIsFollowed()
+{
+    FakeVoiceServer first;
+    FakeVoiceServer second;
+    const auto rtc = streamConnection();
+    QSignalSpy connected(rtc.get(), &Core::StreamConnection::connected);
+    QSignalSpy reconnecting(rtc.get(), &Core::StreamConnection::reconnecting);
+
+    rtc->apply(readyAt(first));
+    QTRY_COMPARE(connected.size(), 1);
+
+    Core::StreamRecord moving;
+    moving.state = Core::StreamRecord::State::Reconnecting;
+    rtc->apply(moving);
+    QCOMPARE(reconnecting.size(), 1);
+    QVERIFY(!rtc->connection());
+
+    rtc->apply(readyAt(second, QStringLiteral("another token")));
+    QTRY_COMPARE(connected.size(), 2);
+    QCOMPARE(second.received(0).first()["token"].toString(), QStringLiteral("another token"));
+}
+
+void TestVoiceClient::aStreamConnectionNotUpInTimeFails()
+{
+    // Takes the connection and never answers it.
+    QTcpServer silent;
+    QVERIFY(silent.listen(QHostAddress(QHostAddress::LocalHost)));
+    const auto rtc = streamConnection();
+    QSignalSpy failed(rtc.get(), &Core::StreamConnection::failed);
+
+    Core::StreamRecord record;
+    record.state = Core::StreamRecord::State::Ready;
+    record.rtcServerId = Core::Snowflake(500);
+    record.endpoint = QStringLiteral("127.0.0.1:%1").arg(silent.serverPort());
+    record.token = QStringLiteral("token");
+    rtc->apply(record);
+
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, Core::StreamConnection::CONNECT_TIMEOUT_MS + 3000);
+    QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::TimedOut);
+    QVERIFY(!rtc->connection());
+}
+
+void TestVoiceClient::aStreamConnectionRefusesAProxyThatCannotCarryIt()
+{
+    FakeVoiceServer server;
+    Core::ProxyConfig http;
+    http.type = Core::ProxyConfig::Type::Http;
+    http.host = QStringLiteral("127.0.0.1");
+    http.port = 8080;
+    const auto rtc = streamConnection(http);
+    QSignalSpy failed(rtc.get(), &Core::StreamConnection::failed);
+
+    rtc->apply(readyAt(server));
+    QCOMPARE(failed.size(), 1);
+    QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::ProxyRefused);
+    QTest::qWait(200);
+    QCOMPARE(server.gatewayConnections(), 0);
 }
 
 QTEST_GUILESS_MAIN(TestVoiceClient)

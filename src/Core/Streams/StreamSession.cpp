@@ -13,33 +13,25 @@ namespace Core {
 using Discord::Voice::VoiceClient;
 
 StreamSession::StreamSession(const Discord::StreamKey &key, Snowflake accountId, const QString &gatewaySessionId, const ProxyConfig &proxy, Audio::VoiceManager *voice, quint32 audioSource, QObject *parent)
-    : QObject(parent), streamKey(key), accountId(accountId), gatewaySessionId(gatewaySessionId), proxy(proxy), voice(voice), audioSource(audioSource)
+    : QObject(parent), streamKey(key), voice(voice), audioSource(audioSource)
 {
-    connectTimeout.setSingleShot(true);
-    connect(&connectTimeout, &QTimer::timeout, this, [this] {
-        if (currentState != State::Connecting)
-            return;
-        qCWarning(LogVoice) << "Stream" << streamKey.toString() << "did not connect in time";
-        disconnectRtc();
-        setState(State::Failed);
-    });
-    connectTimeout.start(CONNECT_TIMEOUT_MS);
+    const StreamConnection::Account account{ accountId, gatewaySessionId, proxy };
+    rtc = new StreamConnection(account, [](Discord::Voice::ConnectionParams &params) { params.videoCodecs = Media::offeredVideoCodecs(); }, this);
+    connect(rtc, &StreamConnection::opened, this, &StreamSession::onRtcOpened);
+    connect(rtc, &StreamConnection::connected, this, &StreamSession::onRtcConnected);
+    connect(rtc, &StreamConnection::closed, this, &StreamSession::onRtcClosed);
+    connect(rtc, &StreamConnection::reconnecting, this, &StreamSession::onRtcReconnecting);
+    connect(rtc, &StreamConnection::failed, this, &StreamSession::onRtcFailed);
+    connect(rtc, &StreamConnection::pingRequested, this, &StreamSession::pingRequested);
 
     surfaceDebounce.setSingleShot(true);
     surfaceDebounce.setInterval(SURFACE_DEBOUNCE_MS);
     connect(&surfaceDebounce, &QTimer::timeout, this, &StreamSession::pushWants);
-
-    reconnectDelay.setSingleShot(true);
-    reconnectDelay.setInterval(RECONNECT_DELAY_MS);
-    connect(&reconnectDelay, &QTimer::timeout, this, [this] {
-        if (currentState == State::Reconnecting && !endpoint.isEmpty())
-            connectRtc();
-    });
 }
 
 StreamSession::~StreamSession()
 {
-    disconnectRtc();
+    rtc->close();
 }
 
 void StreamSession::setState(State state)
@@ -47,8 +39,6 @@ void StreamSession::setState(State state)
     if (currentState == state)
         return;
     currentState = state;
-    if (state != State::Connecting)
-        connectTimeout.stop();
     emit stateChanged();
 }
 
@@ -63,39 +53,15 @@ void StreamSession::apply(const StreamRecord &record)
     }
 
     paused = record.paused;
-    if (rtcConnected && (currentState == State::Active || currentState == State::Paused))
+    if (rtc->isConnected() && (currentState == State::Active || currentState == State::Paused))
         setState(paused ? State::Paused : State::Active);
 
-    switch (record.state) {
-    case StreamRecord::State::AwaitingEndpoint:
-        // The server is moving the stream; the next update says where to.
-        if (connection && record.endpoint.isEmpty() && !endpoint.isEmpty()) {
-            disconnectRtc();
-            endpoint.clear();
-            setState(State::Reconnecting);
-        }
-        break;
-    case StreamRecord::State::Reconnecting:
-        disconnectRtc();
-        endpoint.clear();
-        setState(State::Reconnecting);
-        break;
-    case StreamRecord::State::Ready:
-        if (connection && record.endpoint == endpoint && record.token == token)
-            break;
-        rtcServerId = record.rtcServerId;
-        rtcChannelId = record.rtcChannelId;
-        endpoint = record.endpoint;
-        token = record.token;
-        reconnects = 0;
-        connectRtc();
-        break;
-    }
+    rtc->apply(record);
 }
 
 void StreamSession::end(StreamEndReason reason)
 {
-    disconnectRtc();
+    rtc->close();
     switch (reason) {
     case StreamEndReason::StreamFull:
         setState(State::Full);
@@ -111,46 +77,22 @@ void StreamSession::end(StreamEndReason reason)
     }
 }
 
-void StreamSession::connectRtc()
+void StreamSession::onRtcOpened(Audio::VoiceConnection *connection)
 {
-    disconnectRtc();
-
-    Discord::Voice::ConnectionParams params;
-    params.endpoint = endpoint;
-    params.token = token;
-    params.serverId = rtcServerId;
-    // A stream's RTC channel is the id one below its RTC server when the gateway names none.
-    params.channelId = rtcChannelId.isValid() ? rtcChannelId : Snowflake(static_cast<quint64>(rtcServerId) - 1);
-    params.userId = accountId;
-    params.sessionId = gatewaySessionId;
-    params.proxy = proxy;
-    params.video = true;
-    Discord::Voice::StreamDescription screen;
-    screen.type = QStringLiteral("screen");
-    screen.rid = QStringLiteral("100");
-    screen.quality = 100;
-    params.streams = { screen };
-    params.videoCodecs = Media::offeredVideoCodecs();
-    params.sendsAudio = false;
-    params.streamContext = true;
-
-    connection = new Audio::VoiceConnection(params, this);
     VoiceClient *client = connection->client();
 
     decoder = std::make_unique<Media::VideoDecoder>();
     decoder->setSink(frameSink);
-    // The decoder outlives every call the client can still make: disconnectRtc() stops the
-    // client before it frees the decoder.
+    // The decoder outlives every call the client can still make: the connection is stopped
+    // before the decoder is let go of.
     decoder->setKeyframeRequester([client] { QMetaObject::invokeMethod(client, &VoiceClient::requestVideoKeyframeFromEveryone); });
     decoder->setCodecFailureHandler([client](Discord::Voice::VideoCodec codec) { QMetaObject::invokeMethod(client, [client, codec] { client->withdrawVideoCodec(codec); }); });
     client->setVideoFrameHandler([target = decoder.get()](Snowflake, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
         target->push(codec, std::move(frame));
     });
 
-    connect(client, &VoiceClient::connected, this, &StreamSession::onRtcConnected);
-    connect(client, &VoiceClient::disconnected, this, &StreamSession::onRtcDisconnected, Qt::QueuedConnection);
-    connect(client, &VoiceClient::remoteVideoChanged, this, &StreamSession::onRemoteVideoChanged);
-    connect(client, &VoiceClient::videoStatsUpdated, this, &StreamSession::onVideoStats);
+    connect(connection, &Audio::VoiceConnection::remoteVideoChanged, this, &StreamSession::onRemoteVideoChanged);
+    connect(connection, &Audio::VoiceConnection::videoStatsUpdated, this, &StreamSession::onVideoStats);
 
     voice->attachAudioSource(audioSource, client);
     voice->setAudioSourceVolume(audioSource, audioVolume);
@@ -161,55 +103,30 @@ void StreamSession::connectRtc()
     demand = {};
     demandClock.start();
     fullPicturePixels = 0;
-
-    if (!connection->start()) {
-        disconnectRtc();
-        setState(State::Failed);
-    }
-}
-
-void StreamSession::disconnectRtc()
-{
-    if (!connection)
-        return;
-
-    rtcConnected = false;
-    reconnectDelay.stop();
-    voice->detachAudioSource(audioSource);
-
-    connection->client()->disconnect(this);
-    connection->stop();
-    decoder.reset();
-    delete connection;
-    connection = nullptr;
 }
 
 void StreamSession::onRtcConnected()
 {
-    if (sender() != (connection ? connection->client() : nullptr))
-        return;
-
-    rtcConnected = true;
-    reconnects = 0;
     setState(paused ? State::Paused : State::Active);
     pushWants();
 }
 
-void StreamSession::onRtcDisconnected()
+void StreamSession::onRtcClosed()
 {
-    if (!connection || sender() != connection->client() || isOver())
-        return;
+    voice->detachAudioSource(audioSource);
+    decoder.reset();
+}
 
-    qCWarning(LogVoice) << "Stream" << streamKey.toString() << "lost its RTC connection";
-    disconnectRtc();
+void StreamSession::onRtcReconnecting()
+{
+    if (!isOver())
+        setState(State::Reconnecting);
+}
 
-    if (++reconnects > MAX_RECONNECTS) {
+void StreamSession::onRtcFailed()
+{
+    if (!isOver())
         setState(State::Failed);
-        return;
-    }
-    setState(State::Reconnecting);
-    emit pingRequested();
-    reconnectDelay.start();
 }
 
 void StreamSession::onRemoteVideoChanged(Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate)
@@ -281,19 +198,18 @@ void StreamSession::setSurface(int pixelCount, bool visible)
 
 void StreamSession::pushWants()
 {
-    if (!connection || !rtcConnected)
+    if (!rtc->isConnected())
         return;
 
     const int pixels = demand.pixelsToAskFor(surfacePixels, fullPicturePixels);
     const bool wanted = surfaceVisible;
-    VoiceClient *client = connection->client();
-    QMetaObject::invokeMethod(client, [client, pixels, wanted] { client->setVideoWants(pixels, wanted); });
+    rtc->connection()->run([pixels, wanted](VoiceClient *client) { client->setVideoWants(pixels, wanted); });
 }
 
 void StreamSession::setVolume(float volume)
 {
     audioVolume = volume;
-    if (connection)
+    if (rtc->connection())
         voice->setAudioSourceVolume(audioSource, volume);
 }
 

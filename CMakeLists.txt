@@ -377,7 +377,6 @@ if(ENABLE_VOICE)
         src/UI/VoiceStatusBar.cpp
         src/UI/VoiceWindow.cpp
         src/Core/Audio/VoiceManager.cpp
-        src/Core/Audio/VoiceConnection.cpp
         src/Core/Audio/AudioPipeline.cpp
         src/Core/Audio/IAudioBackend.cpp
         src/Core/Audio/MiniaudioAudioBackend.cpp
@@ -422,6 +421,7 @@ if(ENABLE_VOICE)
         src/Discord/Voice/DaveSession.cpp
         src/Discord/Voice/Rtcp.cpp
         src/Discord/Voice/SinkWants.cpp
+        src/Core/Audio/VoiceConnection.cpp
         src/Core/Audio/OpusEncoder.cpp
         src/Core/Video/TileVisibility.cpp
     )
@@ -441,6 +441,7 @@ if(ENABLE_VOICE)
             src/Core/Media/VideoEncoder.cpp
             src/Core/Media/H264Sps.cpp
             src/Core/Audio/LoopbackCapture.cpp
+            src/Core/Streams/StreamConnection.cpp
             src/Core/Video/BroadcastPipeline.cpp
             src/Core/Video/ScreenCapture.cpp
             src/Core/Video/CardScaler.cpp

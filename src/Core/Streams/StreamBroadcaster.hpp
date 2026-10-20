@@ -11,6 +11,7 @@
 
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
+#include "Core/Streams/StreamConnection.hpp"
 #include "Core/Streams/StreamManager.hpp"
 #include "Core/Video/BroadcastPipeline.hpp"
 #include "Core/Video/CaptureSources.hpp"
@@ -117,9 +118,6 @@ public:
     void stop();
 
     static constexpr int START_TIMEOUT_MS = 5000;
-    static constexpr int CONNECT_TIMEOUT_MS = 12000;
-    static constexpr int RECONNECT_DELAY_MS = 1000;
-    static constexpr int MAX_RECONNECTS = 5;
     // An encoder that cannot follow a new rate is reopened for it, which starts with a key
     // frame, so rates that change in quick succession (a viewer dragging a window's edge) are
     // gathered into one.
@@ -142,21 +140,20 @@ private slots:
     void onVoiceStateChanged();
     void onVoiceDisconnected();
     void onStartTimedOut();
-    void onConnectTimedOut();
-    void onReconnectDelayOver();
     void onCodecTimedOut();
 
-private:
-    // From the RTC connection and the pipeline now in use. Neither is connected to these as
-    // slots: see connectRtc().
-    void onRtcStateChanged(Discord::Voice::VoiceClient::State state);
-    void onRtcDisconnected();
-    void onSendCodecChanged(Discord::Voice::VideoCodec codec);
-    void onSendStats(const Discord::Voice::VideoSendStats &stats);
+    void onRtcOpened(Acheron::Core::Audio::VoiceConnection *connection);
+    void onRtcClosed();
+    void onRtcReconnecting();
+    void onRtcFailed(Acheron::Core::StreamConnection::Failure failure);
+    void onRtcStateChanged(Acheron::Discord::Voice::VoiceClient::State state);
+    void onSendCodecChanged(Acheron::Discord::Voice::VideoCodec codec);
+    void onSendStats(const Acheron::Discord::Voice::VideoSendStats &stats);
     void onKeyframeRequested();
     void onReceiversChanged(int receivers);
-    void onWantsReceived(int pixelCount);
 
+private:
+    void onWantsReceived(int pixelCount);
     void onPipelineStarted(const QSize &encodedSize, int framerate);
     void onPreviewReady(const QImage &preview);
     void onCaptureStalled(bool stalled);
@@ -170,10 +167,10 @@ private:
     void end(bool tellGateway);
     void fail(const QString &reason, bool tellGateway = true);
 
-    void connectRtc();
-    void disconnectRtc(bool announceStop);
-    void deliverFromRtc(quint64 serial, std::function<void()> deliver);
+    void openRtc();
+    [[nodiscard]] bool sendsSound() const;
     void startSoundCapture();
+    void useServerCodec();
 
     void withdrawCodecsUnfitFor(const QSize &size);
     void startPipeline();
@@ -208,25 +205,15 @@ private:
     // so until the share ends, or a window dragged by its edge would have the server change
     // the codec back and forth.
     QList<Discord::Voice::VideoCodec> offeredCodecs;
-    // Told apart from the attempt that a late answer about the encoders belongs to.
-    quint64 attempt = 0;
+    quint64 encoderProbeAttempt = 0;
     bool createSent = false;
     // A stream the gateway did not answer for in time. If it turns up after all it is ended.
     QString abandonedStreamKey;
 
-    // Where the gateway last said the stream is hosted.
-    Snowflake rtcServerId;
-    Snowflake rtcChannelId;
-    QString endpoint;
-    QString token;
-
-    Audio::VoiceConnection *connection = nullptr;
-    // Count the RTC connections and the pipelines, so that what a closed one still had on its
-    // way here is told from the current one's and dropped.
-    quint64 connectionSerial = 0;
-    quint64 pipelineSerial = 0;
+    StreamConnection *rtc = nullptr;
     bool rtcConnected = false;
-    int reconnects = 0;
+    // The codec the server last named, and the one the pipeline was started with.
+    Discord::Voice::VideoCodec serverCodec = Discord::Voice::VideoCodec::Unknown;
     Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;
     Discord::Voice::LocalVideoDescription announced;
@@ -257,8 +244,6 @@ private:
     Discord::Voice::VideoSendStats networkStats;
 
     QTimer startTimeout;
-    QTimer connectTimeout;
-    QTimer reconnectDelay;
     QTimer codecTimeout;
     QTimer bitrateSettle;
     QElapsedTimer sinceBitrateApplied;

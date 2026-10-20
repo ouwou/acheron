@@ -11,6 +11,7 @@
 #include "Core/Media/VideoDecoder.hpp"
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
+#include "Core/Streams/StreamConnection.hpp"
 #include "Core/Streams/StreamManager.hpp"
 #include "Discord/StreamKey.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
@@ -75,10 +76,7 @@ public:
     void setSurface(int pixelCount, bool visible);
     void setVolume(float volume);
 
-    static constexpr int CONNECT_TIMEOUT_MS = 12000;
     static constexpr int SURFACE_DEBOUNCE_MS = 500;
-    static constexpr int RECONNECT_DELAY_MS = 1000;
-    static constexpr int MAX_RECONNECTS = 5;
 
 signals:
     void stateChanged();
@@ -89,21 +87,19 @@ signals:
     void pingRequested();
 
 private slots:
+    void onRtcOpened(Acheron::Core::Audio::VoiceConnection *connection);
     void onRtcConnected();
-    void onRtcDisconnected();
+    void onRtcClosed();
+    void onRtcReconnecting();
+    void onRtcFailed();
     void onRemoteVideoChanged(Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate);
     void onVideoStats(const Discord::Voice::VideoReceiveStats &stats);
 
 private:
     void setState(State state);
-    void connectRtc();
-    void disconnectRtc();
     void pushWants();
 
     Discord::StreamKey streamKey;
-    Snowflake accountId;
-    QString gatewaySessionId;
-    ProxyConfig proxy;
     Audio::VoiceManager *voice;
     quint32 audioSource;
 
@@ -113,21 +109,11 @@ private:
     QSize announcedSize;
     int announcedFramerate = 0;
 
-    // Where the gateway last said the stream is hosted.
-    Snowflake rtcServerId;
-    Snowflake rtcChannelId;
-    QString endpoint;
-    QString token;
-
-    Audio::VoiceConnection *connection = nullptr;
+    StreamConnection *rtc;
     std::unique_ptr<Media::VideoDecoder> decoder;
     std::shared_ptr<Media::VideoFrameSink> frameSink;
-    bool rtcConnected = false;
-    int reconnects = 0;
 
-    QTimer connectTimeout;
     QTimer surfaceDebounce;
-    QTimer reconnectDelay;
     int surfacePixels = 0;
     bool surfaceVisible = false;
     float audioVolume = 1.0f;
