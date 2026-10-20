@@ -5,7 +5,6 @@
 #include "Core/Media/HardwareDevices.hpp"
 
 #include <QElapsedTimer>
-#include <QSettings>
 
 #include <algorithm>
 #include <array>
@@ -139,10 +138,6 @@ const QLatin1String VAAPI_AV1_ENCODER("av1_vaapi");
 // for crop_bottom equal to 8 in hardware").
 constexpr QSize AMF_AV1_BLOCK(64, 16);
 constexpr int AMF_AV1_ROWS_FOR_HALF_A_BLOCK = 2;
-// Sizes that an encoder which codes in whole blocks changes: the rows of the first and the
-// columns of the second are no whole number of any block in use.
-constexpr std::array SIZES_NOT_OF_WHOLE_BLOCKS = { QSize(640, 360), QSize(1000, 700) };
-
 constexpr int TRIAL_WIDTH = 640;
 constexpr int TRIAL_HEIGHT = 360;
 // A size that blocks of 64 by 16 and blocks of 8 by 2 each make another of, as the trial's own
@@ -563,53 +558,6 @@ QSize codedSize(const QString &encoderName, const QSize &size)
 bool paddingIsAcceptable(const QSize &size, const QSize &coded)
 {
     return coded.width() == size.width() && coded.height() >= size.height() && coded.height() - size.height() <= MOST_ROWS_ADDED;
-}
-
-QList<Discord::Voice::VideoCodec> shareCodecs(const QList<Discord::Voice::VideoCodec> &encodable, const QString &av1Encoder, const QSize &size)
-{
-    QList<VideoCodec> codecs = encodable;
-    if (!paddingIsAcceptable(size, codedSize(av1Encoder, size)))
-        codecs.removeAll(VideoCodec::AV1);
-    return codecs;
-}
-
-namespace {
-
-const char *const SEND_CODECS_OFF_KEY = "video/send_codecs_off";
-
-} // namespace
-
-bool sendCodecAllowed(Discord::Voice::VideoCodec codec)
-{
-    return !QSettings().value(SEND_CODECS_OFF_KEY).toStringList().contains(Discord::Voice::videoCodecName(codec));
-}
-
-void setSendCodecAllowed(Discord::Voice::VideoCodec codec, bool allowed)
-{
-    const QString name = Discord::Voice::videoCodecName(codec);
-    QStringList off = QSettings().value(SEND_CODECS_OFF_KEY).toStringList();
-    off.removeAll(name);
-    if (!allowed)
-        off.append(name);
-    QSettings().setValue(SEND_CODECS_OFF_KEY, off);
-}
-
-QList<Discord::Voice::VideoCodec> allowedSendCodecs(const QList<Discord::Voice::VideoCodec> &encodable)
-{
-    QList<VideoCodec> allowed;
-    for (VideoCodec codec : encodable) {
-        if (sendCodecAllowed(codec))
-            allowed.append(codec);
-    }
-    return allowed;
-}
-
-QList<Discord::Voice::VideoCodec> cameraCodecs(const QList<Discord::Voice::VideoCodec> &encodable, const QString &av1Encoder)
-{
-    QList<VideoCodec> codecs = encodable;
-    if (std::any_of(SIZES_NOT_OF_WHOLE_BLOCKS.begin(), SIZES_NOT_OF_WHOLE_BLOCKS.end(), [&av1Encoder](const QSize &size) { return codedSize(av1Encoder, size) != size; }))
-        codecs.removeAll(VideoCodec::AV1);
-    return codecs;
 }
 
 namespace {

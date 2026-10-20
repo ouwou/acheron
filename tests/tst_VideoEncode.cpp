@@ -3,6 +3,7 @@
 // that it puts on it. What the screen showed is only ever counted and measured here: never
 // printed, never written anywhere.
 
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Media/VideoDecoder.hpp"
 #include "Core/Media/VideoEncoder.hpp"
@@ -768,7 +769,7 @@ PathCounts pathCounts(const Core::Video::BroadcastStats &stats)
 // given no size it would add black to (thePipelineHoldsBackWhatItsEncoderWouldPad).
 QList<VideoCodec> codecsSharedAt(const QSize &size)
 {
-    return Core::Media::shareCodecs(Core::Media::encodableVideoCodecs(), Core::Media::videoEncoderFor(VideoCodec::AV1), size);
+    return Core::Media::shareCodecs(Core::Media::encodableVideoCodecs(), size);
 }
 
 // Whether a share's pictures reach the encoder the probe chose without leaving the graphics
@@ -1500,7 +1501,6 @@ void TestVideoEncode::theProbeGivesTheSameAnswerEveryTime()
     const QList<VideoCodec> first = Core::Media::encodableVideoCodecs();
     for (int i = 0; i < 3; i++)
         QVERIFY(Core::Media::encodableVideoCodecs() == first);
-    QVERIFY(Core::Video::BroadcastPipeline::encodableCodecs() == first);
 
     // Best first, as the voice server has them: AV1, H265, H264, VP8.
     QList<VideoCodec> expected;
@@ -1645,14 +1645,14 @@ void TestVideoEncode::av1IsOfferedOnlyWhereItAddsNoBlack()
     const QList<VideoCodec> all = { VideoCodec::AV1, VideoCodec::H265, VideoCodec::H264, VideoCodec::VP8 };
     const QList<VideoCodec> withoutAv1 = { VideoCodec::H265, VideoCodec::H264, VideoCodec::VP8 };
 
-    QVERIFY(shareCodecs(all, amf, QSize(1920, 1080)) == all);
-    QVERIFY(shareCodecs(all, amf, QSize(1280, 720)) == all);
-    QVERIFY(shareCodecs(all, amf, QSize(1452, 752)) == withoutAv1);
-    QVERIFY(shareCodecs(all, amf, QSize(1000, 700)) == withoutAv1);
-    QVERIFY(shareCodecs(all, nvenc, QSize(1452, 752)) == all);
-    QVERIFY(shareCodecs(withoutAv1, amf, QSize(1452, 752)) == withoutAv1);
+    QVERIFY(shareCodecs(all, QSize(1920, 1080), amf) == all);
+    QVERIFY(shareCodecs(all, QSize(1280, 720), amf) == all);
+    QVERIFY(shareCodecs(all, QSize(1452, 752), amf) == withoutAv1);
+    QVERIFY(shareCodecs(all, QSize(1000, 700), amf) == withoutAv1);
+    QVERIFY(shareCodecs(all, QSize(1452, 752), nvenc) == all);
+    QVERIFY(shareCodecs(withoutAv1, QSize(1452, 752), amf) == withoutAv1);
     // Asked of what a share already offers, a codec that was left out once stays out.
-    QVERIFY(shareCodecs(shareCodecs(all, amf, QSize(1452, 752)), amf, QSize(1920, 1080)) == withoutAv1);
+    QVERIFY(shareCodecs(shareCodecs(all, QSize(1452, 752), amf), QSize(1920, 1080), amf) == withoutAv1);
 
     QVERIFY(cameraCodecs(all, amf) == withoutAv1);
     QVERIFY(cameraCodecs(all, nvenc) == all);

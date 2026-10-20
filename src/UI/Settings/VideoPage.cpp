@@ -1,7 +1,7 @@
 #include "VideoPage.hpp"
 
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/VideoDecoder.hpp"
-#include "Core/Media/VideoEncoder.hpp"
 #include "Core/Streams/StreamPreviews.hpp"
 #include "Core/Video/CallVideo.hpp"
 #include "Core/Video/CameraPipeline.hpp"

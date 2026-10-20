@@ -90,12 +90,6 @@ public:
     StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, TermsProvider terms, QObject *parent = nullptr);
     ~StreamBroadcaster() override;
 
-    // The codecs this machine can encode a share with. Finding out opens every encoder once,
-    // which is too slow for the UI thread, so the answer comes later (at once when it is
-    // already known), on the main thread, unless `context` has gone by then.
-    // Without those the settings turned off.
-    static void whenEncodersKnown(QObject *context, std::function<void(const QList<Discord::Voice::VideoCodec> &)> then);
-
     void setGatewaySessionId(const QString &sessionId);
     // A new gateway session has forgotten the stream, so nothing is sent for it.
     void reset();

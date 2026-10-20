@@ -1,7 +1,7 @@
 #include "ScreenSharePicker.hpp"
 
 #include "Core/Audio/LoopbackCapture.hpp"
-#include "Core/Streams/StreamBroadcaster.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Video/ScreenCapture.hpp"
 
 #include <QCheckBox>
@@ -150,7 +150,7 @@ ScreenSharePicker::ScreenSharePicker(const Core::Video::SharerTier &tier, QWidge
 
     listSources();
     showQuality();
-    Core::StreamBroadcaster::whenEncodersKnown(this, [this](const QList<Discord::Voice::VideoCodec> &codecs) { onEncodersKnown(codecs); });
+    Core::Media::whenSendCodecsKnown(this, [this](const QList<Discord::Voice::VideoCodec> &codecs) { onEncodersKnown(codecs); });
 }
 
 SendQuality ScreenSharePicker::rememberedQuality(const Core::Video::SharerTier &tier)

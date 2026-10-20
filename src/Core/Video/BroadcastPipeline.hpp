@@ -62,11 +62,6 @@ public:
     explicit BroadcastPipeline(QObject *parent = nullptr);
     ~BroadcastPipeline() override;
 
-    // The codecs this machine has a working encoder for, best first. H265 and AV1 are among
-    // them only when there is hardware for them.
-    // The first call opens each candidate once and can take a moment; call it off the UI thread.
-    [[nodiscard]] static QList<Discord::Voice::VideoCodec> encodableCodecs();
-
     // All of these may be called from any thread and return at once.
     void start(const BroadcastSettings &settings);
     void stop();

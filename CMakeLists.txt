@@ -435,6 +435,7 @@ if(ENABLE_VOICE)
             src/Discord/Voice/SendSideEstimator.cpp
             src/Discord/Voice/TransportFeedback.cpp
             src/Core/Media/RgbScaler.cpp
+            src/Core/Media/CodecSupport.cpp
             src/Core/Media/DecodeDemand.cpp
             src/Core/Media/VideoDecoder.cpp
             src/Core/Media/VideoEncoder.cpp

@@ -78,10 +78,6 @@ public:
     // Whether the account may turn its camera on where it is in voice now.
     using Permission = std::function<bool()>;
 
-    // What a voice connection offers to send the camera with, of the codecs this machine
-    // encodes. Call it once those are known: it asks which encoder each would use.
-    [[nodiscard]] static QList<Discord::Voice::VideoCodec> codecsToOffer(const QList<Discord::Voice::VideoCodec> &encodable);
-
     CameraSender(Discord::Client *client, Audio::VoiceManager *voice, StreamBroadcaster *screenShare, Permission allowedHere, QObject *parent = nullptr);
     ~CameraSender() override;
 

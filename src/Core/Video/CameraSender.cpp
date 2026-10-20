@@ -2,7 +2,7 @@
 
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/Logging.hpp"
-#include "Core/Media/VideoEncoder.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Streams/StreamBroadcaster.hpp"
 #include "Core/Video/CameraPipeline.hpp"
 #include "Discord/Client.hpp"
@@ -48,11 +48,6 @@ CameraSender::~CameraSender()
 {
     QObject::disconnect(framesToRtc);
     stopPipeline();
-}
-
-QList<VideoCodec> CameraSender::codecsToOffer(const QList<VideoCodec> &encodable)
-{
-    return Media::cameraCodecs(encodable, Media::videoEncoderFor(VideoCodec::AV1));
 }
 
 bool CameraSender::canTurnOn() const
@@ -132,7 +127,7 @@ void CameraSender::turnOn(const QString &wantedDeviceId)
     setState(State::Starting);
     sendVoiceState();
 
-    StreamBroadcaster::whenEncodersKnown(this, [this, thisAttempt = ++attempt](const QList<VideoCodec> &codecs) {
+    Media::whenSendCodecsKnown(this, [this, thisAttempt = ++attempt](const QList<VideoCodec> &codecs) {
         if (thisAttempt == attempt)
             onEncodersKnown(codecs);
     });
@@ -146,7 +141,7 @@ void CameraSender::onEncodersKnown(const QList<VideoCodec> &codecs)
     }
 
     encodersKnown = true;
-    voice->setEncodableVideoCodecs(codecsToOffer(codecs));
+    voice->setEncodableVideoCodecs(Media::cameraCodecs(codecs));
     sendOnceReady();
 }
 

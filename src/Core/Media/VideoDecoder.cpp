@@ -231,26 +231,6 @@ QList<Discord::Voice::VideoCodec> decodableVideoCodecs()
     return codecs;
 }
 
-QList<Discord::Voice::Codec> offeredVideoCodecs(const QList<Discord::Voice::VideoCodec> &encodable)
-{
-    static constexpr int FIRST_PAYLOAD_TYPE = 101;
-
-    QList<Discord::Voice::Codec> offered;
-    const QList<VideoCodec> codecs = decodableVideoCodecs();
-    for (int i = 0; i < codecs.size(); i++) {
-        Discord::Voice::Codec codec;
-        codec.name = Discord::Voice::videoCodecName(codecs[i]);
-        codec.type = QStringLiteral("video");
-        codec.priority = (i + 1) * 1000;
-        codec.payloadType = FIRST_PAYLOAD_TYPE + 2 * i;
-        codec.rtxPayloadType = FIRST_PAYLOAD_TYPE + 2 * i + 1;
-        codec.encode = encodable.contains(codecs[i]);
-        codec.decode = true;
-        offered.append(codec);
-    }
-    return offered;
-}
-
 VideoDecoder::VideoDecoder(bool allowHardware, int softwareThreads)
     : hardwareAllowed(allowHardware), softwareThreads(softwareThreads), thread([this] { run(); })
 {

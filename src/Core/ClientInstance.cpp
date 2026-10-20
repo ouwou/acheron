@@ -15,6 +15,7 @@
 #include "Streams/StreamManager.hpp"
 #include "Streams/StreamPreviews.hpp"
 #ifdef ACHERON_HAVE_VIDEO
+#include "Media/CodecSupport.hpp"
 #include "Streams/StreamBroadcaster.hpp"
 #include "Video/CameraPipeline.hpp"
 #include "Video/CameraSender.hpp"
@@ -131,7 +132,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         // A voice connection can only offer to send video with the codecs known when it is
         // made, and finding them out takes a while the first time.
         if (Video::cameraCaptureAvailable())
-            StreamBroadcaster::whenEncodersKnown(voiceManager, [voice = voiceManager](const QList<Discord::Voice::VideoCodec> &codecs) { voice->setEncodableVideoCodecs(CameraSender::codecsToOffer(codecs)); });
+            Media::whenSendCodecsKnown(voiceManager, [voice = voiceManager](const QList<Discord::Voice::VideoCodec> &codecs) { voice->setEncodableVideoCodecs(Media::cameraCodecs(codecs)); });
         streamBroadcast->setGatewaySessionId(gatewaySessionId);
 #endif
         streamManager->reset();

@@ -67,20 +67,6 @@ inline constexpr int MOST_ROWS_ADDED = 8;
 // bottom are put up with, and no columns.
 [[nodiscard]] bool paddingIsAcceptable(const QSize &size, const QSize &coded);
 
-// The codecs the user lets video be sent with: every one, unless the settings window turned
-// it off (`video/send_codecs_off`, by name). The server chooses among those that are offered,
-// so what is turned off here is never chosen.
-[[nodiscard]] bool sendCodecAllowed(Discord::Voice::VideoCodec codec);
-void setSendCodecAllowed(Discord::Voice::VideoCodec codec, bool allowed);
-[[nodiscard]] QList<Discord::Voice::VideoCodec> allowedSendCodecs(const QList<Discord::Voice::VideoCodec> &encodable);
-
-// What a screen or window share whose pictures are `size` offers to send with: the codecs this
-// machine encodes, without AV1 when `av1Encoder` would add more to that size than is acceptable.
-[[nodiscard]] QList<Discord::Voice::VideoCodec> shareCodecs(const QList<Discord::Voice::VideoCodec> &encodable, const QString &av1Encoder, const QSize &size);
-// The same for the camera, whose size follows what its viewers want and cannot be told
-// beforehand: AV1 only from an encoder that codes every size as it is.
-[[nodiscard]] QList<Discord::Voice::VideoCodec> cameraCodecs(const QList<Discord::Voice::VideoCodec> &encodable, const QString &av1Encoder);
-
 // Makes of what an encoder hands over the frame the RTP sender is promised, whichever encoder
 // it was and however it was asked. H264 and H265 are Annex B, and a key frame opens with its
 // parameter sets: SPS and PPS, after the VPS for H265. AV1 is a temporal unit of OBUs that

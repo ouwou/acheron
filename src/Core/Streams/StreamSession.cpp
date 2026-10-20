@@ -3,6 +3,7 @@
 #include "Core/Audio/VoiceConnection.hpp"
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/Logging.hpp"
+#include "Core/Media/CodecSupport.hpp"
 
 #include <algorithm>
 

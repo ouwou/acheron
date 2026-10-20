@@ -4,16 +4,13 @@
 #include "Core/Audio/VoiceConnection.hpp"
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/Logging.hpp"
-#include "Core/Media/VideoDecoder.hpp"
-#include "Core/Media/VideoEncoder.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Streams/StreamAudio.hpp"
 #include "Core/Streams/StreamPreviews.hpp"
 #include "Core/Video/ScreenCapture.hpp"
 #include "Discord/Client.hpp"
 
 #include <QCoreApplication>
-#include <QPointer>
-#include <QThreadPool>
 
 #include <algorithm>
 #include <utility>
@@ -28,60 +25,12 @@ using Discord::Voice::VoiceClient;
 
 namespace {
 
-using EncodersKnown = std::function<void(const QList<VideoCodec> &)>;
-
-// The main thread's only.
-struct EncoderProbe
-{
-    bool known = false;
-    bool running = false;
-    QList<VideoCodec> codecs;
-    QList<std::pair<QPointer<QObject>, EncodersKnown>> waiting;
-};
-
-EncoderProbe &encoderProbe()
-{
-    static EncoderProbe probe;
-    return probe;
-}
-
 bool sameDescription(const LocalVideoDescription &a, const LocalVideoDescription &b)
 {
     return a.maxWidth == b.maxWidth && a.maxHeight == b.maxHeight && a.maxFramerate == b.maxFramerate && a.maxBitrate == b.maxBitrate;
 }
 
 } // namespace
-
-void StreamBroadcaster::whenEncodersKnown(QObject *context, EncodersKnown then)
-{
-    EncoderProbe &probe = encoderProbe();
-    if (probe.known) {
-        then(Media::allowedSendCodecs(probe.codecs));
-        return;
-    }
-
-    probe.waiting.append({ QPointer<QObject>(context), std::move(then) });
-    if (probe.running)
-        return;
-    probe.running = true;
-
-    QThreadPool::globalInstance()->start([] {
-        const QList<VideoCodec> codecs = Video::BroadcastPipeline::encodableCodecs();
-        QMetaObject::invokeMethod(
-                qApp,
-                [codecs] {
-                    EncoderProbe &probe = encoderProbe();
-                    probe.known = true;
-                    probe.codecs = codecs;
-                    const auto waiting = std::exchange(probe.waiting, {});
-                    for (const auto &[context, then] : waiting) {
-                        if (context)
-                            then(Media::allowedSendCodecs(codecs));
-                    }
-                },
-                Qt::QueuedConnection);
-    });
-}
 
 StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, TermsProvider terms, QObject *parent)
     : QObject(parent), client(client), streams(streams), voice(voice), accountId(accountId), proxy(proxy), terms(std::move(terms))
@@ -204,7 +153,7 @@ void StreamBroadcaster::start(const Video::CaptureSource &chosen, const Video::S
     abandonedStreamKey.clear();
     setState(State::Starting);
 
-    whenEncodersKnown(this, [this, asked = ++attempt](const QList<VideoCodec> &codecs) {
+    Media::whenSendCodecsKnown(this, [this, asked = ++attempt](const QList<VideoCodec> &codecs) {
         if (asked == attempt)
             sendCreate(codecs);
     });
@@ -219,7 +168,7 @@ void StreamBroadcaster::sendCreate(const QList<VideoCodec> &codecs)
 
     // The size is known already unless the window is still on its way back from the taskbar.
     const QSize size = Video::encodeSizeOf(source, sendQuality.height);
-    offeredCodecs = size.isEmpty() ? codecs : Media::shareCodecs(codecs, Media::videoEncoderFor(VideoCodec::AV1), size);
+    offeredCodecs = size.isEmpty() ? codecs : Media::shareCodecs(codecs, size);
     if (offeredCodecs != codecs)
         qCInfo(LogVoice) << "Screen share" << streamKey.toString() << "does not offer AV1: its encoder would add black to" << size;
     createSent = true;
@@ -312,7 +261,7 @@ void StreamBroadcaster::onCodecTimedOut()
 void StreamBroadcaster::onVoiceConnected()
 {
     if (Video::screenCaptureAvailable())
-        whenEncodersKnown(this, [](const QList<VideoCodec> &) {});
+        Media::whenSendCodecsKnown(this, [](const QList<VideoCodec> &) {});
 }
 
 void StreamBroadcaster::onVoiceStateChanged()
@@ -574,7 +523,7 @@ void StreamBroadcaster::onSendCodecChanged(VideoCodec codec)
 // sent while the server takes its time to name another codec.
 void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
 {
-    const QList<VideoCodec> fit = Media::shareCodecs(offeredCodecs, Media::videoEncoderFor(VideoCodec::AV1), size);
+    const QList<VideoCodec> fit = Media::shareCodecs(offeredCodecs, size);
     if (fit == offeredCodecs)
         return;
 

@@ -2,6 +2,7 @@
 // to the receiver packet by packet, reassembled, and decoded. Which codecs run depends on the
 // encoders the linked ffmpeg was built with; a codec with no encoder is skipped.
 
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/VideoDecoder.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
 #include "Discord/Voice/VideoReceiver.hpp"

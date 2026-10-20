@@ -4,7 +4,7 @@
 
 #include "Core/Logging.hpp"
 #ifdef ACHERON_HAVE_VIDEO
-#include "Core/Media/VideoDecoder.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Video/CallVideo.hpp"
 #include "Core/Video/SendQuality.hpp"
 #endif

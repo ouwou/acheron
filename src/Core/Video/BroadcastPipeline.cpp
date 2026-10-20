@@ -369,11 +369,6 @@ BroadcastPipeline::BroadcastPipeline(QObject *parent) : QObject(parent)
 
 BroadcastPipeline::~BroadcastPipeline() = default;
 
-QList<Discord::Voice::VideoCodec> BroadcastPipeline::encodableCodecs()
-{
-    return Media::encodableVideoCodecs();
-}
-
 void BroadcastPipeline::start(const BroadcastSettings &settings)
 {
     worker->start(settings);
