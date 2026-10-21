@@ -180,7 +180,7 @@ jobs:
             @("3840x2160", 30, "yuv420p", 1, "h264-high-2160p30.h264", "-c:v libx264 -profile:v high -preset veryfast -tune zerolatency -b:v 20000k"),
             @("1920x1080", 30, "yuv420p", 3, "hevc-main-1080p30.hevc", "-c:v libx265 -profile:v main -preset veryfast -tune zerolatency -b:v 5000k"),
             @("1920x1080", 30, "yuv420p10le", 2, "hevc-main10-1080p30.hevc", "-c:v libx265 -profile:v main10 -preset veryfast -tune zerolatency -b:v 5000k"),
-            @("1920x1080", 30, "yuv420p", 3, "av1-1080p30.ivf", "-c:v libsvtav1 -preset 10 -b:v 4000k -svtav1-params lookahead=0:pred-struct=1"),
+            @("1920x1080", 30, "yuv420p", 3, "av1-1080p30.ivf", "-c:v libsvtav1 -preset 10 -b:v 4000k -svtav1-params lookahead=0:pred-struct=1:rc=2"),
             @("1280x720", 30, "yuv420p", 3, "vp8-720p30.ivf", "-c:v libvpx -b:v 2500k -lag-in-frames 0")
           )
           foreach ($c in $clips) {
