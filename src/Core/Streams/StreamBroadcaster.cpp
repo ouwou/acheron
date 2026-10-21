@@ -27,13 +27,13 @@ namespace {
 
 bool sameDescription(const LocalVideoDescription &a, const LocalVideoDescription &b)
 {
-    return a.maxWidth == b.maxWidth && a.maxHeight == b.maxHeight && a.maxFramerate == b.maxFramerate && a.maxBitrate == b.maxBitrate;
+    return a.maxSize == b.maxSize && a.maxFramerate == b.maxFramerate && a.maxBitrateBps == b.maxBitrateBps;
 }
 
 } // namespace
 
-StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, TermsProvider terms, QObject *parent)
-    : QObject(parent), client(client), streams(streams), voice(voice), accountId(accountId), proxy(proxy), terms(std::move(terms))
+StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, TermsProvider terms, QObject *parent)
+    : QObject(parent), client(client), streams(streams), voice(voice), terms(std::move(terms))
 {
     rateClock.start();
 
@@ -42,7 +42,7 @@ StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *str
     connect(&startTimeout, &QTimer::timeout, this, &StreamBroadcaster::onStartTimedOut);
 
     codecTimeout.setSingleShot(true);
-    codecTimeout.setInterval(CODEC_TIMEOUT_MS);
+    codecTimeout.setInterval(Video::SEND_CODEC_TIMEOUT_MS);
     connect(&codecTimeout, &QTimer::timeout, this, &StreamBroadcaster::onCodecTimedOut);
 
     bitrateSettle.setSingleShot(true);
@@ -63,12 +63,7 @@ StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *str
 
 StreamBroadcaster::~StreamBroadcaster()
 {
-    end(false);
-}
-
-void StreamBroadcaster::setGatewaySessionId(const QString &sessionId)
-{
-    gatewaySessionId = sessionId;
+    end(GatewayNotice::Skip);
 }
 
 bool StreamBroadcaster::canShare() const
@@ -80,7 +75,7 @@ void StreamBroadcaster::reset()
 {
     abandonedStreamKey.clear();
     if (isSharing())
-        fail(tr("Screen sharing stopped because the connection to Discord was restarted."), false);
+        fail(tr("Screen sharing stopped because the connection to Discord was restarted."), GatewayNotice::Skip);
 }
 
 void StreamBroadcaster::setState(State state)
@@ -104,7 +99,7 @@ StreamBroadcaster::Stats StreamBroadcaster::stats() const
     Stats now;
     now.encoder = encoderStats;
     now.network = networkStats;
-    now.targetBitrate = rate.bitrate();
+    now.targetBitrateBps = rate.bitrate();
     now.receivers = receivers;
     now.encodingSuspended = encodingSuspended;
     now.captureStalled = captureStalled;
@@ -130,7 +125,7 @@ void StreamBroadcaster::start(const Video::CaptureSource &chosen, const Video::S
         fail(tr("You cannot share your screen here."));
         return;
     }
-    if (!proxy.canRelayUdp()) {
+    if (!voice->accountProxy().canRelayUdp()) {
         Video::releaseSource(chosen);
         fail(tr("This account's proxy cannot carry video, so the screen was not shared."));
         return;
@@ -141,14 +136,11 @@ void StreamBroadcaster::start(const Video::CaptureSource &chosen, const Video::S
     soundCaptureFailed = false;
     sendQuality = Video::usableQuality(quality, here.tier);
     preferredRegion = here.preferredRegion;
-    streamKey = Discord::StreamKey::forChannel(voice->currentGuildId(), voice->currentChannelId(), accountId);
+    streamKey = voice->streamKeyOf(voice->accountUserId());
     abandonedStreamKey.clear();
     setState(State::Starting);
 
-    Media::whenSendCodecsKnown(this, [this, asked = ++encoderProbeAttempt](const QList<VideoCodec> &codecs) {
-        if (asked == encoderProbeAttempt)
-            sendCreate(codecs);
-    });
+    sendCodecs.ask(this, [this](const QList<VideoCodec> &codecs) { sendCreate(codecs); });
 }
 
 void StreamBroadcaster::sendCreate(const QList<VideoCodec> &codecs)
@@ -158,8 +150,7 @@ void StreamBroadcaster::sendCreate(const QList<VideoCodec> &codecs)
         return;
     }
 
-    // The size is known already unless the window is still on its way back from the taskbar.
-    const QSize size = Video::encodeSizeOf(source, sendQuality.height);
+    const QSize size = Video::encodeSizeOf(source, sendQuality.heightLimit());
     offeredCodecs = size.isEmpty() ? codecs : Media::shareCodecs(codecs, size);
     if (offeredCodecs != codecs)
         qCInfo(LogVoice) << "Screen share" << streamKey.toString() << "does not offer AV1: its encoder would add black to" << size;
@@ -179,32 +170,32 @@ void StreamBroadcaster::setQuality(const Video::SendQuality &quality)
 
 void StreamBroadcaster::stop()
 {
-    end(true);
+    end(GatewayNotice::Send);
 }
 
-void StreamBroadcaster::end(bool tellGateway)
+void StreamBroadcaster::end(GatewayNotice notice)
 {
     if (!isSharing())
         return;
 
-    encoderProbeAttempt++;
+    sendCodecs.cancel();
     startTimeout.stop();
     previewUploader->stop();
 
     if (rtc) {
         if (Audio::VoiceConnection *connection = rtc->connection())
             rtc->close([client = connection->client()] { client->stopVideo(); });
-        // Not deleted here: this may be one of its own signals.
+        // not deleted here: this may be one of its own signals
         std::exchange(rtc, nullptr)->deleteLater();
     }
-    if (tellGateway && createSent)
+    if (notice == GatewayNotice::Send && createSent)
         client->sendStreamDelete(streamKey.toString());
     stopPipeline();
     Video::releaseSource(source);
 
     createSent = false;
     sendCodec = VideoCodec::Unknown;
-    receivers = -1;
+    receivers.reset();
     captureStalled = false;
     soundCaptureFailed = false;
     viewerSize = {};
@@ -215,12 +206,12 @@ void StreamBroadcaster::end(bool tellGateway)
     setState(State::Idle);
 }
 
-void StreamBroadcaster::fail(const QString &reason, bool tellGateway)
+void StreamBroadcaster::fail(const QString &reason, GatewayNotice notice)
 {
     qCWarning(LogVoice) << "Screen share" << streamKey.toString() << "ended:" << reason;
     failureText = reason;
     if (isSharing())
-        end(tellGateway);
+        end(notice);
     else
         emit stateChanged();
     emit failed(reason);
@@ -228,9 +219,9 @@ void StreamBroadcaster::fail(const QString &reason, bool tellGateway)
 
 void StreamBroadcaster::onStartTimedOut()
 {
-    // The official client gives up here without a word to the gateway.
+    // the official client gives up here without telling the gateway
     abandonedStreamKey = streamKey.toString();
-    fail(tr("Discord did not answer the request to share your screen."), false);
+    fail(tr("Discord did not answer the request to share your screen."), GatewayNotice::Skip);
 }
 
 void StreamBroadcaster::onCodecTimedOut()
@@ -241,7 +232,7 @@ void StreamBroadcaster::onCodecTimedOut()
 void StreamBroadcaster::onVoiceConnected()
 {
     if (Video::screenCaptureAvailable())
-        Media::whenSendCodecsKnown(this, [](const QList<VideoCodec> &) {});
+        Media::startSendCodecProbe();
 }
 
 void StreamBroadcaster::onVoiceStateChanged()
@@ -253,7 +244,6 @@ void StreamBroadcaster::onVoiceStateChanged()
 void StreamBroadcaster::onVoiceDisconnected()
 {
     stop();
-    // The call it was said in is over.
     clearFailure();
 }
 
@@ -285,30 +275,20 @@ void StreamBroadcaster::onStreamEnded(const QString &endedKey, StreamEndReason r
     if (!isSharing() || endedKey != streamKey.toString())
         return;
 
-    switch (reason) {
-    case StreamEndReason::Unauthorized:
-    case StreamEndReason::SafetyGuildRateLimited:
-        fail(tr("Discord refused the screen share."), false);
-        break;
-    case StreamEndReason::UserRequested:
-    case StreamEndReason::StreamFull:
-    case StreamEndReason::Other:
-        fail(tr("Discord ended the screen share."), false);
-        break;
-    }
+    fail(isRefusal(reason) ? tr("Discord refused the screen share.") : tr("Discord ended the screen share."), GatewayNotice::Skip);
 }
 
 void StreamBroadcaster::openRtc()
 {
-    const StreamConnection::Account account{ accountId, gatewaySessionId, proxy };
     rtc = new StreamConnection(
-            account,
+            StreamConnection::Account::of(*voice),
             [this](Discord::Voice::ConnectionParams &params) {
                 params.videoCodecs = Media::offeredVideoCodecs(offeredCodecs);
                 params.sendsAudio = sendsSound();
             },
             this);
     connect(rtc, &StreamConnection::opened, this, &StreamBroadcaster::onRtcOpened);
+    connect(rtc, &StreamConnection::connected, this, &StreamBroadcaster::onRtcConnected);
     connect(rtc, &StreamConnection::closed, this, &StreamBroadcaster::onRtcClosed);
     connect(rtc, &StreamConnection::reconnecting, this, &StreamBroadcaster::onRtcReconnecting);
     connect(rtc, &StreamConnection::failed, this, &StreamBroadcaster::onRtcFailed);
@@ -322,7 +302,6 @@ void StreamBroadcaster::onRtcOpened(Audio::VoiceConnection *connection)
         connection->adopt(streamAudio.get());
     }
 
-    connect(connection, &Audio::VoiceConnection::stateChanged, this, &StreamBroadcaster::onRtcStateChanged);
     connect(connection, &Audio::VoiceConnection::videoSendCodecChanged, this, &StreamBroadcaster::onSendCodecChanged);
     connect(connection, &Audio::VoiceConnection::videoSendStatsUpdated, this, &StreamBroadcaster::onSendStats);
     connect(connection, &Audio::VoiceConnection::videoKeyframeRequested, this, &StreamBroadcaster::onKeyframeRequested);
@@ -338,7 +317,6 @@ bool StreamBroadcaster::sendsSound() const
 
 void StreamBroadcaster::onRtcClosed()
 {
-    rtcConnected = false;
     videoAnnounced = false;
     serverCodec = VideoCodec::Unknown;
     codecTimeout.stop();
@@ -380,13 +358,13 @@ void StreamBroadcaster::startSoundCapture()
         onSoundCaptureFailed(tr("The program the shared window belongs to is not known."));
         return;
     }
-    // All this client plays is the call, and the people in it would get themselves back.
+    // this client plays only the call, which would echo the participants back to themselves
     if (ofProgram && source.processId == self)
         return;
 
     soundCapture = std::make_unique<Audio::LoopbackCapture>();
     connect(soundCapture.get(), &Audio::LoopbackCapture::frameCaptured, streamAudio.get(), &StreamAudio::onFrameCaptured);
-    // Context the capture, so that a failure it had on its way when it was let go of goes with it.
+    // the capture is the context, so a failure still on its way goes with it
     connect(soundCapture.get(), &Audio::LoopbackCapture::failed, soundCapture.get(), [this](const QString &reason) { onSoundCaptureFailed(reason); });
     if (ofProgram)
         soundCapture->start(source.processId, Audio::LoopbackCapture::Scope::ProcessTree);
@@ -403,24 +381,17 @@ void StreamBroadcaster::onSoundCaptureFailed(const QString &reason)
     emit stateChanged();
 }
 
-// Reached on the first connection and again whenever the client has resumed a dropped one,
-// which has forgotten what it was told of the video.
-void StreamBroadcaster::onRtcStateChanged(VoiceClient::State state)
+void StreamBroadcaster::onRtcConnected()
 {
-    if (state != VoiceClient::State::Connected)
-        return;
-
-    rtcConnected = true;
     videoAnnounced = false;
     startSoundCapture();
     useServerCodec();
 }
 
-// The server names the codec as the session is described, which is before the connection is up.
 void StreamBroadcaster::onSendCodecChanged(VideoCodec codec)
 {
     serverCodec = codec;
-    if (rtcConnected)
+    if (rtc->isConnected())
         useServerCodec();
 }
 
@@ -439,8 +410,6 @@ void StreamBroadcaster::useServerCodec()
     startPipeline();
 }
 
-// The pipeline encodes nothing of a size its encoder would add black to, so nothing of it is
-// sent while the server takes its time to name another codec.
 void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
 {
     const QList<VideoCodec> fit = Media::shareCodecs(offeredCodecs, size);
@@ -451,7 +420,7 @@ void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
     offeredCodecs = fit;
     if (!rtc || !rtc->connection())
         return;
-    rtc->connection()->run([fit](VoiceClient *connection) { connection->offerVideoEncoding(fit); });
+    rtc->run([fit](VoiceClient *connection) { connection->offerVideoEncoding(fit); });
     if (!fit.contains(sendCodec))
         codecTimeout.start();
 }
@@ -487,15 +456,13 @@ void StreamBroadcaster::onWantsReceived(int pixelCount)
 void StreamBroadcaster::startPipeline()
 {
     stopPipeline();
-    // A capture that is starting has not stalled, whatever the one before it had done.
     onCaptureStalled(false);
 
     limits = Video::bitrateLimits(sendQuality);
-    rate.restart(limits.min, limits.max);
+    rate.restart(limits.minBps, limits.maxBps);
 
     pipeline = std::make_unique<Video::ScreenPipeline>();
-    // In the pipeline's own context, so that what it had on its way when it was let go of
-    // goes with it.
+    // the pipeline is the context, so whatever it still had on the way goes with it
     Video::ScreenPipeline *started = pipeline.get();
     connect(started, &Video::ScreenPipeline::started, started, [this](const QSize &size, int framerate) { onPipelineStarted(size, framerate); });
     connect(started, &Video::ScreenPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
@@ -507,13 +474,13 @@ void StreamBroadcaster::startPipeline()
 
     Video::ScreenSettings settings;
     settings.sourceId = source.id;
-    settings.maxHeight = sendQuality.height;
+    settings.maxHeight = sendQuality.heightLimit();
     settings.framerate = sendQuality.framerate;
     settings.codec = sendCodec;
-    settings.bitrateBps = rate.bitrate();
-    settings.maxBitrateBps = limits.max;
+    appliedBitrate = rate.bitrate();
+    settings.bitrateBps = appliedBitrate;
+    settings.maxBitrateBps = limits.maxBps;
     pipeline->start(settings);
-    appliedBitrate = settings.bitrateBps;
     sinceBitrateApplied.start();
     tellBitrate();
 }
@@ -555,7 +522,7 @@ void StreamBroadcaster::onPipelineStarted(const QSize &size, int framerate)
     withdrawCodecsUnfitFor(size);
     refreshLimits();
 
-    if (rtcConnected && !videoAnnounced)
+    if (rtc && rtc->isConnected() && !videoAnnounced)
         announceVideo();
     applySuspension();
 }
@@ -578,7 +545,7 @@ void StreamBroadcaster::onCaptureStalled(bool stalled)
     emit stateChanged();
 }
 
-// Closing the shared window ends the share as stopping it does, in the official client too.
+// as in the official client
 void StreamBroadcaster::onSourceClosed()
 {
     stop();
@@ -596,14 +563,11 @@ void StreamBroadcaster::onPipelineStats(const Video::PipelineStats &encoder)
 
 LocalVideoDescription StreamBroadcaster::videoDescription() const
 {
-    const QSize largest = Video::announcedSize(sendQuality);
     LocalVideoDescription description;
-    description.maxWidth = largest.width();
-    description.maxHeight = largest.height();
+    description.maxSize = Video::announcedSize(sendQuality);
     description.maxFramerate = sendQuality.framerate;
-    // The quality's own limit, whatever the viewers' sizes have lowered the encoder to: the
-    // official client announces again only when the quality itself is changed.
-    description.maxBitrate = Video::bitrateLimits(sendQuality).max;
+    // the official client re-announces only when the quality changes
+    description.maxBitrateBps = Video::bitrateLimits(sendQuality).maxBps;
     return description;
 }
 
@@ -611,11 +575,10 @@ void StreamBroadcaster::announceVideo()
 {
     announced = videoDescription();
     videoAnnounced = true;
-    rtc->connection()->run([description = announced](VoiceClient *connection) { connection->startVideo(description); });
+    rtc->run([description = announced](VoiceClient *connection) { connection->startVideo(description); });
     tellBitrate();
     applySuspension();
-    // What was encoded before the client took the announcement was dropped by it, and that
-    // included the frame every viewer needs first.
+    // the client dropped what came before it took the announcement, including the first key frame
     pipeline->requestKeyframe();
 
     previewUploader->start(streamKey.toString());
@@ -624,14 +587,14 @@ void StreamBroadcaster::announceVideo()
 
 void StreamBroadcaster::describeVideoIfChanged()
 {
-    if (!videoAnnounced || !rtcConnected)
+    if (!videoAnnounced || !rtc || !rtc->isConnected())
         return;
     const LocalVideoDescription description = videoDescription();
     if (sameDescription(description, announced))
         return;
 
     announced = description;
-    rtc->connection()->run([description](VoiceClient *connection) { connection->describeVideo(description); });
+    rtc->run([description](VoiceClient *connection) { connection->describeVideo(description); });
 }
 
 void StreamBroadcaster::refreshLimits()
@@ -640,7 +603,7 @@ void StreamBroadcaster::refreshLimits()
     const qint64 encodedPixels = static_cast<qint64>(encodedSize.width()) * encodedSize.height();
     limits = pipelineStarted ? Video::limitsForViewerSize(full, sendQuality, encodedPixels, encodedFramerate, viewerSize.pixelCount()) : full;
 
-    if (rate.setLimits(limits.min, limits.max) && pipelineStarted)
+    if (rate.setLimits(limits.minBps, limits.maxBps) && pipelineStarted)
         applyBitrateOnceSettled();
     describeVideoIfChanged();
 }
@@ -670,17 +633,13 @@ void StreamBroadcaster::applyBitrate()
 
 void StreamBroadcaster::tellBitrate()
 {
-    if (!rtc || !rtc->connection() || appliedBitrate <= 0)
-        return;
-    rtc->connection()->run([bitrate = appliedBitrate](VoiceClient *connection) { connection->setVideoBitrate(bitrate); });
+    if (rtc && appliedBitrate > 0)
+        rtc->run([bitrate = appliedBitrate](VoiceClient *connection) { connection->setVideoBitrate(bitrate); });
 }
 
-// Nothing is encoded while nobody is there to receive it, as in the official client. Only once
-// the pipeline has started, though: it is not promised to report a start while it encodes
-// nothing.
 void StreamBroadcaster::applySuspension()
 {
-    const bool suspend = pipelineStarted && (!videoAnnounced || receivers == 0);
+    const bool suspend = Video::encodingSuspends(pipelineStarted, videoAnnounced, receivers);
     if (suspend == encodingSuspended)
         return;
     encodingSuspended = suspend;

@@ -29,7 +29,6 @@ TilePlan planTiles(const CallFacts &facts)
             continue;
         if (participant.streaming)
             plan.tiles.append(TileKey::streamOf(participant.userId));
-        // A disabled camera is turned back on from the person's entry in the channel list.
         if (participant.cameraSending && participant.cameraDisabled)
             continue;
         if (participant.cameraSending || facts.nonVideoShown || !anyVideo)

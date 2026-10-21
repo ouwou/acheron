@@ -55,8 +55,6 @@ struct StreamResolution : Core::JsonUtils::JsonObject
     }
 };
 
-// One entry of a `streams` array: a video layer as IDENTIFY offers it, READY assigns it, and
-// VIDEO (opcode 12) announces it.
 struct StreamDescription : Core::JsonUtils::JsonObject
 {
     Field<QString> type;
@@ -68,6 +66,8 @@ struct StreamDescription : Core::JsonUtils::JsonObject
     Field<int, true> maxBitrate;
     Field<int, true> maxFramerate;
     Field<StreamResolution, true> maxResolution;
+
+    [[nodiscard]] quint32 rtxSsrcOrNext() const { return rtxSsrc.hasValue() && rtxSsrc.get() != 0 ? rtxSsrc.get() : ssrc.valueOr(0) + 1; }
 
     Core::OrderedJson toJson() const
     {
@@ -186,31 +186,7 @@ struct SelectProtocolData : Core::JsonUtils::JsonObject
     }
 };
 
-struct SessionDescription : Core::JsonUtils::JsonObject
-{
-    Field<QString> mode;
-    Field<QByteArray> secretKey;
-    Field<int, true> daveProtocolVersion;
-    Field<QString, true> audioCodec;
-    Field<QString, true> videoCodec;
-    Field<QString, true> mediaSessionId;
-    Field<int, true> keyframeInterval;
-
-    static SessionDescription fromJson(const QJsonObject &obj)
-    {
-        SessionDescription desc;
-        get(obj, "mode", desc.mode);
-        get(obj, "secret_key", desc.secretKey);
-        get(obj, "dave_protocol_version", desc.daveProtocolVersion);
-        get(obj, "audio_codec", desc.audioCodec);
-        get(obj, "video_codec", desc.videoCodec);
-        get(obj, "media_session_id", desc.mediaSessionId);
-        get(obj, "keyframe_interval", desc.keyframeInterval);
-        return desc;
-    }
-};
-
-// SESSION_UPDATE (opcode 14) from the server: any of these may change mid-session.
+// opcode 14; any of these may change mid-session
 struct SessionUpdate : Core::JsonUtils::JsonObject
 {
     Field<QString, true> audioCodec;
@@ -221,15 +197,37 @@ struct SessionUpdate : Core::JsonUtils::JsonObject
     static SessionUpdate fromJson(const QJsonObject &obj)
     {
         SessionUpdate update;
-        get(obj, "audio_codec", update.audioCodec);
-        get(obj, "video_codec", update.videoCodec);
-        get(obj, "media_session_id", update.mediaSessionId);
-        get(obj, "keyframe_interval", update.keyframeInterval);
+        update.read(obj);
         return update;
+    }
+
+protected:
+    void read(const QJsonObject &obj)
+    {
+        get(obj, "audio_codec", audioCodec);
+        get(obj, "video_codec", videoCodec);
+        get(obj, "media_session_id", mediaSessionId);
+        get(obj, "keyframe_interval", keyframeInterval);
     }
 };
 
-// VIDEO (opcode 12) to the server: what this client is sending.
+struct SessionDescription : SessionUpdate
+{
+    Field<QString> mode;
+    Field<QByteArray> secretKey;
+    Field<int, true> daveProtocolVersion;
+
+    static SessionDescription fromJson(const QJsonObject &obj)
+    {
+        SessionDescription desc;
+        desc.read(obj);
+        get(obj, "mode", desc.mode);
+        get(obj, "secret_key", desc.secretKey);
+        get(obj, "dave_protocol_version", desc.daveProtocolVersion);
+        return desc;
+    }
+};
+
 struct LocalVideoState : Core::JsonUtils::JsonObject
 {
     Field<quint32> audioSsrc;
@@ -248,15 +246,14 @@ struct LocalVideoState : Core::JsonUtils::JsonObject
     }
 };
 
-// MEDIA_SINK_WANTS (opcode 15): how much of each sender's video a receiver wants, 0 to 100.
 struct MediaSinkWants
 {
     std::optional<int> any;
     QMap<quint32, int> bySsrc;
     QMap<quint32, int> pixelCounts;
 
-    // The official client builds this as a JS object, which serializes integer-like keys first
-    // in ascending order, so the SSRC entries precede `any` whatever order they were set in.
+    // the official client builds this as a JS object, which serializes integer-like keys first in
+    // ascending order, so the SSRC entries precede `any`
     Core::OrderedJson toJson() const
     {
         Core::OrderedJson obj;
@@ -321,7 +318,6 @@ struct SpeakingData : Core::JsonUtils::JsonObject
     }
 };
 
-// VIDEO (opcode 12) from the server: the SSRCs one user sends on.
 struct ClientConnectData : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> userId;
@@ -366,12 +362,9 @@ struct VoiceIdentifyData : Core::JsonUtils::JsonObject
     }
 };
 
-// Everything that distinguishes one RTC connection from another. A voice connection and a
-// Go Live stream connection speak the same protocol and differ only in these values.
 struct ConnectionParams
 {
     QString endpoint;
-    // Discord's voice gateways are only reached over TLS. A test's stand-in server is not.
     QString gatewayScheme = QStringLiteral("wss");
     QString token;
     Core::Snowflake serverId;
@@ -380,19 +373,13 @@ struct ConnectionParams
     QString sessionId;
     Core::ProxyConfig proxy;
 
-    // What IDENTIFY declares about video. Left unset, the server treats the connection as
-    // audio-only.
-    std::optional<bool> video;
+    // off, identify leaves video out and the server treats the connection as audio-only
+    bool video = false;
     QList<StreamDescription> streams;
-    // The video codecs SELECT_PROTOCOL offers after Opus, in preference order. Incoming video is
-    // told apart by the payload types given here.
+    // payload types are positional, after Opus
     QList<Codec> videoCodecs;
-    // A stream's viewer has no microphone on that connection and sends no audio at all, not
-    // even the silence a voice connection opens with. Its owner sends the sound that is shared
-    // with it, if any is.
+    // a stream viewer sends no audio at all, not even the silence a voice connection opens with
     bool sendsAudio = true;
-    // A Go Live stream's connection rather than a voice channel's. The same messages mean
-    // slightly different things on the two.
     bool streamContext = false;
 };
 

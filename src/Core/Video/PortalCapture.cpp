@@ -56,22 +56,17 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Chosen = std::function<void(const CaptureSource &, const QString &)>;
 
-const QLatin1String ID_PREFIX("pipewire:");
 const QLatin1String PORTAL_SERVICE("org.freedesktop.portal.Desktop");
 const QLatin1String PORTAL_PATH("/org/freedesktop/portal/desktop");
 const QLatin1String SCREEN_CAST_INTERFACE("org.freedesktop.portal.ScreenCast");
 const QLatin1String REQUEST_INTERFACE("org.freedesktop.portal.Request");
 const QLatin1String SESSION_INTERFACE("org.freedesktop.portal.Session");
-// For a call made on the UI thread to a portal that is there or is not. One that is only
-// being started takes seconds, and is asked again no sooner than a couple of seconds on.
+// a portal that is still starting takes seconds
 constexpr int PORTAL_PROBE_LIMIT_MS = 100;
 constexpr auto PORTAL_ASKED_AGAIN_AFTER = std::chrono::seconds(2);
-// For each call of the handshake that the user has no part in.
 constexpr int PORTAL_ANSWER_LIMIT_MS = 5000;
 constexpr auto START_LIMIT = std::chrono::seconds(5);
 
-// org.freedesktop.portal.ScreenCast's source types, cursor modes and persist modes, and
-// org.freedesktop.portal.Request's response codes.
 constexpr uint MONITOR_SOURCES = 1;
 constexpr uint WINDOW_SOURCES = 2;
 constexpr uint CURSOR_IN_THE_PICTURE = 2;
@@ -79,8 +74,7 @@ constexpr uint PERSIST_UNTIL_REVOKED = 2;
 constexpr uint VERSION_WITH_RESTORING = 4;
 constexpr uint CALLED_OFF_BY_THE_USER = 1;
 
-// drm_fourcc.h's DRM_FORMAT_MOD_LINEAR and DRM_FORMAT_MOD_INVALID. KWin drops the second
-// when it is offered more than one.
+// KWin drops DRM_FORMAT_MOD_INVALID when offered more than one modifier
 constexpr uint64_t MODIFIERS[] = { 0, 0x00ffffffffffffffULL };
 
 struct PixelLayout
@@ -91,7 +85,7 @@ struct PixelLayout
     const char *name;
 };
 
-// The fourccs are drm_fourcc.h's XRGB8888, ARGB8888, XBGR8888 and ABGR8888.
+// drm_fourcc.h's XRGB8888, ARGB8888, XBGR8888 and ABGR8888
 constexpr PixelLayout LAYOUTS[] = {
     { SPA_VIDEO_FORMAT_BGRx, AV_PIX_FMT_BGR0, MKTAG('X', 'R', '2', '4'), "BGRx" },
     { SPA_VIDEO_FORMAT_BGRA, AV_PIX_FMT_BGRA, MKTAG('A', 'R', '2', '4'), "BGRA" },
@@ -117,7 +111,7 @@ struct Source
 
     quint32 node = 0;
     QSize size;
-    // The portal's connection to PipeWire, where this process's own is not the one to use.
+    // the portal's PipeWire connection, not this process's own
     int remote = -1;
     PortalSession *session = nullptr;
     std::atomic<bool> closed{ false };
@@ -139,7 +133,7 @@ Table &table()
 QString registered(const std::shared_ptr<Source> &source)
 {
     std::lock_guard<std::mutex> lock(table().guard);
-    const QString id = ID_PREFIX + QString::number(table().nextNumber++);
+    const QString id = PIPEWIRE_SOURCE_PREFIX + QString::number(table().nextNumber++);
     table().sources.insert(id, source);
     return id;
 }
@@ -182,9 +176,8 @@ Portal portal()
 bool pipeWireStarts()
 {
     static const bool starts = [] {
-        if (!Media::pipeWireCanBeCalled())
+        if (!Media::pipeWireReady())
             return false;
-        pw_init(nullptr, nullptr);
         pw_loop *loop = pw_loop_new(nullptr);
         if (loop)
             pw_loop_destroy(loop);
@@ -332,7 +325,7 @@ private:
         const QString expected = QStringLiteral("/org/freedesktop/portal/desktop/request/%1/%2").arg(bus.baseService().mid(1).replace(QLatin1Char('.'), QLatin1Char('_')), requestToken);
         options.insert(QStringLiteral("handle_token"), requestToken);
         listenTo(expected);
-        // The user takes as long as he likes over the dialog that Start shows.
+        // the user takes as long as they like over Start's dialog
         if (step != Step::Start)
             deadline.start(PORTAL_ANSWER_LIMIT_MS);
 
@@ -344,7 +337,7 @@ private:
             const QDBusPendingReply<QDBusObjectPath> reply = *finished;
             if (reply.isError())
                 fail(captureText("The desktop could not be asked what to share (%1).").arg(reply.error().message()));
-            // A portal older than 0.9 names its requests itself.
+            // before portal 0.9 the request path is chosen by the portal
             else if (request == expected && reply.value().path() != expected)
                 listenTo(reply.value().path());
         });
@@ -376,7 +369,7 @@ private:
             CaptureSource picked;
             picked.id = registered(source);
             picked.kind = kind;
-            picked.name = kind == CaptureSource::Kind::Window ? captureText("Window") : captureText("Screen");
+            picked.name = kindName(kind);
             picked.geometry = QRect(QPoint(0, 0), stream.size);
             finish(picked, QString(), nextToken);
         });
@@ -420,9 +413,8 @@ using Media::FramePointer;
 
 struct Pictures : std::enable_shared_from_this<Pictures>
 {
-    // Taken before the loop's own lock, which is taken before `guard`.
+    // taken before the loop's lock, which is taken before `guard`
     std::mutex lifetime;
-    // Null once the grabber is going.
     pw_thread_loop *loop = nullptr;
     std::mutex guard;
     std::condition_variable changed;
@@ -432,8 +424,7 @@ struct Pictures : std::enable_shared_from_this<Pictures>
     int buffers = 0;
     bool takesCardBuffers = false;
     FramePointer newest;
-    // Buffers kept from the stream while their pictures live, by the number they were kept
-    // under: PipeWire uses a buffer's address again after a change of format.
+    // PipeWire reuses a buffer's address after a format change
     std::vector<std::pair<quint64, pw_buffer *>> kept;
     quint64 lastKept = 0;
     bool streamed = false;
@@ -444,7 +435,6 @@ struct Pictures : std::enable_shared_from_this<Pictures>
 struct CardPicture
 {
     std::shared_ptr<Pictures> pictures;
-    // Zero for a picture whose buffer has gone back to the stream.
     quint64 number = 0;
     AVDRMFrameDescriptor layout = {};
 };
@@ -454,7 +444,7 @@ CardPicture *cardPictureOf(const AVFrame *picture)
     return picture && picture->format == AV_PIX_FMT_DRM_PRIME ? static_cast<CardPicture *>(av_buffer_get_opaque(picture->buf[0])) : nullptr;
 }
 
-// With the loop's lock and the guard held.
+// with the loop's lock and the guard held
 void returnBuffer(Pictures *pictures, quint64 number)
 {
     const auto found = std::find_if(pictures->kept.begin(), pictures->kept.end(), [number](const auto &kept) { return kept.first == number; });
@@ -470,8 +460,7 @@ void freeCardPicture(void *opaque, uint8_t *)
     Pictures *pictures = picture->pictures.get();
     ::close(picture->layout.objects[0].fd);
     if (picture->number != 0) {
-        // Before PipeWire 1.2 pw_loop_invoke is for one thread at a time, and the stream's own
-        // thread uses it: the buffer goes back under the loop's lock, as thread-loop.h has it.
+        // before PipeWire 1.2 pw_loop_invoke is for one thread at a time and the stream's thread uses it
         std::lock_guard<std::mutex> alive(pictures->lifetime);
         if (pictures->loop) {
             pw_thread_loop_lock(pictures->loop);
@@ -502,8 +491,7 @@ bool showsPicture(const spa_buffer *sent, const spa_video_info_raw &format)
     return plane.data && plane.chunk->stride >= row && plane.chunk->size >= needed && plane.chunk->offset + needed <= plane.maxsize;
 }
 
-// The buffer's own descriptor is closed by PipeWire when the format changes or the stream
-// ends, which a picture has to outlive.
+// PipeWire closes the buffer's own descriptor on a format change or at the end of the stream
 bool keepOnCard(const spa_buffer *sent, const PixelLayout &layout, Pictures *pictures, AVFrame *picture)
 {
     const int descriptor = fcntl(static_cast<int>(sent->datas[0].fd), F_DUPFD_CLOEXEC, 3);
@@ -518,7 +506,7 @@ bool keepOnCard(const spa_buffer *sent, const PixelLayout &layout, Pictures *pic
     described.objects[0].format_modifier = pictures->format.modifier;
     described.nb_layers = 1;
     described.layers[0].format = layout.fourcc;
-    // KWin's buffers for a consumer that keeps to its sync timeline end in two sync objects.
+    // KWin's buffers for a consumer that keeps to its sync timeline end in two sync objects
     for (uint32_t i = 0; i < sent->n_datas && described.layers[0].nb_planes < AV_DRM_MAX_PLANES; i++) {
         if (sent->datas[i].type == SPA_DATA_DmaBuf)
             described.layers[0].planes[described.layers[0].nb_planes++] = { 0, sent->datas[i].chunk->offset, sent->datas[i].chunk->stride };
@@ -545,7 +533,7 @@ bool copyFromMemory(const spa_data &plane, const PixelLayout &layout, AVFrame *p
     return true;
 }
 
-// For PipeWire's thread, with the guard held.
+// on PipeWire's thread, with the guard held
 FramePointer pictureIn(const spa_buffer *sent, Pictures *pictures)
 {
     const spa_video_info_raw &format = pictures->format;
@@ -562,10 +550,7 @@ FramePointer pictureIn(const spa_buffer *sent, Pictures *pictures)
 
     const auto *crop = static_cast<const spa_meta_region *>(spa_buffer_find_meta_data(sent, SPA_META_VideoCrop, sizeof(spa_meta_region)));
     if (crop && spa_meta_region_is_valid(crop) && crop->region.position.x >= 0 && crop->region.position.y >= 0 && crop->region.position.x + crop->region.size.width <= format.size.width && crop->region.position.y + crop->region.size.height <= format.size.height) {
-        picture->crop_left = static_cast<size_t>(crop->region.position.x);
-        picture->crop_top = static_cast<size_t>(crop->region.position.y);
-        picture->crop_right = format.size.width - crop->region.size.width - picture->crop_left;
-        picture->crop_bottom = format.size.height - crop->region.size.height - picture->crop_top;
+        cropTo(picture.get(), QRect(crop->region.position.x, crop->region.position.y, static_cast<int>(crop->region.size.width), static_cast<int>(crop->region.size.height)));
     }
     return picture;
 }
@@ -599,8 +584,8 @@ void streamFormatChanged(void *shared, uint32_t id, const spa_pod *param)
     spa_pod_builder_init(&builder, space, sizeof(space));
     const bool onCard = spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier) != nullptr;
     const int memory = onCard ? 1 << SPA_DATA_DmaBuf : (1 << SPA_DATA_MemFd) | (1 << SPA_DATA_MemPtr);
-    // Four is the most KWin gives, and the fewest of which the caller can keep a picture with
-    // a newer one waiting behind it. Asked for alone first, since KWin's own choice is three.
+    // four is KWin's most, and the fewest that let the caller keep a picture with a newer one behind it.
+    // asked for alone first, since KWin's own choice is three
     const spa_pod *params[] = {
         static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 4, 16), SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(memory))),
         static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 2, 16), SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(memory))),
@@ -636,10 +621,8 @@ void streamHasPictures(void *shared)
     while (pw_buffer *buffer = pw_stream_dequeue_buffer(pictures->stream)) {
         FramePointer picture = pictureIn(buffer->buffer, pictures);
         CardPicture *card = cardPictureOf(picture.get());
-        // Two buffers are always left with the compositor: with one it waits for each picture's
-        // buffer to come back before it can draw the next, and with none it stops. A picture on
-        // the card whose buffer cannot be kept goes back with it, unused, since the compositor
-        // draws the next picture into it.
+        // the compositor always keeps two buffers: with one it waits for each to come back, with none it stops.
+        // a card picture whose buffer cant be kept goes back unused, since the next is drawn into it
         const bool keepsBuffer = card && static_cast<int>(pictures->kept.size()) + 3 <= pictures->buffers;
         if (card && !keepsBuffer)
             passedOver.push_back(std::move(picture));
@@ -731,7 +714,7 @@ class Grabber : public LinuxGrabber
 {
 public:
     Grabber(std::shared_ptr<Source> from, int framerate, bool onCard)
-        : source(std::move(from)), interval(std::chrono::duration_cast<Clock::duration>(std::chrono::seconds(1)) / std::max(1, framerate))
+        : source(std::move(from)), interval(pictureInterval(framerate))
     {
         loop = pw_thread_loop_new("acheron-capture", nullptr);
         context = loop ? pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0) : nullptr;
@@ -745,8 +728,7 @@ public:
         core = source->remote >= 0 ? pw_context_connect_fd(context, fcntl(source->remote, F_DUPFD_CLOEXEC, 3), nullptr, 0) : pw_context_connect(context, nullptr, 0);
         if (core)
             pw_core_add_listener(core, &coreListener, &CORE_EVENTS, &farewell);
-        // node.dont-fallback has WirePlumber end a stream whose target is gone, and not look
-        // for another source to link it to.
+        // node.dont-fallback has WirePlumber end a stream whose target is gone instead of relinking it
         stream = core ? pw_stream_new(core, "acheron", pw_properties_new(PW_KEY_MEDIA_TYPE, "Video", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_MEDIA_ROLE, "Screen", "node.dont-fallback", "true", nullptr)) : nullptr;
         if (stream) {
             pictures->stream = stream;
@@ -784,8 +766,7 @@ public:
                 pictures->stream = nullptr;
                 unclaimed = std::move(pictures->newest);
             }
-            // The portal's one connection is used again by the next grabber, which would take
-            // what the server still had to say to this one for its own: it is heard out first.
+            // the next grabber reuses the portal's connection and would take this one's remaining replies
             farewell.awaited = pw_core_sync(core, PW_ID_CORE, 0);
             int waited = farewell.awaited < 0 ? farewell.awaited : 0;
             while (!farewell.answered && waited == 0)
@@ -810,7 +791,7 @@ public:
             const auto now = Clock::now();
             if (source->closed || (pictures->ended && pictures->streamed))
                 return Result::Closed;
-            // A stream's first consumer settles its buffers for every other, whatever those offer.
+            // a stream's first consumer settles the buffer type for every later one
             if (pictures->memory == SPA_DATA_DmaBuf && !pictures->takesCardBuffers) {
                 failureText = captureText("Another program has the desktop keep these pictures on the graphics card.");
                 return Result::Failed;
@@ -833,7 +814,7 @@ public:
         av_frame_unref(into);
         av_frame_move_ref(into, picture.get());
         std::lock_guard<std::mutex> listed(table().guard);
-        source->size = QSize(into->width - static_cast<int>(into->crop_left + into->crop_right), into->height - static_cast<int>(into->crop_top + into->crop_bottom));
+        source->size = visibleArea(into).size();
         return Result::Frame;
     }
 

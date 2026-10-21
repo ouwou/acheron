@@ -2,6 +2,7 @@
 
 #include <QString>
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -17,8 +18,18 @@ enum class VideoCodec {
     AV1,
 };
 constexpr size_t VIDEO_CODEC_COUNT = static_cast<size_t>(VideoCodec::AV1) + 1;
+inline constexpr std::array<VideoCodec, 4> VIDEO_CODECS_BEST_FIRST = { VideoCodec::AV1, VideoCodec::H265, VideoCodec::H264, VideoCodec::VP8 };
 
-// Codec names as the voice gateway spells them.
+// a VP8 stream cant say its colours, and decoders take it for BT.601
+[[nodiscard]] constexpr bool carriesOnlyBt601(VideoCodec codec)
+{
+    return codec == VideoCodec::VP8;
+}
+
+inline constexpr int FULL_QUALITY = 100;
+inline constexpr int SECOND_LAYER_QUALITY = 50;
+
+// as the voice gateway spells them
 [[nodiscard]] inline VideoCodec videoCodecFromName(const QString &name)
 {
     if (name == QLatin1String("H264"))
@@ -49,8 +60,6 @@ constexpr size_t VIDEO_CODEC_COUNT = static_cast<size_t>(VideoCodec::AV1) + 1;
     return {};
 }
 
-// One whole encoded frame: what an encoder hands the RTP sender, and what the RTP receiver
-// hands a decoder. The timestamp is at 90 kHz.
 struct EncodedVideoFrame
 {
     std::vector<uint8_t> data;

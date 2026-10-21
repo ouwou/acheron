@@ -13,7 +13,6 @@ constexpr int CHANNELS = 2;
 constexpr int FRAME_SAMPLES = SAMPLE_RATE / 50;
 constexpr int FRAMES = 100;
 
-// Noise is the hardest thing to compress, so it is what makes an encoder spend all it may.
 QByteArray noiseFrame(std::mt19937 &random)
 {
     QByteArray frame(FRAME_SAMPLES * CHANNELS * static_cast<int>(sizeof(qint16)), '\0');
@@ -57,13 +56,12 @@ void TestOpusEncoder::theHighestBitrateStillFitsOnePacket()
     const int largest = largestPacket(510000);
     QVERIFY2(largest > 0, "encoding failed");
     QVERIFY2(largest <= Audio::OpusEncoder::MAX_PACKET_BYTES, qPrintable(QString::number(largest)));
-    // And it uses the room it has: the limit lowers the rate, it does not break the encoder.
     QVERIFY2(largest > Audio::OpusEncoder::MAX_PACKET_BYTES * 9 / 10, qPrintable(QString::number(largest)));
 }
 
 void TestOpusEncoder::anOrdinaryBitrateIsNotHeldBack()
 {
-    // 128 kbps is 320 bytes for each 20 ms.
+    // 128 kbps is 320 bytes per 20 ms
     const int largest = largestPacket(128000);
     QVERIFY2(largest > 250 && largest < 500, qPrintable(QString::number(largest)));
 }

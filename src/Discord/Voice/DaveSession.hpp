@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <map>
+#include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -23,8 +25,7 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// Whether a commit's changes to the roster give anyone a key: someone added, or someone whose
-// key changed. One who left is in it without a key.
+// one who left is in the roster changes without a key
 [[nodiscard]] bool bringsNewKeys(const discord::dave::RosterMap &changes);
 
 class DaveSession : public QObject
@@ -48,8 +49,10 @@ public:
     void onExecuteTransition(int transitionId);
     void onPrepareEpoch(int protocolVersion, int epoch);
 
-    discord::dave::IEncryptor *encryptor();
-    discord::dave::IDecryptor *getOrCreateDecryptor(quint32 ssrc, uint64_t userId);
+    [[nodiscard]] size_t maxCiphertextSize(discord::dave::MediaType type, size_t frameSize);
+    [[nodiscard]] std::optional<size_t> encrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out);
+    [[nodiscard]] size_t maxPlaintextSize(discord::dave::MediaType type, quint32 ssrc, size_t frameSize);
+    [[nodiscard]] std::optional<size_t> decrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out);
 
     bool isDaveEnabled() const { return daveEnabled; }
 
@@ -61,9 +64,7 @@ public:
     std::vector<uint8_t> lastEpochAuthenticator() const;
 
     void setLocalSsrc(quint32 ssrc);
-    // An SSRC this client sends video on, one per layer. The encryptor goes by the codec to tell
-    // which parts of a frame have to stay readable for it to be packetized. The SSRCs that carry
-    // retransmissions are not named: they repeat packets of frames encrypted already.
+    // RTX SSRCs arent named: they repeat packets of frames encrypted already
     void setLocalVideoCodec(quint32 ssrc, discord::dave::Codec codec);
     void addConnectedUser(const std::string &userId);
     void removeConnectedUser(const std::string &userId);
@@ -75,14 +76,13 @@ signals:
     void sendReadyForTransition(int transitionId);
     void sendInvalidCommitWelcome(int transitionId);
     void daveStateChanged(bool enabled);
-    // A transition was carried out that gave someone a key they did not have: a commit that
-    // added or re-keyed a member, or a welcome. They can make nothing of what this client
-    // sends until its next key frame, and the official client asks its encoder for one then.
+    // its receivers can read nothing until the next key frame, which the official client then asks for
     void newKeysNeedKeyframe();
 
 private:
     void reinit();
     void completeTransition();
+    discord::dave::IDecryptor *decryptorFor(quint32 ssrc);
 
     std::unique_ptr<discord::dave::mls::ISession> mlsSession;
     std::unique_ptr<discord::dave::IEncryptor> daveEncryptor;

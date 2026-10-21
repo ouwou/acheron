@@ -6,8 +6,8 @@
 namespace Acheron {
 namespace Core {
 
-StreamWatcher::StreamWatcher(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, QObject *parent)
-    : QObject(parent), client(client), streams(streams), voice(voice), accountId(accountId), proxy(proxy)
+StreamWatcher::StreamWatcher(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, QObject *parent)
+    : QObject(parent), client(client), streams(streams), voice(voice), accountId(voice->accountUserId())
 {
     connect(streams, &StreamManager::streamChanged, this, &StreamWatcher::onStreamChanged);
     connect(streams, &StreamManager::streamEnded, this, &StreamWatcher::onStreamEnded);
@@ -28,16 +28,15 @@ void StreamWatcher::watchWhenConnected(const Discord::StreamKey &key)
         pendingWatch = key;
 }
 
-// In a private call the official client watches a stream without being asked: the first live
-// one when the call is joined, and afterwards whichever participant's voice state last arrived
-// saying they are live, in place of the one being watched (130553.js).
+// in a private call the official client watches unasked: the first live stream on joining, then
+// whoever's voice state last arrived saying they are live (130553.js)
 void StreamWatcher::onVoiceConnected()
 {
     lastAutoWatched.clear();
 
     const QList<Audio::VoiceParticipant> participants = voice->currentParticipants();
     for (const Audio::VoiceParticipant &participant : participants) {
-        const QString streamKey = Discord::StreamKey::forChannel(Snowflake::Invalid, voice->currentChannelId(), participant.userId).toString();
+        const QString streamKey = voice->streamKeyOf(participant.userId).toString();
         if (participant.userId == accountId || !participant.selfStream || fullStreams.contains(streamKey))
             continue;
         autoWatchStreamOf(participant.userId);
@@ -54,7 +53,7 @@ void StreamWatcher::onParticipantChanged(Snowflake userId)
     if (participant->selfStream)
         autoWatchStreamOf(userId);
     else
-        fullStreams.remove(Discord::StreamKey::forChannel(Snowflake::Invalid, voice->currentChannelId(), userId).toString());
+        fullStreams.remove(voice->streamKeyOf(userId).toString());
 }
 
 void StreamWatcher::autoWatchStreamOf(Snowflake userId)
@@ -63,18 +62,13 @@ void StreamWatcher::autoWatchStreamOf(Snowflake userId)
     if (!inPrivateCall)
         return;
 
-    const Discord::StreamKey key = Discord::StreamKey::forChannel(Snowflake::Invalid, voice->currentChannelId(), userId);
+    const Discord::StreamKey key = voice->streamKeyOf(userId);
     const QString streamKey = key.toString();
     if (sessions.contains(streamKey) || streamKey == lastAutoWatched || fullStreams.contains(streamKey))
         return;
 
     lastAutoWatched = streamKey;
     watch(key);
-}
-
-void StreamWatcher::setGatewaySessionId(const QString &sessionId)
-{
-    gatewaySessionId = sessionId;
 }
 
 bool StreamWatcher::canWatch(const Discord::StreamKey &key) const
@@ -98,17 +92,17 @@ void StreamWatcher::watch(const Discord::StreamKey &key)
             emit sessionOpened(existing);
             return;
         }
-        remove(streamKey, false);
+        remove(streamKey, GatewayNotice::Skip);
     }
 
-    // Watching replaces what was being watched, unless two or more are already open.
+    // as the official client
     if (sessions.size() < 2) {
         const QStringList others = sessions.keys();
         for (const QString &other : others)
-            remove(other, true);
+            remove(other, GatewayNotice::Send);
     }
 
-    auto *session = new StreamSession(key, accountId, gatewaySessionId, proxy, voice, nextAudioSource++, this);
+    auto *session = new StreamSession(key, voice, nextAudioSource++, this);
     connect(session, &StreamSession::pingRequested, this, [this, streamKey] { client->sendStreamPing(streamKey); });
     sessions.insert(streamKey, session);
 
@@ -118,14 +112,14 @@ void StreamWatcher::watch(const Discord::StreamKey &key)
 
 void StreamWatcher::stopWatching(const QString &streamKey)
 {
-    remove(streamKey, true);
+    remove(streamKey, GatewayNotice::Send);
 }
 
 void StreamWatcher::stopAll()
 {
     const QStringList keys = sessions.keys();
     for (const QString &key : keys)
-        remove(key, true);
+        remove(key, GatewayNotice::Send);
 }
 
 void StreamWatcher::reset()
@@ -134,16 +128,16 @@ void StreamWatcher::reset()
     fullStreams.clear();
     const QStringList keys = sessions.keys();
     for (const QString &key : keys)
-        remove(key, false);
+        remove(key, GatewayNotice::Skip);
 }
 
-void StreamWatcher::remove(const QString &streamKey, bool tellGateway)
+void StreamWatcher::remove(const QString &streamKey, GatewayNotice notice)
 {
     StreamSession *session = sessions.take(streamKey);
     if (!session)
         return;
 
-    if (tellGateway && !session->isOver())
+    if (notice == GatewayNotice::Send && !session->isOver())
         client->sendStreamDelete(streamKey);
 
     emit sessionClosed(streamKey);
@@ -168,12 +162,11 @@ void StreamWatcher::onStreamEnded(const QString &streamKey, StreamEndReason reas
 
 void StreamWatcher::onVoiceStateChanged()
 {
-    // Leaving the channel a stream is in stops watching it.
     const QStringList keys = sessions.keys();
     for (const QString &key : keys) {
         StreamSession *session = sessions.value(key, nullptr);
         if (session && voice->currentChannelId() != session->key().channelId)
-            remove(key, true);
+            remove(key, GatewayNotice::Send);
     }
 
     if (pendingWatch && canWatch(*pendingWatch)) {

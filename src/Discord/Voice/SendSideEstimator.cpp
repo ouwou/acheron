@@ -11,11 +11,6 @@ namespace Voice {
 
 namespace {
 
-// A report states arrivals from a reference time in units of 64 ms, in steps of a quarter
-// of a millisecond.
-constexpr qint64 REFERENCE_UNIT_US = 64000;
-constexpr qint64 DELTA_UNIT_US = 250;
-
 // bitrate_estimator.cc
 constexpr int INITIAL_WINDOW_MS = 500;
 constexpr int WINDOW_MS = 150;
@@ -106,8 +101,7 @@ bool SendSideEstimator::onReport(const ReceivedRtcp::TransportReport &report, qi
     reports++;
 
     if (haveReference) {
-        // The reference is 24 bits wide, and so is the difference between two of them.
-        const int32_t moved = static_cast<int32_t>(static_cast<uint32_t>(report.referenceTime - lastReference) << 8) >> 8;
+        const int32_t moved = signExtend24(static_cast<uint32_t>(report.referenceTime - lastReference));
         referenceOffsetUs += moved * REFERENCE_UNIT_US;
     } else {
         referenceOffsetUs = nowUs;
@@ -115,7 +109,6 @@ bool SendSideEstimator::onReport(const ReceivedRtcp::TransportReport &report, qi
     }
     lastReference = report.referenceTime;
 
-    // The newest number a report can be about is that of the last packet to leave.
     const qint64 newest = nextNumber - 1;
     const qint64 base = newest - static_cast<uint16_t>(static_cast<uint16_t>(newest) - report.baseSequence);
 
@@ -146,17 +139,13 @@ bool SendSideEstimator::onReport(const ReceivedRtcp::TransportReport &report, qi
     for (const Arrived &packet : arrived) {
         throughput.add(packet.arrivalUs / 1000, packet.bytes);
 
-        qint64 sendDeltaUs = 0;
-        qint64 arrivalDeltaUs = 0;
-        if (grouping.add(packet.sendUs, packet.arrivalUs, nowUs, &sendDeltaUs, &arrivalDeltaUs))
-            trend.add(arrivalDeltaUs / 1000.0, sendDeltaUs / 1000.0, packet.arrivalUs / 1000.0);
+        if (const std::optional<Grouping::Deltas> deltas = grouping.add(packet.sendUs, packet.arrivalUs, nowUs))
+            trend.add(deltas->arrivalUs / 1000.0, deltas->sendUs / 1000.0, packet.arrivalUs / 1000.0);
     }
 
     std::optional<double> acknowledgedNow;
-    if (throughput.estimateKbps >= 0)
-        acknowledgedNow = throughput.estimateKbps * 1000.0;
-    // An overused way is backed off from once what it does carry has been measured, and no
-    // more often than a round trip apart unless that is under half of what is aimed at.
+    if (throughput.estimateKbps)
+        acknowledgedNow = *throughput.estimateKbps * 1000.0;
     if (trend.usage == Usage::Overusing && !(acknowledgedNow && rate.timeToReduceFurther(nowUs, *acknowledgedNow)))
         return false;
     return rate.update(trend.usage, acknowledgedNow, nowUs);
@@ -164,25 +153,22 @@ bool SendSideEstimator::onReport(const ReceivedRtcp::TransportReport &report, qi
 
 void SendSideEstimator::Throughput::add(qint64 atMs, int bytes)
 {
-    // The first window is longer, for a steadier number to start from.
-    const float sampleKbps = closeWindow(atMs, bytes, estimateKbps < 0 ? INITIAL_WINDOW_MS : WINDOW_MS);
-    if (sampleKbps < 0)
+    const std::optional<float> sampleKbps = closeWindow(atMs, bytes, estimateKbps ? WINDOW_MS : INITIAL_WINDOW_MS);
+    if (!sampleKbps)
         return;
-    if (estimateKbps < 0) {
+    if (!estimateKbps) {
         estimateKbps = sampleKbps;
         return;
     }
 
-    // A window far from the estimate is trusted less, and the estimate itself less with
-    // every window, since the rate moves.
-    const float uncertainty = UNCERTAINTY_SCALE * std::abs(estimateKbps - sampleKbps) / std::max(estimateKbps, 1e-3f);
+    const float uncertainty = UNCERTAINTY_SCALE * std::abs(*estimateKbps - *sampleKbps) / std::max(*estimateKbps, 1e-3f);
     const float sampleVariance = uncertainty * uncertainty;
     const float predictedVariance = variance + VARIANCE_GROWTH;
-    estimateKbps = (sampleVariance * estimateKbps + predictedVariance * sampleKbps) / (sampleVariance + predictedVariance);
+    estimateKbps = (sampleVariance * *estimateKbps + predictedVariance * *sampleKbps) / (sampleVariance + predictedVariance);
     variance = sampleVariance * predictedVariance / (sampleVariance + predictedVariance);
 }
 
-float SendSideEstimator::Throughput::closeWindow(qint64 atMs, int bytes, int windowLengthMs)
+std::optional<float> SendSideEstimator::Throughput::closeWindow(qint64 atMs, int bytes, int windowLengthMs)
 {
     if (atMs < previousMs) {
         previousMs = -1;
@@ -191,7 +177,6 @@ float SendSideEstimator::Throughput::closeWindow(qint64 atMs, int bytes, int win
     }
     if (previousMs >= 0) {
         windowMs += atMs - previousMs;
-        // Nothing for longer than a whole window: what was counted says nothing of now.
         if (atMs - previousMs > windowLengthMs) {
             sum = 0;
             windowMs %= windowLengthMs;
@@ -199,7 +184,7 @@ float SendSideEstimator::Throughput::closeWindow(qint64 atMs, int bytes, int win
     }
     previousMs = atMs;
 
-    float sampleKbps = -1;
+    std::optional<float> sampleKbps;
     if (windowMs >= windowLengthMs) {
         sampleKbps = 8.0f * static_cast<float>(sum) / static_cast<float>(windowLengthMs);
         windowMs -= windowLengthMs;
@@ -209,42 +194,53 @@ float SendSideEstimator::Throughput::closeWindow(qint64 atMs, int bytes, int win
     return sampleKbps;
 }
 
+std::optional<qint64> SendSideEstimator::estimate() const
+{
+    if (!rate.initialized)
+        return std::nullopt;
+    return static_cast<qint64>(rate.current);
+}
+
+std::optional<qint64> SendSideEstimator::acknowledged() const
+{
+    if (!throughput.estimateKbps)
+        return std::nullopt;
+    return static_cast<qint64>(*throughput.estimateKbps * 1000);
+}
+
 bool SendSideEstimator::Grouping::belongsToBurst(qint64 arrivalUs, qint64 sendUs) const
 {
     const qint64 arrivalDeltaUs = arrivalUs - current.completeUs;
     const qint64 sendDeltaUs = sendUs - current.sendUs;
     if (sendDeltaUs == 0)
         return true;
-    // Packets that left apart and arrived together were held up and let go at once.
     return arrivalDeltaUs - sendDeltaUs < 0 && arrivalDeltaUs <= BURST_DELTA_US && arrivalUs - current.firstArrivalUs < MAX_BURST_US;
 }
 
-bool SendSideEstimator::Grouping::add(qint64 sendUs, qint64 arrivalUs, qint64 systemUs, qint64 *sendDeltaUs, qint64 *arrivalDeltaUs)
+std::optional<SendSideEstimator::Grouping::Deltas> SendSideEstimator::Grouping::add(qint64 sendUs, qint64 arrivalUs, qint64 systemUs)
 {
-    bool completed = false;
+    std::optional<Deltas> completed;
     if (current.isEmpty()) {
         current.sendUs = sendUs;
         current.firstSendUs = sendUs;
         current.firstArrivalUs = arrivalUs;
     } else if (current.firstSendUs > sendUs) {
-        return false;
+        return std::nullopt;
     } else if (!belongsToBurst(arrivalUs, sendUs) && sendUs - current.firstSendUs > GROUP_LENGTH_US) {
         if (!previous.isEmpty()) {
-            *sendDeltaUs = current.sendUs - previous.sendUs;
-            *arrivalDeltaUs = current.completeUs - previous.completeUs;
+            const Deltas deltas{ current.sendUs - previous.sendUs, current.completeUs - previous.completeUs };
             const qint64 systemDeltaUs = current.lastSystemUs - previous.lastSystemUs;
-            if (*arrivalDeltaUs - systemDeltaUs >= ARRIVAL_OFFSET_LIMIT_US) {
-                // The server's clock jumped.
+            if (deltas.arrivalUs - systemDeltaUs >= ARRIVAL_OFFSET_LIMIT_US) {
                 *this = Grouping();
-                return false;
+                return std::nullopt;
             }
-            if (*arrivalDeltaUs < 0) {
+            if (deltas.arrivalUs < 0) {
                 if (++reorderedInARow >= REORDERED_BEFORE_RESET)
                     *this = Grouping();
-                return false;
+                return std::nullopt;
             }
             reorderedInARow = 0;
-            completed = true;
+            completed = deltas;
         }
         previous = current;
         current.firstSendUs = sendUs;
@@ -270,7 +266,6 @@ void SendSideEstimator::Trend::add(double arrivalDeltaMs, double sendDeltaMs, do
     if (window.size() > TREND_WINDOW)
         window.pop_front();
 
-    // The slope of a line fitted through the window: how fast the delay is growing.
     double slope = previousSlope;
     if (window.size() == TREND_WINDOW) {
         double meanArrival = 0;
@@ -303,7 +298,6 @@ void SendSideEstimator::Trend::detect(double slope, double sendDeltaMs, double n
 
     const double modifiedTrend = std::min(deltas, DELTAS_COUNTED) * slope * THRESHOLD_GAIN;
     if (modifiedTrend > threshold) {
-        // The first time it is taken to have been so for half the time since the last group.
         overusingForMs = overusingForMs < 0 ? sendDeltaMs / 2 : overusingForMs + sendDeltaMs;
         overuses++;
         if (overusingForMs > OVERUSING_BEFORE_SAID_MS && overuses > 1 && slope >= previousSlope) {
@@ -325,8 +319,6 @@ void SendSideEstimator::Trend::adaptThreshold(double modifiedTrend, double nowMs
     if (thresholdAdaptedMs < 0)
         thresholdAdaptedMs = nowMs;
 
-    // A sudden large jump, as when the way's capacity drops, is not what the threshold is
-    // to get used to.
     if (std::abs(modifiedTrend) > threshold + MAX_ADAPT_OFFSET_MS) {
         thresholdAdaptedMs = nowMs;
         return;
@@ -358,7 +350,6 @@ void SendSideEstimator::Capacity::onOveruse(double bitsPerSecond)
     const double sampleKbps = bitsPerSecond / 1000.0;
     estimateKbps = estimateKbps ? (1 - OVERUSE_WEIGHT) * *estimateKbps + OVERUSE_WEIGHT * sampleKbps : sampleKbps;
 
-    // The variance of the estimate, as a share of the estimate.
     const double error = *estimateKbps - sampleKbps;
     deviation = std::clamp((1 - OVERUSE_WEIGHT) * deviation + OVERUSE_WEIGHT * error * error / std::max(*estimateKbps, 1.0), MIN_DEVIATION, MAX_DEVIATION);
 }
@@ -370,8 +361,6 @@ bool SendSideEstimator::Rate::timeToReduceFurther(qint64 nowUs, double acknowled
     return initialized && acknowledged < 0.5 * current;
 }
 
-// What a frame's worth of one more packet comes to per second, over the time a change takes
-// to show: about one packet more per response time.
 double SendSideEstimator::Rate::nearMaxIncreasePerSecond() const
 {
     const double frameBits = current / FRAMES_PER_SECOND;
@@ -389,7 +378,6 @@ bool SendSideEstimator::Rate::update(Usage usage, std::optional<double> acknowle
     if (acknowledged)
         latestAcknowledged = *acknowledged;
 
-    // Nothing is known of the way until it has been overused once.
     if (!initialized && usage != Usage::Overusing)
         return false;
 
@@ -407,19 +395,14 @@ bool SendSideEstimator::Rate::update(Usage usage, std::optional<double> acknowle
         if (throughputNow > capacity.upperBound())
             capacity.estimateKbps.reset();
 
-        // Never far above what is seen to arrive, or it would climb without end while
-        // little is being sent.
         const double limit = THROUGHPUT_HEADROOM * throughputNow + THROUGHPUT_HEADROOM_BITS;
         if (current < limit) {
             const double seconds = changedUs < 0 ? 0.0 : static_cast<double>(nowUs - changedUs) / 1e6;
-            // Near where the way last gave out it creeps; far from it, or not knowing, it
-            // climbs by a share of itself.
             const double step = capacity.estimateKbps ? nearMaxIncreasePerSecond() * seconds : std::max(current * (std::pow(INCREASE_PER_SECOND, changedUs < 0 ? 1.0 : std::min(seconds, 1.0)) - 1), MIN_MULTIPLICATIVE_STEP);
             wanted = std::min(current + step, limit);
         }
         changedUs = nowUs;
     } else if (state == State::Decrease) {
-        // A little under what gets through, so that the queue it built drains.
         double decreased = throughputNow * BACK_OFF;
         if (decreased > current && capacity.estimateKbps)
             decreased = BACK_OFF * *capacity.estimateKbps * 1000.0;

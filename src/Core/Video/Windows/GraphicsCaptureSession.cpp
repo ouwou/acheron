@@ -2,9 +2,12 @@
 
 #if defined(Q_OS_WIN)
 
+#include "Core/Video/Windows/Direct3D.hpp"
+
 #include <QOperatingSystemVersion>
 
 #include <atomic>
+#include <thread>
 
 namespace Acheron {
 namespace Core {
@@ -17,7 +20,7 @@ std::atomic<bool> graphicsCaptureRuledOut{ false };
 
 } // namespace
 
-// Making the filter loads everything it needs of Windows, and captures nothing.
+// making the filter loads everything it needs of Windows and captures nothing
 bool graphicsCaptureUsable()
 {
     static const bool initialises = [] {
@@ -36,6 +39,80 @@ bool graphicsCaptureUsable()
 void ruleOutGraphicsCapture()
 {
     graphicsCaptureRuledOut = true;
+}
+
+std::shared_ptr<GraphicsCaptureSession> GraphicsCaptureSession::start(const QByteArray &chain, const QByteArray &adapter, int *error)
+{
+    AVBufferRef *device = nullptr;
+    *error = openDirect3dDevice(&device, adapter);
+    if (*error < 0)
+        return nullptr;
+
+    auto session = std::make_shared<GraphicsCaptureSession>();
+    *error = assemble(chain, device, &session->graph, &session->sink);
+    av_buffer_unref(&device);
+    if (*error < 0)
+        return nullptr;
+    std::thread([session] { session->run(); }).detach();
+    return session;
+}
+
+GraphicsCaptureSession::~GraphicsCaptureSession()
+{
+    avfilter_graph_free(&graph);
+}
+
+void GraphicsCaptureSession::abandon()
+{
+    const std::lock_guard lock(mutex);
+    abandoned = true;
+}
+
+std::optional<int> GraphicsCaptureSession::endedWith()
+{
+    const std::lock_guard lock(mutex);
+    return ended;
+}
+
+GraphicsCaptureSession::Taken GraphicsCaptureSession::take(AVFrame *into, std::chrono::steady_clock::time_point notBefore, std::chrono::steady_clock::time_point giveUpAt)
+{
+    std::unique_lock lock(mutex);
+    for (;;) {
+        if (ended)
+            return Taken::Ended;
+        const auto now = std::chrono::steady_clock::now();
+        if (fresh && now >= notBefore) {
+            av_frame_unref(into);
+            av_frame_move_ref(into, latest.get());
+            fresh = false;
+            return Taken::Picture;
+        }
+        if (now >= giveUpAt)
+            return Taken::Nothing;
+        arrived.wait_until(lock, fresh ? notBefore : giveUpAt);
+    }
+}
+
+// Windows 10 hands over every screen refresh whatever rate was asked and keeps only two waiting
+void GraphicsCaptureSession::run()
+{
+    const Media::FramePointer picture(av_frame_alloc());
+    for (;;) {
+        const int got = av_buffersink_get_frame(sink, picture.get());
+        const std::lock_guard lock(mutex);
+        if (abandoned)
+            break;
+        if (got < 0) {
+            ended = got;
+            break;
+        }
+        av_frame_unref(latest.get());
+        av_frame_move_ref(latest.get(), picture.get());
+        fresh = true;
+        arrived.notify_all();
+    }
+    arrived.notify_all();
+    avfilter_graph_free(&graph);
 }
 
 } // namespace Win

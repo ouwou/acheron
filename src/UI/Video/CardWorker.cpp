@@ -2,6 +2,8 @@
 
 #ifdef Q_OS_WIN
 
+#include "GlTextures.hpp"
+
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLFunctions>
 
@@ -22,7 +24,7 @@ constexpr GLuint64 FINISH_TIMEOUT_NS = 100'000'000;
 
 } // namespace
 
-std::shared_ptr<CardWorker> CardWorker::sharingWith(QOpenGLContext *widgetContext)
+std::shared_ptr<CardWorker> CardWorker::sharingWith(QOpenGLContext *layerContext)
 {
     static std::map<QOpenGLContextGroup *, std::vector<std::weak_ptr<CardWorker>>> groups;
     for (auto group = groups.begin(); group != groups.end();) {
@@ -31,8 +33,8 @@ std::shared_ptr<CardWorker> CardWorker::sharingWith(QOpenGLContext *widgetContex
         group = workers.empty() ? groups.erase(group) : std::next(group);
     }
 
-    // Every surface holds one reference to its worker, and `candidate` one more.
-    std::vector<std::weak_ptr<CardWorker>> &workers = groups[widgetContext->shareGroup()];
+    // every surface holds one reference to its worker, and `candidate` one more
+    std::vector<std::weak_ptr<CardWorker>> &workers = groups[layerContext->shareGroup()];
     std::shared_ptr<CardWorker> least;
     long leastServed = 0;
     for (const std::weak_ptr<CardWorker> &entry : workers) {
@@ -46,18 +48,18 @@ std::shared_ptr<CardWorker> CardWorker::sharingWith(QOpenGLContext *widgetContex
     if (least && (leastServed < SURFACES_PER_WORKER || static_cast<int>(workers.size()) >= MAX_WORKERS))
         return least;
 
-    std::shared_ptr<CardWorker> worker(new CardWorker(widgetContext));
+    std::shared_ptr<CardWorker> worker(new CardWorker(layerContext));
     if (!worker->thread.isRunning())
         return least;
     workers.push_back(worker);
     return worker;
 }
 
-CardWorker::CardWorker(QOpenGLContext *widgetContext)
+CardWorker::CardWorker(QOpenGLContext *layerContext)
 {
-    context.setFormat(widgetContext->format());
-    context.setShareContext(widgetContext);
-    surface.setFormat(widgetContext->format());
+    context.setFormat(layerContext->format());
+    context.setShareContext(layerContext);
+    surface.setFormat(layerContext->format());
     surface.create();
     if (!surface.isValid() || !context.create())
         return;
@@ -70,7 +72,7 @@ CardWorker::~CardWorker()
 {
     if (!thread.isRunning())
         return;
-    // The context goes back to the thread that is about to destroy it.
+    // the context goes back to the thread that is about to destroy it
     run([this, home = QThread::currentThread()] {
         context.doneCurrent();
         context.moveToThread(home);
@@ -97,13 +99,12 @@ void CardWorker::finish()
     extra->glDeleteSync(fence);
 }
 
-bool CardPicture::render(const AVFrame *frame, bool bt709, bool fullRange)
+bool CardPicture::render(const AVFrame *frame)
 {
     if (closed)
         return true;
-    // Made at the picture's own size; the widget's drawing scales it.
     const QSize size(frame->width, frame->height);
-    if (!bridge.update(frame, size, bt709, fullRange) || !bridge.lock())
+    if (!bridge.update(frame, size) || !bridge.lock())
         return false;
 
     QOpenGLFunctions *gl = worker->gl();
@@ -112,17 +113,13 @@ bool CardPicture::render(const AVFrame *frame, bool bt709, bool fullRange)
     if (!back.name) {
         gl->glGenTextures(1, &back.name);
         gl->glBindTexture(GL_TEXTURE_2D, back.name);
-        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        setSampling(gl, GL_LINEAR);
     }
     gl->glBindTexture(GL_TEXTURE_2D, back.name);
     if (back.size != size) {
         gl->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size.width(), size.height(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         back.size = size;
     }
-    // A copy on the card, out of the texture Direct3D drew into.
     gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     gl->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bridge.texture(), 0);
     gl->glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, size.width(), size.height());

@@ -128,8 +128,6 @@ QByteArray contentsOf(const PacketBuffer &packet)
     return QByteArray(reinterpret_cast<const char *>(packet.data()), packet.size());
 }
 
-// The transport's send path: the relay header is written once per destination and then put
-// in front of each packet inside the packet's own buffer.
 QByteArray encapsulate(const QByteArray &payload, const QHostAddress &destination, quint16 port)
 {
     uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
@@ -143,8 +141,6 @@ QByteArray encapsulate(const QByteArray &payload, const QHostAddress &destinatio
     return contentsOf(packet);
 }
 
-// The transport's receive path: the datagram is read into a packet and the header dropped
-// from its front.
 QByteArray decapsulate(const QByteArray &datagram)
 {
     PacketBuffer packet;
@@ -955,8 +951,6 @@ void TestProxy::wrapWritesIntoHeadroomWithoutMovingPayload()
     QFETCH(QString, address);
     QFETCH(int, headerSize);
 
-    // A video stream is hundreds of packets a second, so the relay header must cost a write
-    // into the packet's spare front bytes, never a copy of the payload.
     uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
     QCOMPARE(Socks5UdpAssociation::writeRelayHeader(header, QHostAddress(address), 50004), headerSize);
 
@@ -976,7 +970,6 @@ void TestProxy::wrapWritesIntoHeadroomWithoutMovingPayload()
     QCOMPARE(decoded.port, quint16(50004));
     QCOMPARE(decoded.payload, payload);
 
-    // The sender gets its packet back as it was, so it can be kept for retransmission.
     QVERIFY(packet.dropFront(headerSize));
     QCOMPARE(contentsOf(packet), payload);
     QCOMPARE(static_cast<const void *>(packet.data()), static_cast<const void *>(payloadAddress));
@@ -993,8 +986,6 @@ void TestProxy::wrapFailsClosedWithoutHeadroom()
     QVERIFY(packet.growFront(packet.headroom() - headerSize + 1));
     const QByteArray before = contentsOf(packet);
 
-    // Sending the packet without its relay header would aim it at the proxy as if the proxy
-    // were Discord, so a packet that cannot be wrapped must not be sent at all.
     QVERIFY(!Socks5UdpAssociation::wrap(packet, { header, static_cast<size_t>(headerSize) }));
     QCOMPARE(contentsOf(packet), before);
 }

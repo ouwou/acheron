@@ -24,15 +24,13 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/pod/builder.h>
 
-// A stream of pictures as a compositor gives one out, in buffers of its own making: memory
-// both sides can read, or graphics card buffers where the other side asks for them.
 class PipeWireTestSource
 {
 public:
-    // The most it makes. As KWin, it would rather make three, and no fewer than two.
+    // as KWin: it would rather make three, and no fewer than two
     static constexpr int BUFFERS = 4;
     static constexpr uint64_t LINEAR_MODIFIER = 0;
-    // SPA_DATA_SyncObj came with PipeWire 1.2.
+    // SPA_DATA_SyncObj came with PipeWire 1.2
     static constexpr bool HAS_SYNC_OBJECTS = PW_CHECK_VERSION(1, 2, 0);
 
     enum class Spoiling {
@@ -41,7 +39,6 @@ public:
         MarkedInChunk,
         Empty,
     };
-    // `again` is whether the buffer still shows what this painted into it earlier.
     using Painter = std::function<void(void *into, const QSize &size, int stride, quint32 number, bool again)>;
 
     [[nodiscard]] static bool cardMemoryCanBeMade()
@@ -52,8 +49,7 @@ public:
         return device >= 0;
     }
 
-    // With `syncObjects`, each buffer on the card ends in two of them, as KWin's do for a
-    // consumer that keeps to its sync timeline.
+    // two sync objects per card buffer, as KWin gives a consumer that keeps to its sync timeline
     PipeWireTestSource(const QSize &size, Painter paint, spa_video_format format = SPA_VIDEO_FORMAT_BGRx, bool offersCard = false, bool syncObjects = false)
         : size(size), paint(std::move(paint)), format(format), offersCard(offersCard), syncObjects(syncObjects)
     {
@@ -62,7 +58,7 @@ public:
         context = pw_context_new(pw_thread_loop_get_loop(loop), nullptr, 0);
         pw_thread_loop_start(loop);
 
-        // A machine may have libpipewire and none of PipeWire's own files, and then no context.
+        // a machine may have libpipewire and none of PipeWire's own files, and then no context
         Locked lock(loop);
         core = context ? pw_context_connect(context, nullptr, 0) : nullptr;
         if (!core)
@@ -104,8 +100,6 @@ public:
 
     bool send(quint32 number, Spoiling spoiling = Spoiling::None, const QRect &crop = QRect())
     {
-        // A picture sent before the one before it was taken would lie with this side until
-        // the next, which a compositor's are too far apart for.
         for (int tries = 0; carrying && tries < 400; tries++)
             QThread::usleep(250);
 
@@ -194,8 +188,7 @@ private:
         return static_cast<const spa_pod *>(spa_pod_builder_pop(builder, &object));
     }
 
-    // As KWin has it: the settled modifier first once one was asked for, then every modifier,
-    // then plain memory.
+    // as KWin: the settled modifier first once one was asked for, then every modifier, then plain memory
     std::vector<const spa_pod *> offers(uint8_t *space, uint32_t bytes) const
     {
         spa_pod_builder builder;
@@ -267,7 +260,7 @@ private:
         plane.flags |= SPA_DATA_FLAG_MAPPABLE;
 #endif
         if (source->onCard) {
-            // The kernel makes a graphics card buffer only of memory that cannot shrink.
+            // the kernel makes a card buffer only of memory that cant shrink
             fcntl(shared, F_ADD_SEALS, F_SEAL_SHRINK);
             const int device = ::open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
             udmabuf_create wanted = {};
@@ -339,8 +332,8 @@ private:
     spa_hook listener = {};
 };
 
-// The screen the machine's owner approved once for the tests, had again without the desktop's
-// dialog. The approval is at ~/.config/acheron-tests/portal.conf whatever the test's own settings.
+// the screen the machine's owner approved once for the tests, without the dialog. the approval is at
+// ~/.config/acheron-tests/portal.conf
 struct ApprovedScreen
 {
     enum class State {
@@ -373,7 +366,6 @@ struct ApprovedScreen
         QElapsedTimer waited;
         waited.start();
         {
-            // Gone, and the desktop's dialog with it, should the approval no longer stand.
             QObject receiver;
             bool answered = false;
             PortalCapture::chooseAgain(CaptureSource::Kind::Screen, &token, &receiver, [&](const CaptureSource &source, const QString &why) {

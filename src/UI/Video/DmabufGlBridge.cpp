@@ -20,7 +20,7 @@ namespace UI {
 
 namespace {
 
-// EGL/egl.h and EGL/eglext.h, which nothing else here needs.
+// from EGL/egl.h and EGL/eglext.h
 constexpr qint32 ATTRIBUTE_NONE = 0x3038;
 constexpr qint32 ATTRIBUTE_EXTENSIONS = 0x3055;
 constexpr qint32 ATTRIBUTE_HEIGHT = 0x3056;
@@ -33,18 +33,17 @@ constexpr qint32 ATTRIBUTE_PLANE_PITCH = 0x3274;
 constexpr qint32 ATTRIBUTE_MODIFIER_LOW = 0x3443;
 constexpr qint32 ATTRIBUTE_MODIFIER_HIGH = 0x3444;
 
-// drm_fourcc.h: one byte to a pixel, and two with the first in red.
+// drm_fourcc.h
 constexpr quint32 FOURCC_R8 = 0x20203852;
 constexpr quint32 FOURCC_GR88 = 0x38385247;
 constexpr quint64 MODIFIER_LINEAR = 0;
 constexpr quint64 MODIFIER_INVALID = 0x00ffffffffffffffULL;
 
-// One decoding device serves the whole program, so what EGL makes of its pictures is settled once.
+// one decoding device serves the whole program, so EGL's verdict is settled once
 std::atomic<bool> importRefused{ false };
 
 } // namespace
 
-// EGL and its way of making a DMA-BUF a texture, looked up in the context they are used from.
 struct DmabufGlBridge::Egl
 {
     void *display = nullptr;
@@ -59,7 +58,7 @@ struct DmabufGlBridge::Egl
         if (!context || !context->hasExtension(QByteArrayLiteral("GL_OES_EGL_image")))
             return nullptr;
 
-        // Asked of EGL itself: a GLX context answers for any name, with a function that is not there.
+        // a GLX context answers for any name, with a function that isnt there
         const auto currentDisplay = reinterpret_cast<void *(*)()>(QLibrary::resolve(QStringLiteral("EGL"), 1, "eglGetCurrentDisplay"));
         void *display = currentDisplay ? currentDisplay() : nullptr;
         if (!display)
@@ -103,7 +102,7 @@ AVFrame *DmabufGlBridge::exported(const AVFrame *frame)
         av_frame_free(&exported);
         return nullptr;
     }
-    // A driver takes a plane at the size it was made with and may refuse it at the picture's.
+    // a driver takes a plane at its allocated size and may refuse it at the picture's
     const auto *pool = reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data);
     exported->width = pool->width;
     exported->height = pool->height;
@@ -129,7 +128,6 @@ bool DmabufGlBridge::update(const AVFrame *exported, unsigned int lumaTexture, u
     for (int plane = 0; made && plane < 2; plane++) {
         const AVDRMPlaneDescriptor &layout = descriptor->layers[plane].planes[0];
         const AVDRMObjectDescriptor &object = descriptor->objects[layout.object_index];
-        // Memory in an order of the card's own is not offered to an EGL that cannot be told of it.
         if (!egl->takesModifiers && object.format_modifier != MODIFIER_LINEAR && object.format_modifier != MODIFIER_INVALID) {
             made = false;
             break;
@@ -156,7 +154,6 @@ bool DmabufGlBridge::update(const AVFrame *exported, unsigned int lumaTexture, u
         gl->glBindTexture(GL_TEXTURE_2D, textures[plane]);
         egl->imageTargetTexture(GL_TEXTURE_2D, image);
         made = gl->glGetError() == GL_NO_ERROR;
-        // The texture keeps the memory; the image was only the way to it.
         egl->destroyImage(egl->display, image);
     }
     gl->glBindTexture(GL_TEXTURE_2D, 0);

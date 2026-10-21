@@ -8,6 +8,7 @@
 #include "Core/Video/ScreenCapture.hpp"
 #include "Core/Video/SendQuality.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
+#include "UI/CaptureMethodCombo.hpp"
 #include "UI/Video/VideoSurface.hpp"
 
 #include <QCheckBox>
@@ -47,8 +48,7 @@ VideoPage::VideoPage(QWidget *parent)
 {
     auto *layout = new QVBoxLayout(this);
 
-    // Both fall back by themselves when the machine cannot do it; these are for turning them
-    // off when it can but should not.
+    // both fall back by themselves when the machine cant; these are for when it can but should not
     auto *hardwareDecode = new QCheckBox(tr("Decode video with the graphics card"), this);
     hardwareDecode->setChecked(Core::Media::hardwareDecodingEnabled());
     layout->addWidget(hardwareDecode);
@@ -70,25 +70,9 @@ VideoPage::VideoPage(QWidget *parent)
     layout->addWidget(previews);
     connect(previews, &QCheckBox::toggled, this, [](bool enabled) { Core::StreamPreviewUploader::setEnabled(enabled); });
 
-    auto *captureMethod = new QComboBox(this);
-    captureMethod->addItem(tr("Automatic"), static_cast<int>(CaptureMethod::Auto));
-#ifdef Q_OS_WIN
-    captureMethod->addItem(tr("Graphics Capture"), static_cast<int>(CaptureMethod::GraphicsCapture));
-    captureMethod->addItem(tr("Desktop Duplication"), static_cast<int>(CaptureMethod::DesktopDuplication));
-#else
-    captureMethod->addItem(tr("Desktop Portal"), static_cast<int>(CaptureMethod::Portal));
-    captureMethod->addItem(tr("X11"), static_cast<int>(CaptureMethod::X11));
-#endif
-    if (auto *methods = qobject_cast<QStandardItemModel *>(captureMethod->model())) {
-        for (int i = 0; i < captureMethod->count(); i++)
-            methods->item(i)->setEnabled(Core::Video::captureMethodUsable(static_cast<CaptureMethod>(captureMethod->itemData(i).toInt())));
-    }
-    const CaptureMethod remembered = Core::Video::captureMethod();
-    captureMethod->setCurrentIndex(captureMethod->findData(static_cast<int>(Core::Video::captureMethodUsable(remembered) ? remembered : CaptureMethod::Auto)));
+    QComboBox *captureMethod = makeCaptureMethodCombo(this);
     labelledRow(layout, tr("Capture Method"), captureMethod);
-    connect(captureMethod, qOverload<int>(&QComboBox::activated), this, [captureMethod](int index) {
-        Core::Video::setCaptureMethod(static_cast<CaptureMethod>(captureMethod->itemData(index).toInt()));
-    });
+    connect(captureMethod, qOverload<int>(&QComboBox::activated), this, [captureMethod] { Core::Video::setCaptureMethod(chosenCaptureMethod(captureMethod)); });
 
     if (Core::Video::cameraCaptureAvailable()) {
         const QList<Core::Video::CameraDevice> cameras = Core::Video::cameraDevices();
@@ -111,13 +95,12 @@ VideoPage::VideoPage(QWidget *parent)
     auto *codecs = new QHBoxLayout();
     codecs->addWidget(new QLabel(tr("Send with"), this));
     codecs->addStretch(1);
-    for (const VideoCodec codec : { VideoCodec::AV1, VideoCodec::H265, VideoCodec::H264, VideoCodec::VP8 }) {
+    for (const VideoCodec codec : Discord::Voice::VIDEO_CODECS_BEST_FIRST) {
         auto *check = new QCheckBox(Discord::Voice::videoCodecName(codec), this);
         check->setChecked(Core::Media::sendCodecAllowed(codec));
         codecs->addWidget(check);
         sendCodecChecks.append(check);
         connect(check, &QCheckBox::toggled, this, [this, check, codec](bool allowed) {
-            // With none left there would be nothing to send video with.
             const bool othersLeft = std::any_of(sendCodecChecks.cbegin(), sendCodecChecks.cend(), [](const QCheckBox *each) { return each->isChecked(); });
             if (!allowed && !othersLeft) {
                 check->setChecked(true);

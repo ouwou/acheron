@@ -2,9 +2,8 @@
 
 #if defined(Q_OS_WIN)
 
-#include <windows.h>
-
-#include <d3d11.h>
+#include "Core/Media/FfmpegPointers.hpp"
+#include "Core/Video/Windows/Direct3D.hpp"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -19,21 +18,6 @@ namespace Win {
 
 namespace {
 
-AVD3D11VADeviceContext *deviceOf(const AVFrame *card)
-{
-    return static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWFramesContext *>(card->hw_frames_ctx->data)->device_ctx->hwctx);
-}
-
-ID3D11Resource *textureOf(const AVFrame *card)
-{
-    return reinterpret_cast<ID3D11Resource *>(card->data[0]);
-}
-
-UINT sliceOf(const AVFrame *card)
-{
-    return static_cast<UINT>(reinterpret_cast<quintptr>(card->data[1]));
-}
-
 void clearToBlack(AVFrame *card)
 {
     AVD3D11VADeviceContext *device = deviceOf(card);
@@ -41,20 +25,19 @@ void clearToBlack(AVFrame *card)
     if (FAILED(device->device->CreateRenderTargetView(textureOf(card), nullptr, &view)))
         return;
     const float black[4] = { 0, 0, 0, 1 };
-    device->lock(device->lock_ctx);
-    device->device_context->ClearRenderTargetView(view, black);
-    device->unlock(device->lock_ctx);
+    {
+        const DeviceLock lock(device);
+        device->device_context->ClearRenderTargetView(view, black);
+    }
     view->Release();
 }
 
-// `area` of one picture on the graphics card into another of the same card, at `at`.
 void copyOnCard(const AVFrame *from, const QRect &area, AVFrame *to, const QPoint &at)
 {
     AVD3D11VADeviceContext *device = deviceOf(to);
     const D3D11_BOX box = { static_cast<UINT>(area.left()), static_cast<UINT>(area.top()), 0, static_cast<UINT>(area.left() + area.width()), static_cast<UINT>(area.top() + area.height()), 1 };
-    device->lock(device->lock_ctx);
+    const DeviceLock lock(device);
     device->device_context->CopySubresourceRegion(textureOf(to), sliceOf(to), static_cast<UINT>(at.x()), static_cast<UINT>(at.y()), 0, textureOf(from), sliceOf(from), &box);
-    device->unlock(device->lock_ctx);
 }
 
 } // namespace
@@ -77,30 +60,14 @@ AVBufferRef *cardPictures(AVBufferRef *device, const QSize &size)
 
 bool prepareBgra(AVFrame *bgra, const QSize &size)
 {
-    if (bgra->buf[0] && bgra->format == AV_PIX_FMT_BGRA && bgra->width == size.width() && bgra->height == size.height())
-        return av_frame_make_writable(bgra) >= 0;
-
-    av_frame_unref(bgra);
-    bgra->format = AV_PIX_FMT_BGRA;
-    bgra->width = size.width();
-    bgra->height = size.height();
-    return av_frame_get_buffer(bgra, 0) >= 0;
+    return Media::prepareWritable(bgra, AV_PIX_FMT_BGRA, size) >= 0;
 }
 
 int readBack(const AVFrame *onCard, AVFrame *memory)
 {
     const int format = reinterpret_cast<const AVHWFramesContext *>(onCard->hw_frames_ctx->data)->sw_format;
-    const bool fits = memory->buf[0] && memory->format == format && memory->width == onCard->width && memory->height == onCard->height && av_frame_make_writable(memory) >= 0;
-    if (!fits) {
-        av_frame_unref(memory);
-        memory->format = format;
-        memory->width = onCard->width;
-        memory->height = onCard->height;
-        const int made = av_frame_get_buffer(memory, 0);
-        if (made < 0)
-            return made;
-    }
-    return av_hwframe_transfer_data(memory, onCard, 0);
+    const int made = Media::prepareWritable(memory, format, QSize(onCard->width, onCard->height));
+    return made < 0 ? made : av_hwframe_transfer_data(memory, onCard, 0);
 }
 
 bool isEmptyPicture(const AVFrame *onCard, AVFrame *scratch)

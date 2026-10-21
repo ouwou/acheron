@@ -48,8 +48,7 @@ public slots:
 
     void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
 
-    // Audio from a connection other than the voice one, such as a watched stream. Each source
-    // has its own SSRC space and its own volume; source 0 is the voice connection.
+    // source 0 is the voice connection
     void onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
     void setSourceVolume(quint32 source, float volume);
     void removeSource(quint32 source);
@@ -94,7 +93,6 @@ private:
     QTimer *mixTimer = nullptr;
     std::unique_ptr<OpusEncoder> encoder;
     std::unique_ptr<NoiseSuppressor> noiseSuppressor;
-    // Keyed by source in the high half and SSRC in the low half.
     std::unordered_map<quint64, SpeakerState> speakers;
     QHash<quint32, float> sourceVolumes;
 

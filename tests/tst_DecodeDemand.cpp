@@ -10,8 +10,6 @@ constexpr int KEEPING_UP = 0;
 constexpr int BEHIND = DecodeDemand::BEHIND_MS;
 constexpr int FULL_HD = 1920 * 1080;
 
-// Reports the same decoder state once a second for `seconds`, and says whether the share asked
-// for changed at any point.
 bool observeFor(DecodeDemand &demand, qint64 &nowMs, int seconds, int backlogMs, quint64 discards = 0)
 {
     bool changed = false;
@@ -65,7 +63,6 @@ void TestDecodeDemand::theSenderIsGivenTimeBeforeTheNextHalving()
     QVERIFY(observeFor(demand, now, 1, BEHIND));
     QCOMPARE(demand.pixelShare(), 0.25);
 
-    // And no further than that, however long it goes on.
     QVERIFY(!observeFor(demand, now, 60, BEHIND));
     QCOMPARE(demand.pixelShare(), 0.25);
 }
@@ -77,7 +74,6 @@ void TestDecodeDemand::aDiscardedQueueHalvesAtOnce()
     QVERIFY(!observeFor(demand, now, 5, KEEPING_UP));
     QVERIFY(observeFor(demand, now, 1, KEEPING_UP, 1));
     QCOMPARE(demand.pixelShare(), 0.5);
-    // The same discard is not counted twice.
     QVERIFY(!observeFor(demand, now, 10, KEEPING_UP, 1));
 }
 
@@ -101,7 +97,6 @@ void TestDecodeDemand::aRaiseTakenBackMakesTheNextOneWaitLonger()
     observeFor(demand, now, DecodeDemand::FIRST_RAISE_AFTER_MS / 1000 + 1, KEEPING_UP);
     QCOMPARE(demand.pixelShare(), 1.0);
 
-    // The full picture is too much for the decoder after all.
     observeFor(demand, now, DecodeDemand::BEHIND_FOR_MS / 1000 + 1, BEHIND);
     QCOMPARE(demand.pixelShare(), 0.5);
 
@@ -120,7 +115,6 @@ void TestDecodeDemand::halfOfWhatIsSentNotOfTheSurface()
     observeFor(demand, now, DecodeDemand::BEHIND_FOR_MS / 1000 + 1, BEHIND);
     QCOMPARE(demand.pixelsToAskFor(SURFACE, FULL_HD), FULL_HD / 2);
     QCOMPARE(demand.pixelsToAskFor(FULL_HD / 4, FULL_HD), FULL_HD / 8);
-    // Before the first frame says how large the picture is.
     QCOMPARE(demand.pixelsToAskFor(SURFACE, 0), SURFACE / 2);
 }
 

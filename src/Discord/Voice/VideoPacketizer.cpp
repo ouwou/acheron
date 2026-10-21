@@ -1,5 +1,9 @@
 #include "VideoPacketizer.hpp"
 
+#include "Av1Obu.hpp"
+#include "NalUnits.hpp"
+#include "RtpVideoFormat.hpp"
+
 #include <algorithm>
 #include <array>
 
@@ -12,13 +16,7 @@ namespace {
 using Bytes = std::span<const uint8_t>;
 using Payloads = std::vector<std::vector<uint8_t>>;
 
-void append(std::vector<uint8_t> &out, Bytes bytes)
-{
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
-
-// WebRTC cuts what does not fit into pieces of about one size, the longer ones last, and not
-// into full packets and a remainder.
+// as WebRTC: pieces of about equal size, the longer ones last
 std::vector<size_t> aboutEqualSizes(size_t total, size_t room)
 {
     const size_t count = (total + room - 1) / room;
@@ -31,43 +29,6 @@ std::vector<size_t> aboutEqualSizes(size_t total, size_t room)
     return sizes;
 }
 
-// What RFC 6184 and RFC 7798 have in common.
-constexpr uint8_t FU_START = 0x80;
-constexpr uint8_t FU_END = 0x40;
-constexpr size_t AGGREGATED_LENGTH_SIZE = 2;
-
-// Annex B: every NAL follows a start code of 00 00 01, which may have one more zero in front.
-std::vector<Bytes> splitAnnexB(Bytes frame)
-{
-    constexpr size_t START_CODE_SIZE = 3;
-
-    std::vector<Bytes> nals;
-    size_t nalStart = 0;
-    bool inNal = false;
-
-    const auto endNal = [&](size_t end) {
-        if (inNal && end > nalStart)
-            nals.push_back(frame.subspan(nalStart, end - nalStart));
-    };
-
-    size_t i = 0;
-    while (i + START_CODE_SIZE <= frame.size()) {
-        if (frame[i] != 0 || frame[i + 1] != 0 || frame[i + 2] != 1) {
-            i++;
-            continue;
-        }
-        const bool longStartCode = i > nalStart && frame[i - 1] == 0;
-        endNal(longStartCode ? i - 1 : i);
-        i += START_CODE_SIZE;
-        nalStart = i;
-        inNal = true;
-    }
-    endNal(frame.size());
-    return nals;
-}
-
-// A unit that does not fit, as pieces that each open with `header` and a byte that marks the
-// first and the last of them over the unit's type.
 void appendFragments(Bytes header, uint8_t type, Bytes body, size_t maxPayloadSize, Payloads &payloads)
 {
     const size_t headerSize = header.size() + 1;
@@ -77,9 +38,9 @@ void appendFragments(Bytes header, uint8_t type, Bytes body, size_t maxPayloadSi
 
         std::vector<uint8_t> &payload = payloads.emplace_back();
         payload.reserve(headerSize + sizes[i]);
-        append(payload, header);
+        appendBytes(payload, header);
         payload.push_back(static_cast<uint8_t>(position | type));
-        append(payload, body.first(sizes[i]));
+        appendBytes(payload, body.first(sizes[i]));
         body = body.subspan(sizes[i]);
     }
 }
@@ -87,15 +48,14 @@ void appendFragments(Bytes header, uint8_t type, Bytes body, size_t maxPayloadSi
 void appendAggregate(Bytes header, std::span<const Bytes> nals, Payloads &payloads)
 {
     std::vector<uint8_t> &payload = payloads.emplace_back();
-    append(payload, header);
+    appendBytes(payload, header);
     for (Bytes nal : nals) {
         payload.push_back(static_cast<uint8_t>(nal.size() >> 8));
         payload.push_back(static_cast<uint8_t>(nal.size()));
-        append(payload, nal);
+        appendBytes(payload, nal);
     }
 }
 
-// How one of the two NAL codecs fragments a unit and heads an aggregate.
 struct NalFormat
 {
     size_t nalHeaderSize;
@@ -119,8 +79,7 @@ Payloads packetizeNals(Bytes frame, size_t maxPayloadSize, const NalFormat &form
             continue;
         }
 
-        // A unit that fits travels with as many of those after it as fit beside it, which is
-        // what keeps a key frame's parameter sets in one packet.
+        // keeps a key frame's parameter sets in one packet
         size_t count = 1;
         size_t aggregateSize = format.aggregateHeaderSize + AGGREGATED_LENGTH_SIZE + nals[i].size();
         while (i + count < nals.size() && aggregateSize + AGGREGATED_LENGTH_SIZE + nals[i + count].size() <= maxPayloadSize) {
@@ -137,21 +96,16 @@ Payloads packetizeNals(Bytes frame, size_t maxPayloadSize, const NalFormat &form
     return payloads;
 }
 
-// RFC 6184
-constexpr uint8_t H264_TYPE_MASK = 0x1F;
 constexpr uint8_t H264_IMPORTANCE_MASK = 0x60;
-constexpr uint8_t H264_STAP_A = 24;
-constexpr uint8_t H264_FU_A = 28;
 
 void appendH264Fragments(Bytes nal, size_t maxPayloadSize, Payloads &payloads)
 {
     const uint8_t indicator = static_cast<uint8_t>((nal[0] & ~H264_TYPE_MASK) | H264_FU_A);
-    appendFragments({ &indicator, 1 }, nal[0] & H264_TYPE_MASK, nal.subspan(1), maxPayloadSize, payloads);
+    appendFragments({ &indicator, 1 }, h264Type(nal[0]), nal.subspan(1), maxPayloadSize, payloads);
 }
 
 void appendH264Aggregate(std::span<const Bytes> nals, Payloads &payloads)
 {
-    // The aggregate is as important as the most important unit in it.
     uint8_t importance = 0;
     for (Bytes nal : nals)
         importance = std::max<uint8_t>(importance, nal[0] & H264_IMPORTANCE_MASK);
@@ -162,25 +116,18 @@ void appendH264Aggregate(std::span<const Bytes> nals, Payloads &payloads)
 
 constexpr NalFormat H264_FORMAT = { 1, 1, appendH264Fragments, appendH264Aggregate };
 
-// RFC 7798. A unit's two header bytes hold a forbidden bit, six bits of type, six of layer id
-// and three of temporal id.
-constexpr uint8_t H265_AP = 48;
-constexpr uint8_t H265_FU = 49;
-constexpr uint8_t H265_TYPE_BITS = 0x7E;
 constexpr uint8_t H265_HIGHEST_LAYER_ID = 0x3F;
 constexpr uint8_t H265_TEMPORAL_ID_MASK = 0x07;
-constexpr size_t H265_NAL_HEADER_SIZE = 2;
 
 void appendH265Fragments(Bytes nal, size_t maxPayloadSize, Payloads &payloads)
 {
-    const uint8_t type = (nal[0] & H265_TYPE_BITS) >> 1;
+    const uint8_t type = h265Type(nal[0]);
     const uint8_t header[] = { static_cast<uint8_t>((nal[0] & ~H265_TYPE_BITS) | (H265_FU << 1)), nal[1] };
     appendFragments(header, type, nal.subspan(H265_NAL_HEADER_SIZE), maxPayloadSize, payloads);
 }
 
 void appendH265Aggregate(std::span<const Bytes> nals, Payloads &payloads)
 {
-    // The aggregate is of the lowest layer and the lowest temporal layer among its units.
     uint8_t layerId = H265_HIGHEST_LAYER_ID;
     uint8_t temporalId = H265_TEMPORAL_ID_MASK;
     for (Bytes nal : nals) {
@@ -194,12 +141,7 @@ void appendH265Aggregate(std::span<const Bytes> nals, Payloads &payloads)
 
 constexpr NalFormat H265_FORMAT = { H265_NAL_HEADER_SIZE, H265_NAL_HEADER_SIZE, appendH265Fragments, appendH265Aggregate };
 
-// RFC 7741, 4.2. With one temporal layer WebRTC sends the extension byte for the sake of the
-// picture id alone, and always in its 15-bit form.
-constexpr uint8_t VP8_EXTENDED = 0x80;
-constexpr uint8_t VP8_PARTITION_START = 0x10;
-constexpr uint8_t VP8_HAS_PICTURE_ID = 0x80;
-constexpr uint8_t VP8_LONG_PICTURE_ID = 0x80;
+// with one temporal layer WebRTC still sends the extension byte, for a 15-bit picture id
 constexpr uint16_t VP8_PICTURE_ID_MASK = 0x7FFF;
 constexpr size_t VP8_DESCRIPTOR_SIZE = 4;
 
@@ -223,58 +165,11 @@ Payloads packetizeVp8(Bytes frame, size_t maxPayloadSize, uint16_t pictureId)
     return payloads;
 }
 
-// https://aomediacodec.github.io/av1-rtp-spec/, laid out as WebRTC's rtp_packetizer_av1.cc does.
-constexpr uint8_t AV1_CONTINUES_PREVIOUS = 0x80;
-constexpr uint8_t AV1_CONTINUES_IN_NEXT = 0x40;
-constexpr uint8_t AV1_NEW_SEQUENCE = 0x08;
-constexpr int AV1_ELEMENT_COUNT_SHIFT = 4;
-// The header counts up to three elements, and the last of those needs no length. More than
-// three are not counted, and each of them carries its length.
+// laid out as WebRTC's rtp_packetizer_av1.cc does
 constexpr size_t AV1_MOST_COUNTED_ELEMENTS = 3;
 constexpr size_t AV1_AGGREGATION_HEADER_SIZE = 1;
-constexpr uint8_t OBU_HAS_EXTENSION = 0x04;
-constexpr uint8_t OBU_HAS_SIZE = 0x02;
-constexpr uint8_t OBU_SEQUENCE_HEADER = 1;
-constexpr uint8_t OBU_TEMPORAL_DELIMITER = 2;
-constexpr uint8_t OBU_TILE_LIST = 8;
-constexpr uint8_t OBU_PADDING = 15;
-constexpr int LEB128_MAX_BYTES = 8;
+using namespace Av1;
 
-bool readLeb128(Bytes &bytes, size_t &value)
-{
-    value = 0;
-    for (int i = 0; i < LEB128_MAX_BYTES; i++) {
-        if (bytes.empty())
-            return false;
-        const uint8_t byte = bytes[0];
-        bytes = bytes.subspan(1);
-        value |= size_t(byte & 0x7F) << (7 * i);
-        if (!(byte & 0x80))
-            return true;
-    }
-    return false;
-}
-
-void appendLeb128(std::vector<uint8_t> &out, size_t value)
-{
-    do {
-        uint8_t byte = value & 0x7F;
-        value >>= 7;
-        if (value != 0)
-            byte |= 0x80;
-        out.push_back(byte);
-    } while (value != 0);
-}
-
-size_t leb128Size(size_t value)
-{
-    size_t size = 1;
-    while (value >>= 7)
-        size++;
-    return size;
-}
-
-// The largest element that fits into `room` with its length in front of it.
 size_t largestWithItsLength(size_t room)
 {
     size_t size = room;
@@ -283,8 +178,6 @@ size_t largestWithItsLength(size_t room)
     return size;
 }
 
-// An OBU as it travels: its header without the bit that announces a size field, the extension
-// byte if it has one, and its payload.
 struct Obu
 {
     std::array<uint8_t, 2> header;
@@ -295,25 +188,18 @@ struct Obu
     [[nodiscard]] uint8_t type() const { return (header[0] >> 3) & 0x0F; }
 };
 
-// An encoder gives every OBU its size. The end-to-end encryptor takes the last one's away and
-// puts its trailer behind that OBU's payload, so an OBU without a size runs to the frame's end.
+// the DAVE encryptor removes the last OBU's size, so an OBU without one runs to the frame's end
 bool splitObus(Bytes frame, std::vector<Obu> &obus)
 {
     while (!frame.empty()) {
-        const bool hasSize = frame[0] & OBU_HAS_SIZE;
+        const std::optional<ParsedObu> read = readObu(frame);
+        if (!read)
+            return false;
 
         Obu obu;
-        obu.headerSize = (frame[0] & OBU_HAS_EXTENSION) ? 2 : 1;
-        if (frame.size() < obu.headerSize)
-            return false;
-        obu.header = { static_cast<uint8_t>(frame[0] & ~OBU_HAS_SIZE), obu.headerSize == 2 ? frame[1] : uint8_t(0) };
-        frame = frame.subspan(obu.headerSize);
-
-        size_t size = frame.size();
-        if (hasSize && (!readLeb128(frame, size) || size > frame.size()))
-            return false;
-        obu.body = frame.first(size);
-        frame = frame.subspan(size);
+        obu.headerSize = read->header.size();
+        obu.header = { static_cast<uint8_t>(read->header[0] & ~OBU_HAS_SIZE), obu.headerSize == 2 ? read->header[1] : uint8_t(0) };
+        obu.body = read->body;
 
         if (obu.type() != OBU_TEMPORAL_DELIMITER && obu.type() != OBU_TILE_LIST && obu.type() != OBU_PADDING)
             obus.push_back(obu);
@@ -321,33 +207,27 @@ bool splitObus(Bytes frame, std::vector<Obu> &obus)
     return true;
 }
 
-// `size` bytes of an OBU, from `offset` into it.
 void appendPart(std::vector<uint8_t> &out, const Obu &obu, size_t offset, size_t size)
 {
     const Bytes header = Bytes(obu.header).first(obu.headerSize);
     if (offset < header.size()) {
         const Bytes part = header.subspan(offset, std::min(size, header.size() - offset));
-        append(out, part);
+        appendBytes(out, part);
         size -= part.size();
         offset = header.size();
     }
-    append(out, obu.body.subspan(offset - header.size(), size));
+    appendBytes(out, obu.body.subspan(offset - header.size(), size));
 }
 
-// The elements of one packet: all of `elements` OBUs from `firstObu` on, except that the first
-// may begin `firstObuOffset` into its OBU and the last may end early, after `lastElementSize`.
 struct Av1Packet
 {
     size_t firstObu = 0;
     size_t firstObuOffset = 0;
     size_t elements = 0;
     size_t lastElementSize = 0;
-    // Of everything behind the aggregation header.
     size_t size = 0;
 };
 
-// Fills each packet before the next is begun. An OBU that does not fit takes what is left of
-// the packet, then whole packets, and its end opens a packet the next OBU may share.
 std::vector<Av1Packet> layOutAv1(std::span<const Obu> obus, size_t room)
 {
     std::vector<Av1Packet> packets(1);
@@ -355,8 +235,6 @@ std::vector<Av1Packet> layOutAv1(std::span<const Obu> obus, size_t room)
     for (size_t i = 0; i < obus.size(); i++) {
         const size_t obuSize = obus[i].size();
 
-        // An element behind the packet's last one makes that one state its length, if it does
-        // not already. The packet has to hold that and something of the new element too.
         const size_t held = packets.back().elements;
         size_t lengthOfPrevious = held == 0 || held > AV1_MOST_COUNTED_ELEMENTS ? 0 : leb128Size(packets.back().lastElementSize);
         const size_t leastWorthAdding = held >= AV1_MOST_COUNTED_ELEMENTS ? 2 : 1;
@@ -435,16 +313,15 @@ Payloads packetizeAv1(Bytes frame, bool keyframe, size_t maxPayloadSize)
     const size_t room = maxPayloadSize - AV1_AGGREGATION_HEADER_SIZE;
     std::vector<Av1Packet> packets = layOutAv1(obus, room);
     if (packets.size() > 1) {
-        // Filled one after the other, the packets end in a short one. WebRTC evens them out by
-        // laying the frame out again in packets smaller by a share of the room left unused.
+        // WebRTC evens the packets out by laying the frame out again with packets smaller by a share of the
+        // unused room
         size_t unused = 0;
         for (const Av1Packet &packet : packets)
             unused += room - packet.size;
         packets = layOutAv1(obus, room - unused / packets.size());
     }
 
-    // As in WebRTC, an encoder's word that this is a key frame is not enough: a new sequence
-    // is announced only when the frame brings its sequence header.
+    // as WebRTC: a new sequence only when the frame carries its sequence header
     const bool newSequence = keyframe && obus.front().type() == OBU_SEQUENCE_HEADER;
 
     Payloads payloads;

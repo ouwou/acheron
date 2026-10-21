@@ -47,7 +47,7 @@ void UdpTransport::startIpDiscovery(const QString &ip, int port, quint32 ssrc)
     discoveryPending = true;
     this->ssrc = ssrc;
 
-    // The callers refuse such a proxy before they get here; this keeps a missed check from going direct.
+    // callers refuse such a proxy first; this keeps a missed check from going direct
     if (!proxy.canRelayUdp()) {
         discoveryPending = false;
         QMetaObject::invokeMethod(this, [this] { emit ipDiscoveryFailed(QStringLiteral("an HTTP proxy cannot relay UDP")); }, Qt::QueuedConnection);

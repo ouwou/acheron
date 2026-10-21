@@ -25,11 +25,9 @@ namespace {
 using Target = LoopbackCapture::Target;
 
 constexpr DWORD ACTIVATION_TIMEOUT_MS = 3000;
-// In units of 100 ns. Windows hands sound over every 10 ms; the rest is room for a thread
-// that was kept waiting.
+// 100 ns units
 constexpr REFERENCE_TIME BUFFER_DURATION = 200 * 10000;
-// Windows says nothing at all while nothing is being played. This long without a word from it
-// and the sound has stopped, so what is left of it goes out as a frame filled up with silence.
+// Windows is silent while nothing plays
 constexpr DWORD SOUND_STOPPED_MS = 50;
 constexpr int BYTES_PER_SAMPLE_FRAME = AUDIO_CHANNELS * AUDIO_SAMPLE_BYTES;
 
@@ -40,9 +38,8 @@ struct Released
 template <typename T>
 using ComPointer = std::unique_ptr<T, Released>;
 
-// What Windows calls, on a thread of its own, once it has made the audio client. It holds what
-// was asked for as well: nothing promises that Windows is done reading that when the request
-// returns, and a capture that is stopped meanwhile does not wait for the answer.
+// called by Windows on its own thread. nothing promises Windows is done reading the request when the
+// call returns, so the handler owns it
 class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler
 {
 public:
@@ -59,8 +56,7 @@ public:
     [[nodiscard]] PROPVARIANT *parameters() { return &asked; }
     [[nodiscard]] HANDLE completed() const { return done; }
 
-    // Windows refuses a handler that does not say it may be called on any thread, which is all
-    // that IAgileObject means.
+    // Windows refuses a handler that isnt IAgileObject
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id, void **object) override
     {
         if (id != __uuidof(IUnknown) && id != __uuidof(IActivateAudioInterfaceCompletionHandler) && id != __uuidof(IAgileObject)) {
@@ -105,8 +101,7 @@ struct PendingActivation
 
 HRESULT beginActivation(const Target &target, PendingActivation &pending)
 {
-    // Windows 7 has no such function. It is looked up and not imported, because an import
-    // the loader cannot find stops the program before it has started.
+    // absent on Windows 7; a missing import stops the program at load
     using ActivateAsync = HRESULT(WINAPI *)(LPCWSTR, REFIID, PROPVARIANT *, IActivateAudioInterfaceCompletionHandler *, IActivateAudioInterfaceAsyncOperation **);
     static const auto activateAsync = reinterpret_cast<ActivateAsync>(reinterpret_cast<void *>(GetProcAddress(LoadLibraryW(L"mmdevapi.dll"), "ActivateAudioInterfaceAsync")));
     if (!activateAsync)
@@ -208,8 +203,6 @@ private:
             CoUninitialize();
     }
 
-    // Returns once something else has been asked for, with nothing, or when the capture cannot
-    // go on, with the reason.
     QString capture(const Target &target, quint64 request)
     {
         PendingActivation activation;
@@ -233,7 +226,7 @@ private:
         if (FAILED(result))
             return failureText("GetActivateResult", result);
 
-        // A process loopback client has no mix format to ask for: it converts to what it is told.
+        // a process loopback client has no mix format; it converts to what it is told
         WAVEFORMATEX format = {};
         format.wFormatTag = WAVE_FORMAT_PCM;
         format.nChannels = AUDIO_CHANNELS;
@@ -293,9 +286,7 @@ private:
         return failure;
     }
 
-    // Takes everything Windows has, and sends on each frame that it completes. The packets
-    // are read until one comes back empty: asking for the size of the next one is not
-    // something every Windows that has process loopback answers for it.
+    // not every Windows with process loopback answers GetNextPacketSize for it
     HRESULT read(IAudioCaptureClient *reader, QByteArray &unsent)
     {
         for (;;) {
@@ -329,8 +320,6 @@ private:
     }
 
     LoopbackCapture *owner;
-    // Both reset themselves when a wait has seen them: something was asked of the thread, and
-    // Windows has sound for it.
     HANDLE asked = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     HANDLE soundArrived = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
@@ -345,7 +334,7 @@ bool processLoopbackAvailable()
 {
     static const bool available = [] {
         bool activated = false;
-        // On a thread of its own, so that it does not matter how the caller's has set COM up.
+        // its own thread, whatever COM model the caller's thread has
         std::thread([&activated] {
             const bool comStarted = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED));
             {

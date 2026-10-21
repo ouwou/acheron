@@ -46,7 +46,7 @@ if(NOT TARGET CURL::libcurl AND TARGET CURL::libcurl-impersonate)
         INTERFACE_INCLUDE_DIRECTORIES "${CURL_INCLUDE_DIRS}")
 endif()
 # FindCURL adds what pkg-config says of the system's own libcurl to whichever library was named.
-# Beside curl-impersonate that is a second libcurl in the program, and requests go to either.
+# beside curl-impersonate that is a second libcurl in the program, and requests go to either
 if(CURL_LIBRARY MATCHES "impersonate")
     get_target_property(_curl_links CURL::libcurl INTERFACE_LINK_LIBRARIES)
     if(_curl_links)
@@ -163,7 +163,7 @@ endif()
 include(rnnoise.cmake)
 
 include(ffmpeg.cmake)
-# Core/Media/HardwareDevices.hpp looks for libva with dlopen, which older C libraries keep apart.
+# Core/Media/HardwareDevices.hpp looks for libva with dlopen, which older C libraries keep apart
 if(TARGET ffmpeg AND UNIX AND CMAKE_DL_LIBS)
     target_link_libraries(ffmpeg INTERFACE ${CMAKE_DL_LIBS})
 endif()
@@ -171,10 +171,10 @@ include(linuxcapture.cmake)
 
 include(lottie.cmake)
 
-# Cameras and screen shares in calls. They need the RTC connection and ffmpeg, which are
+# cameras and screen shares in calls. they need the RTC connection and ffmpeg, which are
 # there for other things as well, and bring in what nothing else uses: Qt's OpenGL module,
 # which the video surface draws through where it can (Qt 5 has it in Gui and Widgets), and
-# ffmpeg's avfilter and avdevice, which ffmpeg.cmake takes where it finds them.
+# ffmpeg's avfilter and avdevice, which ffmpeg.cmake takes where it finds them
 set(ACHERON_HAVE_VIDEO OFF)
 set(QT_OPENGL_LIBRARIES "")
 if(ENABLE_VIDEO AND ENABLE_VOICE AND TARGET ffmpeg)
@@ -405,9 +405,9 @@ if(ACHERON_HAVE_VIDEO)
     )
 endif()
 
-# The RTC connection and, where the build has it, everything video needs below the program:
+# the RTC connection and, where the build has it, everything video needs below the program:
 # codecs, capture, the encode pipelines and the surface video is drawn on, with the few parts of
-# the program they stand on. The program and the tests take all of these from here.
+# the program they stand on. the program and the tests take all of these from here
 if(ENABLE_VOICE)
     set(MEDIA_ENGINE_SOURCES
         src/Core/Logging.cpp
@@ -596,7 +596,7 @@ if(BUILD_TESTS)
     add_test(NAME CallTests COMMAND TestCalls)
 
     if(ENABLE_VOICE)
-        # A test of the media engine, with what it takes of the program beside it.
+        # a test of the media engine, with what it takes of the program beside it
         function(add_media_test name ctest_name)
             qt_add_executable(${name} ${ARGN})
             target_link_libraries(${name} PRIVATE acheron_media Qt::Test)
@@ -757,8 +757,8 @@ target_link_libraries(${PROJECT_NAME}
         qt${QT_VERSION_MAJOR}keychain
         OpenSSL::Crypto
 )
-# A static OpenSSL must not be what the system's libssl finds when Qt or another library loads
-# it: the linker would otherwise export it from the program, ahead of the libcrypto libssl needs.
+# a static OpenSSL must not be what the system's libssl finds when Qt or another library loads
+# it: the linker would otherwise export it from the program, ahead of the libcrypto libssl needs
 if(UNIX AND NOT APPLE AND OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$")
     target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--exclude-libs,libcrypto.a:libssl.a")
 endif()

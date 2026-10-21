@@ -15,17 +15,16 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-// Untagged video is taken as BT.709 at HD sizes and BT.601 below, as players do, which is also
-// what a picture that is sent is made in where its codec cannot say.
+// as players do
 [[nodiscard]] bool usesBt709AtHeight(int height);
+[[nodiscard]] inline bool encodesAsBt601(int height, bool bt601Only)
+{
+    return bt601Only || !usesBt709AtHeight(height);
+}
 [[nodiscard]] bool usesBt709(const AVFrame *frame);
 [[nodiscard]] bool isFullRange(const AVFrame *frame);
 
-// Scales decoded pictures into 32-bit RGB images.
-//
-// swscale converts every picture as BT.601 at video range unless told otherwise, whatever the
-// frame itself says, so this passes on the frame's own colour description. It follows a
-// stream whose size, format or colours change part way through.
+// swscale converts as BT.601 video range unless told otherwise, whatever the frame says
 class RgbScaler
 {
 public:
@@ -35,12 +34,10 @@ public:
     RgbScaler(const RgbScaler &) = delete;
     RgbScaler &operator=(const RgbScaler &) = delete;
 
-    // An image for scale() to write into: aligned for swscale's vector code, with room after
-    // the last row, which that code can run past. Null when the memory cannot be had.
+    // aligned for swscale's vector code, with room after the last row, which that code can run past
     [[nodiscard]] static QImage allocate(const QSize &size, QImage::Format format);
 
-    // Fills `into`, which came from allocate(), at its own size. Alpha is left straight. An
-    // image something else still holds is left alone and `into` becomes a new one.
+    // `into` must come from allocate()
     bool scale(const AVFrame *frame, QImage &into);
 
 private:

@@ -24,7 +24,6 @@ constexpr int STANDARD_HEIGHT = 720;
 constexpr int STANDARD_FRAMERATE = 30;
 constexpr int SLOW_SOURCE_FRAMERATE = 10;
 
-// A scaled-down maximum still leaves a fiftieth of a bit for each pixel of each frame.
 constexpr int PIXEL_FRAMES_PER_BIT = 50;
 
 constexpr int CAMERA_MUTED_FRAMERATE = 20;
@@ -37,10 +36,8 @@ struct CameraRow
     int height;
 };
 
-// From the most wanted down. Every row keeps the full picture's shape.
 constexpr std::array<CameraRow, 9> CAMERA_LADDER{ { { 100, 1280, 720 }, { 90, 896, 504 }, { 80, 672, 378 }, { 70, 640, 360 }, { 60, 512, 288 }, { 50, 416, 234 }, { 40, 384, 216 }, { 30, 320, 180 }, { 20, 256, 144 } } };
 
-// Wants that give the encoder the same work are one want as far as it is concerned.
 bool encodeAlike(int want, int other)
 {
     return cameraLayerFor(want) == cameraLayerFor(other) && cameraFramerate(want, true) == cameraFramerate(other, true);
@@ -88,13 +85,15 @@ SendQuality atHeight(const SendQuality &quality, int height, const SharerTier &t
     return moved;
 }
 
-qint64 estimatedCeiling(quint64 receiverEstimate, quint64 delayEstimate)
+std::optional<qint64> estimatedCeiling(std::optional<quint64> receiverEstimate, std::optional<quint64> delayEstimate)
 {
     if (!QSettings().value(QStringLiteral("video/delay_estimate"), true).toBool())
-        delayEstimate = 0;
-    if (receiverEstimate == 0 || delayEstimate == 0)
-        return static_cast<qint64>(std::max(receiverEstimate, delayEstimate));
-    return static_cast<qint64>(std::min(receiverEstimate, delayEstimate));
+        delayEstimate.reset();
+    if (receiverEstimate && delayEstimate)
+        return static_cast<qint64>(std::min(*receiverEstimate, *delayEstimate));
+    if (receiverEstimate || delayEstimate)
+        return static_cast<qint64>(receiverEstimate ? *receiverEstimate : *delayEstimate);
+    return std::nullopt;
 }
 
 bool cameraSecondLayerEnabled()
@@ -107,10 +106,10 @@ void setCameraSecondLayerEnabled(bool enabled)
     QSettings().setValue(QStringLiteral("video/camera_second_layer"), enabled);
 }
 
-QSize announcedSize(const SendQuality &quality)
+std::optional<QSize> announcedSize(const SendQuality &quality)
 {
     if (quality.isSource())
-        return QSize(0, 0);
+        return std::nullopt;
     const int width = quality.height == 480 ? quality.height * 4 / 3 : quality.height * 16 / 9;
     return QSize(width, quality.height);
 }
@@ -127,12 +126,12 @@ BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &
         return full;
 
     const double share = static_cast<double>(viewerPixels) / static_cast<double>(encodedPixels);
-    const qint64 leastMax = std::min<qint64>(encodedPixels * framerate / PIXEL_FRAMES_PER_BIT, full.max);
+    const qint64 leastMax = std::min<qint64>(encodedPixels * framerate / PIXEL_FRAMES_PER_BIT, full.maxBps);
 
     BitrateLimits scaled;
-    scaled.min = std::max(scaledUp(share, full.min), BITRATE_FLOOR);
-    scaled.target = std::max(scaledUp(share, full.target), BITRATE_FLOOR);
-    scaled.max = std::max(scaledUp(share, full.max), static_cast<int>(leastMax));
+    scaled.minBps = std::max(scaledUp(share, full.minBps), BITRATE_FLOOR);
+    scaled.targetBps = std::max(scaledUp(share, full.targetBps), BITRATE_FLOOR);
+    scaled.maxBps = std::max(scaledUp(share, full.maxBps), static_cast<int>(leastMax));
     return scaled;
 }
 
@@ -167,7 +166,7 @@ int cameraFramerate(int want, bool muted)
 
 void CameraSendPlan::start(qint64 nowMs)
 {
-    want = 100;
+    want = Discord::Voice::FULL_QUALITY;
     wantInUse = want;
     rate.restart(CAMERA_MIN_BITRATE, maxBitrate());
     bitrateInUse = rate.bitrate();
@@ -199,12 +198,12 @@ void CameraSendPlan::setSharingScreen(bool sharing)
     sharingScreen = sharing;
 }
 
-void CameraSendPlan::reportLoss(double lossFraction, qint64 nowMs)
+void CameraSendPlan::reportLoss(std::optional<double> lossFraction, qint64 nowMs)
 {
     rate.report(lossFraction, nowMs);
 }
 
-void CameraSendPlan::setReceiverLimit(qint64 bitsPerSecond)
+void CameraSendPlan::setReceiverLimit(std::optional<qint64> bitsPerSecond)
 {
     rate.setReceiverLimit(bitsPerSecond);
 }

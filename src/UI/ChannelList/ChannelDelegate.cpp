@@ -6,6 +6,7 @@
 
 #include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
+#include "UI/LivePill.hpp"
 #include "UI/StatusIndicator.hpp"
 
 namespace Acheron {
@@ -455,15 +456,10 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         constexpr int statusIconSize = 14;
         constexpr int markerSpacing = 4;
 
-        QFont liveFont = painter->font();
-        liveFont.setBold(true);
-        liveFont.setPointSizeF(liveFont.pointSizeF() * 0.75);
-        const QString liveText = tr("LIVE");
-        constexpr int livePillPadding = 4;
-        const int livePillWidth = QFontMetrics(liveFont).horizontalAdvance(liveText) + 2 * livePillPadding;
+        const int pillWidth = isLive ? livePillWidth(painter->font()) : 0;
 
         int iconCount = (muted ? 1 : 0) + (deafened ? 1 : 0) + (hasVideo ? 1 : 0);
-        int markersWidth = iconCount * (statusIconSize + markerSpacing) + (isLive ? livePillWidth + markerSpacing : 0);
+        int markersWidth = iconCount * (statusIconSize + markerSpacing) + (isLive ? pillWidth + markerSpacing : 0);
         int rightReserve = markersWidth + 4;
 
         QColor textColor = option.palette.text().color();
@@ -499,16 +495,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                 iconX -= (statusIconSize + markerSpacing);
             }
             if (isLive) {
-                const QRect pill(iconX + statusIconSize - livePillWidth, iconY, livePillWidth, statusIconSize);
-                painter->save();
-                painter->setRenderHint(QPainter::Antialiasing);
-                painter->setPen(Qt::NoPen);
-                painter->setBrush(Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError));
-                painter->drawRoundedRect(pill, 3, 3);
-                painter->setFont(liveFont);
-                painter->setPen(Qt::white);
-                painter->drawText(pill, Qt::AlignCenter, liveText);
-                painter->restore();
+                paintLivePill(painter, QRect(iconX + statusIconSize - pillWidth, iconY, pillWidth, statusIconSize));
             }
         }
 

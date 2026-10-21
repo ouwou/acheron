@@ -4,12 +4,14 @@
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Video/CaptureCommon.hpp"
+#include "Core/Video/ScreenCapture.hpp"
 
 #include <QByteArray>
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -40,19 +42,14 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-const QLatin1String SCREEN_ID_PREFIX("screen:");
-const QLatin1String WINDOW_ID_PREFIX("window:");
-// As ScreenCapture::RESIZE_SETTLE_MS has it for Windows.
-constexpr auto RESIZE_SETTLE = std::chrono::milliseconds(300);
-constexpr auto HIDDEN_WAIT = std::chrono::milliseconds(50);
-// A twentieth of a second, for a program to draw its window again once the server keeps it apart.
+constexpr auto RESIZE_SETTLE = std::chrono::milliseconds(ScreenCapture::RESIZE_SETTLE_MS);
+constexpr auto HIDDEN_WAIT = std::chrono::milliseconds(STALLED_WAIT_MS);
 constexpr int THUMBNAIL_FRAMERATE = 20;
 constexpr auto THUMBNAIL_WAIT = std::chrono::milliseconds(500);
-// WM_STATE's NormalState and IconicState (ICCCM 4.1.3.1).
+// ICCCM 4.1.3.1
 constexpr quint32 NORMAL_STATE = 1;
 constexpr quint32 ICONIC_STATE = 3;
 constexpr uint32_t LONGEST_PROPERTY = 4096;
-// How many windows a window manager may put around a program's. Any program can nest more.
 constexpr int DEEPEST_FRAME = 4;
 
 struct Disconnect
@@ -95,7 +92,7 @@ Display connectToDisplay()
     return display;
 }
 
-// A request of an extension the server lacks ends the connection, so it is asked first.
+// a request of an extension the server lacks ends the connection
 bool has(const Display &display, xcb_extension_t *extension)
 {
     const xcb_query_extension_reply_t *found = xcb_get_extension_data(display, extension);
@@ -183,7 +180,6 @@ QByteArray monitorName(const Display &display, const xcb_randr_monitor_info_t &m
     return name ? QByteArray(xcb_get_atom_name_name(name.get()), xcb_get_atom_name_name_length(name.get())) : QByteArray();
 }
 
-// A screen by the name of the output it is on, which stays its own while others come and go.
 struct ScreenArea
 {
     QString name;
@@ -204,8 +200,8 @@ std::vector<ScreenArea> screenAreas(const Display &display)
     return areas;
 }
 
-// Xwayland's root window shows nothing of the desktop. It says what it is by an extension from
-// 23.1 on, and before that by the names of its outputs.
+// xwayland's root window shows nothing of the desktop. from 23.1 an extension says so; before, the
+// output names do
 bool isXwayland(const Display &display)
 {
     const Reply<xcb_query_extension_reply_t> extension(xcb_query_extension_reply(display, xcb_query_extension(display, 8, "XWAYLAND"), nullptr));
@@ -221,9 +217,8 @@ bool isXwayland(const Display &display)
 
 xcb_window_t windowOf(const QString &sourceId)
 {
-    bool numbered = false;
-    const uint handle = sourceId.mid(WINDOW_ID_PREFIX.size()).toUInt(&numbered);
-    return sourceId.startsWith(WINDOW_ID_PREFIX) && numbered ? handle : XCB_NONE;
+    const std::optional<quint64> handle = windowHandleOf(sourceId);
+    return handle && *handle <= std::numeric_limits<xcb_window_t>::max() ? static_cast<xcb_window_t>(*handle) : XCB_NONE;
 }
 
 enum class Showing {
@@ -240,8 +235,7 @@ Showing showingOf(const Display &display, xcb_window_t window)
     return attributes->map_state == XCB_MAP_STATE_VIEWABLE ? Showing::Shown : Showing::Hidden;
 }
 
-// GTK draws a window's shadow inside the window itself, and says in _GTK_FRAME_EXTENTS how
-// much of its left, right, top and bottom that is.
+// GTK draws a window's shadow inside the window and gives its size in _GTK_FRAME_EXTENTS
 QRect insideOf(const Display &display, xcb_window_t window)
 {
     const Reply<xcb_get_geometry_reply_t> geometry(xcb_get_geometry_reply(display, xcb_get_geometry(display, window), nullptr));
@@ -332,7 +326,7 @@ private:
     int openInput();
     Result afterFailure(int error);
     Result fail(int error);
-    [[nodiscard]] std::chrono::microseconds interval() const { return std::chrono::microseconds(1'000'000 / framerate); }
+    [[nodiscard]] std::chrono::microseconds interval() const { return pictureInterval(framerate); }
 
     Display display;
     xcb_window_t window;
@@ -340,8 +334,7 @@ private:
     int framerate;
     InputPointer input;
     PacketPointer packet;
-    // x11grab times each picture from when it was opened, and does not wait at all for a
-    // reader that fell behind. This is never earlier than its time, so it does the waiting.
+    // x11grab times pictures from when it was opened and never waits for a reader that fell behind
     Clock::time_point due;
     QRect windowArea;
     QRect pictureArea;
@@ -363,14 +356,13 @@ Grabber::Grabber(const QString &sourceId, int framerate) : display(connectToDisp
             fail(AVERROR(ENODEV));
             return;
         }
-        // Kept by the server as a picture of its own, the window is read whatever covers it.
         if (has(display, &xcb_composite_id))
             xcb_composite_redirect_window(display, window, XCB_COMPOSITE_REDIRECT_AUTOMATIC);
         return;
     }
 
     for (const ScreenArea &each : screenAreas(display)) {
-        if (!each.name.isEmpty() && sourceId == SCREEN_ID_PREFIX + each.name)
+        if (!each.name.isEmpty() && sourceId == SCREEN_SOURCE_PREFIX + each.name)
             screen = each.area;
     }
     if (screen.isEmpty())
@@ -380,7 +372,7 @@ Grabber::Grabber(const QString &sourceId, int framerate) : display(connectToDisp
 LinuxGrabber::Result Grabber::fail(int error)
 {
     input.reset();
-    const QString reason = window ? captureText("The window can no longer be captured (%1).") : captureText("The screen can no longer be captured (%1).");
+    const QString reason = captureLostText(window ? CaptureSource::Kind::Window : CaptureSource::Kind::Screen);
     failureText = reason.arg(describeError(error));
     return Result::Failed;
 }
@@ -414,7 +406,7 @@ LinuxGrabber::Result Grabber::watchWindow(Clock::time_point until)
         pictureArea = inside;
         input.reset();
     }
-    // x11grab reads the part of the window it was opened with, which may no longer be all there.
+    // x11grab reads the area it was opened with, which may have moved off the window
     if (!inside.contains(pictureArea)) {
         std::this_thread::sleep_until(until);
         return Result::NoFrame;
@@ -450,8 +442,7 @@ int Grabber::openInput()
 
 LinuxGrabber::Result Grabber::afterFailure(int error)
 {
-    // x11grab does without shared memory for good after a read that failed. A window may
-    // change between being looked at and being opened or read, once.
+    // x11grab drops shared memory for good after a failed read
     qCDebug(LogVideo) << "x11grab: no picture:" << describeError(error);
     input.reset();
     return window && !std::exchange(failedBefore, true) ? Result::NoFrame : fail(error);
@@ -524,8 +515,8 @@ QList<CaptureSource> screens()
     const std::vector<ScreenArea> areas = screenAreas(display);
     for (size_t i = 0; i < areas.size(); i++) {
         CaptureSource source;
-        source.id = SCREEN_ID_PREFIX + areas[i].name;
-        source.name = captureText("Screen %1").arg(i + 1);
+        source.id = SCREEN_SOURCE_PREFIX + areas[i].name;
+        source.name = numberedScreenName(i + 1);
         source.geometry = areas[i].area;
         sources.append(source);
     }
@@ -547,7 +538,7 @@ QList<CaptureSource> windows()
             continue;
 
         CaptureSource source;
-        source.id = WINDOW_ID_PREFIX + QString::number(window);
+        source.id = windowSourceId(window);
         source.kind = CaptureSource::Kind::Window;
         source.name = titleOf(display, atoms, window);
         source.geometry = insideOnRoot(display, window);
@@ -571,13 +562,10 @@ QImage thumbnail(const CaptureSource &source, const QSize &bound)
 
     const QSize size(frame->width, frame->height);
     const QImage picture(frame->data[0], frame->width, frame->height, frame->linesize[0], QImage::Format_RGB32);
-    QImage shrunk = size.width() > bound.width() || size.height() > bound.height() ? picture.scaled(size.scaled(bound, Qt::KeepAspectRatio).expandedTo(QSize(1, 1)), Qt::IgnoreAspectRatio, Qt::SmoothTransformation) : picture.copy();
-    for (int y = 0; y < shrunk.height(); y++) {
-        auto *row = reinterpret_cast<quint32 *>(shrunk.scanLine(y));
-        // An X server leaves the byte an image keeps for opacity as it finds it.
-        for (int x = 0; x < shrunk.width(); x++)
-            row[x] |= 0xFF000000u;
-    }
+    const QSize fitting = shrunkToFit(size, bound);
+    QImage shrunk = fitting == size ? picture.copy() : picture.scaled(fitting, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    // the X server leaves the alpha byte as it finds it
+    makeOpaque(shrunk);
     return shrunk;
 }
 
@@ -601,8 +589,7 @@ void restoreIfMinimised(const CaptureSource &window)
     const std::vector<quint32> state = numbers(display, handle, atom(display, "WM_STATE"));
     if (state.empty() || state[0] != ICONIC_STATE)
         return;
-    // A window manager takes the mapping of a window it made an icon of as asking for it back
-    // (ICCCM 4.1.4). The answer is waited for: the server drops what came just before a hang-up.
+    // ICCCM 4.1.4. waited for, since the server drops what came just before a hang-up
     Reply<xcb_generic_error_t>(xcb_request_check(display, xcb_map_window_checked(display, handle)));
 }
 

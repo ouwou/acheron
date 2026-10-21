@@ -30,12 +30,13 @@ public:
     [[nodiscard]] QHostAddress relayAddress() const { return relay; }
     [[nodiscard]] quint16 relayPort() const { return relayPortNumber; }
 
-    // The header a relay expects in front of every datagram for one destination: 10 bytes for
-    // IPv4, 22 for IPv6. Returns the bytes written, or -1 when `out` is too small.
-    static constexpr int MAX_RELAY_HEADER_SIZE = 22;
+    // RSV (two bytes) and FRAG
+    static constexpr int DATAGRAM_PREFIX_SIZE = 3;
+    static constexpr int IPV4_ADDRESS_FIELD_SIZE = 1 + 4 + 2;
+    static constexpr int IPV6_ADDRESS_FIELD_SIZE = 1 + 16 + 2;
+    static constexpr int MAX_RELAY_HEADER_SIZE = DATAGRAM_PREFIX_SIZE + IPV6_ADDRESS_FIELD_SIZE;
     static int writeRelayHeader(std::span<uint8_t> out, const QHostAddress &destination, quint16 destinationPort);
 
-    // Both work in place: the header goes into, or comes out of, the packet's headroom.
     static bool wrap(PacketBuffer &packet, std::span<const uint8_t> relayHeader);
     static bool unwrap(PacketBuffer &packet);
 

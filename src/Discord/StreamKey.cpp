@@ -25,8 +25,7 @@ StreamKey StreamKey::forChannel(Core::Snowflake guildId, Core::Snowflake channel
 {
     StreamKey key;
     key.type = guildId.isValid() ? Type::Guild : Type::Call;
-    if (guildId.isValid())
-        key.guildId = guildId;
+    key.guildId = guildId;
     key.channelId = channelId;
     key.ownerId = ownerId;
     return key;

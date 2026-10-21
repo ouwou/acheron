@@ -17,17 +17,15 @@ namespace {
 const char *const DISABLED_USERS_KEY = "video/disabled_users";
 const char *const MAX_DECODERS_KEY = "video/max_decoders";
 
-// Handing a picture over on the graphics card takes the same time whatever its size, and for a
-// small one that is more than decoding it in memory and sending it up: with nine tiles on a
-// Radeon RX 7800 XT, about 1.0 ms of processor time a picture against 0.6 ms for one of
-// 640x360, before either is decoded. So a picture asked for at no more than this, which is
-// 640x360 on the ladder and what everyone is asked for from four cameras up, is decoded in
-// memory. A decoder stays as it was made when what is asked of its sender changes later.
+// a card hand-over costs the same at any size, which for small pictures is more than decoding in
+// memory: measured with nine tiles on a Radeon RX 7800 XT, 1.0 ms of CPU a picture against 0.6 ms at
+// 640x360
 constexpr int MOST_ASKED_OF_A_PICTURE_DECODED_IN_MEMORY = 70;
+// a call can show many cameras at once, so each decodes on one thread
+constexpr int SOFTWARE_THREADS_PER_CAMERA = 1;
+constexpr int EXPIRY_CHECK_MS = 1000;
 
-// The setting, read once, since every plan asks for it.
 std::optional<int> knownMaxDecoders;
-// Every one there is, so that a change to the setting is planned for at once. The UI thread's.
 QList<CallVideo *> &allCallVideos()
 {
     static QList<CallVideo *> instances;
@@ -49,8 +47,7 @@ CallVideo::CallVideo(QObject *parent)
     replanTimer.setInterval(REPLAN_DELAY_MS);
     connect(&replanTimer, &QTimer::timeout, this, &CallVideo::replan);
 
-    // Hidden tiles lose their video as time passes, with nothing else to prompt a new plan.
-    expiryTimer.setInterval(1000);
+    expiryTimer.setInterval(EXPIRY_CHECK_MS);
     connect(&expiryTimer, &QTimer::timeout, this, &CallVideo::replan);
     allCallVideos().append(this);
 }
@@ -87,14 +84,7 @@ void CallVideo::attach(Audio::VoiceConnection *voiceConnection, Snowflake ownUse
     connect(connection, &Audio::VoiceConnection::clientDisconnected, this, &CallVideo::onUserLeftServer);
     connect(connection, &Audio::VoiceConnection::connected, this, &CallVideo::scheduleReplan);
     connection->client()->setVideoFrameHandler([this](Snowflake userId, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
-        std::shared_ptr<Media::VideoDecoder> decoder;
-        {
-            std::lock_guard lock(decoderMutex);
-            auto it = decoders.find(static_cast<quint64>(userId));
-            if (it != decoders.end())
-                decoder = it->second;
-        }
-        if (decoder)
+        if (const std::shared_ptr<Media::VideoDecoder> decoder = decoderOf(userId))
             decoder->push(codec, std::move(frame));
     });
 }
@@ -108,7 +98,7 @@ void CallVideo::detach()
     replanTimer.stop();
     expiryTimer.stop();
 
-    std::unordered_map<quint64, std::shared_ptr<Media::VideoDecoder>> stopping;
+    QHash<Snowflake, std::shared_ptr<Media::VideoDecoder>> stopping;
     {
         std::lock_guard lock(decoderMutex);
         stopping.swap(decoders);
@@ -124,7 +114,7 @@ void CallVideo::detach()
 QList<Snowflake> CallVideo::senders() const
 {
     QList<Snowflake> users = layersByUser.keys();
-    std::sort(users.begin(), users.end(), [](Snowflake a, Snowflake b) { return static_cast<quint64>(a) < static_cast<quint64>(b); });
+    std::sort(users.begin(), users.end());
     return users;
 }
 
@@ -148,12 +138,8 @@ void CallVideo::setTile(Snowflake userId, std::shared_ptr<Media::VideoFrameSink>
     tile.pixels = pixelCount;
     visibility.setVisible(userId, visible, clock.elapsed());
 
-    {
-        std::lock_guard lock(decoderMutex);
-        auto it = decoders.find(static_cast<quint64>(userId));
-        if (it != decoders.end())
-            it->second->setSink(tile.sink);
-    }
+    if (const std::shared_ptr<Media::VideoDecoder> decoder = decoderOf(userId))
+        decoder->setSink(tile.sink);
     scheduleReplan();
 }
 
@@ -212,9 +198,14 @@ void CallVideo::setVideoDisabled(Snowflake userId, bool disabled)
 
 Media::VideoDecoder::Stats CallVideo::decoderStats(Snowflake userId) const
 {
+    const std::shared_ptr<Media::VideoDecoder> decoder = decoderOf(userId);
+    return decoder ? decoder->stats() : Media::VideoDecoder::Stats();
+}
+
+std::shared_ptr<Media::VideoDecoder> CallVideo::decoderOf(Snowflake userId) const
+{
     std::lock_guard lock(decoderMutex);
-    auto it = decoders.find(static_cast<quint64>(userId));
-    return it != decoders.end() ? it->second->stats() : Media::VideoDecoder::Stats();
+    return decoders.value(userId);
 }
 
 void CallVideo::scheduleReplan()
@@ -235,7 +226,6 @@ void CallVideo::replan()
     input.focusedUser = focusedUser;
     input.oneToOne = othersOnServer.size() == 1;
 
-    // The focused sender is considered first so that the decoder limit never leaves it out.
     QList<Snowflake> users = senders();
     const int focusedAt = users.indexOf(focusedUser);
     if (focusedAt > 0)
@@ -255,33 +245,29 @@ void CallVideo::replan()
 
     const Discord::Voice::SinkWantsPlan plan = Discord::Voice::planSinkWants(input);
 
-    // A decoder for every sender being received, and for nobody else.
-    std::unordered_map<quint64, std::shared_ptr<Media::VideoDecoder>> retired;
+    QHash<Snowflake, std::shared_ptr<Media::VideoDecoder>> retired;
     {
         std::lock_guard lock(decoderMutex);
         for (auto it = decoders.begin(); it != decoders.end();) {
-            if (plan.deliver.contains(Snowflake(it->first))) {
+            if (plan.deliver.contains(it.key())) {
                 ++it;
                 continue;
             }
-            retired.insert(*it);
+            retired.insert(it.key(), it.value());
             it = decoders.erase(it);
         }
         for (auto it = plan.deliver.constBegin(); it != plan.deliver.constEnd(); ++it) {
-            const quint64 key = static_cast<quint64>(it.key());
-            if (decoders.count(key))
+            if (decoders.contains(it.key()))
                 continue;
             const int asked = plan.wants.bySsrc.value(it.value(), plan.wants.any.value_or(Discord::Voice::sinkWantLevel(1)));
             const bool onCard = Media::hardwareDecodingEnabled() && asked > MOST_ASKED_OF_A_PICTURE_DECODED_IN_MEMORY;
-            // A camera is at most 720p, which one thread decodes with room to spare.
-            auto decoder = std::make_shared<Media::VideoDecoder>(onCard, 1);
+            auto decoder = std::make_shared<Media::VideoDecoder>(onCard, SOFTWARE_THREADS_PER_CAMERA);
             decoder->setSink(tiles.value(it.key()).sink);
-            // The decoders go before the client does: detach() is called once the connection
-            // has stopped, which is before it is let go of.
+            // the decoders go before the client: detach() runs once the connection has stopped
             VoiceClient *client = connection->client();
             decoder->setKeyframeRequester([client, userId = it.key()] { QMetaObject::invokeMethod(client, [client, userId] { client->requestVideoKeyframeFrom(userId); }); });
-            decoder->setCodecFailureHandler([client](Discord::Voice::VideoCodec codec) { QMetaObject::invokeMethod(client, [client, codec] { client->withdrawVideoCodec(codec); }); });
-            decoders.emplace(key, std::move(decoder));
+            decoder->setCodecFailureHandler(client->queuedCodecWithdrawal());
+            decoders.insert(it.key(), std::move(decoder));
         }
     }
     retired.clear();

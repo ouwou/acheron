@@ -32,20 +32,6 @@ namespace UI {
 class CallControlsBar;
 class CallTile;
 
-// The call an account is in: a tile for each stream, each camera and, optionally, everyone
-// else. It sits in the main window, in `dock`, for as long as the call lasts, and can be
-// collapsed to its bar there. A call without video starts as the bar alone and opens when
-// video starts, unless the viewer collapsed it by hand during the call. The whole of it, or
-// any one tile, can be moved out into a window of its own and back.
-//
-// Clicking a stream that is not being watched watches it, and a stream that starts being
-// watched is enlarged unless a camera is. Double-clicking a tile enlarges it over a strip of the
-// others.
-//
-// The account's own screen share has a tile like any other stream, drawn from the capture's
-// previews. A share that ended by itself leaves its tile up to say why, until it is clicked
-// away. The account's own camera shows mirrored, as its owner expects to see themself; what is
-// sent is not.
 class CallView : public QWidget
 {
     Q_OBJECT
@@ -53,14 +39,11 @@ public:
     using NameResolver = std::function<QString(Core::Snowflake)>;
     using AvatarResolver = std::function<QUrl(Core::Snowflake)>;
 
-    // `dock` is the widget whose layout the view lives in while it is not in its own window.
     CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watcher, Core::StreamBroadcaster *broadcaster, Core::CameraSender *camera, Core::ImageManager *images, Core::Snowflake accountId, NameResolver names, AvatarResolver avatars, const QString &title, QWidget *dock);
     ~CallView() override;
 
-    // The voice channel the view was made for.
     [[nodiscard]] Core::Snowflake channelId() const { return channel; }
 
-    // Whether anyone in the call has a camera on or a stream up.
     [[nodiscard]] bool hasVideo() const { return videoPresent; }
 
     [[nodiscard]] bool isPoppedOut() const { return poppedOut; }
@@ -68,13 +51,11 @@ public:
 
     [[nodiscard]] bool isCollapsed() const { return collapsed; }
     void setCollapsed(bool value);
-    // Brings the view into sight: opened up where it is docked, or its window raised.
     void reveal();
 
     static constexpr QSize AVATAR_SIZE = QSize(128, 128);
 
 signals:
-    // Whether the view takes up room in its dock has changed.
     void presenceChanged();
 
 protected:
@@ -98,6 +79,7 @@ private:
     void onStreamOpened(Core::StreamSession *session);
 
     void setFocusedTile(std::optional<TileKey> key);
+    void pushFocusToVideo();
     void layoutTiles();
     void onStatsShownChanged(bool shown);
     void refreshStats();
@@ -141,8 +123,7 @@ private:
 
     std::map<TileKey, std::unique_ptr<CallTile>> tiles;
     std::optional<TileKey> focused;
-    // The click that started watching a stream, so that the second click of a double click
-    // on it is not also taken as a wish to shrink it again.
+    // so the second click of the double click that started watching doesnt shrink the stream again
     std::optional<TileKey> watchClickTile;
     QElapsedTimer watchClickTimer;
 

@@ -30,12 +30,10 @@ struct Yuv
     uint8_t v;
 };
 
-// Pure red and pure green as each standard codes them at video range.
 constexpr Yuv RED_BT709{ 63, 102, 240 };
 constexpr Yuv GREEN_BT709{ 173, 42, 26 };
 constexpr Yuv RED_BT601{ 81, 90, 240 };
 
-// A picture of one colour, in 8-bit 4:2:0.
 AVFrame *solidFrame(Yuv colour, int width, int height)
 {
     AVFrame *frame = av_frame_alloc();
@@ -65,8 +63,6 @@ bool closeTo(const QColor &shown, const QColor &wanted)
     return shown.isValid() && qAbs(shown.red() - wanted.red()) <= CHANNEL_TOLERANCE && qAbs(shown.green() - wanted.green()) <= CHANNEL_TOLERANCE && qAbs(shown.blue() - wanted.blue()) <= CHANNEL_TOLERANCE;
 }
 
-// Serves one playlist whose only segment is at another path of the same server, and counts
-// what asks for each.
 class PlaylistServer : public QObject
 {
 public:
@@ -102,7 +98,6 @@ private:
     QTcpServer server;
 };
 
-// Opens the URL the way the player does, on another thread so the server here can answer.
 bool openAndClose(const QString &url, bool confined)
 {
     std::atomic<bool> done = false;
@@ -176,8 +171,7 @@ void TestMediaInput::untaggedVideoGoesBySize()
     AVFrame *large = solidFrame(RED_BT709, 1280, 720);
 
     const QColor shownSmall = shownColour(scaler, small);
-    // Shrunk by no more than a player would: swscale's bilinear filter loses a little
-    // brightness of its own once a picture is reduced some twentyfold.
+    // swscale's bilinear filter loses a little brightness once a picture is reduced some twentyfold
     const QColor shownLarge = shownColour(scaler, large, QSize(320, 180));
     QVERIFY2(closeTo(shownSmall, QColor(255, 0, 0)), qPrintable(shownSmall.name()));
     QVERIFY2(closeTo(shownLarge, QColor(255, 0, 0)), qPrintable(shownLarge.name()));
@@ -211,7 +205,6 @@ void TestMediaInput::aChangeOfColoursPartWayIsFollowed()
     frame->colorspace = AVCOL_SPC_BT709;
     QVERIFY(closeTo(shownColour(scaler, frame), QColor(255, 0, 0)));
 
-    // The same size and format, so swscale would keep its context as it was.
     AVFrame *next = solidFrame(RED_BT601, 64, 64);
     next->colorspace = AVCOL_SPC_SMPTE170M;
     const QColor shown = shownColour(scaler, next);
@@ -232,7 +225,6 @@ void TestMediaInput::anOddSizedPictureFitsItsImage()
     av_frame_free(&frame);
 }
 
-// The premise of the test after it: without this there is nothing for the confinement to stop.
 void TestMediaInput::aPlaylistLeftAloneFetchesWhatItNames()
 {
     PlaylistServer server;
@@ -251,7 +243,7 @@ void TestMediaInput::aConfinedPlaylistFetchesNothingElse()
 
 void TestMediaInput::confinementLeavesAnOrdinaryFilePlayable()
 {
-    // A WAV header and a second of 8-bit silence at 8 kHz.
+    // a WAV header and a second of 8-bit silence at 8 kHz
     QByteArray wav = QByteArray::fromHex("52494646641f000057415645666d7420100000000100010040"
                                          "1f0000401f00000100080064617461401f0000");
     wav.append(QByteArray(8000, char(0x80)));

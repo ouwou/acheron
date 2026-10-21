@@ -18,8 +18,63 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-VoiceClient::VideoReceivePath::VideoReceivePath(VoiceClient &client) : client(client)
+namespace {
+
+struct AnnouncedVideo
 {
+    QList<VideoLayer> layers;
+    int maxWidth = 0;
+    int maxHeight = 0;
+    int maxFramerate = 0;
+};
+
+AnnouncedVideo announcedVideo(const ClientConnectData &data, bool streamContext)
+{
+    AnnouncedVideo announced;
+    if (data.videoSsrc.get() == 0)
+        return announced;
+
+    QList<VideoLayer> flaggedInactive;
+    for (const StreamDescription &stream : data.streams.valueOr()) {
+        if (!stream.ssrc.hasValue() || stream.ssrc.get() == 0)
+            continue;
+        VideoLayer layer;
+        layer.ssrc = stream.ssrc.get();
+        layer.rtxSsrc = stream.rtxSsrcOrNext();
+        layer.quality = stream.quality.valueOr(FULL_QUALITY);
+        if (!stream.active.valueOr(true)) {
+            flaggedInactive.append(layer);
+            continue;
+        }
+        announced.layers.append(layer);
+
+        if (layer.quality == FULL_QUALITY || announced.maxWidth == 0) {
+            if (stream.maxResolution.hasValue()) {
+                announced.maxWidth = stream.maxResolution->width;
+                announced.maxHeight = stream.maxResolution->height;
+            }
+            announced.maxFramerate = stream.maxFramerate.valueOr(0);
+        }
+    }
+    // on a voice connection the official client goes by the video SSRC alone and ignores each entry's
+    // active flag
+    if (announced.layers.isEmpty() && !streamContext)
+        announced.layers = flaggedInactive;
+    if (announced.layers.isEmpty() && data.streams.valueOr().isEmpty()) {
+        VideoLayer layer;
+        layer.ssrc = data.videoSsrc;
+        layer.rtxSsrc = layer.ssrc + 1;
+        announced.layers.append(layer);
+    }
+    return announced;
+}
+
+} // namespace
+
+VoiceClient::VideoReceivePath::VideoReceivePath(VoiceClient &client) : client(client), tick(std::make_unique<QTimer>(&client))
+{
+    tick->setTimerType(Qt::PreciseTimer);
+    QObject::connect(tick.get(), &QTimer::timeout, &client, [this] { onTick(); });
     for (const Codec &codec : client.params.videoCodecs) {
         const VideoCodec known = videoCodecFromName(codec.name);
         if (known == VideoCodec::Unknown || !codec.decode.valueOr(false))
@@ -30,14 +85,11 @@ VoiceClient::VideoReceivePath::VideoReceivePath(VoiceClient &client) : client(cl
     }
 }
 
-VoiceClient::VideoReceivePath::~VideoReceivePath()
-{
-    delete tick;
-}
+VoiceClient::VideoReceivePath::~VideoReceivePath() = default;
 
 void VoiceClient::VideoReceivePath::reset()
 {
-    delete std::exchange(tick, nullptr);
+    tick->stop();
     state = {};
 }
 
@@ -45,11 +97,11 @@ bool VoiceClient::VideoReceivePath::receive(const ParsedRtp &rtp, PacketPool::Ha
 {
     const int payloadType = rtp.header.payloadType;
     if (const auto video = payloadTypes.constFind(payloadType); video != payloadTypes.constEnd()) {
-        receiveVideo(rtp, std::move(packet), video.value(), false);
+        receiveVideo(rtp, std::move(packet), video.value(), VideoReceiver::Arrival::FirstTime);
         return true;
     }
     if (const auto rtx = rtxPayloadTypes.constFind(payloadType); rtx != rtxPayloadTypes.constEnd()) {
-        receiveVideo(rtp, std::move(packet), rtx.value(), true);
+        receiveVideo(rtp, std::move(packet), rtx.value(), VideoReceiver::Arrival::Retransmitted);
         return true;
     }
     return false;
@@ -57,41 +109,26 @@ bool VoiceClient::VideoReceivePath::receive(const ParsedRtp &rtp, PacketPool::Ha
 
 void VoiceClient::VideoReceivePath::noteTransportSequence(std::span<const uint8_t> extensions)
 {
-    // Only while feedback is going out; otherwise the record would grow without end.
-    if (!tick || !tick->isActive())
+    if (!tick->isActive())
         return;
     const std::span<const uint8_t> sequence = findRtpExtension(extensions, TRANSPORT_SEQUENCE_EXTENSION);
     if (sequence.size() == 2)
         state.transportFeedback.onPacket(qFromBigEndian<uint16_t>(sequence.data()), nowUs());
 }
 
-void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPool::Handle packet, VideoCodec codec, bool retransmission)
+void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPool::Handle packet, VideoCodec codec, VideoReceiver::Arrival arrival)
 {
     const RtpHeader &header = rtp.header;
-    if (!client.encryption || !client.encryption->open(*packet, rtp.clearSize))
+    if (!client.openRtpPayload(rtp, *packet))
         return;
-
-    packet->dropFront(rtp.clearSize);
-    if (packet->size() < rtp.extensionSize)
-        return;
-    // Every packet the server numbered is reported back to it, wanted or not, since the
-    // numbering is about the connection and not about any one stream.
-    noteTransportSequence(packet->bytes().first(static_cast<size_t>(rtp.extensionSize)));
+    // the transport numbering is the connection's, not any one stream's
     state.transportMediaSsrc = header.ssrc;
-    packet->dropFront(rtp.extensionSize);
 
-    if (header.padding) {
-        const int padding = rtpPaddingSize(packet->bytes());
-        if (padding < 0)
-            return;
-        packet->resize(packet->size() - padding);
-    }
-
+    const bool retransmission = arrival == VideoReceiver::Arrival::Retransmitted;
     quint32 ssrc = header.ssrc;
     uint16_t sequence = header.sequence;
     if (retransmission) {
-        // RFC 4588: the original sequence number leads the payload. One without a payload is
-        // padding sent to probe the link.
+        // RFC 4588. one with no payload is probe padding
         auto primary = state.rtxToPrimary.constFind(ssrc);
         if (primary == state.rtxToPrimary.constEnd() || packet->size() <= RTX_HEADER_SIZE)
             return;
@@ -110,7 +147,6 @@ void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPoo
 
     RemoteVideo &video = it->second;
     if (!video.receiver || video.receiver->codec() != codec) {
-        // A retransmission of what came before a change of codec repairs nothing now.
         if (retransmission)
             return;
         video.receiver = std::make_unique<VideoReceiver>(ssrc, codec);
@@ -118,11 +154,11 @@ void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPoo
 
     const qint64 nowMs = clock.elapsed();
     if (packet->size() == 0) {
-        // Padding a sender puts on the media stream itself still takes its sequence number.
+        // padding on the media stream itself still takes its sequence number
         video.receiver->skip(sequence, header.timestamp, nowMs);
         return;
     }
-    video.receiver->insert(sequence, header.timestamp, header.marker, std::move(packet), nowMs, retransmission ? VideoReceiver::Arrival::Retransmitted : VideoReceiver::Arrival::FirstTime);
+    video.receiver->insert(sequence, header.timestamp, header.marker, std::move(packet), nowMs, arrival);
     deliverFrames(ssrc, video);
 }
 
@@ -135,14 +171,12 @@ void VoiceClient::VideoReceivePath::deliverFrames(quint32 ssrc, RemoteVideo &vid
         if (DaveSession *dave = client.daveSession.get()) {
             if (dave->isDaveEnabled()) {
                 if (!daveDecrypt(ssrc, frame.data)) {
-                    // Later frames build on this one, so they are of no use either.
                     state.decryptFailures++;
                     qCDebug(LogDave) << "Undecryptable" << describeFrame(codec, frame.data);
                     video.receiver->requestKeyframe();
                     return;
                 }
             } else if (!dave->isDowngraded()) {
-                // Keys are still being agreed. A key frame is asked for once they are.
                 state.droppedAwaitingDaveKeys = true;
                 return;
             }
@@ -156,19 +190,12 @@ void VoiceClient::VideoReceivePath::deliverFrames(quint32 ssrc, RemoteVideo &vid
 
 bool VoiceClient::VideoReceivePath::daveDecrypt(quint32 ssrc, std::vector<uint8_t> &frame)
 {
-    const auto user = client.ssrcToUserIdMap.constFind(ssrc);
-    auto *decryptor = client.daveSession->getOrCreateDecryptor(ssrc, user == client.ssrcToUserIdMap.constEnd() ? 0 : user.value());
-
-    std::vector<uint8_t> plaintext(decryptor->GetMaxPlaintextByteSize(discord::dave::MediaType::Video, frame.size()));
-    size_t bytesWritten = 0;
-    const auto result = decryptor->Decrypt(discord::dave::MediaType::Video, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(plaintext.data(), plaintext.size()), &bytesWritten);
-    if (result != discord::dave::IDecryptor::Success) {
-        qCDebug(LogDave) << "DAVE video decrypt failed: SSRC =" << ssrc << "result =" << static_cast<int>(result) << "frameSize =" << frame.size();
+    decrypted.resize(client.daveSession->maxPlaintextSize(discord::dave::MediaType::Video, ssrc, frame.size()));
+    const std::optional<size_t> written = client.daveSession->decrypt(discord::dave::MediaType::Video, ssrc, frame, decrypted);
+    if (!written)
         return false;
-    }
-
-    plaintext.resize(bytesWritten);
-    frame.swap(plaintext);
+    decrypted.resize(*written);
+    frame.swap(decrypted);
     return true;
 }
 
@@ -180,48 +207,8 @@ void VoiceClient::VideoReceivePath::onClientConnect(const ClientConnectData &dat
     if (!userId.isValid() || userId == client.params.userId)
         return;
 
-    // A user's video is on while the announcement names a video SSRC; each entry of `streams`
-    // is then one encoding of it. An announcement with no entries means a single encoding.
-    QList<VideoLayer> layers;
-    QList<VideoLayer> flaggedInactive;
-    int maxWidth = 0;
-    int maxHeight = 0;
-    int maxFramerate = 0;
-    if (data.videoSsrc.get() != 0) {
-        if (data.streams.hasValue()) {
-            for (const StreamDescription &stream : data.streams.get()) {
-                if (!stream.ssrc.hasValue() || stream.ssrc.get() == 0)
-                    continue;
-                VideoLayer layer;
-                layer.ssrc = stream.ssrc.get();
-                layer.rtxSsrc = stream.rtxSsrc.hasValue() && stream.rtxSsrc.get() != 0 ? stream.rtxSsrc.get() : layer.ssrc + 1;
-                layer.quality = stream.quality.valueOr(FULL_QUALITY);
-                if (!stream.active.valueOr(true)) {
-                    flaggedInactive.append(layer);
-                    continue;
-                }
-                layers.append(layer);
-
-                if (layer.quality == FULL_QUALITY || maxWidth == 0) {
-                    if (stream.maxResolution.hasValue()) {
-                        maxWidth = stream.maxResolution->width;
-                        maxHeight = stream.maxResolution->height;
-                    }
-                    maxFramerate = stream.maxFramerate.valueOr(0);
-                }
-            }
-        }
-        // On a voice connection the official client goes by the video SSRC alone and ignores
-        // each entry's own flag, so entries all flagged inactive still count there.
-        if (layers.isEmpty() && !client.params.streamContext)
-            layers = flaggedInactive;
-        if (layers.isEmpty() && (!data.streams.hasValue() || data.streams->isEmpty())) {
-            VideoLayer layer;
-            layer.ssrc = data.videoSsrc;
-            layer.rtxSsrc = layer.ssrc + 1;
-            layers.append(layer);
-        }
-    }
+    const AnnouncedVideo announced = announcedVideo(data, client.params.streamContext);
+    const QList<VideoLayer> &layers = announced.layers;
 
     const auto known = state.remoteLayers.constFind(userId);
     if (known == state.remoteLayers.constEnd() ? !layers.isEmpty() : known.value() != layers) {
@@ -241,11 +228,10 @@ void VoiceClient::VideoReceivePath::onClientConnect(const ClientConnectData &dat
             state.remoteLayers.insert(userId, layers);
     }
 
-    // On a voice connection whoever shows the video decides what is wanted, and is told here.
     if (!state.explicitPlan && client.params.streamContext)
         planSingleSenders();
     emit client.remoteVideoLayersChanged(userId, layers);
-    emit client.remoteVideoChanged(userId, !layers.isEmpty(), maxWidth, maxHeight, maxFramerate);
+    emit client.remoteVideoChanged(userId, !layers.isEmpty(), announced.maxWidth, announced.maxHeight, announced.maxFramerate);
 }
 
 void VoiceClient::VideoReceivePath::onClientDisconnect(Core::Snowflake userId)
@@ -281,8 +267,6 @@ void VoiceClient::VideoReceivePath::setWants(int pixelCount, bool wantedNow)
     planSingleSenders();
 }
 
-// The plan for a stream connection, where the only sender is the broadcaster: its first
-// encoding at full quality, sized to the surface, or nothing while the surface is not shown.
 void VoiceClient::VideoReceivePath::planSingleSenders()
 {
     state.plannedWants = MediaSinkWants();
@@ -308,7 +292,6 @@ void VoiceClient::VideoReceivePath::setPlan(const MediaSinkWants &wants, const Q
 
 void VoiceClient::VideoReceivePath::applyPlan()
 {
-    // An encoding no longer taken starts from a key frame if it is taken again.
     for (auto &[ssrc, video] : state.remoteVideos) {
         if (!state.deliveredSsrcs.contains(ssrc))
             video.receiver.reset();
@@ -320,8 +303,6 @@ void VoiceClient::VideoReceivePath::sendWants()
 {
     if (client.currentState != State::Connected || !client.gateway || payloadTypes.isEmpty())
         return;
-    // A stream's viewer has nothing to say until the broadcaster's video is announced, and a
-    // voice connection nothing until it has been given a plan.
     if (!state.explicitPlan && (!client.params.streamContext || state.remoteLayers.isEmpty()))
         return;
 
@@ -354,8 +335,7 @@ void VoiceClient::VideoReceivePath::onDaveStateChanged()
         requestKeyframeFromEveryone();
 }
 
-// The official client tears down and rebuilds every video receiver it has for the sender, which
-// leaves each waiting for a key frame and asking for one. Starting each over does the same.
+// as the official client, which rebuilds every video receiver it has for the sender
 void VoiceClient::VideoReceivePath::receiveAfresh(quint32 ssrc)
 {
     Core::Snowflake sender;
@@ -378,11 +358,10 @@ void VoiceClient::VideoReceivePath::receiveRtcp(const ReceivedRtcp &received)
         for (const ReceivedRtcp::SenderReport &report : received.senderReports)
             state.senderReports.insert(report.ssrc, { report.compactNtp, nowUs() });
     }
-    if (received.hasInboundEstimate) {
-        if (received.inboundBitsPerSecond != state.serverEstimateBps)
-            qCDebug(LogVoice) << "Server's estimate of the way here:" << received.inboundBitsPerSecond << "bps, loss" << received.inboundLoss;
-        state.serverEstimateBps = received.inboundBitsPerSecond;
-        state.serverLossFraction = received.inboundLoss;
+    if (const std::optional<InboundEstimate> &estimate = received.inboundEstimate) {
+        if (!state.serverEstimate || estimate->bps != state.serverEstimate->bps)
+            qCDebug(LogVoice) << "Server's estimate of the way here:" << estimate->bps << "bps, loss" << estimate->lossFraction;
+        state.serverEstimate = estimate;
     }
 }
 
@@ -393,11 +372,6 @@ void VoiceClient::VideoReceivePath::onConnected()
             clock.start();
         state.reportedMs = clock.elapsed();
 
-        if (!tick) {
-            tick = new QTimer(&client);
-            tick->setTimerType(Qt::PreciseTimer);
-            QObject::connect(tick, &QTimer::timeout, &client, [this] { onTick(); });
-        }
         tick->start(TICK_MS);
     }
     sendWants();
@@ -405,7 +379,7 @@ void VoiceClient::VideoReceivePath::onConnected()
 
 void VoiceClient::VideoReceivePath::onTick()
 {
-    if (client.currentState != State::Connected || !client.encryption || !client.udpTransport)
+    if (!client.canSendMedia())
         return;
 
     const qint64 now = clock.elapsed();
@@ -455,34 +429,30 @@ void VoiceClient::VideoReceivePath::onTick()
         return;
     }
 
-    // A compound packet opens with a report, so feedback sent between reports follows an empty
-    // one. What the receivers have counted as asked for goes in first, ahead of the transport
-    // feedback, which takes whatever room is left.
+    // a compound packet must open with a report. NACKs and PLIs go first; transport feedback takes the
+    // room left
     PacketPool::Handle packet = client.udpTransport->acquirePacket();
     packet->resize(packet->tailroom() - VoiceEncryption::TRAILER_SIZE);
     int size = writeReceiverReport(packet->bytes(), client.localSsrc, reports);
     if (size < 0)
         return;
+    const auto room = [&packet, &size] { return packet->bytes().subspan(static_cast<size_t>(size)); };
+    const auto added = [&size](int written) {
+        if (written > 0)
+            size += written;
+        return written > 0;
+    };
     for (const Pending &entry : pending) {
-        if (!entry.feedback.nacks.empty()) {
-            const int written = writeNack(packet->bytes().subspan(static_cast<size_t>(size)), client.localSsrc, entry.ssrc, entry.feedback.nacks);
-            if (written > 0)
-                size += written;
-        }
-        if (entry.feedback.keyframeRequest) {
-            const int written = writePli(packet->bytes().subspan(static_cast<size_t>(size)), client.localSsrc, entry.ssrc);
-            if (written > 0)
-                size += written;
-        }
+        if (!entry.feedback.nacks.empty())
+            added(writeNack(room(), client.localSsrc, entry.ssrc, entry.feedback.nacks));
+        if (entry.feedback.keyframeRequest)
+            added(writePli(room(), client.localSsrc, entry.ssrc));
     }
     if (transportDue) {
         state.transportReportedMs = now;
-        // One packet covers a bounded span; after a long gap it takes more than one.
-        for (int i = 0; i < 4 && state.transportFeedback.hasPending(); i++) {
-            const int written = state.transportFeedback.write(packet->bytes().subspan(static_cast<size_t>(size)), client.localSsrc, state.transportMediaSsrc);
-            if (written <= 0)
+        for (int i = 0; i < MAX_TRANSPORT_FEEDBACKS_PER_PACKET && state.transportFeedback.hasPending(); i++) {
+            if (!added(state.transportFeedback.write(room(), client.localSsrc, state.transportMediaSsrc)))
                 break;
-            size += written;
         }
     }
     packet->resize(size);
@@ -493,8 +463,7 @@ void VoiceClient::VideoReceivePath::onTick()
     if (reportDue) {
         state.reportedMs = now;
         stats.decryptFailures = state.decryptFailures;
-        stats.serverEstimateBps = state.serverEstimateBps;
-        stats.serverLossFraction = state.serverLossFraction;
+        stats.serverEstimate = state.serverEstimate;
         if (!state.remoteVideos.empty())
             emit client.videoStatsUpdated(stats);
     }

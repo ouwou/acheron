@@ -1,5 +1,7 @@
 #include "Core/Video/Windows/Monitors.hpp"
 
+#include "Core/Video/CaptureSources.hpp"
+
 #if defined(Q_OS_WIN)
 
 #include <dxgi.h>
@@ -10,8 +12,6 @@ namespace Video {
 namespace Win {
 
 namespace {
-
-const QLatin1String SCREEN_ID_PREFIX("screen:");
 
 } // namespace
 
@@ -32,8 +32,7 @@ std::vector<Monitor> attachedMonitors()
             DXGI_OUTPUT_DESC description;
             DEVMODEW mode = {};
             mode.dmSize = sizeof(mode);
-            // The mode is in the screen's own pixels whatever the calling thread understands,
-            // which the output's desktop coordinates are not.
+            // the mode is in the screen's own pixels whatever DPI awareness the thread has
             if (SUCCEEDED(output->GetDesc(&description)) && description.AttachedToDesktop && EnumDisplaySettingsW(description.DeviceName, ENUM_CURRENT_SETTINGS, &mode)) {
                 Monitor monitor;
                 monitor.deviceName = QString::fromWCharArray(description.DeviceName);
@@ -54,14 +53,14 @@ std::vector<Monitor> attachedMonitors()
 
 QString screenSourceId(const Monitor &monitor)
 {
-    return SCREEN_ID_PREFIX + monitor.deviceName;
+    return SCREEN_SOURCE_PREFIX + monitor.deviceName;
 }
 
 const Monitor *monitorOf(const std::vector<Monitor> &monitors, const QString &sourceId)
 {
-    if (!sourceId.startsWith(SCREEN_ID_PREFIX))
+    if (!sourceId.startsWith(SCREEN_SOURCE_PREFIX))
         return nullptr;
-    const QString deviceName = sourceId.mid(SCREEN_ID_PREFIX.size());
+    const QString deviceName = sourceId.mid(SCREEN_SOURCE_PREFIX.size());
     for (const Monitor &monitor : monitors) {
         if (!deviceName.isEmpty() && monitor.deviceName == deviceName)
             return &monitor;

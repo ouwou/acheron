@@ -1,11 +1,4 @@
-// Tests for what a screen share is sent at: which qualities an account may pick, the size and
-// bitrates announced for each, how the bitrates follow the size viewers show the stream at, and
-// the controller that moves the encoder's bitrate by reported loss. The quality rules are the
-// official client's (docs/video-re/re-voice-gateway-video.md).
-//
-// And for what the account's own camera is encoded at: the ladder of sizes by how much of the
-// picture its viewers want, the lower frame rate of an owner who is not heard, and the plan
-// that puts those together with the loss the server reports.
+// the quality rules are the official client's (docs/video-re/re-voice-gateway-video.md)
 
 #include "Core/Video/SendQuality.hpp"
 #include "Core/Video/SendRateController.hpp"
@@ -46,7 +39,6 @@ const std::array<CameraLayer, 9> CAMERA_LADDER{ {
 
 const QSize FULL_CAMERA(1280, 720);
 
-// A camera whose owner goes on speaking, so that only what a test does lowers its frame rate.
 CameraSendPlan planOfASpeaker()
 {
     CameraSendPlan plan;
@@ -191,11 +183,11 @@ void TestSendQuality::movingToAnotherHeightKeepsTheFramerateWhereAllowed()
 
 void TestSendQuality::announcedSizeIsFourByThreeAt480AndSixteenByNineAbove()
 {
-    QCOMPARE(announcedSize({ 480, 30 }), QSize(640, 480));
-    QCOMPARE(announcedSize({ 720, 30 }), QSize(1280, 720));
-    QCOMPARE(announcedSize({ 1080, 60 }), QSize(1920, 1080));
-    QCOMPARE(announcedSize({ 1440, 15 }), QSize(2560, 1440));
-    QCOMPARE(announcedSize({ SOURCE, 30 }), QSize(0, 0));
+    QCOMPARE(announcedSize({ 480, 30 }), std::optional<QSize>(QSize(640, 480)));
+    QCOMPARE(announcedSize({ 720, 30 }), std::optional<QSize>(QSize(1280, 720)));
+    QCOMPARE(announcedSize({ 1080, 60 }), std::optional<QSize>(QSize(1920, 1080)));
+    QCOMPARE(announcedSize({ 1440, 15 }), std::optional<QSize>(QSize(2560, 1440)));
+    QVERIFY(!announcedSize({ SOURCE, 30 }));
 }
 
 void TestSendQuality::maxBitrateFollowsHeightAndFramerate_data()
@@ -225,9 +217,9 @@ void TestSendQuality::maxBitrateFollowsHeightAndFramerate()
     QFETCH(int, maxBitrate);
 
     const BitrateLimits limits = bitrateLimits({ height, framerate });
-    QCOMPARE(limits.max, maxBitrate);
-    QCOMPARE(limits.min, 500'000);
-    QCOMPARE(limits.target, 600'000);
+    QCOMPARE(limits.maxBps, maxBitrate);
+    QCOMPARE(limits.minBps, 500'000);
+    QCOMPARE(limits.targetBps, 600'000);
 }
 
 void TestSendQuality::bitratesAreNotScaledWithoutASmallerViewer()
@@ -247,50 +239,48 @@ void TestSendQuality::sourceQualityIsNeverScaled()
 
 void TestSendQuality::scaledBitratesAreRoundedUp()
 {
-    // A third of the picture: 166,666.67, 200,000 and 1,166,666.67 before rounding.
+    // a third of the picture: 166,666.67, 200,000 and 1,166,666.67 before rounding
     const BitrateLimits scaled = limitsForViewerSize(FULL_720P, { 720, 30 }, 900'000, 30, 300'000);
-    QCOMPARE(scaled.min, 166'667);
-    QCOMPARE(scaled.target, 200'000);
-    QCOMPARE(scaled.max, 1'166'667);
+    QCOMPARE(scaled.minBps, 166'667);
+    QCOMPARE(scaled.targetBps, 200'000);
+    QCOMPARE(scaled.maxBps, 1'166'667);
 }
 
 void TestSendQuality::scaledMinimumAndTargetStopAtTheFloor()
 {
-    // A quarter of the picture would put the minimum at 125,000 and leaves the target at
-    // exactly 150,000.
+    // a quarter of the picture would put the minimum at 125,000 and leaves the target at exactly 150,000
     const BitrateLimits quarter = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 4);
-    QCOMPARE(quarter.min, 150'000);
-    QCOMPARE(quarter.target, 150'000);
+    QCOMPARE(quarter.minBps, 150'000);
+    QCOMPARE(quarter.targetBps, 150'000);
 
     const BitrateLimits tenth = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 10);
-    QCOMPARE(tenth.min, 150'000);
-    QCOMPARE(tenth.target, 150'000);
+    QCOMPARE(tenth.minBps, 150'000);
+    QCOMPARE(tenth.targetBps, 150'000);
 
     const BitrateLimits half = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 2);
-    QCOMPARE(half.min, 250'000);
-    QCOMPARE(half.target, 300'000);
+    QCOMPARE(half.minBps, 250'000);
+    QCOMPARE(half.targetBps, 300'000);
 }
 
 void TestSendQuality::scaledMaximumKeepsRoomForThePicture()
 {
-    // 0.02 x 921,600 pixels x 30 frames = 552,960, above a tenth of 3,500,000.
+    // 0.02 x 921,600 pixels x 30 frames = 552,960, above a tenth of 3,500,000
     const BitrateLimits tenth = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 10);
-    QCOMPARE(tenth.max, 552'960);
+    QCOMPARE(tenth.maxBps, 552'960);
 
-    // And under a half of it.
     const BitrateLimits half = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 2);
-    QCOMPARE(half.max, 1'750'000);
+    QCOMPARE(half.maxBps, 1'750'000);
 }
 
 void TestSendQuality::scaledMaximumNeverPassesTheFullMaximum()
 {
-    // 0.02 x 3,686,400 pixels x 60 frames is 4,423,680, more than this picture may use at all.
+    // 0.02 x 3,686,400 pixels x 60 frames = 4,423,680, more than this picture may use at all
     const qint64 pixels = 2560 * 1440;
     const BitrateLimits scaled = limitsForViewerSize(FULL_720P, { 1440, 60 }, pixels, 60, pixels / 100);
-    QCOMPARE(scaled.max, 3'500'000);
+    QCOMPARE(scaled.maxBps, 3'500'000);
 
     const BitrateLimits roomy = limitsForViewerSize(FULL_1080P, { 1440, 60 }, pixels, 60, pixels / 100);
-    QCOMPARE(roomy.max, 4'423'680);
+    QCOMPARE(roomy.maxBps, 4'423'680);
 }
 
 void TestSendQuality::firstViewerSizeIsTakenUp()
@@ -323,7 +313,6 @@ void TestSendQuality::viewerSizeWithinFivePercentIsIgnored()
 
 void TestSendQuality::viewerSizeIsComparedWithTheOneInUse()
 {
-    // Small steps that are each ignored do not add up to a change that is not.
     ViewerSize size;
     QVERIFY(size.offer(100'000));
     QVERIFY(!size.offer(104'000));
@@ -345,7 +334,7 @@ void TestSendQuality::controllerIgnoresReportsBeforeTheServerHasSaid()
     SendRateController rate;
     rate.restart(500'000, 9'000'000);
     for (qint64 now = 0; now <= 30'000; now += 1000)
-        QVERIFY(!rate.report(-1, now));
+        QVERIFY(!rate.report(std::nullopt, now));
     QCOMPARE(rate.bitrate(), 9'000'000);
 }
 
@@ -488,20 +477,18 @@ void TestSendQuality::newLimitsKeepTheShareOfTheMaximum()
     QVERIFY(lowered.setLimits(250'000, 4'500'000));
     QCOMPARE(lowered.bitrate(), 3'150'000);
 
-    // The new minimum still holds.
     QVERIFY(lowered.setLimits(400'000, 500'000));
     QCOMPARE(lowered.bitrate(), 400'000);
 }
 
 void TestSendQuality::aMaximumUnderTheMinimumIsStillAMaximum()
 {
-    // What the viewer-size rule gives a 480p15 picture shown very small.
     const BitrateLimits scaled = limitsForViewerSize(FULL_720P, { 480, 15 }, 640 * 480, 15, 640 * 480 / 100);
-    QCOMPARE(scaled.min, 150'000);
-    QCOMPARE(scaled.max, 92'160);
+    QCOMPARE(scaled.minBps, 150'000);
+    QCOMPARE(scaled.maxBps, 92'160);
 
     SendRateController rate;
-    rate.restart(scaled.min, scaled.max);
+    rate.restart(scaled.minBps, scaled.maxBps);
     QCOMPARE(rate.bitrate(), 92'160);
     QVERIFY(!rate.report(0.5, 0));
     QCOMPARE(rate.bitrate(), 92'160);
@@ -515,7 +502,6 @@ void TestSendQuality::restartGoesBackToTheMaximum()
 
     rate.restart(500'000, 3'500'000);
     QCOMPARE(rate.bitrate(), 3'500'000);
-    // The two seconds between decreases start over as well.
     QVERIFY(rate.report(0.5, 100));
     QCOMPARE(rate.bitrate(), 2'450'000);
 }
@@ -535,7 +521,7 @@ void TestSendQuality::cameraLadderHasARowForEachWant()
     const CameraLayer chosen = cameraLayerFor(row.want);
     QCOMPARE(chosen.want, row.want);
     QCOMPARE(chosen.size, row.size);
-    QCOMPARE(chosen.maxBitrate, row.maxBitrate);
+    QCOMPARE(chosen.maxBitrateBps, row.maxBitrateBps);
     QCOMPARE(chosen.size.width() * 9, chosen.size.height() * 16);
 }
 
@@ -548,7 +534,6 @@ void TestSendQuality::aWantBetweenRowsTakesTheRowBelow()
         QCOMPARE(cameraLayerFor(below.want + 1), below);
     }
 
-    // More than everything is still everything.
     QCOMPARE(cameraLayerFor(101), CAMERA_LADDER.front());
 }
 
@@ -592,11 +577,10 @@ void TestSendQuality::theCameraStartsWithTheWholePictureAtItsMaximum()
     const CameraEncoding first = plan.advance(1000);
     QCOMPARE(first.size, FULL_CAMERA);
     QCOMPARE(first.framerate, 30);
-    QCOMPARE(first.bitrate, 2'500'000);
+    QCOMPARE(first.bitrateBps, 2'500'000);
     QCOMPARE(plan.servedWant(), 100);
     QCOMPARE(plan.maxBitrate(), 2'500'000);
 
-    // A camera turned on again starts over, whatever the last one was down to.
     plan.setWant(20);
     plan.reportLoss(0.5, 4000);
     QCOMPARE(plan.advance(4000).size, QSize(256, 144));
@@ -613,9 +597,8 @@ void TestSendQuality::selfMuteLowersTheFramerateAtOnce()
     QVERIFY(plan.countsAsMuted(100));
     const CameraEncoding muted = plan.advance(100);
     QCOMPARE(muted.framerate, 20);
-    // Nothing else of the picture changes with it.
     QCOMPARE(muted.size, FULL_CAMERA);
-    QCOMPARE(muted.bitrate, 2'500'000);
+    QCOMPARE(muted.bitrateBps, 2'500'000);
 
     plan.setSelfMuted(false);
     QVERIFY(!plan.countsAsMuted(101));
@@ -624,7 +607,6 @@ void TestSendQuality::selfMuteLowersTheFramerateAtOnce()
 
 void TestSendQuality::fifteenSecondsOfSilenceLowerTheFramerate()
 {
-    // Nothing has been said since the camera was turned on.
     CameraSendPlan plan;
     plan.start(1000);
 
@@ -640,14 +622,12 @@ void TestSendQuality::silenceIsCountedFromTheLastWord()
     CameraSendPlan plan;
     plan.start(0);
     plan.setSpeaking(true, 5000);
-    // Speaking, for however long, keeps the full rate.
     QCOMPARE(plan.advance(60'000).framerate, 30);
 
     plan.setSpeaking(false, 60'000);
     QCOMPARE(plan.advance(74'999).framerate, 30);
     QCOMPARE(plan.advance(75'000).framerate, 20);
 
-    // Being told again that nothing is said does not start the count over.
     plan.setSpeaking(true, 80'000);
     plan.setSpeaking(false, 81'000);
     plan.setSpeaking(false, 90'000);
@@ -664,7 +644,6 @@ void TestSendQuality::speakingRestoresTheFramerateAtOnce()
     plan.setSpeaking(true, 20'001);
     QCOMPARE(plan.advance(20'001).framerate, 30);
 
-    // Not while self-muted, though: what is said then is not heard.
     plan.setSelfMuted(true);
     QCOMPARE(plan.advance(20'002).framerate, 20);
 }
@@ -679,7 +658,6 @@ void TestSendQuality::aMutedCameraWantedAtTwentyOrLessIsSentAtTwelve()
     QCOMPARE(lowestRow.size, QSize(256, 144));
     QCOMPARE(lowestRow.framerate, 20);
 
-    // The same row, and still a change for the encoder.
     plan.setWant(20);
     QCOMPARE(plan.advance(3999).framerate, 20);
     const CameraEncoding slowest = plan.advance(4000);
@@ -703,7 +681,6 @@ void TestSendQuality::theFramerateIsNotLoweredWhileAScreenIsShared()
     plan.setSharingScreen(false);
     QCOMPARE(plan.advance(60'000).framerate, 20);
 
-    // Silence does not lower it either.
     plan.setSelfMuted(false);
     QCOMPARE(plan.advance(60'001).framerate, 20);
     plan.setSharingScreen(true);
@@ -721,23 +698,21 @@ void TestSendQuality::aNewWantIsTakenUpTwoSecondsAfterTheLastChange()
     const CameraEncoding lowered = plan.advance(2000);
     QCOMPARE(lowered.size, QSize(416, 234));
     QCOMPARE(lowered.framerate, 30);
-    QCOMPARE(lowered.bitrate, 264'062);
+    QCOMPARE(lowered.bitrateBps, 264'062);
     QCOMPARE(plan.servedWant(), 50);
     QCOMPARE(plan.maxBitrate(), 264'062);
 
-    // The two seconds start again with every change that is made.
     plan.setWant(100);
     QCOMPARE(plan.advance(3999), lowered);
     const CameraEncoding raised = plan.advance(4000);
     QCOMPARE(raised.size, FULL_CAMERA);
-    QCOMPARE(raised.bitrate, 2'500'000);
+    QCOMPARE(raised.bitrateBps, 2'500'000);
 }
 
 void TestSendQuality::wantsInQuickSuccessionAreGatheredIntoOne()
 {
     CameraSendPlan plan = planOfASpeaker();
 
-    // Long after the last change, the first of them is taken up at once.
     plan.setWant(50);
     QCOMPARE(plan.advance(5000).size, QSize(416, 234));
 
@@ -750,9 +725,8 @@ void TestSendQuality::wantsInQuickSuccessionAreGatheredIntoOne()
 
     const CameraEncoding settled = plan.advance(7000);
     QCOMPARE(settled.size, QSize(896, 504));
-    QCOMPARE(settled.bitrate, 1'225'000);
+    QCOMPARE(settled.bitrateBps, 1'225'000);
 
-    // A want that comes back to the one in use leaves nothing to do.
     plan.setWant(40);
     plan.setWant(90);
     QVERIFY(!plan.nextChangeIn(7100));
@@ -770,7 +744,6 @@ void TestSendQuality::aWantWithinTheRowInUseChangesNothing()
     QVERIFY(!plan.nextChangeIn(2100));
     QCOMPARE(plan.advance(2100), atNinety);
 
-    // And does not put off a change that does matter to the encoder.
     plan.setWant(80);
     QCOMPARE(plan.nextChangeIn(2100), std::optional<qint64>(1900));
     QCOMPARE(plan.advance(4000).size, QSize(672, 378));
@@ -781,16 +754,14 @@ void TestSendQuality::lossMovesTheCameraBitrateDownToItsMinimum()
     CameraSendPlan plan = planOfASpeaker();
 
     plan.reportLoss(0.5, 3000);
-    QCOMPARE(plan.advance(3000).bitrate, 1'750'000);
+    QCOMPARE(plan.advance(3000).bitrateBps, 1'750'000);
     plan.reportLoss(0.5, 5000);
     const CameraEncoding lowered = plan.advance(5000);
-    QCOMPARE(lowered.bitrate, 1'225'000);
-    // The picture keeps its size: only the want changes that.
+    QCOMPARE(lowered.bitrateBps, 1'225'000);
     QCOMPARE(lowered.size, FULL_CAMERA);
 
-    // Before the server has said anything of loss there is nothing to act on.
-    plan.reportLoss(-1, 7000);
-    QCOMPARE(plan.advance(7000).bitrate, 1'225'000);
+    plan.reportLoss(std::nullopt, 7000);
+    QCOMPARE(plan.advance(7000).bitrateBps, 1'225'000);
 
     qint64 now = 7000;
     for (int i = 0; i < 12; i++) {
@@ -798,7 +769,7 @@ void TestSendQuality::lossMovesTheCameraBitrateDownToItsMinimum()
         plan.reportLoss(0.5, now);
         plan.advance(now);
     }
-    QCOMPARE(plan.advance(now).bitrate, 150'000);
+    QCOMPARE(plan.advance(now).bitrateBps, 150'000);
 }
 
 void TestSendQuality::aBitrateChangeWaitsOutTheTwoSecondsToo()
@@ -806,27 +777,26 @@ void TestSendQuality::aBitrateChangeWaitsOutTheTwoSecondsToo()
     CameraSendPlan plan = planOfASpeaker();
 
     plan.reportLoss(0.5, 500);
-    QCOMPARE(plan.advance(500).bitrate, 2'500'000);
-    QCOMPARE(plan.advance(1999).bitrate, 2'500'000);
-    QCOMPARE(plan.advance(2000).bitrate, 1'750'000);
+    QCOMPARE(plan.advance(500).bitrateBps, 2'500'000);
+    QCOMPARE(plan.advance(1999).bitrateBps, 2'500'000);
+    QCOMPARE(plan.advance(2000).bitrateBps, 1'750'000);
 }
 
 void TestSendQuality::aNewRowKeepsTheBitratesShareOfItsMaximum()
 {
     CameraSendPlan plan = planOfASpeaker();
     plan.reportLoss(0.5, 3000);
-    QCOMPARE(plan.advance(3000).bitrate, 1'750'000);
+    QCOMPARE(plan.advance(3000).bitrateBps, 1'750'000);
 
     plan.setWant(70);
     const CameraEncoding smaller = plan.advance(5000);
     QCOMPARE(smaller.size, QSize(640, 360));
-    QCOMPARE(smaller.bitrate, 437'500);
+    QCOMPARE(smaller.bitrateBps, 437'500);
 
-    // On the lowest row the minimum and the maximum are one and the same.
     plan.setWant(20);
-    QCOMPARE(plan.advance(7000).bitrate, 150'000);
+    QCOMPARE(plan.advance(7000).bitrateBps, 150'000);
     plan.reportLoss(0.5, 9000);
-    QCOMPARE(plan.advance(9000).bitrate, 150'000);
+    QCOMPARE(plan.advance(9000).bitrateBps, 150'000);
 }
 
 void TestSendQuality::thePlanSaysWhenItNextChangesByItself()
@@ -834,17 +804,14 @@ void TestSendQuality::thePlanSaysWhenItNextChangesByItself()
     CameraSendPlan plan;
     plan.start(1000);
 
-    // Silent since the camera came on: the frame rate drops fifteen seconds after that.
     QCOMPARE(plan.nextChangeIn(1000), std::optional<qint64>(15'000));
     QCOMPARE(plan.nextChangeIn(10'000), std::optional<qint64>(6000));
 
-    // A want that waits for the two seconds comes first.
     plan.setWant(50);
     QCOMPARE(plan.nextChangeIn(1500), std::optional<qint64>(1500));
     plan.advance(3000);
     QCOMPARE(plan.nextChangeIn(3000), std::optional<qint64>(13'000));
 
-    // Once the rate has dropped, or while it cannot, nothing is due.
     plan.advance(16'000);
     QVERIFY(!plan.nextChangeIn(16'000));
     plan.setSpeaking(true, 17'000);
@@ -857,7 +824,6 @@ void TestSendQuality::thePlanSaysWhenItNextChangesByItself()
     plan.setSharingScreen(true);
     QVERIFY(!plan.nextChangeIn(18'000));
 
-    // A change that is overdue is due now.
     plan.setWant(100);
     QCOMPARE(plan.nextChangeIn(30'000), std::optional<qint64>(0));
 }
@@ -867,26 +833,22 @@ void TestSendQuality::theReceiversEstimateIsACeiling()
     SendRateController rate;
     rate.restart(500'000, 9'000'000);
 
-    // One above what is in use changes nothing.
     QVERIFY(!rate.setReceiverLimit(20'000'000));
     QCOMPARE(rate.bitrate(), 9'000'000);
 
     QVERIFY(rate.setReceiverLimit(3'000'000));
     QCOMPARE(rate.bitrate(), 3'000'000);
 
-    // Never under the minimum, whatever it says.
     QVERIFY(rate.setReceiverLimit(100'000));
     QCOMPARE(rate.bitrate(), 500'000);
 
-    // New limits for the video are bounded by it as well.
-    rate.setReceiverLimit(0);
+    rate.setReceiverLimit(std::nullopt);
     QVERIFY(rate.setReceiverLimit(3'000'000));
     QVERIFY(!rate.setLimits(500'000, 6'000'000));
     QCOMPARE(rate.bitrate(), 3'000'000);
     QVERIFY(rate.setLimits(500'000, 2'000'000));
     QCOMPARE(rate.bitrate(), 2'000'000);
 
-    // Starting over forgets it.
     rate.restart(500'000, 9'000'000);
     QCOMPARE(rate.bitrate(), 9'000'000);
 }
@@ -900,7 +862,6 @@ void TestSendQuality::theReceiversEstimateIsFollowedDownAtOnceAndUpByWholeSteps(
     QVERIFY(rate.setReceiverLimit(3'990'000));
     QCOMPARE(rate.bitrate(), 3'990'000);
 
-    // An estimate that wanders about the same place does not have the encoder restarted for it.
     for (int estimate : { 4'000'000, 4'300'000, 3'995'000, 4'580'000 })
         QVERIFY(!rate.setReceiverLimit(estimate));
     QCOMPARE(rate.bitrate(), 3'990'000);
@@ -915,9 +876,9 @@ void TestSendQuality::liftingTheReceiversEstimateLeavesNoMark()
     rate.restart(500'000, 9'000'000);
     QVERIFY(rate.setReceiverLimit(1'000'000));
 
-    QVERIFY(rate.setReceiverLimit(0));
+    QVERIFY(rate.setReceiverLimit(std::nullopt));
     QCOMPARE(rate.bitrate(), 9'000'000);
-    QVERIFY(!rate.setReceiverLimit(0));
+    QVERIFY(!rate.setReceiverLimit(std::nullopt));
 }
 
 void TestSendQuality::lossLowersFromWhatTheReceiversEstimateAllows()
@@ -926,11 +887,9 @@ void TestSendQuality::lossLowersFromWhatTheReceiversEstimateAllows()
     rate.restart(500'000, 9'000'000);
     QVERIFY(rate.setReceiverLimit(2'000'000));
 
-    // Not from the nine megabits that losses alone had allowed, which would change nothing.
     QVERIFY(rate.report(0.5, 0));
     QCOMPARE(rate.bitrate(), 1'400'000);
 
-    // A clean stretch then raises it as ever, and the estimate still bounds that.
     for (qint64 now = 1000; now < 11'000; now += 1000)
         QVERIFY(!rate.report(0.0, now));
     QVERIFY(rate.report(0.0, 11'000));
@@ -943,9 +902,9 @@ void TestSendQuality::lossLowersFromWhatTheReceiversEstimateAllows()
 
 void TestSendQuality::theLowerEstimateOfTheWayIsItsCeiling()
 {
-    QCOMPARE(estimatedCeiling(0, 0), qint64(0));
-    QCOMPARE(estimatedCeiling(2'000'000, 0), qint64(2'000'000));
-    QCOMPARE(estimatedCeiling(0, 900'000), qint64(900'000));
+    QCOMPARE(estimatedCeiling(std::nullopt, std::nullopt), std::optional<qint64>());
+    QCOMPARE(estimatedCeiling(2'000'000, std::nullopt), qint64(2'000'000));
+    QCOMPARE(estimatedCeiling(std::nullopt, 900'000), qint64(900'000));
     QCOMPARE(estimatedCeiling(2'000'000, 900'000), qint64(900'000));
     QCOMPARE(estimatedCeiling(700'000, 900'000), qint64(700'000));
 }

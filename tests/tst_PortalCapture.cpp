@@ -5,6 +5,7 @@
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
 
 #include "PipeWireTestSource.hpp"
+#include "ProcessUsage.hpp"
 
 #include <QDBusArgument>
 #include <QDBusConnection>
@@ -35,6 +36,7 @@ extern "C" {
 
 using namespace Acheron::Core::Video;
 using Result = LinuxGrabber::Result;
+using ProcessUsage::threadsOfThisProcess;
 
 namespace {
 
@@ -145,11 +147,6 @@ int descriptorsOfThisProcess()
     return static_cast<int>(QDir(QStringLiteral("/proc/self/fd")).entryList(QDir::Files | QDir::System | QDir::NoDotAndDotDot).size());
 }
 
-int threadsOfThisProcess()
-{
-    return static_cast<int>(QDir(QStringLiteral("/proc/self/task")).entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
-}
-
 std::optional<int> pipeWireObjectsOfThisProcess()
 {
     QProcess dump;
@@ -248,8 +245,6 @@ Q_DECLARE_METATYPE(OfferedSize)
 
 namespace {
 
-// A desktop portal of the test's own, on a session bus of the test's own and a thread of its
-// own, which answers as it is told to and remembers what it was asked. It shows nothing.
 class PortalOfTheTests : public QDBusVirtualObject
 {
 public:
@@ -404,8 +399,8 @@ private:
         return { { QStringLiteral("streams"), QVariant::fromValue(QList<OfferedStream>{ OfferedStream{ told.node, properties } }) }, { QStringLiteral("restore_token"), told.nextToken } };
     }
 
-    // A portal that names its requests itself is one whose answer cannot be listened for
-    // before it is asked, so this one gives whoever asked the time to find out where to listen.
+    // a portal that names its requests itself cant be listened to before it is asked, so it gives the
+    // caller time to find out where to listen
     void respond(const QString &request, uint response, const QVariantMap &results)
     {
         QTimer::singleShot(told.namesItsRequestsItself ? 200 : 0, this, [request, response, results] {
@@ -745,7 +740,6 @@ void TestPortalCapture::openingAndClosingTwentyTimesLeavesNothingBehind()
     const std::optional<int> objects = pipeWireObjectsOfThisProcess();
     if (!objects)
         QSKIP("pw-dump is not here to count what PipeWire holds for this process.");
-    // The source's own client and node, and nothing left of the tests before this one.
     QTRY_COMPARE(pipeWireObjectsOfThisProcess().value_or(-1), 2);
     QVERIFY(captureOnce());
     const int threads = threadsOfThisProcess();
@@ -950,8 +944,6 @@ void TestPortalCapture::anAskingWhoseReceiverIsGoneAnswersNobodyAndLeavesNoSessi
 
     bool answered = false;
     {
-        // Gone before the portal has answered the first call, which is two calls before the
-        // one that shows its dialog.
         QObject receiver;
         PortalCapture::choose(CaptureSource::Kind::Screen, &receiver, [&](const CaptureSource &, const QString &) { answered = true; });
     }
@@ -965,8 +957,7 @@ void TestPortalCapture::anAskingThePortalTurnsDownEndsWithAReasonAndNoSession()
     if (!PortalCapture::usable())
         QSKIP("There is no desktop portal with a screen cast on the session bus.");
 
-    // xdg-desktop-portal turns down a token that is no UUID in the call before the one that
-    // shows its dialog. The receiver goes after two seconds, and any dialog with it.
+    // xdg-desktop-portal refuses a token that isnt a UUID in the call before the dialog
     QString token = QStringLiteral("not-a-token");
     CaptureSource handedOver;
     QString reason;
@@ -990,8 +981,6 @@ void TestPortalCapture::anAskingThePortalTurnsDownEndsWithAReasonAndNoSession()
     QCOMPARE(sessionsAtThePortal(), 0);
 }
 
-// The slots of TestPortalCapture that need a portal to misbehave, or to answer without a
-// dialog. They run in a process of their own, whose session bus is one the test started.
 class TestPortalOfTheTests : public QObject
 {
     Q_OBJECT
@@ -1109,7 +1098,6 @@ void TestPortalOfTheTests::closingThePickerWhileTheDialogIsUpClosesTheSession()
         QObject receiver;
         PortalCapture::choose(CaptureSource::Kind::Window, &receiver, [&answer](const CaptureSource &source, const QString &why) { answer = { answer.answers + 1, source, why }; });
         QTRY_VERIFY(portal.whatWasAsked().calls.contains(QStringLiteral("Start")));
-        // As long as the user likes: the dialog has no deadline.
         QTest::qWait(6500);
         QCOMPARE(answer.answers, 0);
         QVERIFY(!portal.whatWasAsked().calls.contains(QStringLiteral("Session.Close")));
@@ -1184,7 +1172,6 @@ void TestPortalOfTheTests::aSourceChosenInTheDialogIsCapturedAndReleased()
     QVERIFY(firstPictureArrives(source, grabber.get(), frame.get(), 91));
     QCOMPARE(pixelsThatDiffer(frame.get(), 91), 0);
 
-    // Ended from the desktop's own indicator.
     portal.closeTheSession();
     QTRY_COMPARE(grabber->grab(frame.get(), milliseconds(50)), Result::Closed);
     QVERIFY(!portal.whatWasAsked().calls.contains(QStringLiteral("Session.Close")));
@@ -1220,8 +1207,7 @@ void TestPortalOfTheTests::aSourceIsOpenedAgainAndAgainOnThePortalsOneConnection
 
 void TestPortalCapture::aPortalOfTheTestsOwnIsAskedOnABusOfTheTestsOwn()
 {
-    // A bus that starts no service: the desktop's own configuration would have it start the
-    // real portal for whoever asks for one, and that one shows dialogs.
+    // a bus that starts no service: the desktop's own would start the real portal, which shows dialogs
     QTemporaryDir place;
     QFile configuration(place.filePath(QStringLiteral("bus.conf")));
     QVERIFY(configuration.open(QIODevice::WriteOnly));

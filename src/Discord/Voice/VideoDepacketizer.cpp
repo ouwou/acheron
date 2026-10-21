@@ -1,5 +1,9 @@
 #include "VideoDepacketizer.hpp"
 
+#include "Av1Obu.hpp"
+#include "NalUnits.hpp"
+#include "RtpVideoFormat.hpp"
+
 #include <QStringList>
 
 #include <algorithm>
@@ -13,27 +17,12 @@ namespace {
 
 using Payload = std::span<const uint8_t>;
 
-constexpr std::array<uint8_t, 4> START_CODE = { 0, 0, 0, 1 };
-
 void appendStartCode(std::vector<uint8_t> &frame)
 {
     frame.insert(frame.end(), START_CODE.begin(), START_CODE.end());
 }
 
-void append(std::vector<uint8_t> &frame, Payload bytes)
-{
-    frame.insert(frame.end(), bytes.begin(), bytes.end());
-}
-
-// RFC 6184
-constexpr uint8_t H264_TYPE_MASK = 0x1F;
-constexpr uint8_t H264_IDR = 5;
-constexpr uint8_t H264_SPS = 7;
-constexpr uint8_t H264_STAP_A = 24;
-constexpr uint8_t H264_FU_A = 28;
-constexpr uint8_t FU_START = 0x80;
-
-// A slice whose first_mb_in_slice is 0 starts a picture; ue(v) codes 0 as a single 1 bit.
+// first_mb_in_slice 0 starts a picture; ue(v) codes 0 as a single 1 bit
 bool beginsPicture(Payload sliceData)
 {
     return !sliceData.empty() && (sliceData[0] & 0x80);
@@ -67,7 +56,6 @@ bool h264StartsKeyframe(Payload payload)
     return false;
 }
 
-// Aggregation packets of both H264 and H265 are a run of 16-bit lengths, each followed by a NAL.
 bool appendAggregatedNals(Payload units, std::vector<uint8_t> &frame)
 {
     while (!units.empty()) {
@@ -78,7 +66,7 @@ bool appendAggregatedNals(Payload units, std::vector<uint8_t> &frame)
         if (size == 0 || size > units.size())
             return false;
         appendStartCode(frame);
-        append(frame, units.first(size));
+        appendBytes(frame, units.first(size));
         units = units.subspan(size);
     }
     return true;
@@ -102,7 +90,7 @@ bool assembleH264(std::span<const Payload> payloads, std::vector<uint8_t> &frame
             } else if (!inFragment) {
                 return false;
             }
-            append(frame, payload.subspan(2));
+            appendBytes(frame, payload.subspan(2));
             continue;
         }
 
@@ -112,30 +100,12 @@ bool assembleH264(std::span<const Payload> payloads, std::vector<uint8_t> &frame
                 return false;
         } else if (type >= 1 && type <= 23) {
             appendStartCode(frame);
-            append(frame, payload);
+            appendBytes(frame, payload);
         } else {
             return false;
         }
     }
     return !frame.empty();
-}
-
-// RFC 7798
-constexpr uint8_t H265_VPS = 32;
-constexpr uint8_t H265_SPS = 33;
-constexpr uint8_t H265_AP = 48;
-constexpr uint8_t H265_FU = 49;
-constexpr uint8_t H265_IRAP_FIRST = 16;
-constexpr uint8_t H265_IRAP_LAST = 23;
-
-uint8_t h265Type(uint8_t firstHeaderByte)
-{
-    return (firstHeaderByte >> 1) & 0x3F;
-}
-
-bool h265IsIrap(uint8_t type)
-{
-    return type >= H265_IRAP_FIRST && type <= H265_IRAP_LAST;
 }
 
 bool h265StartsKeyframe(Payload payload)
@@ -146,7 +116,7 @@ bool h265StartsKeyframe(Payload payload)
     const uint8_t type = h265Type(payload[0]);
     if (type == H265_VPS || type == H265_SPS)
         return true;
-    // first_slice_segment_in_pic_flag is the first bit of the slice header.
+    // first_slice_segment_in_pic_flag is the slice header's first bit
     if (h265IsIrap(type))
         return payload[2] & 0x80;
     if (type == H265_AP) {
@@ -184,7 +154,7 @@ bool assembleH265(std::span<const Payload> payloads, std::vector<uint8_t> &frame
             } else if (!inFragment) {
                 return false;
             }
-            append(frame, payload.subspan(3));
+            appendBytes(frame, payload.subspan(3));
             continue;
         }
 
@@ -194,7 +164,7 @@ bool assembleH265(std::span<const Payload> payloads, std::vector<uint8_t> &frame
                 return false;
         } else if (type < H265_AP) {
             appendStartCode(frame);
-            append(frame, payload);
+            appendBytes(frame, payload);
         } else {
             return false;
         }
@@ -202,7 +172,7 @@ bool assembleH265(std::span<const Payload> payloads, std::vector<uint8_t> &frame
     return !frame.empty();
 }
 
-// RFC 7741. Returns the payload behind the descriptor, and whether this packet opens a frame.
+// RFC 7741
 bool stripVp8Descriptor(Payload payload, Payload &data, bool &opensFrame)
 {
     if (payload.empty())
@@ -210,24 +180,24 @@ bool stripVp8Descriptor(Payload payload, Payload &data, bool &opensFrame)
 
     const uint8_t first = payload[0];
     size_t offset = 1;
-    if (first & 0x80) {
+    if (first & VP8_EXTENDED) {
         if (payload.size() <= offset)
             return false;
         const uint8_t extension = payload[offset++];
-        if (extension & 0x80) {
+        if (extension & VP8_HAS_PICTURE_ID) {
             if (payload.size() <= offset)
                 return false;
-            offset += (payload[offset] & 0x80) ? 2 : 1;
+            offset += (payload[offset] & VP8_LONG_PICTURE_ID) ? 2 : 1;
         }
-        if (extension & 0x40)
+        if (extension & VP8_HAS_TL0_PICTURE_INDEX)
             offset += 1;
-        if (extension & 0x30)
+        if (extension & VP8_HAS_TEMPORAL_ID_OR_KEY_INDEX)
             offset += 1;
     }
     if (payload.size() <= offset)
         return false;
 
-    opensFrame = (first & 0x10) && (first & 0x07) == 0;
+    opensFrame = (first & VP8_PARTITION_START) && (first & VP8_PARTITION_ID_MASK) == 0;
     data = payload.subspan(offset);
     return true;
 }
@@ -238,7 +208,7 @@ bool vp8StartsKeyframe(Payload payload)
     bool opensFrame = false;
     if (!stripVp8Descriptor(payload, data, opensFrame))
         return false;
-    // The frame tag's lowest bit is 0 on a key frame.
+    // VP8: bit 0 of the first byte is clear on a key frame
     return opensFrame && !(data[0] & 0x01);
 }
 
@@ -253,69 +223,16 @@ bool assembleVp8(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
         if (first && !opensFrame)
             return false;
         first = false;
-        append(frame, data);
+        appendBytes(frame, data);
     }
     return !frame.empty();
 }
 
-// https://aomediacodec.github.io/av1-rtp-spec/
-constexpr uint8_t AV1_CONTINUES_PREVIOUS = 0x80;
-constexpr uint8_t AV1_CONTINUES_IN_NEXT = 0x40;
-constexpr uint8_t AV1_NEW_SEQUENCE = 0x08;
-constexpr uint8_t OBU_HAS_EXTENSION = 0x04;
-constexpr uint8_t OBU_HAS_SIZE = 0x02;
-constexpr int LEB128_MAX_BYTES = 8;
-
-bool readLeb128(Payload &bytes, size_t &value)
-{
-    value = 0;
-    for (int i = 0; i < LEB128_MAX_BYTES; i++) {
-        if (bytes.empty())
-            return false;
-        const uint8_t byte = bytes[0];
-        bytes = bytes.subspan(1);
-        value |= size_t(byte & 0x7F) << (7 * i);
-        if (!(byte & 0x80))
-            return true;
-    }
-    return false;
-}
-
-void appendLeb128(std::vector<uint8_t> &out, size_t value)
-{
-    do {
-        uint8_t byte = value & 0x7F;
-        value >>= 7;
-        if (value != 0)
-            byte |= 0x80;
-        out.push_back(byte);
-    } while (value != 0);
-}
+using namespace Av1;
 
 bool av1StartsKeyframe(Payload payload)
 {
     return !payload.empty() && !(payload[0] & AV1_CONTINUES_PREVIOUS) && (payload[0] & AV1_NEW_SEQUENCE);
-}
-
-// Splits an OBU as it travels in RTP into its header bytes and its payload. An element should
-// not carry a size field, but one that does has it removed here.
-bool splitObu(Payload obu, Payload &header, Payload &body)
-{
-    if (obu.empty())
-        return false;
-    const size_t headerSize = (obu[0] & OBU_HAS_EXTENSION) ? 2 : 1;
-    if (obu.size() < headerSize)
-        return false;
-
-    header = obu.first(headerSize);
-    body = obu.subspan(headerSize);
-    if (obu[0] & OBU_HAS_SIZE) {
-        size_t size = 0;
-        if (!readLeb128(body, size) || size > body.size())
-            return false;
-        body = body.first(size);
-    }
-    return true;
 }
 
 bool assembleAv1(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
@@ -329,7 +246,7 @@ bool assembleAv1(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
             return false;
 
         const uint8_t aggregation = payload[0];
-        const int elementCount = (aggregation >> 4) & 0x03;
+        const int elementCount = (aggregation >> AV1_ELEMENT_COUNT_SHIFT) & AV1_ELEMENT_COUNT_MASK;
         const bool continuesPrevious = aggregation & AV1_CONTINUES_PREVIOUS;
         if (continuesPrevious != openObu || (i == 0 && continuesPrevious))
             return false;
@@ -337,7 +254,6 @@ bool assembleAv1(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
 
         for (int index = 0; !payload.empty(); index++) {
             Payload element = payload;
-            // With a count, every element but the last carries its length; without, all do.
             if (elementCount == 0 || index + 1 < elementCount) {
                 size_t size = 0;
                 if (!readLeb128(payload, size) || size > payload.size())
@@ -364,48 +280,41 @@ bool assembleAv1(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
         return false;
 
     for (size_t i = 0; i < obus.size(); i++) {
-        Payload header, body;
-        if (!splitObu(obus[i], header, body))
+        Payload bytes = obus[i];
+        const std::optional<ParsedObu> obu = readObu(bytes);
+        if (!obu)
             return false;
 
         const bool last = i + 1 == obus.size();
-        frame.push_back(static_cast<uint8_t>(last ? (header[0] & ~OBU_HAS_SIZE) : (header[0] | OBU_HAS_SIZE)));
-        append(frame, header.subspan(1));
+        frame.push_back(static_cast<uint8_t>(last ? (obu->header[0] & ~OBU_HAS_SIZE) : (obu->header[0] | OBU_HAS_SIZE)));
+        appendBytes(frame, obu->header.subspan(1));
         if (!last)
-            appendLeb128(frame, body.size());
-        append(frame, body);
+            appendLeb128(frame, obu->body.size());
+        appendBytes(frame, obu->body);
     }
     return true;
 }
 
 void sizeLastObu(std::vector<uint8_t> &frame)
 {
-    size_t offset = 0;
-    while (offset < frame.size()) {
-        const uint8_t header = frame[offset];
-        const size_t headerSize = (header & OBU_HAS_EXTENSION) ? 2 : 1;
-        if (offset + headerSize > frame.size())
+    for (Payload rest(frame); !rest.empty();) {
+        const size_t offset = frame.size() - rest.size();
+        const std::optional<ParsedObu> obu = readObu(rest);
+        if (!obu)
             return;
+        if (obu->hasSize)
+            continue;
 
-        if (!(header & OBU_HAS_SIZE)) {
-            std::vector<uint8_t> size;
-            appendLeb128(size, frame.size() - offset - headerSize);
-            frame[offset] = header | OBU_HAS_SIZE;
-            frame.insert(frame.begin() + static_cast<std::ptrdiff_t>(offset + headerSize), size.begin(), size.end());
-            return;
-        }
-
-        Payload rest(frame.data() + offset + headerSize, frame.size() - offset - headerSize);
-        const size_t before = rest.size();
-        size_t size = 0;
-        if (!readLeb128(rest, size) || size > rest.size())
-            return;
-        offset += headerSize + (before - rest.size()) + size;
+        std::vector<uint8_t> size;
+        appendLeb128(size, obu->body.size());
+        frame[offset] |= OBU_HAS_SIZE;
+        frame.insert(frame.begin() + static_cast<std::ptrdiff_t>(offset + obu->header.size()), size.begin(), size.end());
+        return;
     }
 }
 
-// The trailer the end-to-end encryptor appends: an 8-byte tag, the nonce, the ranges it left
-// readable as (offset, size) pairs, the trailer's own size, and the marker 0xFAFA.
+// DAVE's trailer: an 8-byte tag, the nonce, the clear ranges as (offset, size) pairs, the trailer's
+// own size, and 0xFAFA
 QString describeEncryptionTrailer(Payload frame)
 {
     constexpr size_t TAG_SIZE = 8;
@@ -437,16 +346,11 @@ QString describeNals(Payload frame, bool h265)
     constexpr int MAX_LISTED = 16;
 
     QStringList units;
-    size_t offset = 0;
-    while (offset + START_CODE.size() < frame.size() && units.size() < MAX_LISTED) {
-        if (!std::equal(START_CODE.begin(), START_CODE.end(), frame.begin() + static_cast<std::ptrdiff_t>(offset))) {
-            offset++;
-            continue;
-        }
-        const size_t header = offset + START_CODE.size();
-        const int type = h265 ? h265Type(frame[header]) : (frame[header] & H264_TYPE_MASK);
-        units.append(QStringLiteral("%1@%2").arg(type).arg(offset));
-        offset = header;
+    for (Payload nal : splitAnnexB(frame)) {
+        if (units.size() == MAX_LISTED)
+            break;
+        const int type = h265 ? h265Type(nal[0]) : h264Type(nal[0]);
+        units.append(QStringLiteral("%1@%2").arg(type).arg(nal.data() - frame.data()));
     }
     return units.join(QLatin1Char(' '));
 }
@@ -485,7 +389,6 @@ bool startsWithParameterSets(VideoCodec codec, std::span<const uint8_t> payload)
         if (payload.empty())
             return false;
         const uint8_t type = payload[0] & H264_TYPE_MASK;
-        // An aggregate that reached startsKeyframe() by way of its parameter sets counts too.
         return type == H264_SPS || (type == H264_STAP_A && h264StartsKeyframe(payload));
     }
     case VideoCodec::H265: {
@@ -496,7 +399,6 @@ bool startsWithParameterSets(VideoCodec codec, std::span<const uint8_t> payload)
     }
     case VideoCodec::VP8:
     case VideoCodec::AV1:
-        // These formats mark the first packet of a key frame itself.
         return startsKeyframe(codec, payload);
     case VideoCodec::Unknown:
         break;

@@ -3,6 +3,7 @@
 #include "Core/Audio/LoopbackCapture.hpp"
 #include "Core/Media/CodecSupport.hpp"
 #include "Core/Video/ScreenCapture.hpp"
+#include "UI/CaptureMethodCombo.hpp"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -100,15 +101,7 @@ ScreenSharePicker::ScreenSharePicker(const Core::Video::SharerTier &tier, QWidge
     optionsRow->addWidget(framerateCombo);
     optionsRow->addSpacing(12);
     optionsRow->addWidget(new QLabel(tr("Capture Method"), getContainer()));
-    methodCombo = new QComboBox(getContainer());
-    methodCombo->addItem(tr("Automatic"), static_cast<int>(CaptureMethod::Auto));
-#ifdef Q_OS_WIN
-    methodCombo->addItem(tr("Graphics Capture"), static_cast<int>(CaptureMethod::GraphicsCapture));
-    methodCombo->addItem(tr("Desktop Duplication"), static_cast<int>(CaptureMethod::DesktopDuplication));
-#else
-    methodCombo->addItem(tr("Desktop Portal"), static_cast<int>(CaptureMethod::Portal));
-    methodCombo->addItem(tr("X11"), static_cast<int>(CaptureMethod::X11));
-#endif
+    methodCombo = makeCaptureMethodCombo(getContainer());
     optionsRow->addWidget(methodCombo);
     optionsRow->addStretch(1);
     layout->addLayout(optionsRow);
@@ -136,13 +129,6 @@ ScreenSharePicker::ScreenSharePicker(const Core::Video::SharerTier &tier, QWidge
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, this, &ScreenSharePicker::onShareClicked);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-
-    // A remembered method this machine has since lost is shown as the automatic choice it
-    // would be captured by anyway.
-    const CaptureMethod remembered = Core::Video::captureMethod();
-    for (int i = 0; i < methodCombo->count(); i++)
-        setItemEnabled(methodCombo, i, Core::Video::captureMethodUsable(static_cast<CaptureMethod>(methodCombo->itemData(i).toInt())));
-    methodCombo->setCurrentIndex(methodCombo->findData(static_cast<int>(Core::Video::captureMethodUsable(remembered) ? remembered : CaptureMethod::Auto)));
 
     const bool soundCapturable = Core::Audio::processLoopbackAvailable();
     audioCheck->setEnabled(soundCapturable);
@@ -201,8 +187,8 @@ QListWidget *ScreenSharePicker::makeSourceList(int visibleRows)
 
 void ScreenSharePicker::listSources()
 {
-    const QListWidgetItem *chosen = chosenItem();
-    const QString chosenId = chosen ? sources[chosen->data(Qt::UserRole).toInt()].id : QString();
+    const std::optional<CaptureSource> chosen = chosenSource();
+    const QString chosenId = chosen ? chosen->id : QString();
 
     {
         const QSignalBlocker screensBlocked(screenList);
@@ -230,13 +216,13 @@ void ScreenSharePicker::listSources()
     }
 
     listPrograms();
-    refreshShareButton();
+    refreshControls();
     loadThumbnailsFromTheFirst();
 }
 
 QList<CaptureSource> ScreenSharePicker::offeredSources() const
 {
-    const auto method = static_cast<CaptureMethod>(methodCombo->currentData().toInt());
+    const CaptureMethod method = chosenCaptureMethod(methodCombo);
     return Core::Video::captureSources(method) + Core::Video::captureWindows(method);
 }
 
@@ -248,8 +234,7 @@ void ScreenSharePicker::listPrograms()
         programCombo->addItem(program.name, program.processId);
 }
 
-// One still for each turn of the event loop, so that the picker is up before the first and
-// stays usable while a window is slow to draw itself.
+// one still per event loop turn, so the picker stays usable while a window is slow to draw
 void ScreenSharePicker::loadThumbnailsFromTheFirst()
 {
     thumbnailsLoaded = 0;
@@ -290,6 +275,14 @@ QListWidgetItem *ScreenSharePicker::chosenItem() const
     return nullptr;
 }
 
+std::optional<CaptureSource> ScreenSharePicker::chosenSource() const
+{
+    const QListWidgetItem *chosen = chosenItem();
+    if (!chosen)
+        return std::nullopt;
+    return sources[chosen->data(Qt::UserRole).toInt()];
+}
+
 void ScreenSharePicker::onRefreshClicked()
 {
     listSources();
@@ -299,14 +292,14 @@ void ScreenSharePicker::onScreenSelected()
 {
     if (!screenList->selectedItems().isEmpty())
         windowList->clearSelection();
-    refreshShareButton();
+    refreshControls();
 }
 
 void ScreenSharePicker::onWindowSelected()
 {
     if (!windowList->selectedItems().isEmpty())
         screenList->clearSelection();
-    refreshShareButton();
+    refreshControls();
 }
 
 void ScreenSharePicker::showQuality()
@@ -341,17 +334,17 @@ void ScreenSharePicker::onMethodChosen(int)
 
 void ScreenSharePicker::onAudioToggled(bool)
 {
-    refreshShareButton();
+    refreshControls();
 }
 
 void ScreenSharePicker::onEncodersKnown(const QList<Discord::Voice::VideoCodec> &codecs)
 {
     encodersKnown = true;
     canEncode = !codecs.isEmpty();
-    refreshShareButton();
+    refreshControls();
 }
 
-void ScreenSharePicker::refreshShareButton()
+void ScreenSharePicker::refreshControls()
 {
     if (!choosingFailure.isEmpty())
         noteLabel->setText(choosingFailure);
@@ -365,23 +358,23 @@ void ScreenSharePicker::refreshShareButton()
         noteLabel->clear();
     noteLabel->setVisible(!noteLabel->text().isEmpty());
 
-    const QListWidgetItem *chosen = chosenItem();
-    const CaptureSource source = chosen ? sources[chosen->data(Qt::UserRole).toInt()] : CaptureSource();
+    const std::optional<CaptureSource> chosen = chosenSource();
+    const CaptureSource source = chosen.value_or(CaptureSource());
     const bool ofUnknownProgram = source.kind == CaptureSource::Kind::Window && Core::Video::isChosenByTheDesktop(source);
     programCombo->setVisible(ofUnknownProgram && audioCheck->isEnabled());
     programCombo->setEnabled(audioCheck->isChecked());
 
-    shareButton->setEnabled(canEncode && chosen != nullptr && !choosing);
+    shareButton->setEnabled(canEncode && chosen && !choosing);
 }
 
 void ScreenSharePicker::onShareClicked()
 {
-    const QListWidgetItem *chosen = chosenItem();
+    const std::optional<CaptureSource> chosen = chosenSource();
     if (!canEncode || !chosen || choosing)
         return;
 
     rememberQuality(quality);
-    Core::Video::setCaptureMethod(static_cast<CaptureMethod>(methodCombo->currentData().toInt()));
+    Core::Video::setCaptureMethod(chosenCaptureMethod(methodCombo));
     if (audioCheck->isEnabled())
         QSettings().setValue(AUDIO_KEY, audioCheck->isChecked());
 
@@ -389,8 +382,8 @@ void ScreenSharePicker::onShareClicked()
     const bool withAudio = audioCheck->isEnabled() && audioCheck->isChecked();
     choosing = true;
     choosingFailure.clear();
-    refreshShareButton();
-    Core::Video::chooseSource(sources[chosen->data(Qt::UserRole).toInt()], this, [this, program, withAudio](const CaptureSource &source, const QString &failure) { onSourceChosen(source, failure, program, withAudio); });
+    refreshControls();
+    Core::Video::chooseSource(*chosen, this, [this, program, withAudio](const CaptureSource &source, const QString &failure) { onSourceChosen(source, failure, program, withAudio); });
 }
 
 void ScreenSharePicker::onSourceChosen(const CaptureSource &chosen, const QString &failure, quint32 program, bool withAudio)
@@ -398,7 +391,7 @@ void ScreenSharePicker::onSourceChosen(const CaptureSource &chosen, const QStrin
     choosing = false;
     if (chosen.id.isEmpty()) {
         choosingFailure = failure;
-        refreshShareButton();
+        refreshControls();
         return;
     }
 

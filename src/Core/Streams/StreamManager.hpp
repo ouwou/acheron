@@ -13,15 +13,11 @@
 namespace Acheron {
 namespace Core {
 
-// What the gateway has said about one stream this account owns or asked to watch.
 struct StreamRecord
 {
     enum class State {
-        // STREAM_CREATE arrived; the server has not yet said where the stream is hosted.
         AwaitingEndpoint,
-        // An endpoint and token are known, so an RTC connection can be opened.
         Ready,
-        // The server marked the stream unavailable and is expected to announce it again.
         Reconnecting,
     };
 
@@ -46,10 +42,13 @@ enum class StreamEndReason {
 };
 
 [[nodiscard]] StreamEndReason streamEndReasonFromString(const QString &reason);
+[[nodiscard]] inline bool isRefusal(StreamEndReason reason)
+{
+    return reason == StreamEndReason::Unauthorized || reason == StreamEndReason::SafetyGuildRateLimited;
+}
 
-// Tracks the streams the gateway is telling this account about. The gateway only sends stream
-// events to a stream's owner and its viewers, so this is empty until the account starts or
-// watches one; who else is live comes from voice states.
+// the gateway sends stream events only to the owner and viewers; who else is live comes from voice
+// states
 class StreamManager : public QObject
 {
     Q_OBJECT
@@ -61,7 +60,6 @@ public:
     void handleStreamUpdate(const Discord::StreamUpdate &event);
     void handleStreamDelete(const Discord::StreamDelete &event);
 
-    // A new gateway session forgets every stream; a resumed one keeps them.
     void reset();
 
     [[nodiscard]] std::optional<StreamRecord> stream(const QString &streamKey) const;

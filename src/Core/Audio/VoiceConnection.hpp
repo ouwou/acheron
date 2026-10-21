@@ -13,13 +13,8 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-// One RTC connection and the thread it runs on. The voice connection is one of these, and so is
-// each Go Live stream connection.
-//
-// The client lives on the connection's thread, and this object is its face on the thread that
-// made it: the client's signals come out of it there, from start() until stop() and never after,
-// so whatever a connection that has been stopped still had on its way is dropped and cannot be
-// taken for the next connection's.
+// the client lives on the connection's thread, and its signals come out of this object only between
+// start() and stop(), so nothing a stopped connection still had on its way reaches the next one
 class VoiceConnection : public QObject
 {
     Q_OBJECT
@@ -27,24 +22,19 @@ public:
     explicit VoiceConnection(const Discord::Voice::ConnectionParams &params, QObject *parent = nullptr);
     ~VoiceConnection() override;
 
-    // For what has to be connected on the connection's own thread, before start(): the audio
-    // pipeline, the video frame handler, encoded frames to send.
+    // for wiring on the connection's own thread before start()
     [[nodiscard]] Discord::Voice::VoiceClient *client() const { return voiceClient; }
     [[nodiscard]] QThread *networkThread() const { return connectionThread; }
-    [[nodiscard]] bool isRunning() const { return connectionThread->isRunning(); }
 
-    // Objects that have to live on the connection's thread while it runs. They come back to
-    // this object's thread when the connection stops.
     void adopt(QObject *object);
 
-    // Refuses, before any socket opens, when the account's proxy cannot carry UDP: every RTC
-    // connection sends its media over UDP, and falling back to a direct route would leak it.
+    // refuses before any socket opens when the account's proxy cant carry UDP: falling back to a direct
+    // route would leak the media
     bool start();
 
-    // `beforeStop` runs on the connection's thread ahead of the client being stopped.
+    // `beforeStop` runs on the connection's thread before the client stops
     void stop(const std::function<void()> &beforeStop = {});
 
-    // Calls the client on its own thread, which is how everything is asked of it once it runs.
     template <typename Call>
     void run(Call call)
     {

@@ -43,7 +43,7 @@ public:
     void sendDaveInvalidCommitWelcome(int transitionId);
 
     [[nodiscard]] uint64_t currentGeneration() const { return generation.load(); }
-    // Once hardStop() has been called. Any thread.
+    // any thread
     [[nodiscard]] bool isStopping() const { return !running; }
 
 signals:
@@ -93,7 +93,6 @@ private:
 
     void networkLoop();
     void heartbeatLoop();
-    // Returns early when hardStop() is called meanwhile.
     void waitUnlessStopped(std::chrono::milliseconds delay);
 
 private:

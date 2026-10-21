@@ -1,6 +1,7 @@
 #include "Core/Video/CardScaler.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 
 #include <QString>
 
@@ -13,13 +14,7 @@ extern "C" {
 }
 
 #ifdef Q_OS_WIN
-#include <windows.h>
-
-#include <d3d11_1.h>
-
-extern "C" {
-#include <libavutil/hwcontext_d3d11va.h>
-}
+#include "Core/Video/Windows/Direct3D.hpp"
 #elif defined(ACHERON_HAVE_AVFILTER)
 extern "C" {
 #include <libavfilter/avfilter.h>
@@ -36,7 +31,6 @@ namespace Video {
 
 namespace {
 
-// Whether the card has scaled a picture, or refused to in a way it will go on refusing.
 enum class Verdict {
     Untried,
     Works,
@@ -50,76 +44,21 @@ std::atomic<Verdict> verdict{ Verdict::Untried };
 
 #ifdef Q_OS_WIN
 
+using namespace Win;
+
 namespace {
 
-// A window that moves from screen to screen brings a size of texture with every screen.
 constexpr size_t MOST_PROCESSORS = 4;
-
-template <typename T>
-void drop(T *&object)
-{
-    if (object)
-        object->Release();
-    object = nullptr;
-}
-
-// The card's one context for drawing is shared with whatever captures and with the encoder.
-class DeviceLock
-{
-public:
-    explicit DeviceLock(AVD3D11VADeviceContext *device) : device(device) { device->lock(device->lock_ctx); }
-    ~DeviceLock() { device->unlock(device->lock_ctx); }
-
-    DeviceLock(const DeviceLock &) = delete;
-    DeviceLock &operator=(const DeviceLock &) = delete;
-
-private:
-    AVD3D11VADeviceContext *device;
-};
-
-AVD3D11VADeviceContext *direct3d(AVBufferRef *device)
-{
-    return static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWDeviceContext *>(device->data)->hwctx);
-}
 
 RECT native(const QRect &rect)
 {
     return { rect.left(), rect.top(), rect.left() + rect.width(), rect.top() + rect.height() };
 }
 
-// From the screen's full-range RGB to what the pictures are marked as. Left alone, the
-// processor converts with coefficients of the driver's choosing.
-void setColourSpaces(ID3D11VideoContext *context, ID3D11VideoProcessor *processor, bool toYuv, bool bt601)
-{
-    // The older call leaves the meaning of the RGB range to the driver, and drivers disagree.
-    ID3D11VideoContext1 *modern = nullptr;
-    if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11VideoContext1), reinterpret_cast<void **>(&modern)))) {
-        DXGI_COLOR_SPACE_TYPE output = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
-        if (toYuv)
-            output = bt601 ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
-        modern->VideoProcessorSetStreamColorSpace1(processor, 0, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
-        modern->VideoProcessorSetOutputColorSpace1(processor, output);
-        modern->Release();
-        return;
-    }
-
-    // All zero is full-range RGB.
-    const D3D11_VIDEO_PROCESSOR_COLOR_SPACE input = {};
-    context->VideoProcessorSetStreamColorSpace(processor, 0, &input);
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE output = {};
-    if (toYuv) {
-        output.YCbCr_Matrix = bt601 ? 0 : 1;
-        output.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
-    }
-    context->VideoProcessorSetOutputColorSpace(processor, &output);
-}
-
 } // namespace
 
 struct CardScaler::Card
 {
-    // One for every size of texture pictures have come in. A window comes cut out of its
-    // screen's picture and in one of its own by turns.
     struct Processor
     {
         QSize textureSize;
@@ -139,12 +78,10 @@ struct CardScaler::Card
 
     AVBufferRef *device = nullptr;
     Output output;
-    // The frames the scaled pictures are, which an encoder is opened with: they stay the same
-    // for as long as the card and the output do.
+    // an encoder relies on these staying the same while the card and output do
     AVBufferRef *pictures = nullptr;
     AVPixelFormat pictureFormat = AV_PIX_FMT_NONE;
     std::vector<Processor> processors;
-    // What the card would not do, for the log.
     const char *refused = "";
     HRESULT refusedWith = S_OK;
 };
@@ -245,15 +182,7 @@ const CardScaler::Card::Processor *CardScaler::Card::processorFor(ID3D11Texture2
     made.textureSize = textureSize;
     made.textureFormat = description.Format;
 
-    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = {};
-    content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
-    content.InputFrameRate = { 60, 1 };
-    content.InputWidth = description.Width;
-    content.InputHeight = description.Height;
-    content.OutputFrameRate = { 60, 1 };
-    content.OutputWidth = static_cast<UINT>(output.size.width());
-    content.OutputHeight = static_cast<UINT>(output.size.height());
-    content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = processorContent(QSize(static_cast<int>(description.Width), static_cast<int>(description.Height)), output.size);
 
     ID3D11VideoDevice *video = direct3d(device)->video_device;
     refused = "it made no video processor";
@@ -292,7 +221,7 @@ bool CardScaler::Card::choosePictures(const Processor &processor)
         if (FAILED(processor.enumerator->CheckVideoProcessorFormat(made, &support)) || !(support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT))
             continue;
 
-        // Not every driver makes a texture that is drawn into and is an encoder's input as well.
+        // not every driver makes a texture that is both a render target and encoder input
         for (UINT bindFlags : { static_cast<UINT>(D3D11_BIND_RENDER_TARGET | D3D11_BIND_VIDEO_ENCODER), static_cast<UINT>(D3D11_BIND_RENDER_TARGET) }) {
             pictures = picturesOf(format, bindFlags, processor);
             if (pictures) {
@@ -304,8 +233,6 @@ bool CardScaler::Card::choosePictures(const Processor &processor)
     return false;
 }
 
-// Frames for the scaled pictures, once the card has made one and the processor taken it as
-// something to draw into. Null otherwise.
 AVBufferRef *CardScaler::Card::picturesOf(AVPixelFormat format, UINT bindFlags, const Processor &processor)
 {
     AVBufferRef *made = av_hwframe_ctx_alloc(device);
@@ -316,9 +243,7 @@ AVBufferRef *CardScaler::Card::picturesOf(AVPixelFormat format, UINT bindFlags, 
     frames->sw_format = format;
     frames->width = output.size.width();
     frames->height = output.size.height();
-    // None to begin with has ffmpeg make every texture by itself as it is asked for. Any other
-    // number is that many in one texture array, which is what a Radeon will not make of NV12
-    // render targets.
+    // a pool size makes one texture array, which a Radeon wont make of NV12 render targets
     frames->initial_pool_size = 0;
     static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = bindFlags;
 
@@ -347,11 +272,12 @@ void CardScaler::Card::setUp(const Processor &processor)
 
     const DeviceLock lock(d3d);
     context->VideoProcessorSetStreamFrameFormat(processor.processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
-    // No sharpening, noise reduction or the like, which drivers apply to what they take for film.
+    // drivers otherwise sharpen and denoise what they take for film
     context->VideoProcessorSetStreamAutoProcessingMode(processor.processor, 0, FALSE);
     context->VideoProcessorSetOutputTargetRect(processor.processor, TRUE, &whole);
     context->VideoProcessorSetOutputBackgroundColor(processor.processor, FALSE, &black);
-    setColourSpaces(context, processor.processor, pictureFormat == AV_PIX_FMT_NV12, output.bt601);
+    const bool toYuv = pictureFormat == AV_PIX_FMT_NV12;
+    setColourSpaces(context, processor.processor, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, toYuv ? yuvColourSpace(!output.bt601, false) : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
 }
 
 CardScaler::CardScaler() : card(std::make_unique<Card>()) {}
@@ -375,8 +301,7 @@ bool CardScaler::scale(const AVFrame *from, const QRect &area, const Output &out
     }
 
     const QString reason = QStringLiteral("%1 (%2)").arg(QLatin1String(card->refused), QString::number(static_cast<quint32>(card->refusedWith), 16));
-    // A card that Windows has just taken away, as it does on a change of driver or of screen
-    // mode, has said nothing of what it can do.
+    // a card Windows just took away (driver or mode change) has said nothing about what it can do
     auto *lent = static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWFramesContext *>(from->hw_frames_ctx->data)->device_ctx->hwctx);
     const bool cardTakenAway = FAILED(lent->device->GetDeviceRemovedReason());
     if (!cardTakenAway && verdict.compare_exchange_strong(untried, Verdict::RuledOut))
@@ -409,7 +334,6 @@ struct CardScaler::Card
     AVFilterContext *source = nullptr;
     AVFilterContext *sink = nullptr;
     AVFrame *cut = av_frame_alloc();
-    // What the card would not do, for the log.
     const char *refused = "";
     int refusedWith = 0;
 };
@@ -442,10 +366,7 @@ bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Outpu
     refusedWith = av_frame_ref(cut, from);
     if (refusedWith < 0)
         return false;
-    cut->crop_left = static_cast<size_t>(taken.left());
-    cut->crop_top = static_cast<size_t>(taken.top());
-    cut->crop_right = static_cast<size_t>(size.width() - taken.left() - taken.width());
-    cut->crop_bottom = static_cast<size_t>(size.height() - taken.top() - taken.height());
+    cropTo(cut, taken);
     cut->color_range = AVCOL_RANGE_JPEG;
 
     refusedWith = av_buffersrc_add_frame_flags(source, cut, AV_BUFFERSRC_FLAG_PUSH | AV_BUFFERSRC_FLAG_NO_CHECK_FORMAT);
@@ -549,8 +470,7 @@ bool CardScaler::scale(const AVFrame *, const QRect &, const Output &, const QRe
 
 bool CardScaler::scale(const AVFrame *from, const Output &output, AVFrame *into)
 {
-    const QRect area(static_cast<int>(from->crop_left), static_cast<int>(from->crop_top), from->width - static_cast<int>(from->crop_left + from->crop_right), from->height - static_cast<int>(from->crop_top + from->crop_bottom));
-    return scale(from, area, output, QRect(QPoint(0, 0), output.size), into);
+    return scale(from, visibleArea(from), output, QRect(QPoint(0, 0), output.size), into);
 }
 
 } // namespace Video

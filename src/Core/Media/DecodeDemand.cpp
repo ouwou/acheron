@@ -51,7 +51,6 @@ void DecodeDemand::lower(qint64 nowMs)
 
 int DecodeDemand::pixelsToAskFor(int shownPixels, qint64 sentPixels) const
 {
-    // Asking for half of a surface larger than the picture would ask for nothing less.
     const qint64 useful = sentPixels > 0 ? std::min<qint64>(shownPixels, sentPixels) : shownPixels;
     return halvings == 0 ? shownPixels : static_cast<int>(useful >> halvings);
 }

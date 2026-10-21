@@ -9,7 +9,10 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 
+#include "Core/GatewayNotice.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Video/EncodePipeline.hpp"
 #include "Core/Video/SendQuality.hpp"
@@ -33,83 +36,59 @@ namespace Video {
 class CameraPipeline;
 }
 
-// The account's own camera in the voice channel or call it is connected to. Says on the
-// gateway that the camera is on, runs the camera's pipeline, and sends what it encodes on the
-// voice connection, at the size, frame rate and bitrate the official client's rules give.
-//
-// The camera goes off by itself when the account leaves the channel or is moved to another,
-// when another of its sessions takes the call over, and when the camera fails.
+// goes off by itself on leaving or moving channel, when another session takes the call over, and when
+// the camera fails
 class CameraSender : public QObject
 {
     Q_OBJECT
 public:
     enum class State {
         Off,
-        // The gateway has been told; the camera, its encoder or the voice connection is not
-        // up yet.
         Starting,
         On,
-        // Off, having gone off by itself. failure() says why.
         Failed,
     };
     Q_ENUM(State)
 
-    struct Stats
+    struct LayerStats
     {
         Video::PipelineStats encoder;
-        Discord::Voice::VideoSendStats network;
-        // What the encoder is asked for, in bits per second.
-        int targetBitrate = 0;
-        // As the server counts them; negative until it has said.
-        int receivers = -1;
-        // How much of the picture its viewers want, 0 to 100, as the encoder now serves it.
-        int servedWant = 100;
-        bool mutedFramerate = false;
-        bool encodingSuspended = false;
-
-        // The second layer, where the connection has one: the same again for it.
-        bool hasSecondLayer = false;
-        Video::PipelineStats secondEncoder;
-        int secondTargetBitrate = 0;
-        int secondReceivers = -1;
-        int secondServedWant = 100;
-        bool secondEncodingSuspended = true;
+        int targetBitrateBps = 0;
+        std::optional<int> receivers;
+        int servedWant = Discord::Voice::FULL_QUALITY;
+        bool encodingSuspended = true;
     };
 
-    // Whether the account may turn its camera on where it is in voice now.
+    struct Stats
+    {
+        Discord::Voice::VideoSendStats network;
+        bool mutedFramerate = false;
+        std::array<LayerStats, Video::CAMERA_LAYERS> layers;
+        bool hasSecondLayer = false;
+    };
+
     using Permission = std::function<bool()>;
 
     CameraSender(Discord::Client *client, Audio::VoiceManager *voice, StreamBroadcaster *screenShare, Permission allowedHere, QObject *parent = nullptr);
     ~CameraSender() override;
 
-    // A new gateway session has forgotten the camera, so nothing is sent for it.
     void reset();
 
     [[nodiscard]] bool canTurnOn() const;
     [[nodiscard]] State state() const { return currentState; }
     [[nodiscard]] bool isOn() const { return currentState == State::Starting || currentState == State::On; }
-    // What a voice state update for `channelId` has to say of the camera.
     [[nodiscard]] bool isOnIn(Snowflake channelId) const { return isOn() && channelId == cameraChannelId; }
     [[nodiscard]] Stats stats() const;
-    // The camera's latest picture, as the camera sees it. Null until there is one.
     [[nodiscard]] QImage preview() const { return latestPreview; }
-    // Why the camera went off by itself, in one sentence. Empty unless the state is Failed.
     [[nodiscard]] QString failure() const { return failureText; }
     void clearFailure();
 
-    // An empty id takes the first camera there is. While the camera is on, this changes to
-    // another camera without turning it off.
     void turnOn(const QString &deviceId);
     void turnOff();
 
-    // How long the server is given to name a codec the camera can be sent with.
-    static constexpr int CODEC_TIMEOUT_MS = 8000;
-
 signals:
-    // Also sent when the first picture of a camera arrives.
     void stateChanged();
     void previewChanged(const QImage &preview);
-    // The camera went off without being asked to. failure() has the same sentence.
     void failed(const QString &reason);
 
 private slots:
@@ -138,8 +117,8 @@ private:
     void onPipelineStats(const Video::PipelineStats &stats, int layer);
 
     void setState(State state);
-    void end(bool tellGateway, State endState);
-    void fail(const QString &reason, bool tellGateway = true);
+    void end(GatewayNotice notice, State endState);
+    void fail(const QString &reason, GatewayNotice notice = GatewayNotice::Send);
     void sendVoiceState();
 
     void sendOnceReady();
@@ -159,31 +138,25 @@ private:
     Snowflake cameraChannelId;
     QString deviceId;
     bool encodersKnown = false;
-    quint64 encoderProbeAttempt = 0;
+    Media::SendCodecRequest sendCodecs;
 
-    // The voice connection. Null between connections.
     Audio::VoiceConnection *rtc = nullptr;
     bool rtcConnected = false;
     Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;
 
-    // One encoding of the camera, by its layer in the pipeline: the full picture, and beside
-    // it the second layer, which is sent only where the connection has one.
     struct Layer
     {
-        int quality = Video::CAMERA_FULL_QUALITY;
+        int quality = Discord::Voice::FULL_QUALITY;
         Video::CameraSendPlan plan;
         Video::CameraEncoding asked;
-        // As the server counts them; negative until it has said.
-        int receivers = -1;
+        std::optional<int> receivers;
         bool suspended = false;
         Video::PipelineStats encoderStats;
     };
-    static constexpr int FULL = 0;
-    static constexpr int SECOND = 1;
-    [[nodiscard]] int layerOf(int quality) const { return quality == layers[SECOND].quality ? SECOND : FULL; }
+    [[nodiscard]] int layerOf(int quality) const { return quality == layers[Video::CAMERA_SECOND_LAYER].quality ? Video::CAMERA_SECOND_LAYER : Video::CAMERA_FULL_LAYER; }
 
-    std::array<Layer, 2> layers;
+    std::array<Layer, Video::CAMERA_LAYERS> layers;
     bool hasSecondLayer = false;
 
     std::unique_ptr<Video::CameraPipeline> pipeline;

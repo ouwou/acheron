@@ -1,13 +1,13 @@
-// The camera pipeline with a camera of the test's own in the real one's place: pictures the test
-// paints go through the scaling, the thinning and the encoders this machine has, and back through
-// the decoder. Two cases open the real camera, each for two seconds at most. What that saw is only
-// ever counted and measured here: never printed, never written anywhere, never shown.
+// what the real camera sees is only counted and measured here: never printed, written or shown
 
 #include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoDecoder.hpp"
 #include "Core/Media/VideoEncoder.hpp"
 #include "Core/Video/CameraCapture.hpp"
 #include "Core/Video/CameraPipeline.hpp"
+#include "ColourChecks.hpp"
+#include "EncodedFrameChecks.hpp"
+#include "ProcessUsage.hpp"
 #include "HardwareTests.hpp"
 
 #include <QDir>
@@ -54,25 +54,25 @@ using namespace Acheron::Core::Video;
 using Discord::Voice::EncodedVideoFrame;
 using Discord::Voice::VideoCodec;
 using Discord::Voice::videoCodecName;
+using namespace EncodedFrameChecks;
+using ProcessUsage::processCpuMs;
 
 namespace {
 
+using ColourChecks::distance;
+using ColourChecks::inYuv;
+using ColourChecks::Yuv;
 using Clock = std::chrono::steady_clock;
 
 constexpr int BITRATE = 1'500'000;
 constexpr int TICKS_PER_SECOND = 90000;
-// How long the real camera is given, which with the closing of it stays within two seconds.
 constexpr int REAL_CAMERA_MS = 1900;
 
-// The colour a synthetic camera shows when it shows one colour.
 constexpr int COLOUR_RED = 40;
 constexpr int COLOUR_GREEN = 200;
 constexpr int COLOUR_BLUE = 60;
-// And the two greys, as full-range luma, when it shows a dark half and a light half.
 constexpr int DARK_GREY = 60;
 constexpr int LIGHT_GREY = 200;
-// The luma of the square a synthetic camera shows in its middle, a third of its height on a
-// side, and of what is around it.
 constexpr int SQUARE_LUMA = 220;
 constexpr int AROUND_SQUARE_LUMA = 40;
 
@@ -83,37 +83,9 @@ FramePointer makeFrame()
     return FramePointer(av_frame_alloc(), [](AVFrame *frame) { av_frame_free(&frame); });
 }
 
-struct Yuv
-{
-    double y = 0;
-    double u = 0;
-    double v = 0;
-};
-
-Yuv inYuv(int red, int green, int blue, bool bt709, bool fullRange)
-{
-    const double kr = bt709 ? 0.2126 : 0.299;
-    const double kb = bt709 ? 0.0722 : 0.114;
-    const double luma = kr * red + (1 - kr - kb) * green + kb * blue;
-    const double u = (blue - luma) / (2 * (1 - kb));
-    const double v = (red - luma) / (2 * (1 - kr));
-    if (fullRange)
-        return { luma, 128 + u, 128 + v };
-    return { 16 + 219 * luma / 255, 128 + 224 * u / 255, 128 + 224 * v / 255 };
-}
-
-double distance(const Yuv &a, const Yuv &b)
-{
-    return std::sqrt((a.y - b.y) * (a.y - b.y) + (a.u - b.u) * (a.u - b.u) + (a.v - b.v) * (a.v - b.v));
-}
-
-// What the camera that stands in for the real one is like, and what was done with it.
 struct SyntheticCamera
 {
     enum class Shows {
-        // A gradient that drifts, a patch of fine texture that slides across it, and a band of
-        // noise that differs from one picture to the next: enough that an encoder has to spend
-        // what it is given.
         Movement,
         Square,
         TwoGreys,
@@ -127,9 +99,7 @@ struct SyntheticCamera
     int framerate = 30;
     Shows shows = Shows::Movement;
     bool opens = true;
-    // How long it takes to open, as a real one takes a second or so.
     int opensAfterMs = 0;
-    // The camera is lost once it has given this many pictures.
     std::optional<int> lostAfter;
 
     std::atomic<int> timesOpened{ 0 };
@@ -138,8 +108,6 @@ struct SyntheticCamera
     std::mutex mutex;
     QString openedWithId;
 
-    // Each is done as the camera is asked for one of its coming pictures, the first at the next
-    // one, on the thread that asks. No sleep puts something between two pictures as surely.
     void atComingPictures(std::initializer_list<std::function<void()>> each)
     {
         std::lock_guard lock(mutex);
@@ -219,8 +187,6 @@ void paint(AVFrame *picture, const SyntheticCamera &camera, int index)
     }
 }
 
-// Gives pictures as a camera does: one every frame interval, stamped with when it was taken,
-// and to a reader that comes late the newest one only.
 class SyntheticSource : public CameraFrameSource
 {
 public:
@@ -295,7 +261,6 @@ private:
     int given = 0;
 };
 
-// Counts decoded pictures, notes every size they change to, and keeps the last one.
 class KeepingSink : public Core::Media::VideoFrameSink
 {
 public:
@@ -325,7 +290,6 @@ struct Decoded
     FramePointer last;
 };
 
-// Decodes the frames from `from` up to `to` in order, in software.
 Decoded decodeAll(VideoCodec codec, const std::vector<EncodedFramePointer> &frames, size_t from = 0, size_t to = SIZE_MAX)
 {
     const auto sink = std::make_shared<KeepingSink>();
@@ -340,7 +304,6 @@ Decoded decodeAll(VideoCodec codec, const std::vector<EncodedFramePointer> &fram
         for (size_t i = from; i < std::min(to, frames.size()); i++) {
             decoder.push(codec, EncodedVideoFrame(*frames[i]));
             pushed++;
-            // The decoder throws its queue away when it falls far behind.
             while (pushed - sink->frames > 20 && timer.elapsed() < 10000)
                 QThread::msleep(1);
         }
@@ -368,7 +331,6 @@ Yuv middleOf(const AVFrame *frame)
     return { static_cast<double>(frame->data[0][y * frame->linesize[0] + x]), static_cast<double>(frame->data[1][(y / 2) * frame->linesize[1] + x / 2]), static_cast<double>(frame->data[2][(y / 2) * frame->linesize[2] + x / 2]) };
 }
 
-// How much of the row and of the column through the middle of the picture is bright.
 QSize brightExtent(const AVFrame *frame)
 {
     constexpr int BRIGHT = (SQUARE_LUMA + AROUND_SQUARE_LUMA) / 2;
@@ -398,88 +360,6 @@ QString describe(QRgb pixel)
     return QStringLiteral("(%1, %2, %3)").arg(qRed(pixel)).arg(qGreen(pixel)).arg(qBlue(pixel));
 }
 
-// The types of an Annex B frame's NAL units, as H264 or as H265 numbers them.
-std::vector<int> nalTypes(VideoCodec codec, const std::vector<uint8_t> &data)
-{
-    std::vector<int> types;
-    for (size_t i = 0; i + 3 < data.size(); i++) {
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
-            types.push_back(codec == VideoCodec::H265 ? (data[i + 3] >> 1) & 0x3F : data[i + 3] & 0x1F);
-    }
-    return types;
-}
-
-// What an AV1 temporal unit is, when it is made of OBUs that each say their size: a key frame
-// or not, and with its sequence header before its picture or without.
-struct TemporalUnit
-{
-    bool whole = false;
-    bool keyFrame = false;
-    bool hasSequenceHeader = false;
-};
-
-TemporalUnit temporalUnit(const std::vector<uint8_t> &data)
-{
-    constexpr int SEQUENCE_HEADER = 1;
-    constexpr int FRAME_HEADER = 3;
-    constexpr int FRAME = 6;
-    TemporalUnit unit;
-    for (size_t at = 0; at < data.size();) {
-        const int type = (data[at] >> 3) & 0x0F;
-        size_t payload = at + ((data[at] & 0x04) ? 2 : 1);
-        if ((data[at] & 0x80) || !(data[at] & 0x02))
-            return {};
-        size_t size = 0;
-        uint8_t byte = 0x80;
-        for (int shift = 0; byte & 0x80; shift += 7) {
-            if (payload >= data.size() || shift > 28)
-                return {};
-            byte = data[payload++];
-            size |= size_t(byte & 0x7F) << shift;
-        }
-        if (size > data.size() - payload)
-            return {};
-        if (type == SEQUENCE_HEADER && !unit.whole)
-            unit.hasSequenceHeader = true;
-        if ((type == FRAME || type == FRAME_HEADER) && !unit.whole && size > 0) {
-            unit.whole = true;
-            // show_existing_frame, the two bits of frame_type, where zero is a key frame, and show_frame.
-            unit.keyFrame = !(data[payload] & 0x80) && ((data[payload] >> 5) & 0x03) == 0 && (data[payload] & 0x10);
-        }
-        at = payload + size;
-    }
-    return unit;
-}
-
-// A key frame of H264 or H265 is Annex B and opens with its parameter sets, one of AV1 has its
-// sequence header before its picture, and a VP8 frame says itself what it is.
-bool isWellFormed(VideoCodec codec, const EncodedVideoFrame &frame)
-{
-    if (frame.data.empty())
-        return false;
-    if (codec == VideoCodec::VP8)
-        return !(frame.data[0] & 1) == frame.keyframe;
-    if (codec == VideoCodec::AV1) {
-        const TemporalUnit unit = temporalUnit(frame.data);
-        return unit.whole && unit.keyFrame == frame.keyframe && (!unit.keyFrame || unit.hasSequenceHeader);
-    }
-
-    const bool h265 = codec == VideoCodec::H265;
-    const std::vector<int> types = nalTypes(codec, frame.data);
-    const bool hasKeyPicture = std::any_of(types.begin(), types.end(), [h265](int type) { return h265 ? type >= 16 && type <= 23 : type == 5; });
-    const bool startsWithStartCode = frame.data.size() >= 4 && frame.data[0] == 0 && frame.data[1] == 0 && (frame.data[2] == 1 || (frame.data[2] == 0 && frame.data[3] == 1));
-    if (!startsWithStartCode || hasKeyPicture != frame.keyframe)
-        return false;
-    if (!frame.keyframe)
-        return true;
-    if (h265)
-        return types.size() >= 4 && types[0] == 32 && types[1] == 33 && types[2] == 34;
-    return types.size() >= 3 && types[0] == 7 && types[1] == 8;
-}
-
-// Whether every decoded picture is of the size that was sent. A graphics card that codes AV1
-// only in whole blocks sends a picture with what fills its last block, larger by less than the
-// 64 by 16 of one: whatAnEncoderMakesOfASizeItCannotCode in tst_VideoEncode has what and why.
 bool arePicturesOfTheSizeSent(VideoCodec codec, const QList<QSize> &decoded, const QSize &sent)
 {
     if (decoded.size() != 1)
@@ -488,7 +368,6 @@ bool arePicturesOfTheSizeSent(VideoCodec codec, const QList<QSize> &decoded, con
     return beyond == QSize(0, 0) || (codec == VideoCodec::AV1 && beyond.width() >= 0 && beyond.width() < 64 && beyond.height() >= 0 && beyond.height() < 16);
 }
 
-// What a pipeline said while it ran.
 struct PipelineRecord
 {
     struct Start
@@ -522,7 +401,6 @@ struct PipelineRecord
         QObject::connect(&pipeline, &CameraPipeline::failed, &here, [this](const QString &reason) { failures.append(reason); });
     }
 
-    // The first key frame among those from `from` on, or the number of frames when there is none.
     [[nodiscard]] size_t keyFrameFrom(size_t from) const
     {
         size_t index = from;
@@ -536,7 +414,6 @@ struct PipelineRecord
         return static_cast<int>(std::count_if(frames.begin() + static_cast<std::ptrdiff_t>(from), frames.end(), [](const EncodedFramePointer &frame) { return frame->keyframe; }));
     }
 
-    // Ticks of the 90 kHz clock from each frame to the next, from frame `from` on.
     [[nodiscard]] std::vector<int> ticksBetween(size_t from = 0) const
     {
         std::vector<int> ticks;
@@ -549,7 +426,6 @@ struct PipelineRecord
     QElapsedTimer clock;
     qint64 firstFrameAt = -1;
     std::vector<EncodedFramePointer> frames;
-    // What the second layer said, apart from the first's.
     std::vector<EncodedFramePointer> secondFrames;
     QList<Start> secondStarts;
     QList<QImage> previews;
@@ -579,43 +455,11 @@ CameraSettings settingsFor(VideoCodec codec, const QSize &encodeSize, int framer
     return settings;
 }
 
-#ifdef Q_OS_WIN
-// The processor time this process has used on all its threads, in milliseconds. Counted in
-// processor cycles: the times Windows keeps are sampled at its clock tick, which misses most
-// of the work of threads that wake up for a few milliseconds at a time.
-double processCpuMs()
-{
-    static const double cyclesPerMs = [] {
-        constexpr qint64 CALIBRATION_NS = 20'000'000;
-        ULONG64 before = 0;
-        ULONG64 after = 0;
-        QueryThreadCycleTime(GetCurrentThread(), &before);
-        QElapsedTimer spinning;
-        spinning.start();
-        while (spinning.nsecsElapsed() < CALIBRATION_NS) {}
-        QueryThreadCycleTime(GetCurrentThread(), &after);
-        return static_cast<double>(after - before) / (static_cast<double>(CALIBRATION_NS) / 1e6);
-    }();
-
-    ULONG64 cycles = 0;
-    QueryProcessCycleTime(GetCurrentProcess(), &cycles);
-    return static_cast<double>(cycles) / cyclesPerMs;
-}
-#else
-double processCpuMs()
-{
-    return 1000.0 * static_cast<double>(std::clock()) / CLOCKS_PER_SEC;
-}
-#endif
-
 } // namespace
 
 Q_DECLARE_METATYPE(VideoCodec)
 Q_DECLARE_METATYPE(AVColorSpace)
 
-// The tests that are about the pipeline and not about a codec look at the sizes of decoded
-// pictures, so they take H264 where there is one: AV1 does not come out of every graphics card
-// at the size it went in.
 #define SKIP_WITHOUT_AN_ENCODER(codec)                                       \
     const QList<VideoCodec> encodable = Core::Media::encodableVideoCodecs(); \
     if (encodable.isEmpty())                                                 \
@@ -724,8 +568,6 @@ void TestCameraCapture::camerasAreListedTheSameEveryTime()
         QVERIFY(first.isEmpty());
 
 #ifdef Q_OS_LINUX
-    // The nodes that can themselves be captured from, which the one a camera's metadata comes
-    // from and a loopback that nothing writes to cannot.
     QSet<QString> capturing;
     const QStringList nodes = QDir(QStringLiteral("/dev")).entryList({ QStringLiteral("video*") }, QDir::System);
     for (const QString &node : nodes) {
@@ -756,8 +598,6 @@ void TestCameraCapture::camerasAreListedTheSameEveryTime()
     qInfo().noquote() << "cameras:" << (names.isEmpty() ? QStringLiteral("none") : names.join(QStringLiteral(", "))) << "; listed in" << firstListingMs << "ms the first time and" << timer.elapsed() / 3 << "ms after that";
 }
 
-// The interval of a camera at thirty pictures a second, and the shortest time one of its
-// pictures takes to be read here, in the cases that make up a camera's clock and ours.
 constexpr std::chrono::microseconds CAMERA_INTERVAL(33'333);
 constexpr std::chrono::microseconds QUICKEST_READ(4'000);
 
@@ -775,8 +615,6 @@ void TestCameraCapture::aCamerasOwnClockSaysWhenAPictureWasTaken()
     qint64 readFurthestApart = 0;
     Clock::time_point lastReadAt;
     for (int index = 0; index < PICTURES; index++) {
-        // Read anything up to 16 ms later than the quickest, as a reader that looks every so
-        // often does, and once a fifth of a second later.
         noise = noise * 1664525u + 1013904223u;
         microseconds late((noise >> 8) % 16'000);
         if (index == 0)
@@ -793,7 +631,6 @@ void TestCameraCapture::aCamerasOwnClockSaysWhenAPictureWasTaken()
         taken.push_back(at);
     }
 
-    // As far apart as the camera took them, where the times they were read at are not.
     QVERIFY(readFurthestApart > 200'000);
     QCOMPARE(taken[0], began + QUICKEST_READ);
     for (size_t i = 1; i < taken.size(); i++) {
@@ -801,8 +638,6 @@ void TestCameraCapture::aCamerasOwnClockSaysWhenAPictureWasTaken()
         QVERIFY2(std::abs(apart - CAMERA_INTERVAL.count()) <= 1'000, qPrintable(QStringLiteral("pictures %1 and %2 are %3 us apart").arg(i - 1).arg(i).arg(apart)));
     }
 
-    // A picture that has no stamp was taken when it was read, and two read at the same moment
-    // are still one after the other.
     const Clock::time_point later = began + PICTURES * CAMERA_INTERVAL + seconds(1);
     QCOMPARE(clock.at(std::nullopt, later), later);
     QVERIFY(clock.at(std::nullopt, later) > later);
@@ -811,7 +646,7 @@ void TestCameraCapture::aCamerasOwnClockSaysWhenAPictureWasTaken()
 void TestCameraCapture::aCameraClockThatRunsSlowIsFollowed()
 {
     using namespace std::chrono;
-    // Twenty minutes of a camera whose clock loses a ten-thousandth, which by the end is 120 ms.
+    // twenty minutes of a camera clock losing a ten-thousandth: 120 ms by the end
     constexpr int PICTURES = 36'000;
     const Clock::time_point began = Clock::time_point(seconds(1000));
 
@@ -872,8 +707,6 @@ void TestCameraCapture::picturesAreEncodedAtTheSizeAskedFor()
     QVERIFY(record.frames[0]->keyframe);
     QCOMPARE(record.keyFramesFrom(1), 0);
 
-    // Time stamps are when each picture was taken, on a 90 kHz clock: the synthetic camera
-    // takes one every thirtieth of a second exactly, whenever the pipeline got round to it.
     const std::vector<int> ticks = record.ticksBetween();
     for (int each : ticks) {
         QVERIFY2(each > 0, qPrintable(QString::number(each)));
@@ -924,8 +757,6 @@ void TestCameraCapture::aCameraOfAnotherShapeKeepsItsShape()
     QCOMPARE(decoded.errors, quint64(0));
     QCOMPARE(decoded.sizes, QList<QSize>{ expected });
 
-    // The square in the middle of the camera's picture is still square, and as much smaller
-    // as the whole picture is: nothing was stretched and nothing cut off.
     QVERIFY(isPlanar420(decoded.last.get()));
     const QSize square = brightExtent(decoded.last.get());
     const int side = cameraSize.height() / 3 * expected.height() / cameraSize.height();
@@ -965,8 +796,6 @@ void TestCameraCapture::picturesAreThinnedToTheFrameRate()
     const double fps = framesPerSecond(ticks);
     qInfo() << "frames a second:" << fps;
     QVERIFY2(fps > expected * 0.9 && fps < expected * 1.05, qPrintable(QString::number(fps)));
-    // Thinned evenly: no two frames closer together than the camera's pictures allow at this
-    // rate, which is one camera interval short of the interval wanted at the least.
     const int closest = TICKS_PER_SECOND / expected - TICKS_PER_SECOND / cameraRate;
     for (int each : ticks)
         QVERIFY2(each > closest, qPrintable(QStringLiteral("%1 ticks between two frames").arg(each)));
@@ -984,7 +813,6 @@ void TestCameraCapture::aNewSizeAndRateStartWithAKeyFrame()
     QTRY_VERIFY2_WITH_TIMEOUT(record.frames.size() >= 15 || !record.failures.isEmpty(), "fewer than 15 frames in 5 s", 5000);
     QVERIFY2(record.failures.isEmpty(), qPrintable(record.failures.join(QLatin1Char(';'))));
 
-    // The frames already on their way here when the change is asked for are the allowance.
     const size_t atChange = record.frames.size();
     pipeline.setEncoding(smaller, 15);
     QTRY_VERIFY_WITH_TIMEOUT(record.frames.size() >= atChange + 12, 3000);
@@ -993,7 +821,6 @@ void TestCameraCapture::aNewSizeAndRateStartWithAKeyFrame()
     QCOMPARE(record.keyFramesFrom(changed + 1), 0);
     QCOMPARE(record.keyFramesFrom(1), 1);
 
-    // The same again changes nothing, and still starts with a key frame.
     const size_t atRepeat = record.frames.size();
     pipeline.setEncoding(smaller, 15);
     QTRY_VERIFY_WITH_TIMEOUT(record.frames.size() >= atRepeat + 8, 3000);
@@ -1017,8 +844,6 @@ void TestCameraCapture::aNewSizeAndRateStartWithAKeyFrame()
     QCOMPARE(after.sizes, QList<QSize>{ smaller });
 }
 
-// A change of quality is a new bit rate and then a new size, asked for one after the other.
-// Either alone starts the encoder over; the two together are to do that once.
 void TestCameraCapture::aNewBitrateAndSizeTogetherCostOneKeyFrame()
 {
     SKIP_WITHOUT_AN_ENCODER(codec);
@@ -1040,8 +865,6 @@ void TestCameraCapture::aNewBitrateAndSizeTogetherCostOneKeyFrame()
         const QSize size = toSmaller ? smaller : larger;
         const int bitrate = toSmaller ? LOWER_BITRATE : BITRATE;
         const size_t atChange = record.frames.size();
-        // At once, and with one picture between the two, in either order. Two pictures between
-        // them would be a change of each on its own.
         const auto newBitrate = [&pipeline, bitrate] { pipeline.setBitrate(bitrate); };
         const auto newSize = [&pipeline, size] { pipeline.setEncoding(size, 30); };
         if (change % 3 == 0) {
@@ -1058,7 +881,6 @@ void TestCameraCapture::aNewBitrateAndSizeTogetherCostOneKeyFrame()
         expectedStarts.append({ size, 30 });
     }
 
-    // The last change was to the lower bit rate, which is what is then spent.
     QTest::qWait(500);
     const size_t measuredFrom = record.frames.size();
     QTest::qWait(1000);
@@ -1072,7 +894,6 @@ void TestCameraCapture::aNewBitrateAndSizeTogetherCostOneKeyFrame()
     QCOMPARE(record.keyFramesFrom(0), CHANGES + 1);
     QCOMPARE(record.starts, expectedStarts);
 
-    // Each key frame is where the pictures become the size asked for with it.
     changedAt.push_back(record.frames.size());
     for (size_t i = 0; i + 1 < changedAt.size(); i++) {
         const Decoded decoded = decodeAll(codec, record.frames, changedAt[i], changedAt[i + 1]);
@@ -1118,7 +939,6 @@ void TestCameraCapture::whatIsAskedForBeforeTheFirstFrameShapesIt()
     const std::vector<int> ticks = record.ticksBetween();
     const double fps = framesPerSecond(ticks);
     QVERIFY2(fps > 15 * 0.9 && fps < 15 * 1.05, qPrintable(QString::number(fps)));
-    // Once the encoder has settled, which the first second is left for.
     constexpr size_t SETTLED = 15;
     size_t bytes = 0;
     qint64 ticksMeasured = 0;
@@ -1148,7 +968,6 @@ void TestCameraCapture::aKeyFrameComesWhenAskedFor()
     QVERIFY(record.frames[0]->keyframe);
     QCOMPARE(record.keyFramesFrom(1), 0);
 
-    // With the next picture or two: the frames already on their way here are the allowance.
     const size_t atRequest = record.frames.size();
     pipeline.requestKeyframe();
     QTRY_VERIFY_WITH_TIMEOUT(record.frames.size() >= atRequest + 10, 2000);
@@ -1181,7 +1000,6 @@ void TestCameraCapture::nothingIsEncodedWhileSuspended()
     pipeline.requestKeyframe();
     QTest::qWait(1000);
     QCOMPARE(record.frames.size(), whileSuspended);
-    // The camera stays open and is still read, and its owner still sees it.
     QCOMPARE(camera->openNow.load(), 1);
     QVERIFY(camera->picturesGiven - picturesBefore >= 20);
     const int previewsMeanwhile = static_cast<int>(record.previews.size()) - previewsBefore;
@@ -1214,8 +1032,6 @@ void TestCameraCapture::aSecondLayerIsEncodedBesideTheFirstOnceItIsAskedFor()
     QVERIFY(record.secondFrames.empty());
     QVERIFY(record.secondStarts.isEmpty());
 
-    // Asked for, it starts with a key frame of its own, at its own size and rate, and the
-    // first layer goes on as it was.
     const size_t firstLayerBefore = record.frames.size();
     pipeline.setEncodingSuspended(false, 1);
     QTRY_VERIFY2_WITH_TIMEOUT(record.secondFrames.size() >= 10 || !record.failures.isEmpty(), "fewer than 10 frames of the second layer in 5 s", 5000);
@@ -1226,7 +1042,6 @@ void TestCameraCapture::aSecondLayerIsEncodedBesideTheFirstOnceItIsAskedFor()
     QCOMPARE(record.keyFramesFrom(firstLayerBefore), 0);
     QCOMPARE(record.starts.size(), 1);
 
-    // A key frame asked of the second layer is the second layer's alone.
     const size_t secondLayerBefore = record.secondFrames.size();
     const size_t firstLayerThen = record.frames.size();
     pipeline.requestKeyframe(1);
@@ -1234,7 +1049,6 @@ void TestCameraCapture::aSecondLayerIsEncodedBesideTheFirstOnceItIsAskedFor()
     QTRY_VERIFY_WITH_TIMEOUT(keyFrameSince(), 2000);
     QCOMPARE(record.keyFramesFrom(firstLayerThen), 0);
 
-    // No longer asked for, it stops and the first goes on.
     pipeline.setEncodingSuspended(true, 1);
     QTest::qWait(300);
     const size_t secondLayerStopped = record.secondFrames.size();
@@ -1280,8 +1094,8 @@ void TestCameraCapture::aCameraOpenedWhileSuspendedIsAnnounced()
     QCOMPARE(decoded.sizes, QList<QSize>{ QSize(480, 360) });
 }
 
-// A camera that sends MJPEG sends full range, where black is 0 and white 255. Sent on as it
-// is to a viewer who takes it for video range, its darks would be darker and its lights lighter.
+// MJPEG cameras send full range; passed on as is, a viewer assuming video range would crush darks and
+// lights
 void TestCameraCapture::aFullRangeCameraKeepsItsBrightness()
 {
     QFETCH(VideoCodec, codec);
@@ -1333,8 +1147,7 @@ void TestCameraCapture::aCamerasColoursAreWhatAViewerTakesThemFor_data()
         QTest::newRow("no encoder") << VideoCodec::Unknown << AVCOL_SPC_UNSPECIFIED << QSize();
 }
 
-// A stream that does not say which matrix it is in is taken to be BT.709 from 720 lines up and
-// BT.601 below, and VP8 to be BT.601 always. Whatever the camera has, that is what is sent.
+// untagged streams are taken as BT.709 from 720 lines up and BT.601 below; VP8 as BT.601 always
 void TestCameraCapture::aCamerasColoursAreWhatAViewerTakesThemFor()
 {
     QFETCH(VideoCodec, codec);
@@ -1368,7 +1181,6 @@ void TestCameraCapture::aCamerasColoursAreWhatAViewerTakesThemFor()
     QVERIFY(distance(middle, wrong) > 12);
     QVERIFY(decoded.last->color_range != AVCOL_RANGE_JPEG);
     if (codec != VideoCodec::VP8) {
-        // And what this program's own viewer makes of it is the colour the camera saw.
         QCOMPARE(Core::Media::usesBt709(decoded.last.get()), sentAsBt709);
         const QRgb shown = inRgb(decoded.last.get()).pixel(size.width() / 2, size.height() / 2);
         QVERIFY2(std::abs(qRed(shown) - COLOUR_RED) <= 6 && std::abs(qGreen(shown) - COLOUR_GREEN) <= 6 && std::abs(qBlue(shown) - COLOUR_BLUE) <= 6, qPrintable(describe(shown)));
@@ -1394,11 +1206,9 @@ void TestCameraCapture::thePreviewIsSmallAndFrequent()
 
     CameraPipeline pipeline;
     PipelineRecord record(pipeline);
-    // Whatever is encoded, the preview is of the camera's own picture.
     pipeline.start(settingsFor(codec, QSize(320, 180), 30));
     QTRY_VERIFY2_WITH_TIMEOUT(!record.previews.isEmpty() || !record.failures.isEmpty(), "no preview in 5 s", 5000);
     QVERIFY2(record.failures.isEmpty(), qPrintable(record.failures.join(QLatin1Char(';'))));
-    // How often they come has nothing to do with the camera's size, and is counted for one.
     if (cameraSize == QSize(1280, 720)) {
         const int before = static_cast<int>(record.previews.size());
         QTest::qWait(2000);
@@ -1414,10 +1224,8 @@ void TestCameraCapture::thePreviewIsSmallAndFrequent()
         QVERIFY(preview.width() <= 640 && preview.height() <= 360);
         QCOMPARE(preview.size(), expected);
     }
-    // Each is an image of its own: a later one has not been drawn over an earlier one.
     QVERIFY(record.previews.first().constBits() != record.previews.last().constBits());
 
-    // Not stretched: the camera's square is square in it.
     const QImage last = record.previews.last();
     int across = 0;
     int down = 0;
@@ -1439,7 +1247,6 @@ void TestCameraCapture::theBitrateIsFollowed()
     CameraPipeline pipeline;
     PipelineRecord record(pipeline);
     CameraSettings settings = settingsFor(codec, QSize(640, 360), 30);
-    // More than the most allowed, which is then what is used.
     settings.bitrateBps = 9'000'000;
     settings.maxBitrateBps = BITRATE;
     pipeline.start(settings);
@@ -1509,7 +1316,6 @@ void TestCameraCapture::aCameraThatIsLostFails()
     QCOMPARE(record.failures.first(), QStringLiteral("the synthetic camera was lost"));
     QTRY_COMPARE_WITH_TIMEOUT(camera->openNow.load(), 0, 2000);
 
-    // Nothing more comes, and nothing is tried again by itself.
     const size_t frames = record.frames.size();
     QVERIFY(frames >= 1 && frames <= 12);
     QTest::qWait(500);
@@ -1539,11 +1345,8 @@ void TestCameraCapture::aCameraThatDoesNotOpenFails()
     QCOMPARE(camera->timesOpened.load(), 1);
 }
 
-// The camera's light is not to come on for a stream that cannot be sent.
 void TestCameraCapture::noCameraIsOpenedWithoutAnEncoder()
 {
-    // A codec this machine has no encoder for: one that only a graphics card encodes, where
-    // this one's does not, and failing that no codec at all.
     VideoCodec codec = VideoCodec::Unknown;
     for (VideoCodec each : { VideoCodec::H265, VideoCodec::AV1 }) {
         if (!Core::Media::encodableVideoCodecs().contains(each))
@@ -1583,7 +1386,6 @@ void TestCameraCapture::stoppingClosesTheCameraAndItOpensAgain()
     QCOMPARE(record.frames.size(), afterStop);
     QCOMPARE(static_cast<int>(record.previews.size()), previewsAfterStop);
 
-    // The same pipeline opens the camera again, and time does not run backwards across it.
     const uint32_t lastTimestamp = record.frames.back()->rtpTimestamp;
     record.frames.clear();
     pipeline.start(settings);
@@ -1594,7 +1396,6 @@ void TestCameraCapture::stoppingClosesTheCameraAndItOpensAgain()
     QVERIFY(record.frames[0]->keyframe);
     QVERIFY(static_cast<int32_t>(record.frames[0]->rtpTimestamp - lastTimestamp) > 0);
 
-    // A start while it runs takes the camera's place with a camera opened anew.
     record.frames.clear();
     pipeline.start(settings);
     QTRY_COMPARE_WITH_TIMEOUT(camera->timesOpened.load(), 3, 2000);
@@ -1644,7 +1445,6 @@ void TestCameraCapture::theFirstCameraDeliversPictures()
     }
     const double cpuAtStop = processCpuMs();
     const size_t framesAtStop = record.frames.size();
-    // Closes the camera before it returns.
     pipeline->stop();
     pipeline.reset();
     qInstallMessageHandler(handler);
@@ -1653,12 +1453,10 @@ void TestCameraCapture::theFirstCameraDeliversPictures()
 
     if (!record.failures.isEmpty())
         QSKIP(qPrintable(QStringLiteral("the camera could not be used: %1").arg(record.failures.first())));
-    // Which a virtual camera does while the program behind it is not running.
     if (record.frames.empty() && record.previews.isEmpty())
         QSKIP("the first camera opened and sent no picture in the two seconds it may be open for");
     QVERIFY(!record.frames.empty());
 
-    // In a mode it was asked for, or in its own when asked for nothing: never in one near to what was asked.
     const QStringList opened = said.filter(QStringLiteral("opened as"));
     QCOMPARE(opened.size(), 1);
     QVERIFY2(opened.first().contains(QRegularExpression(QStringLiteral("opened as \\S+ \\S+ (\\d+x\\d+) at .* when asked for (\\1|nothing)$"))), qPrintable(opened.first()));
@@ -1692,8 +1490,7 @@ void TestCameraCapture::theFirstCameraDeliversPictures()
     QCOMPARE(decoded.sizes, QList<QSize>{ sent });
 }
 
-// A picture is its reader's to keep. One of v4l2's is in the driver's own memory when it comes,
-// which is gone once the camera is closed.
+// a v4l2 picture is in the driver's memory, gone once the camera closes
 void TestCameraCapture::aPictureOutlivesItsCamera()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();

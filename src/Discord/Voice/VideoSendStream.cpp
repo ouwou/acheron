@@ -10,13 +10,12 @@ namespace Voice {
 
 namespace {
 
-constexpr int VIDEO_CLOCK_KHZ = 90;
 constexpr qint64 HISTORY_US = qint64(VideoSendStream::HISTORY_MS) * 1000;
 constexpr qint64 BURST_US = qint64(VideoSendStream::BURST_MS) * 1000;
 constexpr qint64 MAX_QUEUE_US = qint64(VideoSendStream::MAX_QUEUE_MS) * 1000;
 constexpr qint64 RETRANSMISSION_WINDOW_US = qint64(VideoSendStream::RETRANSMISSION_WINDOW_MS) * 1000;
-// A reception report answers one of the last few sender reports; older ones are of no use.
 constexpr size_t REMEMBERED_REPORTS = 8;
+constexpr qint64 LEAST_DRAIN_US = 1000;
 
 } // namespace
 
@@ -51,7 +50,7 @@ void VideoSendStream::setPacingFactor(double factor)
 
 int VideoSendStream::maxPayloadSize() const
 {
-    // As WebRTC does, room is left in every packet for it to be sent again whole.
+    // as WebRTC, every packet leaves room to be resent whole
     return MAX_PACKET_SIZE - CLEAR_SIZE - EXTENSIONS_SIZE - (retransmits() ? RTX_HEADER_SIZE : 0);
 }
 
@@ -73,9 +72,7 @@ bool VideoSendStream::queueFrame(std::span<const uint8_t> frame, uint32_t rtpTim
         queuedBytes += static_cast<qint64>(packet.payload.size());
     }
 
-    framesQueued = true;
-    lastFrameTimestamp = rtpTimestamp;
-    lastFrameQueuedUs = nowUs;
+    lastFrame = QueuedFrame{ rtpTimestamp, nowUs };
     counters.frames++;
     if (keyframe)
         counters.keyframes++;
@@ -93,7 +90,7 @@ void VideoSendStream::retransmit(std::span<const uint16_t> sequences, qint64 now
         Packet *sent = findSent(sequence);
         if (!sent || sent->resendWaiting)
             continue;
-        if (sent->resentUs >= 0 && nowUs - sent->resentUs < roundTripUs())
+        if (sent->resentUs && nowUs - *sent->resentUs < roundTripUs())
             continue;
         if (!takeResendShare(static_cast<qint64>(sent->payload.size()), nowUs))
             break;
@@ -109,7 +106,7 @@ bool VideoSendStream::takeResendShare(qint64 bytes, qint64 nowUs)
         resentLately.pop_front();
     }
 
-    const qint64 share = static_cast<qint64>(targetBitrate) * RETRANSMISSION_WINDOW_MS / 8000;
+    const qint64 share = bytesAtRate(targetBitrate, RETRANSMISSION_WINDOW_US);
     if (resentLatelyBytes + bytes > share)
         return false;
     resentLately.push_back({ nowUs, bytes });
@@ -124,7 +121,7 @@ void VideoSendStream::clear()
     history.clear();
     queuedBytes = 0;
     budget = 0;
-    budgetedUs = -1;
+    budgetedUs.reset();
 }
 
 qint64 VideoSendStream::pacingRate(qint64 nowUs) const
@@ -132,18 +129,17 @@ qint64 VideoSendStream::pacingRate(qint64 nowUs) const
     const qint64 rate = static_cast<qint64>(targetBitrate * pacingFactor);
     if (queued.empty())
         return rate;
-    const qint64 leftUs = std::max<qint64>(1000, MAX_QUEUE_US - (nowUs - queued.front().queuedUs));
-    return std::max(rate, queuedBytes * 8 * 1000000 / leftUs);
+    const qint64 leftUs = std::max<qint64>(LEAST_DRAIN_US, MAX_QUEUE_US - (nowUs - queued.front().queuedUs));
+    return std::max(rate, rateOf(queuedBytes, leftUs));
 }
 
 void VideoSendStream::startInterval(qint64 nowUs)
 {
     const qint64 rate = pacingRate(nowUs);
-    const qint64 burst = std::min<qint64>(rate * BURST_MS / 8000, MAX_BURST_BYTES);
-    // After a pause a whole burst may leave at once, as after the first frame.
-    const qint64 earnedUs = budgetedUs < 0 ? BURST_US : std::clamp<qint64>(nowUs - budgetedUs, 0, BURST_US);
+    const qint64 burst = std::min<qint64>(bytesAtRate(rate, BURST_US), MAX_BURST_BYTES);
+    const qint64 earnedUs = budgetedUs ? std::clamp<qint64>(nowUs - *budgetedUs, 0, BURST_US) : BURST_US;
     budgetedUs = nowUs;
-    budget = std::min(burst, budget + rate * earnedUs / 8000000);
+    budget = std::min(burst, budget + bytesAtRate(rate, earnedUs));
 }
 
 bool VideoSendStream::writeNext(qint64 nowUs, PacketBuffer &out)
@@ -160,7 +156,7 @@ bool VideoSendStream::writeNext(qint64 nowUs, PacketBuffer &out)
         if (!original)
             continue;
         original->resendWaiting = false;
-        if (!write(out, *original, true, nowUs))
+        if (!write(out, *original, Transmission::Retransmission, nowUs))
             continue;
         original->resentUs = nowUs;
         budget -= out.size();
@@ -174,7 +170,7 @@ bool VideoSendStream::writeNext(qint64 nowUs, PacketBuffer &out)
         queuedBytes -= static_cast<qint64>(packet.payload.size());
         packet.sequence = nextSequence;
         packet.sentUs = nowUs;
-        if (!write(out, packet, false, nowUs))
+        if (!write(out, packet, Transmission::Original, nowUs))
             continue;
 
         nextSequence++;
@@ -187,8 +183,9 @@ bool VideoSendStream::writeNext(qint64 nowUs, PacketBuffer &out)
     return false;
 }
 
-bool VideoSendStream::write(PacketBuffer &out, const Packet &packet, bool retransmission, qint64 nowUs)
+bool VideoSendStream::write(PacketBuffer &out, const Packet &packet, Transmission transmission, qint64 nowUs)
 {
+    const bool retransmission = transmission == Transmission::Retransmission;
     RtpHeader header;
     header.extension = true;
     header.marker = packet.marker;
@@ -197,22 +194,23 @@ bool VideoSendStream::write(PacketBuffer &out, const Packet &packet, bool retran
     header.timestamp = packet.timestamp;
     header.ssrc = retransmission ? retransmissionSsrc : mediaSsrc;
 
-    // abs-send-time is the time in seconds as 6.18 fixed point, cut to its low 24 bits.
+    // abs-send-time: seconds as 6.18 fixed point, low 24 bits
     const quint64 sendTime = ((static_cast<quint64>(nowUs) << 18) + 500000) / 1000000;
-    const uint8_t sendTimeBytes[3] = { static_cast<uint8_t>(sendTime >> 16), static_cast<uint8_t>(sendTime >> 8), static_cast<uint8_t>(sendTime) };
-    // The transmission offset is there but always zero, as the official client sends it.
+    uint8_t sendTimeBytes[3];
+    writeBigEndian24(static_cast<uint32_t>(sendTime), sendTimeBytes);
+    // always zero, as the official client sends it
     const uint8_t noOffset[3] = {};
     const int size = CLEAR_SIZE + EXTENSIONS_SIZE + (retransmission ? RTX_HEADER_SIZE : 0) + static_cast<int>(packet.payload.size());
     uint8_t transportSequence[2];
     qToBigEndian(transport ? transport->numberPacket(nowUs, size) : nextTransportSequence, transportSequence);
-    // In the order WebRTC lays them out, which is not the order of their ids.
+    // WebRTC's order, not the ids' order
     const RtpExtension elements[] = { { ABS_SEND_TIME_EXTENSION, sendTimeBytes }, { TRANSMISSION_OFFSET_EXTENSION, noOffset }, { TRANSPORT_SEQUENCE_EXTENSION, transportSequence } };
     uint8_t extensions[EXTENSIONS_SIZE];
     if (writeRtpExtensions(elements, extensions) != EXTENSIONS_SIZE)
         return false;
 
     out.clear();
-    if (writeRtpHeader(header, { out.data(), static_cast<size_t>(out.tailroom()) }, EXTENSIONS_SIZE / 4) != CLEAR_SIZE)
+    if (writeRtpHeader(header, out.writable(), EXTENSIONS_SIZE / 4) != CLEAR_SIZE)
         return false;
     out.resize(CLEAR_SIZE);
     out.append(extensions);
@@ -241,7 +239,7 @@ VideoSendStream::Packet *VideoSendStream::findSent(uint16_t sequence)
 
 qint64 VideoSendStream::roundTripUs() const
 {
-    return counters.roundTripMs < 0 ? 0 : qint64(counters.roundTripMs + ROUND_TRIP_MARGIN_MS) * 1000;
+    return counters.roundTripMs ? qint64(*counters.roundTripMs + ROUND_TRIP_MARGIN_MS) * 1000 : 0;
 }
 
 void VideoSendStream::forgetOld(qint64 nowUs)
@@ -268,8 +266,7 @@ int VideoSendStream::writeSenderReport(std::span<uint8_t> out, qint64 nowUs, uin
     SenderInfo info;
     info.ssrc = mediaSsrc;
     info.ntpTime = ntpTime;
-    // The RTP time of this moment: the last frame's, moved on by the time since.
-    info.rtpTimestamp = lastFrameTimestamp + static_cast<uint32_t>((nowUs - lastFrameQueuedUs) * VIDEO_CLOCK_KHZ / 1000);
+    info.rtpTimestamp = lastFrame->timestamp + static_cast<uint32_t>((nowUs - lastFrame->queuedUs) * VIDEO_CLOCK_KHZ / 1000);
     info.packetCount = static_cast<uint32_t>(counters.packets);
     info.octetCount = static_cast<uint32_t>(counters.bytes);
 
@@ -287,7 +284,7 @@ void VideoSendStream::onReceptionReport(const ReceptionReport &report, qint64 no
 {
     counters.lossFraction = report.fractionLost / 256.0;
 
-    // Zero stands for no sender report received yet.
+    // zero: no sender report received yet
     if (report.lastSenderReport == 0)
         return;
     const auto answered = std::find_if(sentReports.begin(), sentReports.end(), [&report](const SentReport &sent) { return sent.compactNtp == report.lastSenderReport; });

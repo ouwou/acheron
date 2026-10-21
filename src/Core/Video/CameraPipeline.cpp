@@ -4,6 +4,7 @@
 #include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoEncoder.hpp"
 #include "Core/Video/CameraCapture.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/EncodeThread.hpp"
 
 #include <QElapsedTimer>
@@ -48,30 +49,17 @@ struct Encoding
 
 struct Asked
 {
-    int bitrateBps = 0;
-    // Set when a size and frame rate were asked for, also the ones there already are.
+    std::optional<int> bitrateBps;
     std::optional<Encoding> encoding;
 };
 
-// The camera's picture inside the size to encode: never stretched and never enlarged, so a
-// camera of another shape is sent smaller than asked, and both sides even.
-QSize fittedInside(const QSize &camera, const QSize &bound)
-{
-    QSize size = camera;
-    if (!bound.isEmpty() && (camera.width() > bound.width() || camera.height() > bound.height()))
-        size = camera.scaled(bound, Qt::KeepAspectRatio);
-    return QSize(std::max(2, size.width() & ~1), std::max(2, size.height() & ~1));
-}
-
-// Lets through as many pictures a second as are wanted, of a camera that takes more.
 class FrameThinner
 {
 public:
-    explicit FrameThinner(int framerate) : interval(std::chrono::microseconds(1'000'000 / std::max(1, framerate))) {}
+    explicit FrameThinner(int framerate) : interval(pictureInterval(framerate)) {}
 
     bool takes(Clock::time_point capturedAt)
     {
-        // A camera's pictures come a little early as often as a little late.
         if (due && capturedAt < *due - interval / 4)
             return false;
         due = std::max(due ? *due + interval : capturedAt + interval, capturedAt);
@@ -83,11 +71,9 @@ private:
     std::optional<Clock::time_point> due;
 };
 
-// Makes of the camera's picture the one that is encoded: at the size to send, in the format
-// the encoder takes, and in the colours a viewer takes a stream to be in when it does not say:
-// video range, where a camera that sends MJPEG sends full range, and BT.709 from 720 lines up
-// and BT.601 below. The picture says so as well, but not every encoder passes that on (AMF
-// leaves BT.601 unsaid), and VP8 has no way to: it is BT.601 by definition.
+// in the colours a viewer assumes when the stream doesnt say: video range (an MJPEG camera sends
+// full) and BT.709 from 720 lines up, BT.601 below. AMF drops a BT.601 marking, and VP8 cant carry
+// one
 class EncodePictureMaker
 {
 public:
@@ -97,25 +83,16 @@ public:
     EncodePictureMaker(const EncodePictureMaker &) = delete;
     EncodePictureMaker &operator=(const EncodePictureMaker &) = delete;
 
-    // Null when the picture could not be converted. `camera` itself when it is already as wanted.
     AVFrame *make(AVFrame *camera, const QSize &size, int format, bool bt601Only)
     {
-        const Conversion wanted{ camera->width, camera->height, camera->format, Media::usesBt709(camera), Media::isFullRange(camera), size, format, !bt601Only && Media::usesBt709AtHeight(size.height()) };
+        const Conversion wanted{ camera->width, camera->height, camera->format, Media::usesBt709(camera), Media::isFullRange(camera), size, format, !Media::encodesAsBt601(size.height(), bt601Only) };
         if (wanted.changesNothing())
             return camera;
         if (wanted != configuredFor && !configure(wanted))
             return nullptr;
 
-        if (made->width != size.width() || made->height != size.height() || made->format != format) {
-            av_frame_unref(made.get());
-            made->width = size.width();
-            made->height = size.height();
-            made->format = format;
-            if (av_frame_get_buffer(made.get(), 0) < 0)
-                return nullptr;
-        }
-        // An encoder may still hold the last picture.
-        if (av_frame_make_writable(made.get()) < 0)
+        // an encoder may still hold the last picture
+        if (Media::prepareWritable(made.get(), format, size) < 0)
             return nullptr;
         if (sws_scale(context, camera->data, camera->linesize, 0, camera->height, made->data, made->linesize) <= 0)
             return nullptr;
@@ -151,9 +128,8 @@ private:
             return false;
         configuredFor = {};
 
-        // The ranges are set before the context is made ready: swscale picks a plain copy for
-        // two formats that differ only in their layout, and that does not convert a range it
-        // is told of afterwards.
+        // before initialising: swscale picks a plain copy for two formats that differ only in layout, and that
+        // copy ignores a range set afterwards
         av_opt_set_int(context, "srcw", wanted.width, 0);
         av_opt_set_int(context, "srch", wanted.height, 0);
         av_opt_set_int(context, "src_format", wanted.format, 0);
@@ -181,8 +157,7 @@ Media::VideoEncoder::Settings encoderSettings(const CameraSettings &settings, in
     Media::VideoEncoder::Settings encoding;
     encoding.codec = settings.codec;
     encoding.framerate = framerate;
-    encoding.bitrate = bitrateBps;
-    encoding.keyframeIntervalMs = settings.keyframeIntervalMs;
+    encoding.bitrateBps = bitrateBps;
     encoding.content = Media::VideoEncoder::Content::Camera;
     return encoding;
 }
@@ -206,8 +181,7 @@ class CameraPipeline::Worker
 public:
     explicit Worker(CameraPipeline *pipeline) : pipeline(pipeline)
     {
-        // Every layer but the first waits to be asked for.
-        for (int layer = 1; layer < LAYERS; layer++)
+        for (int layer = 1; layer < CAMERA_LAYERS; layer++)
             suspended[static_cast<size_t>(layer)] = true;
     }
 
@@ -217,7 +191,6 @@ public:
         thread.start(settings);
     }
 
-    // A camera that has not been opened yet opens with what is asked for here.
     void setBitrate(int bitrateBps, int layer)
     {
         thread.change([&](std::optional<CameraSettings> &pending) {
@@ -245,43 +218,38 @@ public:
         });
     }
 
-    std::array<std::atomic<bool>, LAYERS> keyframeWanted{};
-    std::array<std::atomic<bool>, LAYERS> suspended{};
+    std::array<std::atomic<bool>, CAMERA_LAYERS> keyframeWanted{};
+    std::array<std::atomic<bool>, CAMERA_LAYERS> suspended{};
 
 private:
-    // What has been asked of one layer since its last picture, guarded by the thread's lock.
+    // guarded by the thread's lock
     struct Requests
     {
-        int bitrateBps = 0;
+        std::optional<int> bitrateBps;
         std::optional<Encoding> encodingWanted;
         quint64 changes = 0;
         quint64 changesAtLastPicture = 0;
     };
 
-    // One encoding of the camera's pictures, as it stands in a capture.
     struct Layer
     {
         explicit Layer(const Encoding &encoding) : encoding(encoding), thinner(encoding.framerate) {}
 
         Encoding encoding;
         int sendingBitrateBps = 0;
-        // Made when the layer is first asked for.
         std::optional<Media::VideoEncoder> encoder;
         EncodePictureMaker pictures;
         FrameThinner thinner;
         std::optional<Encoding> announced;
         bool wasSuspended = false;
-        quint64 framesEncoded = 0;
-        quint64 framesDropped = 0;
-        int encodedLately = 0;
-        quint64 bytesLately = 0;
+        EncodeCounters counters;
     };
 
     void capture(const CameraSettings &settings, quint64 session);
     [[nodiscard]] std::optional<Asked> takeAsked(int layer);
 
     CameraPipeline *pipeline;
-    std::array<Requests, LAYERS> requests;
+    std::array<Requests, CAMERA_LAYERS> requests;
     RtpClock clock;
 
 public:
@@ -289,9 +257,7 @@ public:
                                           [this](const CameraSettings &settings) { requests[0].bitrateBps = settings.bitrateBps; } };
 };
 
-// What is asked of a layer now, once a picture has come with nothing new asked for since the
-// picture before it. A new bit rate and a new size asked for one after the other are each a
-// new start for the encoder, and a key frame: taken together like this they are one.
+// so a new rate and size asked back to back cost the encoder one restart and key frame, not two
 std::optional<Asked> CameraPipeline::Worker::takeAsked(int layer)
 {
     std::optional<Asked> taken;
@@ -306,9 +272,8 @@ std::optional<Asked> CameraPipeline::Worker::takeAsked(int layer)
 void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 session)
 {
     const QString noEncoder = CameraPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(settings.codec));
-    // A layer that has been told nothing of its own yet starts as the first does.
     std::deque<Layer> layers;
-    for (int index = 0; index < LAYERS; index++)
+    for (int index = 0; index < CAMERA_LAYERS; index++)
         layers.emplace_back(Encoding{ settings.encodeSize, std::max(1, settings.framerate) });
     for (Layer &layer : layers)
         layer.sendingBitrateBps = usableBitrate(settings.bitrateBps, settings.maxBitrateBps);
@@ -332,14 +297,12 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
     sinceStats.start();
     int capturedLately = 0;
 
-    // False when the camera cannot go on, which has then been said.
     const auto encodeLayer = [&](int index, Clock::time_point capturedAt, int64_t timestamp) {
         Layer &layer = layers[static_cast<size_t>(index)];
         const std::optional<Asked> asked = takeAsked(index);
-        if (asked && asked->bitrateBps > 0)
+        if (asked && asked->bitrateBps)
             layer.sendingBitrateBps = usableBitrate(asked->bitrateBps, settings.maxBitrateBps);
-        // VideoEncoder has no way to be given a new frame rate, so a new one is made, which
-        // starts with a key frame as a new size would anyway.
+        // VideoEncoder cant change frame rate, so a new one is made
         if (asked && asked->encoding) {
             layer.encoding = *asked->encoding;
             if (layer.encoder)
@@ -357,7 +320,6 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
                 return false;
             }
         }
-        // An encoder that has yet to open waits for what is still being asked for, and opens once.
         if (!asked && layer.encoder->stats().opened == 0)
             return true;
         const Encoding sending{ fittedInside(QSize(frame->width, frame->height), layer.encoding.size), layer.encoding.framerate };
@@ -376,7 +338,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         if (!layer.thinner.takes(capturedAt))
             return true;
 
-        AVFrame *picture = layer.pictures.make(frame.get(), sending.size, layer.encoder->softwareFormat(), settings.codec == VideoCodec::VP8);
+        AVFrame *picture = layer.pictures.make(frame.get(), sending.size, layer.encoder->softwareFormat(), Discord::Voice::carriesOnlyBt601(settings.codec));
         if (!picture) {
             emit pipeline->failed(CameraPipeline::tr("The camera's picture could not be converted."));
             return false;
@@ -395,38 +357,20 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         }
         announce();
 
-        layer.framesDropped += encoded.empty() ? 1 : 0;
-        for (EncodedVideoFrame &each : encoded) {
-            layer.framesEncoded++;
-            layer.encodedLately++;
-            layer.bytesLately += each.data.size();
-            emit pipeline->frameEncoded(std::make_shared<const EncodedVideoFrame>(std::move(each)), index);
-        }
+        layer.counters.deliver(encoded, pipeline, index);
         return true;
     };
 
     while (thread.isCurrent(session)) {
         if (sinceStats.elapsed() >= STATS_INTERVAL_MS) {
             const double seconds = static_cast<double>(sinceStats.restart()) / 1000.0;
-            for (int index = 0; index < LAYERS; index++) {
+            for (int index = 0; index < CAMERA_LAYERS; index++) {
                 Layer &layer = layers[static_cast<size_t>(index)];
                 if (!layer.encoder)
                     continue;
                 const Media::VideoEncoder::Stats &encoderStats = layer.encoder->stats();
-                PipelineStats stats;
-                // The camera's mode goes into the name for want of a place of its own in the statistics.
-                stats.encoderName = QStringLiteral("%1, from %2").arg(encoderStats.encoderName.isEmpty() ? QStringLiteral("no encoder yet") : encoderStats.encoderName, camera->description());
-                stats.hardware = encoderStats.hardware;
-                stats.encodedSize = layer.announced ? layer.announced->size : QSize();
-                stats.capturedFps = capturedLately / seconds;
-                stats.encodedFps = layer.encodedLately / seconds;
-                stats.averageEncodeMs = encoderStats.averageEncodeMs;
-                stats.bitrateBps = static_cast<quint64>(static_cast<double>(layer.bytesLately) * 8.0 / seconds);
-                stats.framesEncoded = layer.framesEncoded;
-                stats.framesDropped = layer.framesDropped;
-                emit pipeline->statsUpdated(stats, index);
-                layer.encodedLately = 0;
-                layer.bytesLately = 0;
+                const QSize encodedSize = layer.announced ? layer.announced->size : QSize();
+                emit pipeline->statsUpdated(layer.counters.takeStats(seconds, encoderStats, encoderOrNone(encoderStats), camera->description(), encodedSize, capturedLately), index);
             }
             capturedLately = 0;
         }
@@ -451,7 +395,7 @@ void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 ses
         }
 
         const int64_t timestamp = clock.timestampOf(capturedAt);
-        for (int index = 0; index < LAYERS; index++) {
+        for (int index = 0; index < CAMERA_LAYERS; index++) {
             if (!encodeLayer(index, capturedAt, timestamp))
                 return;
         }
@@ -474,25 +418,25 @@ void CameraPipeline::stop()
 
 void CameraPipeline::requestKeyframe(int layer)
 {
-    if (layer >= 0 && layer < LAYERS)
+    if (layer >= 0 && layer < CAMERA_LAYERS)
         worker->keyframeWanted[static_cast<size_t>(layer)] = true;
 }
 
 void CameraPipeline::setBitrate(int bitrateBps, int layer)
 {
-    if (layer >= 0 && layer < LAYERS)
+    if (layer >= 0 && layer < CAMERA_LAYERS)
         worker->setBitrate(bitrateBps, layer);
 }
 
 void CameraPipeline::setEncoding(const QSize &encodeSize, int framerate, int layer)
 {
-    if (layer >= 0 && layer < LAYERS)
+    if (layer >= 0 && layer < CAMERA_LAYERS)
         worker->setEncoding(encodeSize, framerate, layer);
 }
 
 void CameraPipeline::setEncodingSuspended(bool suspended, int layer)
 {
-    if (layer >= 0 && layer < LAYERS)
+    if (layer >= 0 && layer < CAMERA_LAYERS)
         worker->suspended[static_cast<size_t>(layer)] = suspended;
 }
 

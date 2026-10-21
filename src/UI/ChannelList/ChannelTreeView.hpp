@@ -37,12 +37,9 @@ signals:
     void leaveGuildRequested(Core::Snowflake accountId, Core::Snowflake guildId);
     void guildSettingsRequested(Core::Snowflake accountId, Core::Snowflake guildId, GuildSettingsSection section);
     void voiceParticipantContextMenuRequested(const QModelIndex &proxyIndex, QPoint globalPos);
-    // A live participant's row has been hovered long enough for its stream thumbnail to be shown;
-    // an invalid index means the hover ended.
     void liveParticipantHoverChanged(const QModelIndex &proxyIndex);
-    // A live participant's row was double-clicked, which is how the official client watches.
+    // as in the official client
     void watchStreamRequested(const QModelIndex &proxyIndex);
-    // The same for a participant with their camera on.
     void showCallVideoRequested(const QModelIndex &proxyIndex);
 
 protected:
@@ -55,6 +52,7 @@ private:
     void leaveEvent(QEvent *event) override;
 
     void setHoveredLiveParticipant(const QModelIndex &proxyIndex);
+    void hideLiveHover();
 
     bool handleMouseEventForExpansion(QMouseEvent *event);
 

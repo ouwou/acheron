@@ -91,7 +91,7 @@ CallTile::~CallTile()
         video->removeTile(tileKey.userId);
     if (watched)
         watched->setSurface(0, false);
-    // Going, the surface is hidden, and says so to whoever is still listening.
+    // deleting hides the surface, which it would announce to whoever still listens
     drawnOn->disconnect();
     delete drawnOn;
     delete window.data();
@@ -139,8 +139,7 @@ void CallTile::present(const QImage &picture)
     frame->format = AV_PIX_FMT_RGB32;
     frame->width = pixels.width();
     frame->height = pixels.height();
-    // Where the surface makes YUV of this for its shader, swscale does it its default way,
-    // which is this one.
+    // what swscale assumes when it makes YUV of this for the shader
     frame->colorspace = AVCOL_SPC_SMPTE170M;
     frame->color_range = AVCOL_RANGE_MPEG;
     if (av_frame_get_buffer(frame, 0) == 0) {

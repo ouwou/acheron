@@ -1,6 +1,3 @@
-// Real video through the whole receive chain: frames encoded by ffmpeg are packetized, handed
-// to the receiver packet by packet, reassembled, and decoded. Which codecs run depends on the
-// encoders the linked ffmpeg was built with; a codec with no encoder is skipped.
 
 #include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/VideoDecoder.hpp"
@@ -38,7 +35,6 @@ struct CodecCase
 {
     VideoCodec codec;
     AVCodecID id;
-    // Tried in turn: not every ffmpeg has the same ones.
     std::array<const char *, 2> encoders;
 };
 
@@ -49,7 +45,6 @@ struct EncodedFrame
     uint32_t timestamp = 0;
 };
 
-// A short clip of moving gradients, encoded with as little delay as the encoder allows.
 std::vector<EncodedFrame> encodeClip(const CodecCase &codecCase)
 {
     std::vector<EncodedFrame> frames;
@@ -77,7 +72,7 @@ std::vector<EncodedFrame> encodeClip(const CodecCase &codecCase)
     av_opt_set(context, "preset", "ultrafast", AV_OPT_SEARCH_CHILDREN);
     av_opt_set(context, "usage", "realtime", AV_OPT_SEARCH_CHILDREN);
     av_opt_set_int(context, "cpu-used", 8, AV_OPT_SEARCH_CHILDREN);
-    // Kvazaar reorders frames unless told not to, which no live sender does.
+    // kvazaar reorders frames unless told not to, which no live sender does
     av_opt_set(context, "kvazaar-params", "gop=0,period=10", AV_OPT_SEARCH_CHILDREN);
 
     if (avcodec_open2(context, encoder, nullptr) < 0) {
@@ -144,7 +139,6 @@ public:
     std::atomic<int> height{ 0 };
 };
 
-// Holds the decoder's thread in present() until the gate is opened.
 class GatedSink : public Core::Media::VideoFrameSink
 {
 public:
@@ -191,7 +185,6 @@ struct Chain
         decoder.setKeyframeRequester([this] { keyframeRequests++; });
     }
 
-    // Sends one encoded frame as RTP, leaving out the packets whose index `dropped` accepts.
     void send(const CodecCase &codecCase, const EncodedFrame &frame, const std::function<bool(size_t)> &dropped = {})
     {
         const RtpPayloads packets = codec == VideoCodec::AV1 ? packetizeAv1ByHand(frame.data, frame.keyframe) : packetizeWithFfmpeg(codecCase.id, frame.data, frame.keyframe);
@@ -211,14 +204,12 @@ struct Chain
         }
     }
 
-    // Waits for the decoder to show `count` frames and returns how many it did show.
     int waitForDecoded(int count)
     {
         QElapsedTimer timer;
         timer.start();
         while (sink->frames < count && timer.elapsed() < 5000)
             QThread::msleep(5);
-        // Whatever is still in the decoder's queue gets its chance to fail.
         QThread::msleep(50);
         return sink->frames;
     }
@@ -274,7 +265,7 @@ void TestVideoDecode::decodableCodecsAreOffered()
     QVERIFY(decodable.contains(VideoCodec::H264));
     QCOMPARE(offered.size(), decodable.size());
 
-    // Payload types follow the position in the list, as the official client assigns them.
+    // payload types follow the position in the list, as the official client assigns them
     for (int i = 0; i < offered.size(); i++) {
         QCOMPARE(offered[i].name.get(), videoCodecName(decodable[i]));
         QCOMPARE(offered[i].payloadType.get(), 101 + 2 * i);
@@ -284,7 +275,6 @@ void TestVideoDecode::decodableCodecsAreOffered()
         QCOMPARE(offered[i].encode.get(), false);
     }
 
-    // The preference order is AV1, H265, H264, VP8, whichever of them are present.
     QList<VideoCodec> expected;
     for (VideoCodec codec : { VideoCodec::AV1, VideoCodec::H265, VideoCodec::H264, VideoCodec::VP8 }) {
         if (decodable.contains(codec))
@@ -326,7 +316,6 @@ void TestVideoDecode::lossSkipsToTheNextKeyframe()
     if (clip.empty())
         QSKIP("this ffmpeg has no encoder for the codec");
 
-    // The first packet of the fourth frame never arrives, and no retransmission comes.
     constexpr int LOST_FRAME = 3;
     Chain chain(codecCase.codec);
     int expected = 0;
@@ -338,7 +327,6 @@ void TestVideoDecode::lossSkipsToTheNextKeyframe()
             continue;
         }
         if (index == LOST_FRAME + 2) {
-            // Long enough for the receiver to stop asking for the packet.
             chain.now += VideoReceiver::NACK_GIVE_UP_MS + 1;
             QVERIFY(chain.receiver.poll(chain.now).keyframeRequest);
         }
@@ -350,8 +338,6 @@ void TestVideoDecode::lossSkipsToTheNextKeyframe()
         chain.send(codecCase, clip[index]);
     }
 
-    // Everything from the loss up to the next key frame is withheld, so nothing the decoder
-    // was given depended on the missing frame.
     QVERIFY(expected < static_cast<int>(clip.size()));
     QCOMPARE(chain.pushed, expected);
     const int shown = chain.waitForDecoded(expected);
@@ -365,7 +351,6 @@ void TestVideoDecode::hardwareDecodesOrGivesWayToSoftware()
     QFETCH(CodecCase, codecCase);
     if (!Core::Media::decodableVideoCodecs().contains(codecCase.codec))
         QSKIP("this ffmpeg cannot decode the codec");
-    // Twice over, so that a stream the graphics card turns down is seen to restart in software.
     std::vector<EncodedFrame> clip = encodeClip(codecCase);
     if (clip.empty())
         QSKIP("this ffmpeg has no encoder for the codec");
@@ -387,11 +372,9 @@ void TestVideoDecode::hardwareDecodesOrGivesWayToSoftware()
     QCOMPARE(chain.sink->width.load(), WIDTH);
     QCOMPARE(chain.sink->height.load(), HEIGHT);
     if (stats.hardware) {
-        // The graphics card took it: nothing may have gone wrong on the way.
         QCOMPARE(stats.errors, quint64(0));
         QCOMPARE(chain.sink->frames.load(), static_cast<int>(clip.size()));
     } else {
-        // Software, either from the start or after the hardware gave up early on.
         QVERIFY(stats.errors <= 1);
         QVERIFY(chain.sink->frames.load() >= FRAME_COUNT);
     }
@@ -416,8 +399,6 @@ void TestVideoDecode::aDiscardedQueueStartsOverAtAKeyframe()
     decoder.push(vp8.codec, forDecoder(vp8.codec, clip[0]));
     QTRY_COMPARE(sink->frames.load(), 1);
 
-    // With its thread held in the sink the decoder falls behind by more than its queue holds,
-    // so the queue is thrown away and what arrives next has nothing to build on.
     constexpr int ARRIVING_AFTER_THE_DISCARD = 5;
     for (int i = 0; i < Core::Media::VideoDecoder::MAX_QUEUED_FRAMES + ARRIVING_AFTER_THE_DISCARD; i++)
         decoder.push(vp8.codec, forDecoder(vp8.codec, clip[1]));
@@ -451,7 +432,6 @@ void TestVideoDecode::aQueueThatHasWaitedTooLongIsDiscarded()
     decoder.push(vp8.codec, forDecoder(vp8.codec, clip[0]));
     QTRY_COMPARE(sink->frames.load(), 1);
 
-    // A slow stream never fills the queue, but what waits in it is as far behind all the same.
     decoder.push(vp8.codec, forDecoder(vp8.codec, clip[1]));
     QTest::qWait(Core::Media::VideoDecoder::MAX_QUEUE_AGE_MS / 2);
     decoder.push(vp8.codec, forDecoder(vp8.codec, clip[1]));
@@ -484,7 +464,6 @@ void TestVideoDecode::aDamagedStreamIsNotHeldAgainstTheHardware()
     const auto decodeClip = [&](int damagedKeyframesFirst) {
         Chain chain(h264.codec, true);
         for (int i = 0; i < damagedKeyframesFirst; i++) {
-            // An IDR slice with nothing to say what picture it belongs to.
             EncodedVideoFrame damaged;
             damaged.data = { 0, 0, 0, 1, 0x65, 0xB8, 0x00, 0x04, 0x00, 0x00, 0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
             damaged.keyframe = true;
@@ -502,7 +481,6 @@ void TestVideoDecode::aDamagedStreamIsNotHeldAgainstTheHardware()
     if (!decodeClip(0).hardware)
         QSKIP("no hardware H264 decoder on this machine");
 
-    // More damaged starts than failures are tolerated before hardware is given up on.
     for (int attempt = 0; attempt < 3; attempt++) {
         const Outcome outcome = decodeClip(1);
         QCOMPARE(outcome.errors, quint64(1));

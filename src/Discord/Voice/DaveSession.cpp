@@ -116,7 +116,7 @@ void DaveSession::onAnnounceCommitTransition(const QByteArray &payload)
     if (auto *roster = std::get_if<discord::dave::RosterMap>(&result)) {
         qCInfo(LogDave) << "ProcessCommit succeeded, roster size =" << roster->size();
         pendingTransitionReady = true;
-        // Kept from a transition this one overtakes, as the official client keeps it.
+        // as the official client
         pendingTransitionBringsKeys = pendingTransitionBringsKeys || bringsNewKeys(*roster);
         emit sendReadyForTransition(transitionId);
         if (transitionId == 0)
@@ -245,16 +245,48 @@ void DaveSession::onPrepareEpoch(int version, int epoch)
     }
 }
 
-discord::dave::IEncryptor *DaveSession::encryptor()
+size_t DaveSession::maxCiphertextSize(discord::dave::MediaType type, size_t frameSize)
 {
-    return daveEncryptor.get();
+    return daveEncryptor->GetMaxCiphertextByteSize(type, frameSize);
 }
 
-discord::dave::IDecryptor *DaveSession::getOrCreateDecryptor(quint32 ssrc, uint64_t uid)
+std::optional<size_t> DaveSession::encrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out)
+{
+    size_t written = 0;
+    const auto result = daveEncryptor->Encrypt(type, ssrc, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(out.data(), out.size()), &written);
+    if (result == discord::dave::IEncryptor::Success)
+        return written;
+    qCWarning(LogDave) << "DAVE encrypt failed: result =" << static_cast<int>(result) << "frameSize =" << frame.size();
+    return std::nullopt;
+}
+
+size_t DaveSession::maxPlaintextSize(discord::dave::MediaType type, quint32 ssrc, size_t frameSize)
+{
+    return decryptorFor(ssrc)->GetMaxPlaintextByteSize(type, frameSize);
+}
+
+std::optional<size_t> DaveSession::decrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out)
+{
+    size_t written = 0;
+    const auto result = decryptorFor(ssrc)->Decrypt(type, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(out.data(), out.size()), &written);
+    if (result == discord::dave::IDecryptor::Success)
+        return written;
+
+    static constexpr const char *RESULT_NAMES[] = { "Success", "DecryptionFailure", "MissingKeyRatchet", "InvalidNonce", "MissingCryptor" };
+    const auto index = static_cast<size_t>(result);
+    const bool hasMagicMarker = frame.size() >= 2 && frame[frame.size() - 2] == 0xFA && frame.back() == 0xFA;
+    qCDebug(LogDave) << "DAVE decrypt failed: SSRC =" << ssrc << "result =" << (index < std::size(RESULT_NAMES) ? RESULT_NAMES[index] : "Unknown") << "frameSize =" << frame.size() << "hasMagicMarker =" << hasMagicMarker;
+    return std::nullopt;
+}
+
+discord::dave::IDecryptor *DaveSession::decryptorFor(quint32 ssrc)
 {
     auto it = daveDecryptors.find(ssrc);
     if (it != daveDecryptors.end())
         return it->second.get();
+
+    const auto user = ssrcMap.constFind(ssrc);
+    const uint64_t uid = user == ssrcMap.constEnd() ? 0 : user.value();
 
     auto decryptor = discord::dave::CreateDecryptor();
 

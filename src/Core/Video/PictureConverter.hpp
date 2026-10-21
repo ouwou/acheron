@@ -25,8 +25,6 @@ inline QByteArray softwareScaling(const QSize &size, bool bt601, int format)
     return scaling + ",format=" + av_get_pix_fmt_name(static_cast<AVPixelFormat>(format));
 }
 
-// A graph of `chain` ending in a sink to read from. Its filters that work on a graphics card
-// are given `device`.
 inline int assemble(const QByteArray &chain, AVBufferRef *device, AVFilterGraph **graph, AVFilterContext **sink)
 {
     *graph = avfilter_graph_alloc();
@@ -58,7 +56,6 @@ inline int assemble(const QByteArray &chain, AVBufferRef *device, AVFilterGraph 
     return result;
 }
 
-// Scales RGB pictures in system memory and converts them to what an encoder takes.
 class PictureConverter
 {
 public:
@@ -68,7 +65,6 @@ public:
     PictureConverter(const PictureConverter &) = delete;
     PictureConverter &operator=(const PictureConverter &) = delete;
 
-    // Leaves `picture` with its owner. Negative, an ffmpeg error, when it could not be converted.
     int convert(AVFrame *picture, const QSize &size, int format, bool bt601, AVFrame *into)
     {
         const QSize from(picture->width, picture->height);

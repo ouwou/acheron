@@ -1,8 +1,7 @@
 #pragma once
 
-// Packetizers for the video RTP tests. None of this uses the code under test: H264, H265 and
-// VP8 go through ffmpeg's RTP muxer, and AV1 is packetized by hand from its RTP specification
-// because the muxer does not handle it.
+// none of this uses the code under test: H264, H265 and VP8 go through ffmpeg's RTP muxer, and AV1 is
+// packetized by hand from its RTP specification because the muxer doesnt handle it
 
 #include "Discord/Voice/RtpPacket.hpp"
 
@@ -31,14 +30,13 @@ inline void appendLeb128(Bytes &out, size_t value)
     } while (value != 0);
 }
 
-// The payloads of one frame's RTP packets, in order, and each packet's marker bit.
 struct RtpPayloads
 {
     std::vector<Bytes> payloads;
     std::vector<bool> markers;
 };
 
-// ffmpeg 7 made the buffer a write callback is handed const.
+// ffmpeg 7 made the buffer a write callback is handed const
 #if LIBAVFORMAT_VERSION_MAJOR >= 61
 using WrittenBytes = const uint8_t *;
 #else
@@ -51,7 +49,7 @@ inline int collectPacket(void *opaque, WrittenBytes data, int size)
 
     auto *out = static_cast<RtpPayloads *>(opaque);
     const std::span<const uint8_t> packet(data, static_cast<size_t>(size));
-    // The muxer interleaves its own sender reports.
+    // the muxer interleaves its own sender reports
     if (classifyPacket(packet) != PacketKind::Rtp)
         return size;
 
@@ -63,7 +61,6 @@ inline int collectPacket(void *opaque, WrittenBytes data, int size)
     return size;
 }
 
-// Packetizes one frame with ffmpeg's RTP muxer. Empty when this ffmpeg cannot packetize the codec.
 inline RtpPayloads packetizeWithFfmpeg(AVCodecID codec, const Bytes &frame, bool keyframe)
 {
     RtpPayloads out;
@@ -106,15 +103,11 @@ inline RtpPayloads packetizeWithFfmpeg(AVCodecID codec, const Bytes &frame, bool
     return out;
 }
 
-// Packetizes OBUs the way the AV1 RTP format describes: no element count, every element
-// length-prefixed, an OBU split wherever the packet fills up. Temporal delimiters are left out,
-// as the format requires.
 inline RtpPayloads packetizeAv1ByHand(const Bytes &frame, bool newSequence)
 {
     constexpr uint8_t OBU_HAS_SIZE = 0x02;
     constexpr uint8_t OBU_TEMPORAL_DELIMITER = 2;
 
-    // Split the frame into OBUs with their size fields removed.
     std::vector<Bytes> elements;
     size_t offset = 0;
     while (offset < frame.size()) {
@@ -144,7 +137,6 @@ inline RtpPayloads packetizeAv1ByHand(const Bytes &frame, bool newSequence)
     for (const Bytes &element : elements) {
         size_t sent = 0;
         while (sent < element.size()) {
-            // Room for this element's length prefix, or the packet goes out as it is.
             if (packet.size() + 3 >= MTU) {
                 out.payloads.push_back(packet);
                 out.markers.push_back(false);

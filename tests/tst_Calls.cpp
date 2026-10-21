@@ -1,6 +1,4 @@
-// Tests for private (DM and group DM) call signalling: the three call events, opcode 13, and
-// the per-session record of calls. The store's rules are the official client's CallStore
-// (docs/video-re/re-dm-calls.md), including what it keeps after a call ends.
+// the store's rules are the official client's CallStore (docs/video-re/re-dm-calls.md)
 
 #include "Core/Calls/CallStore.hpp"
 #include "Discord/Events.hpp"
@@ -12,6 +10,7 @@
 #include <QTest>
 
 using namespace Acheron;
+using Core::CallConnect;
 using Core::CallStore;
 using Core::Snowflake;
 
@@ -109,13 +108,12 @@ void TestCalls::selectingADmAsksOnce()
 {
     CallStore store;
 
-    QVERIFY(store.shouldConnect(CHANNEL, false));
-    QVERIFY(!store.shouldConnect(CHANNEL, false));
+    QVERIFY(store.claimConnect(CHANNEL, CallConnect::OncePerChannel));
+    QVERIFY(!store.claimConnect(CHANNEL, CallConnect::OncePerChannel));
     QVERIFY(!store.isActive(CHANNEL));
 
-    // Nor after the gateway has answered, whether or not a call was there.
     store.handleCallCreate(ongoingCall());
-    QVERIFY(!store.shouldConnect(CHANNEL, false));
+    QVERIFY(!store.claimConnect(CHANNEL, CallConnect::OncePerChannel));
 }
 
 void TestCalls::aFreshSessionAsksAgain()
@@ -123,11 +121,11 @@ void TestCalls::aFreshSessionAsksAgain()
     CallStore store;
     store.handleCallCreate(ongoingCall());
 
-    QVERIFY(store.shouldConnect(CHANNEL, true));
-    QVERIFY(store.shouldConnect(CHANNEL, true));
+    QVERIFY(store.claimConnect(CHANNEL, CallConnect::Always));
+    QVERIFY(store.claimConnect(CHANNEL, CallConnect::Always));
 
     store.reset();
-    QVERIFY(store.shouldConnect(CHANNEL, false));
+    QVERIFY(store.claimConnect(CHANNEL, CallConnect::OncePerChannel));
 }
 
 void TestCalls::createMakesTheCallActive()
@@ -170,7 +168,6 @@ void TestCalls::updateKeepsUnavailability()
     QVERIFY(store.call(CHANNEL)->unavailable);
     QVERIFY(!store.isActive(CHANNEL));
 
-    // Only a new CALL_CREATE brings an unavailable call back.
     store.handleCallCreate(ongoingCall());
     QVERIFY(store.isActive(CHANNEL));
 }
@@ -200,8 +197,7 @@ void TestCalls::deleteLeavesAKnownButEndedCall()
     QVERIFY(!call->messageId.isValid());
     QVERIFY(call->ongoingRings.isEmpty());
 
-    // The ended call is still on record, so looking at the DM again does not ask the gateway.
-    QVERIFY(!store.shouldConnect(CHANNEL, false));
+    QVERIFY(!store.claimConnect(CHANNEL, CallConnect::OncePerChannel));
 }
 
 void TestCalls::unavailableKeepsTheCallButNotActive()

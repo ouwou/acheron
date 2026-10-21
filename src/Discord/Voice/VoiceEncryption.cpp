@@ -60,7 +60,6 @@ bool VoiceEncryption::seal(PacketBuffer &packet, int clearSize)
     if (clearSize < 0 || clearSize > packet.size() || packet.tailroom() < TRAILER_SIZE)
         return false;
 
-    // The counter fills the front of the nonce, zero-padded to the cipher's nonce length.
     uint8_t nonce[LARGEST_NONCE_SIZE] = {};
     const uint32_t counter = qToBigEndian(m_nonce);
     std::memcpy(nonce, &counter, SUPPLEMENTAL_NONCE_SIZE);

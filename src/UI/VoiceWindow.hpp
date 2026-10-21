@@ -25,7 +25,8 @@ namespace Core {
 class ImageManager;
 namespace Audio {
 class VoiceManager;
-}
+struct VoiceParticipant;
+} // namespace Audio
 } // namespace Core
 
 namespace UI {
@@ -87,7 +88,7 @@ public:
 
     void setSpeaking(bool speaking);
     void setAudioLevel(float rms);
-    void setVoiceStateFlags(bool selfMute, bool selfDeaf, bool serverMute, bool serverDeaf, bool suppress, bool selfVideo, bool selfStream);
+    void setVoiceStateFlags(const Core::Audio::VoiceParticipant &participant);
     void setLocallyMuted(bool muted);
     void setVolume(int pct);
     void setDisplayName(const QString &name);

@@ -1,9 +1,6 @@
-// Tests for the packet layer every RTC connection shares: RTP header parsing and writing,
-// telling RTP from RTCP, Discord's rtpsize transport cipher, and the pooled packet buffer.
-//
-// The cipher cases include known-answer vectors computed here with libsodium's detached-nonce
-// primitives laid out by hand, so a mistake in which bytes are authenticated, or where the tag
-// and nonce go, fails even though seal and open would still round-trip with each other.
+// the cipher cases include known-answer vectors built here with libsodium's detached-nonce primitives,
+// so a mistake in which bytes are authenticated, or where the tag and nonce go, fails even though seal
+// and open would still round-trip
 
 #include "Discord/Voice/PacketBuffer.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
@@ -46,7 +43,6 @@ QByteArray testKey()
     return key;
 }
 
-// What the official client's cipher produces for one packet, built without VoiceEncryption.
 QByteArray referenceSeal(EncryptionMode mode, const QByteArray &key, const QByteArray &clear, const QByteArray &plaintext, quint32 counter)
 {
     unsigned char nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES] = {};
@@ -178,7 +174,7 @@ void TestRtp::classifyRejectsNonRtp_data()
     QTest::newRow("version 1") << (QByteArray(1, '\x40') + QByteArray(31, '\0'));
     QTest::newRow("version 3") << (QByteArray(1, '\xc0') + QByteArray(31, '\0'));
     QTest::newRow("rtp shorter than its fixed header") << QByteArray("\x80\x78\x00\x01\x00\x00\x00\x00\x00\x00\x00", 11);
-    // IP discovery responses share the socket and start with a 16-bit type of 2.
+    // IP discovery responses share the socket and start with a 16-bit type of 2
     QTest::newRow("ip discovery response") << (QByteArray("\x00\x02\x00\x46", 4) + QByteArray(70, '\0'));
 }
 
@@ -252,20 +248,19 @@ void TestRtp::parseRejectsTruncatedHeaders_data()
 
 void TestRtp::paddingIsCountedByTheLastByte()
 {
-    // Discord fills the padding with the count; the standard only promises the last byte.
+    // Discord fills the padding with the count; the standard only promises the last byte
     const std::vector<uint8_t> padded = { 0xAA, 0xBB, 0x03, 0x03, 0x03 };
-    QCOMPARE(rtpPaddingSize(padded), 3);
+    QCOMPARE(rtpPaddingSize(padded), std::optional<int>(3));
     const std::vector<uint8_t> zeroFilled = { 0xAA, 0x00, 0x00, 0x00, 0x04 };
-    QCOMPARE(rtpPaddingSize(zeroFilled), 4);
+    QCOMPARE(rtpPaddingSize(zeroFilled), std::optional<int>(4));
     const std::vector<uint8_t> allPadding = { 0x02, 0x02 };
-    QCOMPARE(rtpPaddingSize(allPadding), 2);
+    QCOMPARE(rtpPaddingSize(allPadding), std::optional<int>(2));
 
-    // A count of nothing, or of more than there is, is not padding.
     const std::vector<uint8_t> zero = { 0xAA, 0x00 };
-    QCOMPARE(rtpPaddingSize(zero), -1);
+    QVERIFY(!rtpPaddingSize(zero));
     const std::vector<uint8_t> tooLong = { 0xAA, 0x09 };
-    QCOMPARE(rtpPaddingSize(tooLong), -1);
-    QCOMPARE(rtpPaddingSize({}), -1);
+    QVERIFY(!rtpPaddingSize(tooLong));
+    QVERIFY(!rtpPaddingSize({}));
 }
 
 void TestRtp::parseRejectsTruncatedHeaders()
@@ -276,8 +271,6 @@ void TestRtp::parseRejectsTruncatedHeaders()
 
 void TestRtp::parseSurvivesTruncationFuzz()
 {
-    // Every prefix of a packet with the longest possible header must either be rejected or
-    // report a clear size that fits inside the prefix, so nothing downstream reads past the end.
     QByteArray packet = QByteArray::fromHex("9f78000100000000000000aa") + QByteArray(15 * 4, 'c') + QByteArray::fromHex("bede0004") + QByteArray(64, 'p');
 
     for (int length = 0; length <= packet.size(); ++length) {
@@ -483,7 +476,6 @@ void TestRtp::opensReferencePacket()
     const QByteArray clear = QByteArray::fromHex("9078000100000000000000aabede0001");
     const QByteArray plaintext = QByteArray::fromHex("10550000") + QByteArray("opus frame");
 
-    // A nonce the receiver has never seen, as a remote sender's counter would be.
     const QByteArray sealed = referenceSeal(mode, key, clear, plaintext, 0x01020304);
 
     VoiceEncryption cipher(mode, key);
@@ -504,7 +496,6 @@ void TestRtp::rtcpKeepsEightBytesClear()
     QFETCH(EncryptionMode, mode);
 
     const QByteArray key = testKey();
-    // A receiver report with one report block: header and sender SSRC, then the block.
     const QByteArray rtcp = QByteArray::fromHex("81c90007" "000000aa") + QByteArray(24, 'r');
 
     VoiceEncryption cipher(mode, key);
@@ -610,7 +601,7 @@ void TestRtp::bufferKeepsHeadroomForRelayHeader()
     PacketBuffer packet;
     fill(packet, QByteArray("rtp packet"));
 
-    // The largest SOCKS5 relay header, for an IPv6 destination, is 22 bytes.
+    // 22 bytes for an IPv6 destination
     QVERIFY(packet.headroom() >= 22);
     uint8_t *content = packet.data();
 
@@ -664,7 +655,6 @@ void TestRtp::poolRecyclesBuffers()
     QCOMPARE(reused->size(), 0);
     QCOMPARE(reused->headroom(), int(PacketBuffer::HEADROOM));
 
-    // Steady state: a receive loop that hands each packet on and takes the next never grows the pool.
     for (int i = 0; i < 1000; ++i) {
         PacketPool::Handle held = pool.acquire();
         PacketPool::Handle scratch = pool.acquire();

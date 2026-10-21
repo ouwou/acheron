@@ -29,8 +29,7 @@ void InputConfinement::apply(AVFormatContext *format, AVDictionary **options, co
 {
     av_dict_set(options, "protocol_whitelist", isDownload(input) ? DOWNLOAD_PROTOCOLS : LOCAL_PROTOCOLS, 0);
 
-    // With the caller's own I/O in place ffmpeg opens nothing for the input, so everything it
-    // tries to open is something else.
+    // with the caller's own I/O in place ffmpeg opens nothing for the input itself
     inputOpened = format->pb != nullptr;
     open = format->io_open;
     format->opaque = this;

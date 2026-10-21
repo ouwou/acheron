@@ -1,13 +1,10 @@
-// Tests for sending video over RTP: the packetizers, the sender that numbers, paces and repeats
-// their packets, and the RTCP that goes with it. What the packetizers write is read back by the
-// depacketizers the receive path uses, and the end-to-end encryption cases put libdave's
-// encryptor in front of them and its decryptor behind.
 
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
 #include "Discord/Voice/VideoPacketizer.hpp"
 #include "Discord/Voice/VideoSendStream.hpp"
+#include "VideoFrameHelpers.hpp"
 
 #include <bytes/bytes.h>
 #include <dave/dave_interfaces.h>
@@ -25,14 +22,13 @@ namespace {
 
 using Bytes = std::vector<uint8_t>;
 using Payloads = std::vector<Bytes>;
+using namespace VideoFrameHelpers;
 
 constexpr uint32_t SSRC = 0x1234;
 constexpr uint32_t RTX_SSRC = 0x1299;
 constexpr uint8_t PAYLOAD_TYPE = 101;
 constexpr uint8_t RTX_PAYLOAD_TYPE = 102;
 
-// What is left for a payload once the header, the extensions and the room for a retransmission
-// are taken out of the 1200 bytes a packet may have.
 constexpr int PACKET_OVERHEAD = 12 + 4 + 12;
 constexpr int MAX_PAYLOAD = 1200 - PACKET_OVERHEAD - 2;
 constexpr int VP8_DESCRIPTOR = 4;
@@ -47,7 +43,7 @@ constexpr int NAL_PPS = 0x68;
 constexpr int STAP_A = 24;
 constexpr int FU_A = 28;
 
-// An H265 NAL header: the type above a layer id of zero, then the temporal id plus one.
+// the type above a layer id of zero, then the temporal id plus one
 using H265Header = std::array<uint8_t, 2>;
 constexpr H265Header H265_SLICE = { 1 << 1, 1 };
 constexpr H265Header H265_IDR = { 19 << 1, 1 };
@@ -68,7 +64,7 @@ constexpr uint8_t OBU_METADATA = 5;
 constexpr uint8_t OBU_FRAME = 6;
 constexpr uint8_t OBU_TILE_LIST = 8;
 constexpr uint8_t OBU_PADDING = 15;
-// The bits of the aggregation header an AV1 payload opens with; the element count lies between.
+// the element count lies between these bits
 constexpr int AV1_CONTINUES_PREVIOUS = 0x80;
 constexpr int AV1_CONTINUES_IN_NEXT = 0x40;
 constexpr int AV1_NEW_SEQUENCE = 0x08;
@@ -82,17 +78,6 @@ constexpr int av1Elements(int count)
 constexpr qint64 MS = 1000;
 constexpr qint64 SECOND = 1000 * MS;
 
-// Bytes that can never form a start code, so a NAL made of them needs no escaping.
-Bytes filler(size_t size, uint32_t seed)
-{
-    std::mt19937 generator(seed);
-    std::uniform_int_distribution<int> byte(1, 255);
-    Bytes bytes(size);
-    for (uint8_t &value : bytes)
-        value = static_cast<uint8_t>(byte(generator));
-    return bytes;
-}
-
 Bytes vp8Frame(bool keyframe, size_t size, uint32_t seed)
 {
     Bytes frame = filler(size, seed);
@@ -100,14 +85,12 @@ Bytes vp8Frame(bool keyframe, size_t size, uint32_t seed)
     return frame;
 }
 
-// One NAL of `size` bytes in all, behind a start code of `startCodeSize` bytes.
 void appendNal(Bytes &frame, uint8_t header, size_t size, uint32_t seed, int startCodeSize = 4)
 {
     frame.insert(frame.end(), static_cast<size_t>(startCodeSize - 1), 0);
     frame.push_back(1);
     frame.push_back(header);
     Bytes body = filler(size - 1, seed);
-    // A slice that begins its picture, which is what marks the start of a key frame.
     if (!body.empty())
         body[0] |= 0x80;
     frame.insert(frame.end(), body.begin(), body.end());
@@ -122,14 +105,12 @@ Bytes h264Keyframe(size_t pictureSize, int startCodeSize = 4)
     return frame;
 }
 
-// One H265 NAL of `size` bytes in all, behind a start code of `startCodeSize` bytes.
 void appendH265Nal(Bytes &frame, H265Header header, size_t size, uint32_t seed, int startCodeSize = 4)
 {
     frame.insert(frame.end(), static_cast<size_t>(startCodeSize - 1), 0);
     frame.push_back(1);
     frame.insert(frame.end(), header.begin(), header.end());
     Bytes body = filler(size - H265_NAL_HEADER, seed);
-    // A slice segment that is the first of its picture.
     if (!body.empty())
         body[0] |= 0x80;
     frame.insert(frame.end(), body.begin(), body.end());
@@ -168,9 +149,6 @@ enum class LastObu {
     Unsized,
 };
 
-// The same OBUs in the two forms an AV1 frame takes. An encoder gives every OBU its size
-// field. A frame as it is assembled from its packets has none on the last OBU, which is also
-// how the end-to-end encryptor writes it and what its decryptor has to be handed.
 Bytes av1Frame(const std::vector<Obu> &obus, LastObu last = LastObu::Sized)
 {
     Bytes frame;
@@ -191,16 +169,6 @@ Bytes av1Frame(const std::vector<Obu> &obus, LastObu last = LastObu::Sized)
 const std::vector<Obu> AV1_KEYFRAME_SENT = { { OBU_TEMPORAL_DELIMITER, 0 }, { OBU_SEQUENCE_HEADER, 11 }, { OBU_FRAME, 4000 } };
 const std::vector<Obu> AV1_KEYFRAME_KEPT = { { OBU_SEQUENCE_HEADER, 11 }, { OBU_FRAME, 4000 } };
 
-bool reassemble(VideoCodec codec, const Payloads &payloads, Bytes &frame)
-{
-    std::vector<std::span<const uint8_t>> spans;
-    for (const Bytes &payload : payloads)
-        spans.emplace_back(payload);
-    return assembleFrame(codec, spans, frame);
-}
-
-// AV1 payloads are held against the OBUs that are sent, twice: as assembled, where the last OBU
-// is without its size field, and after prepareForDecoder(), where every OBU has one again.
 bool av1ComesBackAs(const std::vector<Obu> &kept, const Payloads &payloads)
 {
     Bytes frame;
@@ -232,47 +200,6 @@ bool noneLargerThan(const Payloads &payloads, size_t limit)
     return std::all_of(payloads.begin(), payloads.end(), [limit](const Bytes &payload) { return !payload.empty() && payload.size() <= limit; });
 }
 
-class FixedKeyRatchet : public discord::dave::IKeyRatchet
-{
-public:
-    discord::dave::EncryptionKey GetKey(discord::dave::KeyGeneration generation) noexcept override
-    {
-        std::vector<uint8_t> key(16, 0x5A);
-        key[0] = static_cast<uint8_t>(generation);
-        return discord::dave::EncryptionKey(std::move(key));
-    }
-    void DeleteKey(discord::dave::KeyGeneration) noexcept override {}
-};
-
-// Encrypted the way VoiceClient does it: the output sized by the encryptor's own bound.
-Bytes encryptFrame(discord::dave::Codec codec, const Bytes &frame)
-{
-    auto encryptor = discord::dave::CreateEncryptor();
-    encryptor->SetKeyRatchet(std::make_unique<FixedKeyRatchet>());
-    encryptor->AssignSsrcToCodec(SSRC, codec);
-
-    Bytes encrypted(encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size()));
-    size_t written = 0;
-    const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, SSRC, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(encrypted.data(), encrypted.size()), &written);
-    if (result != discord::dave::IEncryptor::Success)
-        return {};
-    encrypted.resize(written);
-    return encrypted;
-}
-
-bool decryptFrame(const Bytes &encrypted, Bytes &frame)
-{
-    auto decryptor = discord::dave::CreateDecryptor();
-    decryptor->TransitionToKeyRatchet(std::make_unique<FixedKeyRatchet>());
-
-    frame.resize(decryptor->GetMaxPlaintextByteSize(discord::dave::MediaType::Video, encrypted.size()));
-    size_t written = 0;
-    const auto result = decryptor->Decrypt(discord::dave::MediaType::Video, discord::dave::ArrayView<const uint8_t>(encrypted.data(), encrypted.size()), discord::dave::ArrayView<uint8_t>(frame.data(), frame.size()), &written);
-    frame.resize(written);
-    return result == discord::dave::IDecryptor::Success;
-}
-
-// One packet as the sender wrote it, taken apart the way a receiver would.
 struct Written
 {
     RtpHeader header;
@@ -316,7 +243,6 @@ std::optional<Written> takeApart(const PacketBuffer &packet)
     return written;
 }
 
-// One pacing interval's worth of packets.
 std::vector<Written> interval(VideoSendStream &sender, qint64 nowUs)
 {
     std::vector<Written> out;
@@ -329,8 +255,6 @@ std::vector<Written> interval(VideoSendStream &sender, qint64 nowUs)
     return out;
 }
 
-// Everything that is waiting, written as of `nowUs`. Only the pace is told that time goes by,
-// which is what makes it let everything out.
 std::vector<Written> drain(VideoSendStream &sender, qint64 nowUs)
 {
     std::vector<Written> out;
@@ -355,7 +279,6 @@ qint64 bytesIn(const std::vector<Written> &packets)
     return bytes;
 }
 
-// What the pace lets out in a millisecond at this bitrate, and a burst: 40 ms of that.
 double paceOf(int bitrate, double factor)
 {
     return bitrate * factor / 8000.0;
@@ -375,7 +298,7 @@ void tellRoundTrip(VideoSendStream &sender, int milliseconds)
     report.ssrc = SSRC;
     report.lastSenderReport = compactNtp(NTP);
     sender.onReceptionReport(report, milliseconds * MS);
-    QCOMPARE(sender.stats().roundTripMs, milliseconds);
+    QCOMPARE(sender.stats().roundTripMs, std::optional<int>(milliseconds));
 }
 
 Payloads payloadsOf(const std::vector<Written> &packets)
@@ -409,7 +332,6 @@ void append16(Bytes &out, uint16_t value)
     out.insert(out.end(), bytes, bytes + 2);
 }
 
-// An RTCP packet from its parts; the length field is worked out from the body.
 Bytes rtcpPacket(uint8_t countOrFormat, uint8_t type, const Bytes &body)
 {
     Bytes packet = { static_cast<uint8_t>(0x80 | countOrFormat), type };
@@ -505,11 +427,9 @@ void TestVideoSend::vp8FramesComeBackWhole()
 
     QCOMPARE(static_cast<int>(payloads.size()), packets);
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
-    // The pieces are of about one size, so a frame one byte over does not end in a one-byte packet.
     const auto [smallest, largest] = std::minmax_element(payloads.begin(), payloads.end(), [](const Bytes &a, const Bytes &b) { return a.size() < b.size(); });
     QVERIFY(largest->size() - smallest->size() <= 1);
 
-    // Only the first packet says that a picture starts in it.
     QVERIFY(startsKeyframe(VideoCodec::VP8, payloads.front()));
     for (size_t i = 0; i < payloads.size(); i++)
         QCOMPARE((payloads[i][0] & 0x10) != 0, i == 0);
@@ -528,7 +448,6 @@ void TestVideoSend::vp8PacketsOfAFrameShareItsPictureId()
         const Payloads payloads = packetizer.packetize(vp8Frame(false, 3000, 21), false, MAX_PAYLOAD);
         QCOMPARE(payloads.size(), size_t(3));
         for (const Bytes &payload : payloads) {
-            // X, then I with the M bit: a picture id of fifteen bits and nothing else.
             QCOMPARE(payload[0] & 0xEF, 0x80);
             QCOMPARE(payload[1], uint8_t(0x80));
             QVERIFY(payload[2] & 0x80);
@@ -564,11 +483,9 @@ void TestVideoSend::h264UnitsComeBackWhole()
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
 
     if (packets == 1) {
-        // The unit travels as it is, without its start code.
         QCOMPARE(payloads[0], Bytes(frame.begin() + 4, frame.end()));
     } else {
         for (size_t i = 0; i < payloads.size(); i++) {
-            // The unit's importance stays in the indicator and its type moves to the second byte.
             QCOMPARE(int(payloads[i][0]), (NAL_SLICE & ~NAL_TYPE_MASK) | FU_A);
             QCOMPARE(payloads[i][1] & NAL_TYPE_MASK, NAL_SLICE & NAL_TYPE_MASK);
             QCOMPARE((payloads[i][1] & 0x80) != 0, i == 0);
@@ -590,7 +507,6 @@ void TestVideoSend::h264KeyframeAggregatesItsParameterSets()
     QVERIFY(payloads.size() > 2);
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
 
-    // SPS and PPS share the first packet, each behind its length, and nothing else is in it.
     const Bytes &aggregate = payloads[0];
     QCOMPARE(aggregate[0] & NAL_TYPE_MASK, STAP_A);
     QCOMPARE(aggregate[0] & 0x60, NAL_SPS & 0x60);
@@ -601,7 +517,6 @@ void TestVideoSend::h264KeyframeAggregatesItsParameterSets()
     QCOMPARE(int(aggregate[26]), NAL_PPS);
     QVERIFY(startsWithParameterSets(VideoCodec::H264, aggregate));
 
-    // The picture does not fit beside them and is cut into fragments.
     for (size_t i = 1; i < payloads.size(); i++) {
         QCOMPARE(payloads[i][0] & NAL_TYPE_MASK, FU_A);
         QCOMPARE(payloads[i][1] & NAL_TYPE_MASK, NAL_IDR & NAL_TYPE_MASK);
@@ -629,7 +544,6 @@ void TestVideoSend::h264KeyframeThatFitsIsOneAggregate()
     QVERIFY(reassemble(VideoCodec::H264, payloads, reassembled));
     QCOMPARE(reassembled, frame);
 
-    // One unit more than fits: the aggregate closes and the last unit goes by itself.
     Bytes larger = frame;
     appendNal(larger, NAL_SLICE, MAX_PAYLOAD - 100, 31);
     const Payloads two = packetizer.packetize(larger, true, MAX_PAYLOAD);
@@ -648,7 +562,6 @@ void TestVideoSend::h264ShortStartCodesComeBackLong()
     QVERIFY(!fromShort.empty());
     QCOMPARE(fromShort, fromLong);
 
-    // Of the zero bytes in front of a start code one is the start code's; more are the unit's own.
     const Bytes frame = { 0, 0, 1, NAL_SLICE, 0x80, 0x55, 0, 0, 0, 0, 1, NAL_SLICE, 0x80, 0x66 };
     Bytes reassembled;
     QVERIFY(reassemble(VideoCodec::H264, packetizer.packetize(frame, false, MAX_PAYLOAD), reassembled));
@@ -683,16 +596,12 @@ void TestVideoSend::h265UnitsComeBackWhole()
     QVERIFY(!startsKeyframe(VideoCodec::H265, payloads.front()));
 
     if (packets == 1) {
-        // The unit travels as it is, without its start code.
         QCOMPARE(payloads[0], Bytes(frame.begin() + 4, frame.end()));
     } else {
         const auto [smallest, largest] = std::minmax_element(payloads.begin(), payloads.end(), [](const Bytes &a, const Bytes &b) { return a.size() < b.size(); });
         QVERIFY(largest->size() - smallest->size() <= 1);
 
         for (size_t i = 0; i < payloads.size(); i++) {
-            // The unit's two header bytes stay but for the type, which is a fragmentation
-            // unit's; its own moves to the third byte, under the marks of the first and the
-            // last fragment.
             QCOMPARE(int(payloads[i][0]), H265_FU << 1);
             QCOMPARE(payloads[i][1], H265_SLICE[1]);
             QCOMPARE(payloads[i][2] & 0x3F, H265_SLICE[0] >> 1);
@@ -712,12 +621,9 @@ void TestVideoSend::h265KeyframeAggregatesItsParameterSets()
     VideoPacketizer packetizer(VideoCodec::H265);
     const Payloads payloads = packetizer.packetize(frame, true, MAX_PAYLOAD);
 
-    // One aggregation packet, then the picture in as many fragments as it takes.
     QCOMPARE(payloads.size(), size_t(1 + (5000 - H265_NAL_HEADER + H265_FU_ROOM - 1) / H265_FU_ROOM));
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
 
-    // VPS, SPS and PPS share the first packet, each behind its length alone: there is no
-    // decoding order number in front of any of them.
     const Bytes &aggregate = payloads[0];
     const auto headerAt = [&aggregate](size_t at) { return H265Header{ aggregate[at], aggregate[at + 1] }; };
     QCOMPARE(int(aggregate[0]), H265_AP << 1);
@@ -731,7 +637,6 @@ void TestVideoSend::h265KeyframeAggregatesItsParameterSets()
     QVERIFY(headerAt(72) == H265_PPS);
     QVERIFY(startsWithParameterSets(VideoCodec::H265, aggregate));
 
-    // The picture does not fit beside them and is cut into fragments.
     for (size_t i = 1; i < payloads.size(); i++) {
         QCOMPARE(int(payloads[i][0]), H265_FU << 1);
         QCOMPARE(payloads[i][1], H265_IDR[1]);
@@ -760,7 +665,6 @@ void TestVideoSend::h265KeyframeThatFitsIsOneAggregate()
     QVERIFY(reassemble(VideoCodec::H265, payloads, reassembled));
     QCOMPARE(reassembled, frame);
 
-    // One unit more than fits: the aggregate closes and the last unit goes by itself.
     Bytes larger = frame;
     appendH265Nal(larger, H265_SLICE, MAX_PAYLOAD - 100, 33);
     const Payloads two = packetizer.packetize(larger, true, MAX_PAYLOAD);
@@ -777,7 +681,7 @@ void TestVideoSend::h265KeyframeThatFitsIsOneAggregate()
 
 void TestVideoSend::h265HeadersKeepLayerAndTemporalId()
 {
-    // Layer 33 has a bit in each header byte, beside the type and above the temporal id.
+    // layer 33 has a bit in each header byte
     constexpr H265Header SPS_IN_LAYER_33 = { (33 << 1) | 1, (1 << 3) | 1 };
     constexpr H265Header SLICE_IN_LAYER_33 = { (1 << 1) | 1, (1 << 3) | 3 };
     constexpr H265Header SLICE_IN_LAYER_0 = { 1 << 1, 2 };
@@ -785,7 +689,6 @@ void TestVideoSend::h265HeadersKeepLayerAndTemporalId()
     VideoPacketizer packetizer(VideoCodec::H265);
     Bytes reassembled;
 
-    // An aggregate is of the lowest layer and the lowest temporal layer among its units.
     Bytes oneLayer;
     appendH265Nal(oneLayer, SPS_IN_LAYER_33, 10, 34);
     appendH265Nal(oneLayer, SLICE_IN_LAYER_33, 20, 35);
@@ -806,7 +709,6 @@ void TestVideoSend::h265HeadersKeepLayerAndTemporalId()
     QVERIFY(reassemble(VideoCodec::H265, payloads, reassembled));
     QCOMPARE(reassembled, twoLayers);
 
-    // A fragment keeps both around the type it replaces.
     Bytes large;
     appendH265Nal(large, SLICE_IN_LAYER_33, 3000, 37);
     payloads = packetizer.packetize(large, false, MAX_PAYLOAD);
@@ -822,7 +724,6 @@ void TestVideoSend::h265HeadersKeepLayerAndTemporalId()
 
 void TestVideoSend::av1ObusComeBackWhole_data()
 {
-    // Of the OBU as it travels: its header byte and its payload.
     QTest::addColumn<int>("size");
 
     QTest::newRow("one byte of payload") << 2;
@@ -844,8 +745,6 @@ void TestVideoSend::av1ObusComeBackWhole()
 
     QCOMPARE(static_cast<int>(payloads.size()), (size + AV1_ROOM - 1) / AV1_ROOM);
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
-    // WebRTC evens AV1 packets out more coarsely than the other codecs' fragments: to within
-    // a byte for every packet there is.
     const auto [smallest, largest] = std::minmax_element(payloads.begin(), payloads.end(), [](const Bytes &a, const Bytes &b) { return a.size() < b.size(); });
     QVERIFY(largest->size() - smallest->size() < payloads.size());
 
@@ -855,8 +754,6 @@ void TestVideoSend::av1ObusComeBackWhole()
         QCOMPARE(int(payloads[i][0]), continues | av1Elements(1));
         carried += payloads[i].size() - 1;
     }
-    // The one element is the OBU without its size field and needs no length of its own, and
-    // no temporal delimiter went ahead of it: nothing travels but the OBU's own bytes.
     QCOMPARE(int(payloads[0][1]), OBU_FRAME << 3);
     QCOMPARE(carried, static_cast<size_t>(size));
 
@@ -865,7 +762,6 @@ void TestVideoSend::av1ObusComeBackWhole()
 
 void TestVideoSend::av1HeaderCountsUpToThreeElements()
 {
-    // A payload of whole OBUs, of which the first `withLength` state their length in a byte.
     const auto payloadOf = [](int aggregation, const std::vector<Obu> &obus, size_t withLength) {
         Bytes payload = { static_cast<uint8_t>(aggregation) };
         for (size_t i = 0; i < obus.size(); i++) {
@@ -879,7 +775,6 @@ void TestVideoSend::av1HeaderCountsUpToThreeElements()
 
     VideoPacketizer packetizer(VideoCodec::AV1);
 
-    // The last of the elements that are counted runs to the end of the packet.
     const std::vector<Obu> two = { { OBU_SEQUENCE_HEADER, 11 }, { OBU_FRAME, 500 } };
     Payloads payloads = packetizer.packetize(av1Frame(two), true, MAX_PAYLOAD);
     QCOMPARE(payloads, Payloads{ payloadOf(av1Elements(2) | AV1_NEW_SEQUENCE, two, 1) });
@@ -890,14 +785,11 @@ void TestVideoSend::av1HeaderCountsUpToThreeElements()
     QCOMPARE(payloads, Payloads{ payloadOf(av1Elements(3) | AV1_NEW_SEQUENCE, three, 2) });
     QVERIFY(av1ComesBackAs(three, payloads));
 
-    // Four are more than the count's two bits hold: it is zero, and every element states its length.
     const std::vector<Obu> four = { { OBU_SEQUENCE_HEADER, 3 }, { OBU_FRAME_HEADER, 4 }, { OBU_TILE_GROUP, 5 }, { OBU_TILE_GROUP, 6 } };
     payloads = packetizer.packetize(av1Frame(four), true, MAX_PAYLOAD);
     QCOMPARE(payloads, Payloads{ payloadOf(AV1_NEW_SEQUENCE, four, 4) });
     QVERIFY(av1ComesBackAs(four, payloads));
 
-    // No new sequence begins with a frame that is not said to be a key frame, nor with a key
-    // frame that comes without its sequence header.
     QCOMPARE(packetizer.packetize(av1Frame(two), false, MAX_PAYLOAD), Payloads{ payloadOf(av1Elements(2), two, 1) });
     const std::vector<Obu> pictureAlone = { { OBU_FRAME, 500 } };
     QCOMPARE(packetizer.packetize(av1Frame(pictureAlone), true, MAX_PAYLOAD), Payloads{ payloadOf(av1Elements(1), pictureAlone, 0) });
@@ -910,8 +802,6 @@ void TestVideoSend::av1FrameAcrossPacketsSaysWhatContinues()
     QCOMPARE(payloads.size(), size_t(4));
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
 
-    // The sequence header, behind its length, and the beginning of the picture share the first
-    // packet, which alone says that a new sequence begins.
     QCOMPARE(int(payloads[0][0]), AV1_CONTINUES_IN_NEXT | av1Elements(2) | AV1_NEW_SEQUENCE);
     QCOMPARE(int(payloads[0][1]), 12);
     QCOMPARE(int(payloads[0][2]), OBU_SEQUENCE_HEADER << 3);
@@ -940,7 +830,6 @@ void TestVideoSend::av1ObuSharesThePacketAnotherEndsIn()
     QCOMPARE(payloads[0].size(), payloads[1].size());
     QCOMPARE(int(payloads[0][0]), AV1_CONTINUES_IN_NEXT | av1Elements(1));
 
-    // With an OBU behind it, what is left of the first one states its length.
     Bytes length;
     appendLeb128(length, 1 + 1500 - (payloads[0].size() - 1));
     QCOMPARE(length.size(), size_t(2));
@@ -969,13 +858,11 @@ void TestVideoSend::av1ObusThatAreNotSentAreLeftOut()
 
 void TestVideoSend::av1LastObuMayComeWithoutItsSize()
 {
-    // The end-to-end encryptor hands over a frame whose last OBU runs to the end of the buffer.
     VideoPacketizer packetizer(VideoCodec::AV1);
     const Payloads fromSized = packetizer.packetize(av1Frame(AV1_KEYFRAME_KEPT), true, MAX_PAYLOAD);
     QVERIFY(!fromSized.empty());
     QCOMPARE(packetizer.packetize(av1Frame(AV1_KEYFRAME_KEPT, LastObu::Unsized), true, MAX_PAYLOAD), fromSized);
 
-    // An encoder may write a size in more bytes than it takes.
     const Bytes paddedSize = { (OBU_FRAME << 3) | 0x02, 0x83, 0x00, 7, 8, 9 };
     QCOMPARE(packetizer.packetize(paddedSize, false, MAX_PAYLOAD), (Payloads{ { static_cast<uint8_t>(av1Elements(1)), OBU_FRAME << 3, 7, 8, 9 } }));
 }
@@ -992,8 +879,6 @@ void TestVideoSend::framesComeBackWholeAtAnyPacketSize_data()
     Bytes h265 = h265Keyframe(700);
     appendH265Nal(h265, H265_SLICE, 40, 112);
     appendH265Nal(h265, H265_SLICE, 9, 113);
-    // More OBUs than the header counts, with and without an extension byte, and of lengths
-    // that take one byte to state and two.
     const std::vector<Obu> av1 = { { OBU_SEQUENCE_HEADER, 11 }, { OBU_FRAME_HEADER, 20, true }, { OBU_TILE_GROUP, 300, true }, { OBU_TILE_GROUP, 5 }, { OBU_METADATA, 40 }, { OBU_TILE_GROUP, 150 }, { OBU_TILE_GROUP, 1 } };
 
     QTest::newRow("H264") << int(VideoCodec::H264) << h264 << h264;
@@ -1035,14 +920,10 @@ void TestVideoSend::whatCannotBePacketizedGivesNothing()
     const Bytes frame = h264Keyframe(5000);
     QVERIFY(VideoPacketizer(VideoCodec::Unknown).packetize(frame, true, MAX_PAYLOAD).empty());
     QVERIFY(VideoPacketizer(VideoCodec::H264).packetize(frame, true, 3).empty());
-    // Not Annex B: there is no start code to find a unit behind.
     QVERIFY(VideoPacketizer(VideoCodec::H264).packetize(filler(500, 40), true, MAX_PAYLOAD).empty());
     QVERIFY(VideoPacketizer(VideoCodec::H265).packetize(filler(500, 40), true, MAX_PAYLOAD).empty());
-    // An H265 unit of less than its two header bytes.
     QVERIFY(VideoPacketizer(VideoCodec::H265).packetize(Bytes{ 0, 0, 1, H265_SLICE[0] }, true, MAX_PAYLOAD).empty());
 
-    // An OBU whose size runs past the frame, one whose size does not end, and one that should
-    // have an extension byte.
     const Bytes sizedPastTheEnd = { (OBU_FRAME << 3) | 0x02, 5, 1 };
     const Bytes sizeWithoutEnd = { (OBU_FRAME << 3) | 0x02, 0x80 };
     const Bytes extensionMissing = { (OBU_FRAME << 3) | 0x04 };
@@ -1062,15 +943,12 @@ void TestVideoSend::encryptedFramesSurvivePacketizing_data()
     const Obu av1Delta = { OBU_FRAME, 900 };
 
     QTest::newRow("H264 key frame") << int(VideoCodec::H264) << true << h264Keyframe(5000) << h264Keyframe(5000);
-    // The encryptor widens the start codes, so what a receiver decrypts has long ones.
     QTest::newRow("H264 key frame, short start codes") << int(VideoCodec::H264) << true << h264Keyframe(5000, 3) << h264Keyframe(5000, 4);
     QTest::newRow("VP8 key frame") << int(VideoCodec::VP8) << true << vp8Frame(true, 5000, 50) << vp8Frame(true, 5000, 50);
     QTest::newRow("VP8 delta frame") << int(VideoCodec::VP8) << false << vp8Frame(false, 900, 51) << vp8Frame(false, 900, 51);
     QTest::newRow("H265 key frame") << int(VideoCodec::H265) << true << h265Keyframe(5000) << h265Keyframe(5000);
     QTest::newRow("H265 key frame, short start codes") << int(VideoCodec::H265) << true << h265Keyframe(5000, 3) << h265Keyframe(5000, 4);
     QTest::newRow("H265 delta frame") << int(VideoCodec::H265) << false << h265Delta << h265Delta;
-    // The encryptor leaves out the temporal delimiter and the last OBU's size field, and
-    // prepareForDecoder() gives the decrypted frame that size back.
     QTest::newRow("AV1 key frame") << int(VideoCodec::AV1) << true << av1Frame(AV1_KEYFRAME_SENT) << av1Frame(AV1_KEYFRAME_KEPT);
     QTest::newRow("AV1 delta frame") << int(VideoCodec::AV1) << false << av1Frame({ { OBU_TEMPORAL_DELIMITER, 0 }, av1Delta }) << av1Frame({ av1Delta });
 }
@@ -1083,16 +961,14 @@ void TestVideoSend::encryptedFramesSurvivePacketizing()
     QFETCH(Bytes, decrypted);
     const VideoCodec videoCodec = static_cast<VideoCodec>(codec);
 
-    const Bytes encrypted = encryptFrame(daveCodec(videoCodec), frame);
+    const Bytes encrypted = encryptFrame(daveCodec(videoCodec), SSRC, frame);
     QVERIFY(encrypted.size() > frame.size());
 
     VideoPacketizer packetizer(videoCodec);
     const Payloads payloads = packetizer.packetize(encrypted, keyframe, MAX_PAYLOAD);
     QVERIFY(noneLargerThan(payloads, MAX_PAYLOAD));
-    // What a receiver tells the start of a key frame by is among what stays readable.
     QCOMPARE(startsKeyframe(videoCodec, payloads.front()), keyframe);
 
-    // The decryptor has to be handed exactly what the encryptor produced.
     Bytes reassembled;
     QVERIFY(reassemble(videoCodec, payloads, reassembled));
     QCOMPARE(reassembled, encrypted);
@@ -1103,26 +979,19 @@ void TestVideoSend::encryptedFramesSurvivePacketizing()
     QCOMPARE(plain, decrypted);
 }
 
-// Documents a real out-of-bounds write in vendored libdave (vendor/libdave/cpp/src/encryptor.cpp,
-// submodule tag v1.1.1/cpp). Encryptor::Encrypt writes the grown frame, the tag, the nonce, the
-// serialized unencrypted ranges, the size byte and the marker through raw ArrayViews chained from
-// encryptedFrame.data(), never comparing against encryptedFrame.size(). GetMaxCiphertextByteSize
-// promises only frameSize + kSupplementalBytes(11) + kTransformPaddingBytes(64) = frameSize + 75.
-// An H264 frame of many small slice NAL units outgrows that promise: each unit widens its 3-byte
-// start code to 4 (one byte of frame growth) and adds one unencrypted range whose offset+size
-// LEB128 pair the trailer has to carry. The asserts that would catch this are compiled out: the
-// relwithdebinfo build defines NDEBUG. This case hands Encrypt a view of exactly the stated
-// maximum, backed by a canary-filled buffer, and shows the write landing past that maximum at the
-// calculated threshold (20 units) while a frame one unit smaller stays within it.
+// documents an out-of-bounds write in vendored libdave (vendor/libdave/cpp/src/encryptor.cpp, v1.1.1).
+// Encryptor::Encrypt writes the grown frame and trailer through raw views of encryptedFrame.data()
+// without checking its size, while GetMaxCiphertextByteSize promises only frameSize + 75. each small
+// H264 slice widens its start code by a byte and adds a range to the trailer, so 20 of them overrun
+// where 19 dont. the asserts that would catch it are compiled out under NDEBUG
 void TestVideoSend::encryptWritesPastTheBoundItPromises()
 {
     constexpr uint8_t Canary = 0xCD;
     constexpr size_t CanaryTail = 128;
 
-    // One minimal H264 slice NAL: a 3-byte start code, the slice header, one payload byte whose
-    // leading ones cover all three exp-Golomb header values (so the PPS coverage is a single
-    // byte), then two bytes that stay encrypted so the next unit's start code opens a fresh
-    // unencrypted range. Seven input bytes become eight output bytes plus a six-byte range.
+    // 3-byte start code, slice header, one byte covering all three exp-Golomb header values, then two
+    // encrypted bytes so the next start code opens a fresh clear range: 7 bytes in, 8 out plus a 6-byte
+    // range
     const auto manyNalFrame = [](int units) {
         Bytes frame;
         const uint8_t nal[] = { 0, 0, 1, static_cast<uint8_t>(NAL_SLICE), 0xE0, 0x55, 0x66 };
@@ -1151,8 +1020,7 @@ void TestVideoSend::encryptWritesPastTheBoundItPromises()
         m.frameSize = frame.size();
         m.statedMax = encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size());
 
-        // Larger than the stated maximum and canary-filled past it, so a write past the promised
-        // end lands in our own allocation to be seen, not in the heap to corrupt it.
+        // canary-filled past the stated maximum, so an overrun lands in our own allocation
         Bytes buffer(m.statedMax + CanaryTail, Canary);
         const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, SSRC, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(buffer.data(), m.statedMax), &m.bytesWritten);
         m.succeeded = result == discord::dave::IEncryptor::Success;
@@ -1172,8 +1040,6 @@ void TestVideoSend::encryptWritesPastTheBoundItPromises()
     qInfo() << "H264 20-unit frame:" << over.frameSize << "bytes, stated max" << over.statedMax << ", wrote" << over.bytesWritten << ", overran the stated end by" << over.overrun << "byte(s), succeeded" << over.succeeded;
     qInfo() << "H264 19-unit frame:" << under.frameSize << "bytes, stated max" << under.statedMax << ", wrote" << under.bytesWritten << ", overran the stated end by" << under.overrun << "byte(s), succeeded" << under.succeeded;
 
-    // The threshold frame overruns a buffer sized to the library's own GetMaxCiphertextByteSize,
-    // the frame one unit smaller does not, and the overrun happens while Encrypt reports success.
     QVERIFY(over.overrun >= 1);
     QVERIFY(over.succeeded);
     QCOMPARE(under.overrun, size_t(0));
@@ -1198,19 +1064,16 @@ void TestVideoSend::packetsAreNumberedMarkedAndExtended()
         QCOMPARE(packet.header.ssrc, SSRC);
         QCOMPARE(packet.header.payloadType, PAYLOAD_TYPE);
         QCOMPARE(packet.header.timestamp, ofFirstFrame ? 90000u : 93000u);
-        // Both numberings run on through the wrap, and the transport-wide one counts every packet.
         QCOMPARE(packet.header.sequence, static_cast<uint16_t>(FIRST.sequence + i));
         QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST.transportSequence + i));
         QCOMPARE(packet.header.marker, i == 2 || i == 4);
 
-        // The cipher leaves the fixed header and the extension preamble readable.
         QVERIFY(packet.header.extension);
         QCOMPARE(packet.clearSize, VideoSendStream::CLEAR_SIZE);
         QCOMPARE(packet.extensions.size(), size_t(VideoSendStream::EXTENSIONS_SIZE));
         QCOMPARE(packet.extension(TRANSMISSION_OFFSET_EXTENSION), (Bytes{ 0, 0, 0 }));
         QCOMPARE(packet.extension(ABS_SEND_TIME_EXTENSION).size(), size_t(3));
         QCOMPARE(packet.extension(TRANSPORT_SEQUENCE_EXTENSION).size(), size_t(2));
-        // Nothing but those three: no MID, no RID.
         for (uint8_t other : { 1, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14 })
             QVERIFY(packet.extension(other).empty());
     }
@@ -1236,10 +1099,10 @@ void TestVideoSend::theSendTimeIsSecondsInFixedPoint()
         return packets.size() == 1 ? packets[0].sendTime() : 0xFFFFFFFF;
     };
 
-    // Eighteen bits of fraction: a second and a half is 1.5 * 2^18.
+    // eighteen bits of fraction: 1.5 s is 1.5 * 2^18
     QCOMPARE(sendTimeAt(1500 * MS), 0x060000u);
     QCOMPARE(sendTimeAt(250 * MS), 0x010000u);
-    // Only six bits of whole seconds travel, so the value wraps every 64 seconds.
+    // six bits of whole seconds, so it wraps every 64 s
     QCOMPARE(sendTimeAt(65 * SECOND), 0x040000u);
     QCOMPARE(sendTimeAt(64 * SECOND - 4), 0xFFFFFFu);
 }
@@ -1255,7 +1118,6 @@ void TestVideoSend::noPacketIsLargerThanTheLimit_data()
     Bytes unitOver;
     appendNal(unitOver, NAL_SLICE, MAX_PAYLOAD + 1, 71);
 
-    // A packet that is as large as a first transmission may be still has room to be repeated.
     constexpr int FULL = PACKET_OVERHEAD + MAX_PAYLOAD;
     QTest::newRow("VP8, exactly one packet") << int(VideoCodec::VP8) << vp8Frame(true, VP8_ROOM, 72) << FULL;
     QTest::newRow("VP8, one byte over") << int(VideoCodec::VP8) << vp8Frame(true, VP8_ROOM + 1, 73) << PACKET_OVERHEAD + VP8_DESCRIPTOR + VP8_ROOM / 2 + 1;
@@ -1272,8 +1134,6 @@ void TestVideoSend::noPacketIsLargerThanTheLimit_data()
     QTest::newRow("H265, one byte over") << int(VideoCodec::H265) << h265UnitOver << PACKET_OVERHEAD + H265_FU_HEADER + MAX_PAYLOAD / 2;
     QTest::newRow("H265, key frame of full packets") << int(VideoCodec::H265) << h265Keyframe(H265_NAL_HEADER + 172 * H265_FU_ROOM) << FULL;
 
-    // One OBU of `size` bytes as it travels, in the form a frame is assembled in, so that what
-    // comes back is what went in.
     const auto av1Picture = [](int size) { return av1Frame({ { OBU_FRAME, static_cast<size_t>(size - 1) } }, LastObu::Unsized); };
     QTest::newRow("AV1, exactly one packet") << int(VideoCodec::AV1) << av1Picture(AV1_ROOM) << FULL;
     QTest::newRow("AV1, one byte over") << int(VideoCodec::AV1) << av1Picture(AV1_ROOM + 1) << PACKET_OVERHEAD + 1 + MAX_PAYLOAD / 2;
@@ -1288,7 +1148,6 @@ void TestVideoSend::noPacketIsLargerThanTheLimit()
 
     VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
     sender.setCodec(static_cast<VideoCodec>(codec), PAYLOAD_TYPE, RTX_PAYLOAD_TYPE);
-    // Enough that every packet may be sent again at once.
     sender.setBitrate(100000000);
     QVERIFY(sender.queueFrame(frame, 0, true, 0));
     const std::vector<Written> packets = drain(sender, 0);
@@ -1303,8 +1162,6 @@ void TestVideoSend::noPacketIsLargerThanTheLimit()
     QCOMPARE(largestSeen, largest);
     QVERIFY(largestSeen <= VideoSendStream::MAX_PACKET_SIZE);
 
-    // Sent again, each is two bytes longer and still within the limit: the number it first
-    // went out under, then the payload as it was.
     sender.retransmit(everySequence, 0);
     const std::vector<Written> repeated = drain(sender, 0);
     QCOMPARE(repeated.size(), packets.size());
@@ -1339,7 +1196,7 @@ void TestVideoSend::aFrameLeavesAtThePaceOfItsBitrate()
     QFETCH(int, bitrate);
     QFETCH(bool, screen);
     constexpr int PACKETS = 20;
-    // The official client's: 1.1 times the bitrate for a camera, the bitrate itself for a screen.
+    // the official client's: 1.1x the bitrate for a camera, 1x for a screen
     const double factor = screen ? 1.0 : 1.1;
     QCOMPARE(screen ? VideoSendStream::SCREEN_PACING_FACTOR : VideoSendStream::CAMERA_PACING_FACTOR, factor);
 
@@ -1359,13 +1216,11 @@ void TestVideoSend::aFrameLeavesAtThePaceOfItsBitrate()
         const std::vector<Written> share = interval(sender, ms * MS);
         packets.insert(packets.end(), share.begin(), share.end());
         left += bytesIn(share);
-        // Never more than a burst ahead of the pace, give or take the packet that crossed the line.
         QVERIFY2(left <= burst + pace * ms + VideoSendStream::MAX_PACKET_SIZE, qPrintable(QStringLiteral("%1 bytes out after %2 ms").arg(left).arg(ms)));
         doneAtMs = ms;
     }
 
     QCOMPARE(packets.size(), size_t(PACKETS));
-    // And not behind it either: the frame is out when the pace has earned it, to the interval.
     const double earnedAtMs = std::max(0.0, (left - burst) / pace);
     QVERIFY2(doneAtMs <= earnedAtMs + VideoSendStream::PACE_INTERVAL_MS, qPrintable(QStringLiteral("out after %1 ms, earned after %2").arg(doneAtMs).arg(earnedAtMs)));
     QVERIFY(doneAtMs < VideoSendStream::MAX_QUEUE_MS);
@@ -1381,12 +1236,11 @@ void TestVideoSend::aFrameWithinTheBurstLeavesAtOnce()
 {
     VideoSendStream sender = vp8Sender();
     sender.setBitrate(3500000);
-    // 40 ms of 3.85 Mbps is 19 kB: a frame and a half at 30 a second.
+    // 40 ms of 3.85 Mbps is 19 kB: a frame and a half at 30 fps
     QVERIFY(sender.queueFrame(vp8Frame(false, 12 * VP8_ROOM, 81), 0, false, 0));
     QCOMPARE(interval(sender, 0).size(), size_t(12));
     QVERIFY(!sender.hasWaiting());
 
-    // The burst is spent: of the next frame, too soon after, only a part leaves.
     QVERIFY(sender.queueFrame(vp8Frame(false, 12 * VP8_ROOM, 82), 3000, false, 5 * MS));
     QVERIFY(interval(sender, 5 * MS).size() < size_t(12));
     QVERIFY(sender.hasWaiting());
@@ -1396,7 +1250,6 @@ void TestVideoSend::aBacklogLeavesWithinTheQueueTime()
 {
     VideoSendStream sender = vp8Sender();
     sender.setBitrate(2000000);
-    // Nearly half a megabyte, which at the bitrate's own pace would take close to two seconds.
     QVERIFY(sender.queueFrame(vp8Frame(true, 400 * VP8_ROOM, 81), 0, true, 0));
 
     qint64 ms = 0;
@@ -1406,7 +1259,6 @@ void TestVideoSend::aBacklogLeavesWithinTheQueueTime()
         packets += interval(sender, ms * MS).size();
     }
     QCOMPARE(packets, size_t(400));
-    // It is spread over that time, not let out in one go.
     QVERIFY(ms >= VideoSendStream::MAX_QUEUE_MS / 2);
 }
 
@@ -1417,7 +1269,6 @@ void TestVideoSend::aLostPacketIsSentAgainOnTheRetransmissionStream()
     const std::vector<Written> packets = drain(sender, 0);
     QCOMPARE(packets.size(), size_t(5));
 
-    // Twice the same one in a single request is still one packet.
     const uint16_t lost[] = { packets[4].header.sequence, packets[1].header.sequence, packets[4].header.sequence };
     sender.retransmit(lost, 200 * MS);
     const std::vector<Written> repeated = drain(sender, 250 * MS);
@@ -1432,12 +1283,10 @@ void TestVideoSend::aLostPacketIsSentAgainOnTheRetransmissionStream()
         QCOMPARE(packet.header.payloadType, RTX_PAYLOAD_TYPE);
         QCOMPARE(packet.header.timestamp, 4500u);
         QCOMPARE(packet.header.marker, original.header.marker);
-        // Its own sequence numbers; the transport-wide ones carry on from the first transmissions.
         QCOMPARE(packet.header.sequence, static_cast<uint16_t>(FIRST.rtxSequence + i));
         QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST.transportSequence + 5 + i));
         QVERIFY(packet.sendTime() != original.sendTime());
 
-        // RFC 4588: the original sequence number, then the original payload.
         QCOMPARE(packet.payload.size(), original.payload.size() + 2);
         QCOMPARE(qFromBigEndian<uint16_t>(packet.payload.data()), original.header.sequence);
         QCOMPARE(Bytes(packet.payload.begin() + 2, packet.payload.end()), original.payload);
@@ -1445,7 +1294,6 @@ void TestVideoSend::aLostPacketIsSentAgainOnTheRetransmissionStream()
 
     QCOMPARE(sender.stats().nacksReceived, quint64(3));
     QCOMPARE(sender.stats().retransmitted, quint64(2));
-    // The sender report counts first transmissions only.
     QCOMPARE(sender.stats().packets, quint64(5));
 }
 
@@ -1460,7 +1308,6 @@ void TestVideoSend::retransmissionsGoAheadOfNewPackets()
     const uint16_t lost[] = { sent[0].header.sequence };
     sender.retransmit(lost, 10 * MS);
 
-    // The repeat takes the first place in the share, and counts against it.
     const std::vector<Written> share = interval(sender, 10 * MS);
     QVERIFY(share.size() >= 2 && share.size() < 13);
     QCOMPARE(share[0].header.ssrc, RTX_SSRC);
@@ -1505,18 +1352,15 @@ void TestVideoSend::aPacketIsNotSentAgainWithinARoundTrip()
     tellRoundTrip(sender, 100);
     const qint64 held = (100 + VideoSendStream::ROUND_TRIP_MARGIN_MS) * MS;
 
-    // The first repeat is not held back, however soon after the packet first left.
     const uint16_t lost[] = { sent[0].header.sequence };
     sender.retransmit(lost, 110 * MS);
     QCOMPARE(drain(sender, 110 * MS).size(), size_t(1));
 
-    // A second request before the first repeat can have arrived is the same loss asked about again.
     sender.retransmit(lost, 110 * MS + held - 1);
     QVERIFY(!sender.hasWaiting());
     sender.retransmit(lost, 110 * MS + held);
     QCOMPARE(drain(sender, 110 * MS + held).size(), size_t(1));
 
-    // Another packet is not held by this one's repeat.
     const uint16_t other[] = { sent[1].header.sequence };
     sender.retransmit(other, 110 * MS + held + 1);
     QCOMPARE(drain(sender, 110 * MS + held + 1).size(), size_t(1));
@@ -1536,27 +1380,22 @@ void TestVideoSend::repairsTakeNoMoreThanTheBitrate()
     for (const Written &packet : sent)
         everything.push_back(packet.header.sequence);
 
-    // Half a second of the bitrate, in payload bytes.
     const size_t share = static_cast<size_t>(BITRATE / 8 * VideoSendStream::RETRANSMISSION_WINDOW_MS / 1000 / sent[0].payload.size());
     QVERIFY(share > 10 && share < PACKETS / 2);
 
     sender.retransmit(everything, 100 * MS);
     const std::vector<Written> first = drain(sender, 100 * MS);
     QCOMPARE(first.size(), share);
-    // The front of the list is what got through; the rest of it went unanswered.
     for (size_t i = 0; i < first.size(); i++)
         QCOMPARE(qFromBigEndian<uint16_t>(first[i].payload.data()), everything[i]);
 
-    // Within the same half second there is no room for more.
     const std::span<const uint16_t> rest = std::span<const uint16_t>(everything).subspan(share);
     sender.retransmit(rest, 400 * MS);
     QVERIFY(!sender.hasWaiting());
 
-    // Once it has passed there is.
     sender.retransmit(rest, 100 * MS + VideoSendStream::RETRANSMISSION_WINDOW_MS * MS);
     QCOMPARE(drain(sender, 100 * MS + VideoSendStream::RETRANSMISSION_WINDOW_MS * MS).size(), share);
 
-    // A higher bitrate leaves repairs more room at once.
     sender.setBitrate(2 * BITRATE);
     sender.retransmit(std::span<const uint16_t>(everything).subspan(2 * share), 100 * MS + VideoSendStream::RETRANSMISSION_WINDOW_MS * MS + 1);
     const size_t more = drain(sender, 100 * MS + VideoSendStream::RETRANSMISSION_WINDOW_MS * MS + 1).size();
@@ -1583,7 +1422,6 @@ void TestVideoSend::aSparseHistoryLastsThreeSeconds()
     sender.retransmit(second, KEPT + 1);
     QVERIFY(!sender.hasWaiting());
 
-    // What was sent later is kept its own three seconds.
     sender.retransmit(third, 600 * MS + KEPT);
     const std::vector<Written> repeated = drain(sender, 600 * MS + KEPT);
     QCOMPARE(repeated.size(), size_t(1));
@@ -1602,8 +1440,6 @@ void TestVideoSend::aFullHistoryEndsAfterASecond()
     sender.retransmit(first, VideoSendStream::HISTORY_MS * MS);
     QCOMPARE(drain(sender, VideoSendStream::HISTORY_MS * MS).size(), size_t(1));
 
-    // Past the second the oldest go, until fewer than a full history's worth are left: those
-    // stay on as a sparse history does.
     const uint16_t lastGone[] = { sent[EXTRA].header.sequence };
     const uint16_t firstKept[] = { sent[EXTRA + 1].header.sequence };
     sender.retransmit(lastGone, VideoSendStream::HISTORY_MS * MS + 1);
@@ -1622,7 +1458,6 @@ void TestVideoSend::theHistoryOutlastsThreeRoundTrips()
     tellRoundTrip(sender, ROUND_TRIP_MS);
     QVERIFY(KEPT > VideoSendStream::HISTORY_MS * MS);
 
-    // Well past the plain second, and to the end of three round trips.
     const uint16_t first[] = { sent[0].header.sequence };
     const uint16_t second[] = { sent[1].header.sequence };
     sender.retransmit(first, KEPT);
@@ -1636,7 +1471,6 @@ void TestVideoSend::withoutARetransmissionPayloadTypeNothingIsSentAgain()
     VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
     sender.setCodec(VideoCodec::VP8, PAYLOAD_TYPE, std::nullopt);
 
-    // With nothing to leave room for, a packet may be filled to the limit.
     QVERIFY(sender.queueFrame(vp8Frame(true, VP8_ROOM + 2, 96), 0, true, 0));
     const std::vector<Written> packets = drain(sender, 0);
     QCOMPARE(packets.size(), size_t(1));
@@ -1655,7 +1489,6 @@ void TestVideoSend::changingTheCodecKeepsTheNumbering()
     const std::vector<Written> before = drain(sender, 0);
     QCOMPARE(before.size(), size_t(1));
 
-    // What still waits belongs to the old codec and is dropped with it.
     QVERIFY(sender.queueFrame(vp8Frame(false, 100, 101), 3000, false, 0));
     constexpr uint8_t H264_PAYLOAD_TYPE = 103;
     constexpr uint8_t H264_RTX_PAYLOAD_TYPE = 104;
@@ -1675,12 +1508,10 @@ void TestVideoSend::changingTheCodecKeepsTheNumbering()
     QVERIFY(reassemble(VideoCodec::H264, payloadsOf(after), reassembled));
     QCOMPARE(reassembled, frame);
 
-    // A packet of the old codec cannot be repeated under the new one's payload type.
     const uint16_t old[] = { before[0].header.sequence };
     sender.retransmit(old, 0);
     QVERIFY(!sender.hasWaiting());
 
-    // Naming the same codec again changes nothing.
     QVERIFY(sender.queueFrame(frame, 9000, true, 0));
     sender.setCodec(VideoCodec::H264, H264_PAYLOAD_TYPE, H264_RTX_PAYLOAD_TYPE);
     QVERIFY(sender.hasWaiting());
@@ -1744,7 +1575,6 @@ void TestVideoSend::clearingForgetsWhatWaited()
     sender.retransmit(lost, 0);
     QVERIFY(!sender.hasWaiting());
 
-    // What goes out next follows on from the last packet that did go out.
     QVERIFY(sender.queueFrame(vp8Frame(true, 10, 103), 3000, true, 0));
     const std::vector<Written> next = drain(sender, 0);
     QCOMPARE(next.size(), size_t(1));
@@ -1769,7 +1599,6 @@ void TestVideoSend::theSenderReportStatesWhatWasSent()
 {
     VideoSendStream sender = vp8Sender();
     uint8_t buffer[64];
-    // There is no RTP time to state before the first frame.
     QVERIFY(!sender.canReport());
     QVERIFY(sender.writeSenderReport(buffer, 0, 0) < 0);
 
@@ -1779,7 +1608,7 @@ void TestVideoSend::theSenderReportStatesWhatWasSent()
     sender.retransmit(lost, 1 * SECOND);
     QCOMPARE(drain(sender, 1 * SECOND).size(), size_t(1));
 
-    // 2026-01-01 00:00:00.75 UTC in seconds since 1900.
+    // 2026-01-01 00:00:00.75 UTC in seconds since 1900
     constexpr uint64_t NTP_TIME = (uint64_t(3976214400) << 32) | 0xC0000000u;
     const int size = sender.writeSenderReport(buffer, 1500 * MS, NTP_TIME);
     QCOMPARE(size, 28);
@@ -1791,9 +1620,7 @@ void TestVideoSend::theSenderReportStatesWhatWasSent()
     const ReceivedRtcp::SenderReport &report = parsed.senderReports[0];
     QCOMPARE(report.ssrc, SSRC);
     QCOMPARE(report.compactNtp, uint32_t((3976214400u << 16) | 0xC000));
-    // Half a second on from the frame's own time, at 90 kHz.
     QCOMPARE(report.rtpTimestamp, 90000u + 45000u);
-    // Retransmissions are another stream's and are not counted in this one's report.
     QCOMPARE(report.packetCount, 3u);
     QCOMPARE(report.octetCount, uint32_t(3000 + 3 * VP8_DESCRIPTOR));
     QCOMPARE(qFromBigEndian<quint64>(buffer + 8), NTP_TIME);
@@ -1805,8 +1632,8 @@ void TestVideoSend::theSenderReportStatesWhatWasSent()
 void TestVideoSend::aReceptionReportGivesLossAndRoundTrip()
 {
     VideoSendStream sender = vp8Sender();
-    QVERIFY(sender.stats().lossFraction < 0);
-    QCOMPARE(sender.stats().roundTripMs, -1);
+    QVERIFY(!sender.stats().lossFraction);
+    QVERIFY(!sender.stats().roundTripMs);
 
     QVERIFY(sender.queueFrame(vp8Frame(true, 100, 111), 0, true, 0));
     uint8_t buffer[64];
@@ -1815,31 +1642,28 @@ void TestVideoSend::aReceptionReportGivesLossAndRoundTrip()
     QVERIFY(sender.writeSenderReport(buffer, 1 * SECOND, FIRST_NTP) > 0);
     QVERIFY(sender.writeSenderReport(buffer, 2 * SECOND, SECOND_NTP) > 0);
 
-    // The loss is taken from a report that answers no sender report, the round trip is not.
     ReceptionReport report;
     report.ssrc = SSRC;
     report.fractionLost = 64;
     sender.onReceptionReport(report, 2100 * MS);
-    QCOMPARE(sender.stats().lossFraction, 0.25);
-    QCOMPARE(sender.stats().roundTripMs, -1);
+    QCOMPARE(sender.stats().lossFraction, std::optional<double>(0.25));
+    QVERIFY(!sender.stats().roundTripMs);
 
-    // The first report came back 400 ms after it left, of which the receiver held it 250.
     report.fractionLost = 0;
     report.lastSenderReport = compactNtp(FIRST_NTP);
     report.delaySinceLastSenderReport = 65536 / 4;
     sender.onReceptionReport(report, 1400 * MS);
-    QCOMPARE(sender.stats().lossFraction, 0.0);
-    QCOMPARE(sender.stats().roundTripMs, 150);
+    QCOMPARE(sender.stats().lossFraction, std::optional<double>(0.0));
+    QCOMPARE(sender.stats().roundTripMs, std::optional<int>(150));
 
     report.lastSenderReport = compactNtp(SECOND_NTP);
     report.delaySinceLastSenderReport = 0;
     sender.onReceptionReport(report, 2030 * MS);
-    QCOMPARE(sender.stats().roundTripMs, 30);
+    QCOMPARE(sender.stats().roundTripMs, std::optional<int>(30));
 
-    // An echo of something this sender never sent says nothing.
     report.lastSenderReport = 0x12345678;
     sender.onReceptionReport(report, 5 * SECOND);
-    QCOMPARE(sender.stats().roundTripMs, 30);
+    QCOMPARE(sender.stats().roundTripMs, std::optional<int>(30));
 }
 
 void TestVideoSend::feedbackForTheSenderIsRead()
@@ -1847,7 +1671,6 @@ void TestVideoSend::feedbackForTheSenderIsRead()
     constexpr uint32_t SERVER = 0xAABBCCDD;
     constexpr uint32_t OTHER = 0x4321;
 
-    // A receiver report with one block about the video, as a compound packet opens.
     Bytes block;
     append32(block, SERVER);
     append32(block, SSRC);
@@ -1859,7 +1682,7 @@ void TestVideoSend::feedbackForTheSenderIsRead()
     append32(block, 6554);
     Bytes compound = rtcpPacket(1, 201, block);
 
-    // Generic NACK: packet 0xFFFE and, by the bitmask, the first and the third after it.
+    // packet 0xFFFE and, by the bitmask, the first and third after it
     Bytes nack;
     append32(nack, SERVER);
     append32(nack, SSRC);
@@ -1870,7 +1693,6 @@ void TestVideoSend::feedbackForTheSenderIsRead()
     const Bytes nackPacket = rtcpPacket(1, 205, nack);
     compound.insert(compound.end(), nackPacket.begin(), nackPacket.end());
 
-    // Transport-wide feedback about this client's own packets is taken without complaint.
     Bytes transportWide;
     append32(transportWide, SERVER);
     append32(transportWide, SSRC);
@@ -1888,7 +1710,6 @@ void TestVideoSend::feedbackForTheSenderIsRead()
     const Bytes pictureLossPacket = rtcpPacket(1, 206, pictureLoss);
     compound.insert(compound.end(), pictureLossPacket.begin(), pictureLossPacket.end());
 
-    // A full intra request leaves the media source zero and names its streams in entries.
     Bytes fullIntra;
     append32(fullIntra, SERVER);
     append32(fullIntra, 0);
@@ -1915,9 +1736,8 @@ void TestVideoSend::feedbackForTheSenderIsRead()
     QCOMPARE(parsed.keyframeRequests, (std::vector<uint32_t>{ SSRC, OTHER, SSRC }));
     QVERIFY(parsed.receiverCounts.empty());
     QVERIFY(parsed.senderReports.empty());
-    QVERIFY(!parsed.hasInboundEstimate);
+    QVERIFY(!parsed.inboundEstimate);
 
-    // What this client writes for the streams it receives reads back the same way.
     uint8_t written[64];
     const uint16_t missing[] = { 10, 11, 40 };
     const int nackSize = writeNack(written, SERVER, OTHER, missing);
@@ -1939,7 +1759,6 @@ void TestVideoSend::theReceiverCountIsRead()
         append32(body, ssrc);
         body.insert(body.end(), { 0x30, 0x53, 0x49, 0x44 });
         for (int i = 0; i < receivers; i++) {
-            // A user id, that user's bitrate, and one more byte.
             append32(body, 0x00112233);
             append32(body, 0x44556600u + static_cast<uint32_t>(i));
             body.insert(body.end(), { 0x12, 0x34, 0x56, 0x00 });
@@ -1951,13 +1770,12 @@ void TestVideoSend::theReceiverCountIsRead()
     for (const Bytes &packet : { receiverCount(SSRC, 3), receiverCount(0x4321, 0) })
         compound.insert(compound.end(), packet.begin(), packet.end());
 
-    // Its sibling, the server's estimate of the way here, in the same compound packet.
     Bytes estimate;
     append32(estimate, SERVER);
     estimate.insert(estimate.end(), { 0x31, 0x53, 0x49, 0x44 });
     append32(estimate, 0);
     append32(estimate, 3);
-    // 100000 under an exponent of one, and a quarter lost.
+    // 100000 under an exponent of one, and a quarter lost
     estimate.insert(estimate.end(), { 0x05, 0x86, 0xA0, 64 });
     const Bytes estimatePacket = rtcpPacket(0, 204, estimate);
     compound.insert(compound.end(), estimatePacket.begin(), estimatePacket.end());
@@ -1968,11 +1786,10 @@ void TestVideoSend::theReceiverCountIsRead()
     QCOMPARE(parsed.receiverCounts[0].receivers, 3);
     QCOMPARE(parsed.receiverCounts[1].ssrc, 0x4321u);
     QCOMPARE(parsed.receiverCounts[1].receivers, 0);
-    QVERIFY(parsed.hasInboundEstimate);
-    QCOMPARE(parsed.inboundBitsPerSecond, quint64(100000 << 1));
-    QCOMPARE(parsed.inboundLoss, 0.25);
+    QVERIFY(parsed.inboundEstimate);
+    QCOMPARE(parsed.inboundEstimate->bps, quint64(100000 << 1));
+    QCOMPARE(parsed.inboundEstimate->lossFraction, 0.25);
 
-    // An application packet under another name is neither of the two.
     Bytes other;
     append32(other, SSRC);
     other.insert(other.end(), { 'D', 'I', 'S', '0' });
@@ -2002,30 +1819,26 @@ void TestVideoSend::theReceiverEstimateIsRead()
         return parseRtcp(compound);
     };
 
-    QVERIFY(!read({}).hasReceiverEstimate);
+    QVERIFY(!read({}).receiverEstimateBps);
 
-    // 2,500,000 as WebRTC writes it: the mantissa shifted down until it fits 18 bits.
+    // 2,500,000 as WebRTC writes it: the mantissa shifted down until it fits 18 bits
     ReceivedRtcp received = read({ estimate(4, 156250, { SSRC }) });
-    QVERIFY(received.hasReceiverEstimate);
-    QCOMPARE(received.receiverEstimateBitsPerSecond, uint64_t(2500000));
+    QCOMPARE(received.receiverEstimateBps, std::optional<uint64_t>(2500000));
 
-    QCOMPARE(read({ estimate(0, 0x3FFFF, {}) }).receiverEstimateBitsPerSecond, uint64_t(0x3FFFF));
-    QCOMPARE(read({ estimate(0, 0, { SSRC, 0x4321 }) }).receiverEstimateBitsPerSecond, uint64_t(0));
+    QCOMPARE(read({ estimate(0, 0x3FFFF, {}) }).receiverEstimateBps, std::optional<uint64_t>(0x3FFFF));
+    QCOMPARE(read({ estimate(0, 0, { SSRC, 0x4321 }) }).receiverEstimateBps, std::optional<uint64_t>(0));
 
-    // Of several, the largest, as the official client takes them.
-    QCOMPARE(read({ estimate(1, 1000, { SSRC }), estimate(3, 1000, { SSRC }), estimate(2, 1000, { SSRC }) }).receiverEstimateBitsPerSecond, uint64_t(8000));
+    // of several, the largest, as the official client takes them
+    QCOMPARE(read({ estimate(1, 1000, { SSRC }), estimate(3, 1000, { SSRC }), estimate(2, 1000, { SSRC }) }).receiverEstimateBps, std::optional<uint64_t>(8000));
 
-    // One that lists more SSRCs than it brings, or says more than 64 bits hold, says nothing.
-    QVERIFY(!read({ estimate(4, 156250, { SSRC }, 2) }).hasReceiverEstimate);
-    QVERIFY(!read({ estimate(63, 0x3FFFF, { SSRC }) }).hasReceiverEstimate);
-    QVERIFY(read({ estimate(46, 0x3FFFF, { SSRC }) }).hasReceiverEstimate);
+    QVERIFY(!read({ estimate(4, 156250, { SSRC }, 2) }).receiverEstimateBps);
+    QVERIFY(!read({ estimate(63, 0x3FFFF, { SSRC }) }).receiverEstimateBps);
+    QVERIFY(read({ estimate(46, 0x3FFFF, { SSRC }) }).receiverEstimateBps);
 
-    // Another application-layer message is not taken for one.
     Bytes other = estimate(4, 156250, { SSRC });
     other[12] = 'X';
-    QVERIFY(!read({ other }).hasReceiverEstimate);
-    // A picture loss indication shares the packet type.
-    QVERIFY(!read({ rtcpPacket(1, 206, { 0xAA, 0xBB, 0xCC, 0xDD, 0, 0, 0x12, 0x34 }) }).hasReceiverEstimate);
+    QVERIFY(!read({ other }).receiverEstimateBps);
+    QVERIFY(!read({ rtcpPacket(1, 206, { 0xAA, 0xBB, 0xCC, 0xDD, 0, 0, 0x12, 0x34 }) }).receiverEstimateBps);
 }
 
 void TestVideoSend::aVideoResetRequestIsRead()
@@ -2045,9 +1858,8 @@ void TestVideoSend::aVideoResetRequestIsRead()
 
     QCOMPARE(received.videoResets, (std::vector<uint32_t>{ 0x1111, 0x2222 }));
     QVERIFY(received.receiverCounts.empty());
-    QVERIFY(!received.hasInboundEstimate);
+    QVERIFY(!received.inboundEstimate);
 
-    // The receiver count is told apart by its name alone.
     Bytes count;
     append32(count, 0x1111);
     count.insert(count.end(), { 0x30, 0x53, 0x49, 0x44 });

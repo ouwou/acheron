@@ -1,14 +1,12 @@
-// Tests for receiving video over RTP: the depacketizers, the per-SSRC receiver and the RTCP it
-// sends. Packets for the depacketizers come from ffmpeg's RTP muxer, so the reference is not
-// this code's own idea of the formats; AV1 is also packetized by hand, because the muxer only
-// learnt it recently. The end-to-end encryption cases run frames through libdave's encryptor,
-// the same packetizing, and libdave's decryptor.
+// packets for the depacketizers come from ffmpeg's RTP muxer, so the reference isnt this code's own
+// idea of the formats. AV1 is also packetized by hand, since the muxer only learnt it recently
 
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/TransportFeedback.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
 #include "Discord/Voice/VideoReceiver.hpp"
+#include "VideoFrameHelpers.hpp"
 #include "VideoRtpSupport.hpp"
 
 #include <bytes/bytes.h>
@@ -22,19 +20,9 @@ using namespace Acheron::Discord::Voice;
 
 namespace {
 
+using namespace VideoFrameHelpers;
 using namespace VideoRtpSupport;
 constexpr uint32_t SSRC = 0x1234;
-
-// Bytes that can never form a start code, so a NAL payload made of them needs no escaping.
-Bytes filler(size_t size, uint32_t seed)
-{
-    std::mt19937 generator(seed);
-    std::uniform_int_distribution<int> byte(1, 255);
-    Bytes bytes(size);
-    for (uint8_t &value : bytes)
-        value = static_cast<uint8_t>(byte(generator));
-    return bytes;
-}
 
 void append(Bytes &out, const Bytes &bytes)
 {
@@ -103,8 +91,6 @@ constexpr uint8_t OBU_SEQUENCE_HEADER = 1;
 constexpr uint8_t OBU_TEMPORAL_DELIMITER = 2;
 constexpr uint8_t OBU_FRAME = 6;
 
-// One AV1 temporal unit as an encoder writes it, and the same without the temporal delimiter,
-// which neither the RTP format nor the frame encryptor carries.
 Bytes av1Frame(bool withDelimiter)
 {
     Bytes frame;
@@ -115,54 +101,6 @@ Bytes av1Frame(bool withDelimiter)
     return frame;
 }
 
-bool reassemble(VideoCodec codec, const RtpPayloads &packets, Bytes &frame)
-{
-    std::vector<std::span<const uint8_t>> spans;
-    for (const Bytes &payload : packets.payloads)
-        spans.emplace_back(payload);
-    return assembleFrame(codec, spans, frame);
-}
-
-class FixedKeyRatchet : public discord::dave::IKeyRatchet
-{
-public:
-    discord::dave::EncryptionKey GetKey(discord::dave::KeyGeneration generation) noexcept override
-    {
-        std::vector<uint8_t> key(16, 0x5A);
-        key[0] = static_cast<uint8_t>(generation);
-        return discord::dave::EncryptionKey(std::move(key));
-    }
-    void DeleteKey(discord::dave::KeyGeneration) noexcept override { }
-};
-
-Bytes encryptFrame(discord::dave::Codec codec, const Bytes &frame)
-{
-    auto encryptor = discord::dave::CreateEncryptor();
-    encryptor->SetKeyRatchet(std::make_unique<FixedKeyRatchet>());
-    encryptor->AssignSsrcToCodec(SSRC, codec);
-
-    Bytes encrypted(encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size()));
-    size_t written = 0;
-    const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, SSRC, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(encrypted.data(), encrypted.size()), &written);
-    if (result != discord::dave::IEncryptor::Success)
-        return {};
-    encrypted.resize(written);
-    return encrypted;
-}
-
-bool decryptFrame(const Bytes &encrypted, Bytes &frame)
-{
-    auto decryptor = discord::dave::CreateDecryptor();
-    decryptor->TransitionToKeyRatchet(std::make_unique<FixedKeyRatchet>());
-
-    frame.resize(decryptor->GetMaxPlaintextByteSize(discord::dave::MediaType::Video, encrypted.size()));
-    size_t written = 0;
-    const auto result = decryptor->Decrypt(discord::dave::MediaType::Video, discord::dave::ArrayView<const uint8_t>(encrypted.data(), encrypted.size()), discord::dave::ArrayView<uint8_t>(frame.data(), frame.size()), &written);
-    frame.resize(written);
-    return result == discord::dave::IDecryptor::Success;
-}
-
-// A receiver fed hand-made VP8 packets: one frame is `packetsPerFrame` packets.
 struct Feed
 {
     PacketPool pool;
@@ -183,7 +121,6 @@ struct Feed
         receiver.insert(sequence, timestamp, last, std::move(packet), now, retransmission ? VideoReceiver::Arrival::Retransmitted : VideoReceiver::Arrival::FirstTime);
     }
 
-    // Sends frame number `index` (three packets, sequence numbers from `base`), leaving out `skip`.
     void sendFrame(int index, uint16_t base, bool keyframe, int skip = -1)
     {
         for (int i = 0; i < 3; i++) {
@@ -250,7 +187,7 @@ void TestRtpVideo::h264AgainstFfmpeg()
         QCOMPARE(startsKeyframe(VideoCodec::H264, packets.payloads.front()), keyframe);
 
         Bytes rebuilt;
-        QVERIFY(reassemble(VideoCodec::H264, packets, rebuilt));
+        QVERIFY(reassemble(VideoCodec::H264, packets.payloads, rebuilt));
         QVERIFY(rebuilt == frame);
     }
 }
@@ -264,7 +201,7 @@ void TestRtpVideo::h265AgainstFfmpeg()
         QCOMPARE(startsKeyframe(VideoCodec::H265, packets.payloads.front()), keyframe);
 
         Bytes rebuilt;
-        QVERIFY(reassemble(VideoCodec::H265, packets, rebuilt));
+        QVERIFY(reassemble(VideoCodec::H265, packets.payloads, rebuilt));
         QVERIFY(rebuilt == frame);
     }
 }
@@ -279,7 +216,7 @@ void TestRtpVideo::vp8AgainstFfmpeg()
         QVERIFY(!startsKeyframe(VideoCodec::VP8, packets.payloads[1]));
 
         Bytes rebuilt;
-        QVERIFY(reassemble(VideoCodec::VP8, packets, rebuilt));
+        QVERIFY(reassemble(VideoCodec::VP8, packets.payloads, rebuilt));
         QVERIFY(rebuilt == frame);
     }
 }
@@ -291,7 +228,7 @@ void TestRtpVideo::av1AgainstFfmpeg()
         QSKIP("this ffmpeg has no AV1 RTP packetizer");
 
     Bytes rebuilt;
-    QVERIFY(reassemble(VideoCodec::AV1, packets, rebuilt));
+    QVERIFY(reassemble(VideoCodec::AV1, packets.payloads, rebuilt));
     prepareForDecoder(VideoCodec::AV1, rebuilt);
     QVERIFY(rebuilt == av1Frame(false));
 }
@@ -304,13 +241,12 @@ void TestRtpVideo::av1ByHand()
     QVERIFY(!startsKeyframe(VideoCodec::AV1, packets.payloads[1]));
     QVERIFY(!startsKeyframe(VideoCodec::AV1, packetizeAv1ByHand(av1Frame(false), false).payloads.front()));
 
-    // As assembled, the last OBU has no size field: that is the form the sender encrypted.
     Bytes expected;
     appendObu(expected, OBU_SEQUENCE_HEADER, filler(11, 11));
     appendObu(expected, OBU_FRAME, filler(4000, 12), false);
 
     Bytes rebuilt;
-    QVERIFY(reassemble(VideoCodec::AV1, packets, rebuilt));
+    QVERIFY(reassemble(VideoCodec::AV1, packets.payloads, rebuilt));
     QVERIFY(rebuilt == expected);
 }
 
@@ -327,7 +263,6 @@ void TestRtpVideo::av1LastObuGetsItsSizeBack()
     appendObu(expected, OBU_FRAME, filler(300, 12));
     QVERIFY(frame == expected);
 
-    // Already complete: left alone.
     prepareForDecoder(VideoCodec::AV1, frame);
     QVERIFY(frame == expected);
 }
@@ -340,14 +275,11 @@ void TestRtpVideo::malformedPayloadsAreRejected()
         return assembleFrame(codec, { &span, 1 }, frame);
     };
 
-    // A fragment with no beginning, and an aggregate whose length runs past the packet.
     QVERIFY(!assembleOne(VideoCodec::H264, { 0x7C, 0x05, 0xAA }));
     QVERIFY(!assembleOne(VideoCodec::H264, { 0x18, 0x00, 0x09, 0x67, 0x01 }));
     QVERIFY(!assembleOne(VideoCodec::H265, { 0x62, 0x01, 0x13, 0xAA }));
     QVERIFY(!assembleOne(VideoCodec::H265, { 0x60, 0x01, 0x00, 0x09, 0x40, 0x01 }));
-    // A VP8 frame that does not open with the start of its first partition.
     QVERIFY(!assembleOne(VideoCodec::VP8, { 0x00, 0x01, 0x02 }));
-    // An AV1 packet continuing an OBU nobody started, and one promising a continuation.
     QVERIFY(!assembleOne(VideoCodec::AV1, { 0x80, 0x02, 0x30, 0x01 }));
     QVERIFY(!assembleOne(VideoCodec::AV1, { 0x40, 0x02, 0x30, 0x01 }));
     QVERIFY(!assembleOne(VideoCodec::AV1, { 0x00, 0x09, 0x30, 0x01 }));
@@ -397,7 +329,7 @@ void TestRtpVideo::encryptedFramesSurviveTheReceiveChain()
         break;
     }
 
-    const Bytes encrypted = encryptFrame(daveCodec, original);
+    const Bytes encrypted = encryptFrame(daveCodec, SSRC, original);
     QVERIFY(!encrypted.empty());
     QVERIFY(encrypted != original);
 
@@ -405,7 +337,7 @@ void TestRtpVideo::encryptedFramesSurviveTheReceiveChain()
     QVERIFY(packets.payloads.size() > 2);
 
     Bytes received;
-    QVERIFY(reassemble(videoCodec, packets, received));
+    QVERIFY(reassemble(videoCodec, packets.payloads, received));
     QVERIFY(received == encrypted);
 
     Bytes decrypted;
@@ -416,8 +348,6 @@ void TestRtpVideo::encryptedFramesSurviveTheReceiveChain()
 
 void TestRtpVideo::keyframeKeepsWhatPrecedesItsParameterSets()
 {
-    // An encoder may open the access unit with a delimiter; the frame starts there, not at
-    // the parameter sets that mark it as a key frame.
     const std::vector<Bytes> packets = {
         { 0x41, 0x80, 0x11 },
         { 0x09, 0xF0 },
@@ -440,7 +370,6 @@ void TestRtpVideo::keyframeKeepsWhatPrecedesItsParameterSets()
     const Bytes expected = { 0, 0, 0, 1, 0x09, 0xF0, 0, 0, 0, 1, 0x67, 0x42, 0x00, 0, 0, 0, 1, 0x68, 0xCE, 0, 0, 0, 1, 0x65, 0x88, 0x84 };
     QVERIFY(frames[0].data == expected);
 
-    // The same holds when the parameter sets are not first inside an aggregation packet.
     QVERIFY(startsKeyframe(VideoCodec::H264, Bytes{ 0x18, 0x00, 0x02, 0x09, 0xF0, 0x00, 0x03, 0x67, 0x42, 0x00 }));
     QVERIFY(!startsKeyframe(VideoCodec::H264, Bytes{ 0x18, 0x00, 0x02, 0x09, 0xF0, 0x00, 0x03, 0x41, 0x80, 0x00 }));
     QVERIFY(startsKeyframe(VideoCodec::H265, Bytes{ 0x60, 0x01, 0x00, 0x03, 0x46, 0x01, 0x50, 0x00, 0x04, 0x40, 0x01, 0x0C, 0x01 }));
@@ -457,21 +386,16 @@ void TestRtpVideo::pictureWithoutItsParameterSetsIsNotAStart()
         receiver.insert(sequence, timestamp, marker, std::move(packet), 0);
     };
 
-    // Subscribed in the middle of a key frame: its picture arrives, its parameter sets went
-    // by before. The frame would be incomplete, so it is not taken.
     PacketPool pool;
     VideoReceiver late(SSRC, VideoCodec::H264);
     send(late, pool, 501, 6000, true, picture);
     QVERIFY(late.takeFrames().empty());
     QVERIFY(late.poll(0).keyframeRequest);
 
-    // The whole of the next key frame is.
     send(late, pool, 510, 9000, false, parameterSets);
     send(late, pool, 511, 9000, true, picture);
     QCOMPARE(late.takeFrames().size(), size_t(1));
 
-    // A sender that puts no parameter sets in its key frames is still followed, because the
-    // packet before the picture shows where the frame begins.
     VideoReceiver bare(SSRC, VideoCodec::H264);
     send(bare, pool, 700, 3000, true, delta);
     send(bare, pool, 701, 6000, true, picture);
@@ -482,11 +406,9 @@ void TestRtpVideo::pictureWithoutItsParameterSetsIsNotAStart()
 
 void TestRtpVideo::aKeyframeIsAskedForFiveTimesASecondWhilePacketsCome()
 {
-    // The official client's numbers.
     QCOMPARE(VideoReceiver::KEYFRAME_REQUEST_INTERVAL_MS, 200);
     QCOMPARE(VideoReceiver::SILENT_AFTER_MS, 5000);
 
-    // Nothing has come yet, so there is nobody to ask anything of.
     Feed feed;
     QVERIFY(!feed.receiver.poll(0).keyframeRequest);
 
@@ -497,12 +419,10 @@ void TestRtpVideo::aKeyframeIsAskedForFiveTimesASecondWhilePacketsCome()
         requests += feed.receiver.poll(now).keyframeRequest ? 1 : 0;
     QCOMPARE(requests, 5);
 
-    // The stream goes quiet: asked up to five seconds after its last packet and no longer.
     QVERIFY(feed.receiver.poll(1000 + VideoReceiver::SILENT_AFTER_MS - 1).keyframeRequest);
     for (qint64 now = 1000 + VideoReceiver::SILENT_AFTER_MS; now < 20000; now += 100)
         QVERIFY(!feed.receiver.poll(now).keyframeRequest);
 
-    // Its next packet, of whatever kind, has it asked again at once.
     feed.now = 20000;
     feed.sendFrame(1, 100, false);
     QVERIFY(feed.receiver.poll(20000).keyframeRequest);
@@ -520,7 +440,6 @@ void TestRtpVideo::nothingIsDeliveredBeforeAKeyframe()
     QVERIFY(feedback.keyframeRequest);
     QVERIFY(feedback.nacks.empty());
 
-    // Asked once, then not again until the interval has passed.
     QVERIFY(!feed.receiver.poll(feed.now + 20).keyframeRequest);
     QVERIFY(feed.receiver.poll(feed.now + VideoReceiver::KEYFRAME_REQUEST_INTERVAL_MS).keyframeRequest);
 
@@ -545,7 +464,6 @@ void TestRtpVideo::framesComeOutInOrder()
     QVERIFY(!frames[1].keyframe);
     QCOMPARE(frames[1].rtpTimestamp, 1000u);
     QCOMPARE(frames[2].rtpTimestamp, 2000u);
-    // The payload descriptor is gone and the three packets' bytes follow each other.
     QCOMPARE(frames[0].data.size(), size_t(9));
     QCOMPARE(frames[0].data[1], uint8_t(100));
     QCOMPARE(frames[0].data[4], uint8_t(101));
@@ -560,7 +478,6 @@ void TestRtpVideo::reorderedPacketsAreHeld()
     QVERIFY(feed.receiver.takeFrames().empty());
     feed.send(100, 0, true, false, true);
 
-    // The next frame arrives before the first one's packets do, and waits for them.
     Feed late;
     late.sendFrame(0, 100, true);
     QCOMPARE(late.receiver.takeFrames().size(), size_t(1));
@@ -580,7 +497,6 @@ void TestRtpVideo::lostPacketIsRequestedAndAccepted()
     feed.sendFrame(2, 100, false);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
 
-    // Not asked for at once: it may only be out of order.
     QVERIFY(feed.receiver.poll(feed.now).nacks.empty());
 
     feed.now += VideoReceiver::REORDER_GRACE_MS;
@@ -588,7 +504,6 @@ void TestRtpVideo::lostPacketIsRequestedAndAccepted()
     QCOMPARE(feedback.nacks, std::vector<uint16_t>{ 104 });
     QVERIFY(!feedback.keyframeRequest);
 
-    // Asked again only after the retry interval.
     QVERIFY(feed.receiver.poll(feed.now + 20).nacks.empty());
     feed.now += VideoReceiver::NACK_RETRY_MS;
     QCOMPARE(feed.receiver.poll(feed.now).nacks, std::vector<uint16_t>{ 104 });
@@ -612,7 +527,6 @@ void TestRtpVideo::unrepairedLossWaitsForAKeyframe()
     QVERIFY(feedback.keyframeRequest);
     QVERIFY(feedback.nacks.empty());
 
-    // Frames that build on the lost one are of no use, even complete.
     feed.sendFrame(3, 100, false);
     QVERIFY(feed.receiver.takeFrames().empty());
 
@@ -628,7 +542,6 @@ void TestRtpVideo::paddingOnTheStreamLeavesNoGap()
 {
     Feed feed;
     feed.sendFrame(0, 100, true);
-    // The frame after the padding, which comes late: until then its frame waits behind a gap.
     for (int i = 0; i < 3; i++)
         feed.send(static_cast<uint16_t>(104 + i), 1000, i == 0, i == 2, false);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
@@ -651,7 +564,6 @@ void TestRtpVideo::sequenceNumbersWrap()
         feed.sendFrame(index, base, index == 0);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(5));
 
-    // A loss just past the wrap is named by its 16-bit number.
     feed.sendFrame(5, base, false, 1);
     feed.sendFrame(6, base, false);
     feed.now += VideoReceiver::REORDER_GRACE_MS;
@@ -665,7 +577,6 @@ void TestRtpVideo::aStrayPacketDoesNotRestartTheStream()
     feed.sendFrame(1, 20000, false);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(2));
 
-    // A long-delayed duplicate from far behind.
     feed.send(100, 0, true, true, false);
     QCOMPARE(feed.receiver.stats().strays, quint64(1));
     QCOMPARE(feed.receiver.stats().resyncs, quint64(0));
@@ -681,7 +592,6 @@ void TestRtpVideo::aSenderThatRestartsItsNumberingIsFollowed()
     feed.sendFrame(0, 20000, true);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
 
-    // The first packet of the new numbering could be a stray; the one after it shows it is not.
     feed.sendFrame(1, 100, false);
     QCOMPARE(feed.receiver.stats().strays, quint64(1));
     QCOMPARE(feed.receiver.stats().resyncs, quint64(1));
@@ -707,7 +617,6 @@ void TestRtpVideo::undecodableOutputAsksForAKeyframe()
     feed.sendFrame(2, 100, true);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(1));
 
-    // A stream that keeps failing is not allowed to ask more than once per interval.
     feed.receiver.requestKeyframe();
     QVERIFY(!feed.receiver.poll(feed.now + 20).keyframeRequest);
     QVERIFY(feed.receiver.poll(feed.now + VideoReceiver::KEYFRAME_REQUEST_INTERVAL_MS).keyframeRequest);
@@ -725,10 +634,9 @@ void TestRtpVideo::receptionReportCountsLoss()
     QCOMPARE(report.ssrc, SSRC);
     QCOMPARE(report.highestSequence & 0xFFFFu, 110u);
     QCOMPARE(report.cumulativeLost, 1);
-    // One of the eleven packets expected so far, as a fraction of 256.
+    // one of the eleven packets expected so far, as a fraction of 256
     QCOMPARE(int(report.fractionLost), 256 / 11);
 
-    // The packet missing from the end of that interval is counted in the next one.
     feed.sendFrame(4, 100, false);
     report = feed.receiver.receptionReport();
     QCOMPARE(report.cumulativeLost, 2);
@@ -742,28 +650,27 @@ void TestRtpVideo::receivedRtcpIsRead()
         return Bytes(raw.begin(), raw.end());
     };
 
-    // A sender report as the server sends one: the NTP time is ee73cd84.7cbccc93.
+    // the NTP time is ee73cd84.7cbccc93
     ReceivedRtcp received = parseRtcp(bytes("80c800060000008aee73cd847cbccc930512806400000053000129f0"));
     QCOMPARE(received.senderReports.size(), size_t(1));
     QCOMPARE(received.senderReports[0].ssrc, 0x8Au);
     QCOMPARE(received.senderReports[0].compactNtp, 0xCD847CBCu);
-    QVERIFY(!received.hasInboundEstimate);
+    QVERIFY(!received.inboundEstimate);
 
-    // A receiver report with Discord's estimate behind it: mantissa 0x22560 under exponent 6.
+    // Discord's estimate: mantissa 0x22560 under exponent 6
     received = parseRtcp(bytes("81c90007000003b1000003b100000000000000000000003b0000000000000000" "81cc00050000008a3153494401020304050607081a256000"));
     QVERIFY(received.senderReports.empty());
-    QVERIFY(received.hasInboundEstimate);
-    QCOMPARE(received.inboundBitsPerSecond, quint64(9000960));
-    QCOMPARE(received.inboundLoss, 0.0);
+    QVERIFY(received.inboundEstimate);
+    QCOMPARE(received.inboundEstimate->bps, quint64(9000960));
+    QCOMPARE(received.inboundEstimate->lossFraction, 0.0);
 
-    // Exponent 7, and a quarter of the packets lost.
+    // exponent 7, and a quarter of the packets lost
     received = parseRtcp(bytes("81cc00050000008a3153494401020304050607081efaf040"));
-    QCOMPARE(received.inboundBitsPerSecond, quint64(24999936));
-    QCOMPARE(received.inboundLoss, 0.25);
+    QCOMPARE(received.inboundEstimate->bps, quint64(24999936));
+    QCOMPARE(received.inboundEstimate->lossFraction, 0.25);
 
-    // Another application packet, a cut-off one, and one that claims more than there is.
-    QVERIFY(!parseRtcp(bytes("81cc00050000008a5853494401020304050607081efaf040")).hasInboundEstimate);
-    QVERIFY(!parseRtcp(bytes("81cc00050000008a31534944010203")).hasInboundEstimate);
+    QVERIFY(!parseRtcp(bytes("81cc00050000008a5853494401020304050607081efaf040")).inboundEstimate);
+    QVERIFY(!parseRtcp(bytes("81cc00050000008a31534944010203")).inboundEstimate);
     QVERIFY(parseRtcp(bytes("80c800ff0000008aee73cd847cbccc93")).senderReports.empty());
     QVERIFY(parseRtcp({}).senderReports.empty());
 }
@@ -815,13 +722,12 @@ void TestRtpVideo::nackBytes()
 {
     uint8_t buffer[64];
 
-    // 100 and the two after it share an entry; 200 is too far away and gets its own.
+    // 100 and the two after it share an entry; 200 is too far away and gets its own
     const std::vector<uint16_t> lost = { 100, 101, 116, 200 };
     const int size = writeNack(buffer, 0x01020304, 0x0A0B0C0D, lost);
     QCOMPARE(size, 20);
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("81cd0004010203040a0b0c0d0064800100c80000"));
 
-    // The mask reaches across the wrap.
     const std::vector<uint16_t> wrapping = { 65535, 0, 2 };
     QCOMPARE(writeNack(buffer, 1, 2, wrapping), 16);
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("ffff0005"));
@@ -837,7 +743,6 @@ void TestRtpVideo::pliBytes()
     QCOMPARE(writePli(std::span<uint8_t>(buffer, 11), 1, 2), -1);
 }
 
-
 void TestRtpVideo::transportFeedbackForPacketsInARow()
 {
     uint8_t buffer[128];
@@ -845,8 +750,8 @@ void TestRtpVideo::transportFeedbackForPacketsInARow()
     QVERIFY(!feedback.hasPending());
     QCOMPARE(feedback.write(buffer, 1, 2), 0);
 
-    // Three packets a millisecond apart, the first 2 ms after a 64 ms boundary: one run of
-    // "received", and deltas of 8, 4 and 4 quarter-milliseconds.
+    // a millisecond apart, the first 2 ms after a 64 ms boundary: one run of "received", and deltas of
+    // 8, 4 and 4 quarter-milliseconds
     feedback.onPacket(100, 322000);
     feedback.onPacket(101, 323000);
     feedback.onPacket(102, 324000);
@@ -857,7 +762,6 @@ void TestRtpVideo::transportFeedbackForPacketsInARow()
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("afcd0006010203040a0b0c0d006400030000050020030804040000" "03"));
     QVERIFY(!feedback.hasPending());
 
-    // Twenty in a row are still a single run.
     for (uint16_t i = 0; i < 20; i++)
         feedback.onPacket(static_cast<uint16_t>(200 + i), 640000 + i * 250);
     QCOMPARE(feedback.write(buffer, 1, 2), 44);
@@ -871,7 +775,7 @@ void TestRtpVideo::transportFeedbackMarksWhatDidNotArrive()
     feedback.onPacket(10, 640000);
     feedback.onPacket(12, 641000);
 
-    // Received, missing, received: spelled out two bits each, and only two deltas.
+    // received, missing, received: spelled out two bits each, and only two deltas
     const int size = feedback.write(buffer, 0x01020304, 0x0A0B0C0D);
     QCOMPARE(size, 24);
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("8fcd0005010203040a0b0c0d000a000300000a00d1000004"));
@@ -881,14 +785,14 @@ void TestRtpVideo::transportFeedbackCarriesLongAndBackwardGaps()
 {
     uint8_t buffer[128];
     TransportFeedback feedback;
-    // The second packet is 100 ms behind the first, the third arrived before the second.
+    // the second packet 100 ms behind the first, the third arriving before the second
     feedback.onPacket(1, 0);
     feedback.onPacket(2, 100000);
     feedback.onPacket(3, 99000);
 
     const int size = feedback.write(buffer, 1, 2);
     QCOMPARE(size, 28);
-    // Small, large, large; then 0, +400 and -4 quarter-milliseconds.
+    // small, large, large; then 0, +400 and -4 quarter-milliseconds
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 16).toHex(), QByteArray("0001000300000000da00000190fffc01"));
 }
 
@@ -900,14 +804,12 @@ void TestRtpVideo::transportFeedbackReportsEachPacketOnce()
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
     QCOMPARE(buffer[19], uint8_t(0));
 
-    // The next report starts at the next packet and counts up.
     feedback.onPacket(6, 128000);
     feedback.onPacket(7, 128250);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
     QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 12).toHex(), QByteArray("000600020000020120020001"));
     QCOMPARE(feedback.write(buffer, 1, 2), 0);
 
-    // With no room nothing is written and nothing is forgotten.
     feedback.onPacket(8, 192000);
     QCOMPARE(feedback.write(std::span<uint8_t>(buffer, 20), 1, 2), -1);
     QVERIFY(feedback.hasPending());
@@ -934,8 +836,7 @@ void TestRtpVideo::transportFeedbackLeavesOutALateArrival()
     feedback.onPacket(102, 64250);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
 
-    // 101 turns up after the report that called it missing, and 103 after it. The next report
-    // is of 103 alone, not of 101 with 102 missing.
+    // the next report is of 103 alone, not of 101 with 102 missing
     feedback.onPacket(101, 64500);
     feedback.onPacket(103, 64750);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);

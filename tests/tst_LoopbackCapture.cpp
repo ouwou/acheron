@@ -1,6 +1,3 @@
-// The capture against this machine's own sound: the test plays a short, quiet tone and looks
-// for it in what is delivered. Then the rules that cut captured sound into runs, which need
-// nothing of the machine.
 
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Core/Audio/LoopbackCapture.hpp"
@@ -26,6 +23,8 @@
 #include <tlhelp32.h>
 #endif
 
+#include "ProcessUsage.hpp"
+
 #ifdef ACHERON_HAVE_PIPEWIRE
 #include <QProcess>
 #include <QScopeGuard>
@@ -39,6 +38,7 @@
 
 using namespace Acheron::Core;
 using Audio::LoopbackCapture;
+using ProcessUsage::threadsOfThisProcess;
 
 namespace {
 
@@ -46,7 +46,6 @@ constexpr double TONE_HZ = 1375;
 constexpr float TONE_AMPLITUDE = 0.02f;
 constexpr int TONE_MS = 400;
 constexpr int TONE_FADE_MS = 15;
-// For Windows to have made the capture before there is anything to hear.
 constexpr int CAPTURE_STARTS_MS = 250;
 constexpr int SOUND_ARRIVES_MS = 200;
 
@@ -55,7 +54,6 @@ const char CANNOT_PLAY[] = "This machine has no sound output to play a tone on."
 
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
 
-// Plays the tone once on the default output, from this process, then silence.
 class Tone
 {
 public:
@@ -67,8 +65,8 @@ public:
         config.sampleRate = Audio::AUDIO_SAMPLE_RATE;
         config.dataCallback = &Tone::fill;
         config.pUserData = this;
-        // Only through WASAPI, which is where the capture listens. Left to choose, miniaudio
-        // ends at a backend that plays to nowhere on a machine with no sound card.
+        // only WASAPI, where the capture listens. left to choose, miniaudio ends at a backend that plays to
+        // nowhere on a machine with no sound card
         const ma_backend backends[] = { ma_backend_wasapi };
         hasContext = ma_context_init(backends, 1, nullptr, &context) == MA_SUCCESS;
         opened = hasContext && ma_device_init(&context, &config, &device) == MA_SUCCESS;
@@ -96,7 +94,6 @@ private:
         for (ma_uint32 i = 0; i < sampleFrames; i++) {
             float sample = 0;
             if (tone->position < LENGTH) {
-                // Faded in and out, to spare whoever is in the room the clicks.
                 const float envelope = qMin(1.0f, qMin(tone->position, LENGTH - tone->position) / FADE);
                 sample = TONE_AMPLITUDE * envelope * static_cast<float>(std::sin(2 * std::numbers::pi * TONE_HZ * tone->position / Audio::AUDIO_SAMPLE_RATE));
                 tone->position++;
@@ -126,20 +123,6 @@ public:
 
 #ifdef Q_OS_WIN
 
-int threadsOfThisProcess()
-{
-    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    THREADENTRY32 entry = {};
-    entry.dwSize = sizeof(entry);
-    int count = 0;
-    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
-        if (entry.th32OwnerProcessID == GetCurrentProcessId())
-            count++;
-    }
-    CloseHandle(snapshot);
-    return count;
-}
-
 bool processExists(quint32 processId)
 {
     const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
@@ -150,22 +133,12 @@ bool processExists(quint32 processId)
 
 #elif defined(Q_OS_LINUX)
 
-int threadsOfThisProcess()
-{
-    return static_cast<int>(QDir(QStringLiteral("/proc/self/task")).entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
-}
-
 bool processExists(quint32 processId)
 {
     return QFileInfo::exists(QStringLiteral("/proc/%1").arg(processId));
 }
 
 #else
-
-int threadsOfThisProcess()
-{
-    return 0;
-}
 
 bool processExists(quint32)
 {
@@ -174,7 +147,6 @@ bool processExists(quint32)
 
 #endif
 
-// What one capture delivers, gathered on the test's thread.
 struct Recording : QObject
 {
     Recording()
@@ -188,7 +160,6 @@ struct Recording : QObject
         return std::all_of(frames.cbegin(), frames.cend(), [](const QByteArray &pcm) { return pcm.size() == Audio::AUDIO_FRAME_SIZE; });
     }
 
-    // The frames with something in them, end to end.
     [[nodiscard]] QByteArray sound() const
     {
         QByteArray joined;
@@ -204,7 +175,6 @@ struct Recording : QObject
     QStringList failures;
 };
 
-// How much of one frequency there is in 16-bit stereo sound, as the amplitude of a steady tone.
 double level(const QByteArray &pcm, double hz)
 {
     const auto *samples = reinterpret_cast<const qint16 *>(pcm.constData());
@@ -223,8 +193,6 @@ double level(const QByteArray &pcm, double hz)
     return 2 * std::hypot(real, imaginary) / sampleFrames;
 }
 
-// Other programs may be playing anything, so the tone is told by standing out of what is
-// beside it as well as by its size.
 bool hasTone(const QByteArray &pcm)
 {
     constexpr double BESIDE_HZ = 97;
@@ -256,8 +224,8 @@ context.objects = [
 ]
 )";
 
-// A PipeWire of the test's own, with a session manager that manages no devices and keeps its
-// state to itself. While it lives, it is the one this process captures from.
+// a private PipeWire with a session manager that manages no devices; while it lives this process
+// captures from it
 class OwnPipeWire
 {
 public:
@@ -277,7 +245,7 @@ public:
             process->setProcessEnvironment(environment);
         qputenv("PIPEWIRE_RUNTIME_DIR", directory.path().toLocal8Bit());
 
-        // Should the test die first, `timeout` ends the daemon, and what is connected to it ends with it.
+        // should the test die first, `timeout` ends the daemon and everything connected to it
         daemon.start(QStringLiteral("timeout"), { QStringLiteral("60"), QStringLiteral("pipewire"), QStringLiteral("-c"), configuration.fileName() });
         if (!QTest::qWaitFor([this] { return QFileInfo::exists(directory.filePath(QStringLiteral("pipewire-0"))); }, 5000))
             return;
@@ -406,8 +374,6 @@ void TestLoopbackCapture::whatThisProgramPlaysIsCaptured()
         QSKIP(CANNOT_CAPTURE);
     const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
-    // Stopped and started again before there is anything to hear, so what is heard is the
-    // second start's.
     Recording own;
     own.capture.start(self, LoopbackCapture::Scope::ProcessTree);
     QTest::qWait(CAPTURE_STARTS_MS);
@@ -423,7 +389,6 @@ void TestLoopbackCapture::whatThisProgramPlaysIsCaptured()
 
     QVERIFY2(own.failures.isEmpty(), qPrintable(own.failures.join(' ')));
     QVERIFY(own.everyFrameIsWhole());
-    // All of the tone but its fading ends, give or take a frame.
     const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
     const int framesOfSound = static_cast<int>(own.sound().size()) / Audio::AUDIO_FRAME_SIZE;
     QVERIFY2(framesOfSound >= framesOfTone - 2 && framesOfSound <= framesOfTone + 2, qPrintable(QString::number(framesOfSound)));
@@ -437,7 +402,6 @@ void TestLoopbackCapture::everythingButThisProgramLeavesItsToneOut()
         QSKIP(CANNOT_CAPTURE);
     const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
-    // Both at once, so that the tone the one must not have is known to have been there.
     Recording own;
     Recording others;
     own.capture.start(self, LoopbackCapture::Scope::ProcessTree);
@@ -476,13 +440,10 @@ void TestLoopbackCapture::aProcessThatDoesNotExistHasNoSound()
     QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
     nobody.capture.stop();
 
-    // Windows makes the capture without complaint, and what it delivers while something else
-    // is playing is silence.
     QVERIFY2(nobody.failures.isEmpty(), qPrintable(nobody.failures.join(' ')));
     QVERIFY(nobody.everyFrameIsWhole());
     QVERIFY(nobody.sound().isEmpty());
 #ifndef Q_OS_WIN
-    // The tone was something being played, so there was silence to deliver for as long as it lasted.
     QVERIFY2(nobody.frames.size() >= TONE_MS / Audio::AUDIO_FRAME_DURATION_MS - 2, qPrintable(QString::number(nobody.frames.size())));
 #endif
 }
@@ -493,7 +454,6 @@ void TestLoopbackCapture::startingAndStoppingLeavesNoThreadBehind()
         QSKIP(CANNOT_CAPTURE);
     const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
-    // Stopped at every stage of starting, and destroyed in the middle of the last start.
     const auto startAndStop = [self] {
         LoopbackCapture capture;
         for (int wait = 0; wait <= 30; wait += 10) {
@@ -504,7 +464,6 @@ void TestLoopbackCapture::startingAndStoppingLeavesNoThreadBehind()
         capture.start(self, LoopbackCapture::Scope::ProcessTree);
     };
 
-    // Windows keeps a few threads of its own once sound has been touched.
     startAndStop();
     const int before = threadsOfThisProcess();
 
@@ -556,7 +515,6 @@ void TestLoopbackCapture::whatALoopbackPlaysAgainIsLeftOut()
     if (!own.running)
         QSKIP(CANNOT_RUN);
 
-    // Not a child, so that it is no part of this process's tree: its sink takes the tone and its stream plays it again, late.
     QProcess loopback;
     loopback.setProcessEnvironment(own.environment);
     loopback.setProgram(QStringLiteral("pw-loopback"));
@@ -586,7 +544,6 @@ void TestLoopbackCapture::whatALoopbackPlaysAgainIsLeftOut()
     QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
     QVERIFY2(chain.failures.isEmpty(), qPrintable(chain.failures.join(' ')));
     QVERIFY(everything.everyFrameIsWhole());
-    // Once, as the program played it: a second time would make it longer by the loopback's delay.
     const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
     const int framesOfSound = static_cast<int>(everything.sound().size()) / Audio::AUDIO_FRAME_SIZE;
     QVERIFY2(framesOfSound >= framesOfTone - 2 && framesOfSound <= framesOfTone + 2, qPrintable(QString::number(framesOfSound)));
@@ -603,11 +560,10 @@ void TestLoopbackCapture::framesComeEvenlyHoweverLongTheGraphsCycle()
     OwnPipeWire own;
     if (!own.running)
         QSKIP(CANNOT_RUN);
-    // The longest cycle PipeWire has, 171 ms of sound handed over at a time.
+    // PipeWire's longest cycle: 171 ms of sound at a time
     own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings"), QStringLiteral("0"), QStringLiteral("clock.force-quantum"), QStringLiteral("8192") });
     QVERIFY(own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings") }).contains("key:'clock.force-quantum' value:'8192'"));
 
-    // Told on the capture's own thread, where nothing of the test's stands between sending and seeing.
     std::mutex mutex;
     QElapsedTimer clock;
     QList<qint64> soundSentAt;
@@ -632,7 +588,6 @@ void TestLoopbackCapture::framesComeEvenlyHoweverLongTheGraphsCycle()
 
     const std::lock_guard lock(mutex);
     QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
-    // A capture that is slow to link joins one cycle late and has that much less of the tone.
     const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
     QVERIFY2(soundSentAt.size() > framesOfTone / 2 && soundSentAt.size() <= framesOfTone + 2, qPrintable(QString::number(soundSentAt.size())));
     qint64 longestWait = 0;
@@ -645,7 +600,6 @@ void TestLoopbackCapture::framesComeEvenlyHoweverLongTheGraphsCycle()
         for (int i = 1; i < sentAt.size(); i++)
             gaps += QString::number(sentAt[i] - sentAt[i - 1]) + ' ';
     }
-    // Well within what ends a run of sound for want of frames.
     QVERIFY2(longestWait < StreamAudio::SOUND_GONE_MS / 2, qPrintable(QString::number(longestWait)));
 }
 
@@ -673,7 +627,7 @@ void TestLoopbackCapture::surroundSoundIsMixedDownToBothSides()
         return played && everything.failures.isEmpty() ? everything.sound() : QByteArray();
     };
 
-    // Dialogue is on the centre, which stereo has on both sides at 0.71 of its level.
+    // dialogue is on the centre, which stereo has on both sides at 0.71 of its level
     const QByteArray centre = heard(toneAsPcm(6, surround.split(QLatin1Char(',')).indexOf(QStringLiteral("FC"))), surround);
     for (int side = 0; side < 2; side++) {
         QVERIFY(hasTone(oneSideOf(centre, side)));
@@ -681,7 +635,6 @@ void TestLoopbackCapture::surroundSoundIsMixedDownToBothSides()
         QVERIFY2(part > 0.5 && part < 0.8, qPrintable(QString::number(part)));
     }
 
-    // Where PipeWire is set to fill the sink's other four from a program's two, they are not what it played.
     const double ofStereo = level(heard(toneAsPcm(2), QStringLiteral("FL,FR"), { QStringLiteral("--properties"), QStringLiteral("{ channelmix.upmix-method = simple }") }), TONE_HZ) / FULL;
     QVERIFY2(ofStereo > 0.75 && ofStereo < 1.1, qPrintable(QString::number(ofStereo)));
 }
@@ -711,7 +664,6 @@ void TestLoopbackCapture::startingWithNoFileLeftToOpenFails()
 
 void TestLoopbackCapture::anAnswerOfNoIsAskedAgain()
 {
-    // In a process of its own, which has not found out yet and whose answer the other cases do not get.
     if (!qEnvironmentVariableIsSet(ASKING_ALONE)) {
         QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
         environment.insert(QLatin1String(ASKING_ALONE), QStringLiteral("1"));
@@ -752,7 +704,6 @@ void TestLoopbackCapture::silenceIsWhatRoundingLeaves()
     QVERIFY(!isSilence(frameOf(7)));
     QVERIFY(!isSilence(frameOf(-7)));
 
-    // One click in a frame of nothing is something to hear, and so is the full scale.
     QByteArray click = frameOf(0);
     reinterpret_cast<qint16 *>(click.data())[Audio::AUDIO_FRAME_SIZE / 2 - 1] = 1000;
     QVERIFY(!isSilence(click));
@@ -783,7 +734,6 @@ void TestLoopbackCapture::soundDuringTheSilenceKeepsTheRunOpen()
         QCOMPARE(runs.offer(true), SoundRuns::Step::Continue);
     QCOMPARE(runs.offer(false), SoundRuns::Step::Continue);
 
-    // The silence is counted from the last of the sound.
     for (int i = 0; i < SoundRuns::HELD_SILENT_FRAMES; i++)
         QCOMPARE(runs.offer(true), SoundRuns::Step::Continue);
     QCOMPARE(runs.offer(true), SoundRuns::Step::End);

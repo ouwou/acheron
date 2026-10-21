@@ -18,9 +18,6 @@ extern "C" {
 namespace Acheron {
 namespace UI {
 
-using Core::Media::isFullRange;
-using Core::Media::usesBt709;
-
 QSize fitted(QSize content, QSize bounds)
 {
     if (content.isEmpty() || bounds.isEmpty())
@@ -46,8 +43,7 @@ VideoFrameStore::~VideoFrameStore()
 void VideoFrameStore::present(const AVFrame *frame)
 {
 #ifdef ACHERON_HAVE_DMABUF
-    // Waits for the card to finish the picture: on this thread, the decoder's, and not
-    // under the lock.
+    // waits for the card to finish the picture, on the decoder's thread and outside the lock
     AVFrame *handed = frame->format == AV_PIX_FMT_VAAPI ? DmabufGlBridge::exported(frame) : nullptr;
 #endif
     std::lock_guard lock(mutex);
@@ -61,8 +57,7 @@ void VideoFrameStore::present(const AVFrame *frame)
     store(frame);
     serial++;
 #ifdef Q_OS_WIN
-    // Without a card to hand it to, the surface hears of the frame as of any other: it
-    // may have no layer yet to draw it in.
+    // the surface may have no layer yet to draw it in
     if (last->hw_frames_ctx && card) {
         requestHandOver();
         return;
@@ -79,10 +74,9 @@ void VideoFrameStore::setCard(std::shared_ptr<CardPicture> picture)
     std::lock_guard lock(mutex);
     card = std::move(picture);
     hardwareFramesUsable.store(card != nullptr, std::memory_order_relaxed);
-    // A frame on the card has no way to the screen without one, and stays up in memory.
     if (!card && bringIntoMemory())
         announce();
-    // The frame held may be one the card before this one never got to.
+    // the frame held may be one the previous card never got to
     if (shown && last->hw_frames_ctx)
         requestHandOver();
 }
@@ -96,10 +90,7 @@ void VideoFrameStore::setCardUsable(bool usable)
 
 void VideoFrameStore::readBack()
 {
-    AVFrame *downloaded = av_frame_alloc();
-    if (av_hwframe_transfer_data(downloaded, last, 0) >= 0 && av_frame_copy_props(downloaded, last) >= 0)
-        store(downloaded);
-    av_frame_free(&downloaded);
+    storeDownloaded();
     av_frame_free(&exported);
 }
 #endif
@@ -141,21 +132,25 @@ void VideoFrameStore::keepInMemory()
     bringIntoMemory();
 }
 
+bool VideoFrameStore::storeDownloaded()
+{
+    AVFrame *downloaded = av_frame_alloc();
+    const bool downloadedWhole = downloaded && av_hwframe_transfer_data(downloaded, last, 0) >= 0 && av_frame_copy_props(downloaded, last) >= 0;
+    if (downloadedWhole)
+        store(downloaded);
+    av_frame_free(&downloaded);
+    return downloadedWhole;
+}
+
 bool VideoFrameStore::bringIntoMemory()
 {
-    if (!last->hw_frames_ctx)
+    if (!last->hw_frames_ctx || !storeDownloaded())
         return false;
-    AVFrame *downloaded = av_frame_alloc();
-    const bool brought = downloaded && av_hwframe_transfer_data(downloaded, last, 0) >= 0 && av_frame_copy_props(downloaded, last) >= 0;
-    if (brought) {
-        store(downloaded);
-        av_frame_free(&exported);
-        serial++;
-        if (!gpu)
-            convert();
-    }
-    av_frame_free(&downloaded);
-    return brought;
+    av_frame_free(&exported);
+    serial++;
+    if (!gpu)
+        convert();
+    return true;
 }
 
 void VideoFrameStore::setTarget(QSize devicePixels, qreal devicePixelRatio)
@@ -214,12 +209,11 @@ void VideoFrameStore::handOver(CardPicture &picture)
     }
     if (!handing->hw_frames_ctx)
         return;
-    const bool made = picture.render(handing, usesBt709(handing), isFullRange(handing));
+    const bool made = picture.render(handing);
     av_frame_unref(handing);
 
     std::lock_guard lock(mutex);
     if (!made) {
-        // The decoder sends the next frames in memory, and this one goes the same way.
         hardwareFramesUsable.store(false, std::memory_order_relaxed);
         bringIntoMemory();
     }
@@ -245,8 +239,6 @@ void VideoFrameStore::store(const AVFrame *frame)
         return;
     }
 
-    // Anything else, such as 10-bit video, is brought to 8-bit 4:2:0 here so that the
-    // shader has one family of layouts to deal with.
     last->format = AV_PIX_FMT_YUV420P;
     last->width = frame->width;
     last->height = frame->height;

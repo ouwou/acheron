@@ -1,6 +1,5 @@
-// Tests for the voice gateway payloads that carry video. Expected bytes are what the official
-// desktop client's JSON.stringify produces for the same values (key order included), taken from
-// the canary client's RTC control socket; see docs/video-re/re-voice-gateway-video.md.
+// expected bytes are what the official desktop client's JSON.stringify produces (key order included),
+// taken from the canary client's RTC control socket; see docs/video-re/re-voice-gateway-video.md
 
 #include "Discord/Enums.hpp"
 #include "Discord/Outbound.hpp"
@@ -86,8 +85,7 @@ void TestVoicePayloads::identifyWithoutVideoOmitsVideoKeys()
              QByteArray(R"({"server_id":"100","channel_id":"200","user_id":"300","session_id":"session","token":"token","max_dave_protocol_version":1})"));
 }
 
-// What the official client declares with its simulcast switch off. With it on a second layer
-// follows, `rid` "50" at quality 50.
+// the official client with simulcast off. with it on, rid "50" at quality 50 follows
 void TestVoicePayloads::identifyVoiceConnectionOffersOneCameraLayer()
 {
     VoiceIdentifyData identify = identifyFor(100, 200);
@@ -219,7 +217,6 @@ void TestVoicePayloads::videoFromServerParsesUserSsrcs()
     QCOMPARE(stream.maxResolution->width.get(), 1280);
     QCOMPARE(stream.maxResolution->height.get(), 720);
 
-    // Camera off: the same message with a zero video SSRC and no streams.
     const ClientConnectData off = ClientConnectData::fromJson(parse(R"({"user_id":"123456789012345678","audio_ssrc":5000,"video_ssrc":0})"));
     QCOMPARE(off.videoSsrc.get(), quint32(0));
     QVERIFY(!off.streams.hasValue());
@@ -238,8 +235,7 @@ void TestVoicePayloads::sessionUpdateParsesOnlyWhatIsPresent()
     QVERIFY(!interval.videoCodec.hasValue());
 }
 
-// The main gateway's opcode 4. The official client's keys are guild_id, channel_id, self_mute,
-// self_deaf, self_video, flags, in that order (docs/video-re/re-main-gateway.md).
+// the official client's key order (docs/video-re/re-main-gateway.md)
 void TestVoicePayloads::voiceStateUpdateSaysWhetherTheCameraIsOn()
 {
     using Discord::voiceStateUpdate;
@@ -248,7 +244,6 @@ void TestVoicePayloads::voiceStateUpdateSaysWhetherTheCameraIsOn()
 
     QCOMPARE(voiceStateUpdate(guild, channel, false, false, true).toJson().toBytes(),
              QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true}})"));
-    // Off is said as well, not left out.
     QCOMPARE(voiceStateUpdate(guild, channel, true, true, false).toJson().toBytes(),
              QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":true,"self_deaf":true,"self_video":false}})"));
 }

@@ -18,7 +18,7 @@ env:
   # AppImage builds against this prebuilt prefix and bundles it.
   FFMPEG_LINUX_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-shared-8.1
   FFMPEG_LINUX_SHA256: c882a80f06617149198a98a07a0880a7e881953ae9f9cb931f5be09a4f93caae
-  # Makes the stubs through which the AppImage loads libpipewire when it is first called.
+  # makes the stubs through which the AppImage loads libpipewire when it is first called
   IMPLIB_COMMIT: a3e167cf978a5b8a38ec0f710d8c4331e8dcdd9a
   # aqtinstall 3.3.0, still the newest release, cannot find Qt 6.11+ for Windows: the
   # repository moved to one folder per compiler (jurplel/install-qt-action#374).
@@ -97,13 +97,13 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
-      # The voice client's tests load the curl-impersonate DLL, which is only put beside the
-      # executables when the artifact is made. Without it Windows shows a dialog and waits.
+      # the voice client's tests load the curl-impersonate DLL, which is only put beside the
+      # executables when the artifact is made. without it Windows shows a dialog and waits
       - name: Test
         shell: pwsh
         run: |
           $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
-          # Without this Qt Test writes its report to the debugger, and a failure shows nothing here.
+          # without this Qt Test writes its report to the debugger, and a failure shows nothing here
           $env:QT_FORCE_STDERR_LOGGING = "1"
           ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --timeout 600
 
@@ -232,8 +232,8 @@ jobs:
 
   build-windows-qt5:
     # Visual Studio 2022: its C++ runtime (14.4x) is the last that loads on Windows 7,
-    # and the artifact carries it beside the exe. What a newer toolset builds crashes
-    # at its first std::mutex on an installed runtime older than that toolset.
+    # and the artifact carries it beside the exe. what a newer toolset builds crashes
+    # at its first std::mutex on an installed runtime older than that toolset
     runs-on: windows-2022
 
     steps:
@@ -315,7 +315,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
-          # Without this Qt Test writes its report to the debugger, and a failure shows nothing here.
+          # without this Qt Test writes its report to the debugger, and a failure shows nothing here
           $env:QT_FORCE_STDERR_LOGGING = "1"
           ctest --test-dir build -C MinSizeRel --output-on-failure --timeout 600
 
@@ -343,8 +343,8 @@ jobs:
           # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
           Copy-Item "openssl-bin/*.dll" $out -Force
 
-          # The C++ runtime this job built against, so that the machine's own, which may
-          # be older, is not the one loaded. vccorlib140 is left out: it is for WinRT.
+          # the C++ runtime this job built against, so that the machine's own, which may
+          # be older, isnt the one loaded. vccorlib140 is left out: it is for WinRT
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Sort-Object FullName | Select-Object -Last 1
           Copy-Item "$($crt.FullName)\msvcp140*.dll","$($crt.FullName)\vcruntime140*.dll" $out -Force
@@ -366,8 +366,8 @@ jobs:
           name: acheron-windows-qt5-MinSizeRel
           path: acheron-windows-qt5-MinSizeRel
 
-      # The media tests as this job built them, to be run by hand on a real Windows 7:
-      # the runner is a newer Windows, so passing here says nothing about that one.
+      # the media tests as this job built them, to be run by hand on a real Windows 7:
+      # the runner is a newer Windows, so passing here says nothing about that one
       - name: Prepare media tests
         shell: pwsh
         run: |
@@ -378,8 +378,8 @@ jobs:
             Copy-Item "build/MinSizeRel/$test.exe" $out
             windeployqt --no-translations --no-system-d3d-compiler "$out/$test.exe"
           }
-          # The DLLs the app ships with, the C++ runtime among them, and the platform
-          # plugin the tests that draw nothing ask for.
+          # the DLLs the app ships with, the C++ runtime among them, and the platform
+          # plugin the tests that draw nothing ask for
           Copy-Item "$app/*.dll" $out -Force
           Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$out/platforms" -Force
 
@@ -395,7 +395,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Cameras and screen shares are optional, so the build without them is kept working.
+        # cameras and screen shares are optional, so the build without them is kept working
         video: ['ON', 'OFF']
     name: build-linux (video ${{ matrix.video }})
 
@@ -410,7 +410,7 @@ jobs:
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
 
-      # Left out of the build without video, which has to do without them.
+      # left out of the build without video, which has to do without them
       - name: Install what cameras and screen shares need
         if: matrix.video == 'ON'
         run: |
@@ -459,7 +459,7 @@ jobs:
           -DBUILD_TESTS=ON
           -DENABLE_VIDEO=${{ matrix.video }}
 
-      # Every error in one run, not only the first: nothing else compiles this platform's code.
+      # every error in one run, not only the first: nothing else compiles this platform's code
       - name: Build
         run: cmake --build build --parallel $(nproc) -- --keep-going
 
@@ -531,8 +531,8 @@ jobs:
           tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
 
       # libpipewire has to be the one of the machine the AppImage runs on, which is why
-      # linuxdeploy leaves it out. Linked in the ordinary way, Acheron would then not start
-      # where there is none, so it is loaded when it is first called (linuxcapture.cmake).
+      # linuxdeploy leaves it out. linked in the ordinary way, Acheron would then not start
+      # where there is none, so it is loaded when it is first called (linuxcapture.cmake)
       - name: Get Implib.so
         run: |
           git clone https://github.com/yugr/Implib.so implib
@@ -687,8 +687,8 @@ jobs:
       - name: Build
         run: cmake --build build --parallel $(sysctl -n hw.logicalcpu) -- --keep-going
 
-      # No camera can be opened on macOS yet, and the stand-in the camera tests use cannot
-      # keep thirty pictures a second on the hosted runners, whose timers wake it late.
+      # no camera can be opened on macOS yet, and the stand-in the camera tests use cant
+      # keep thirty pictures a second on the hosted runners, whose timers wake it late
       - name: Test
         run: ctest --test-dir build --output-on-failure --timeout 600 -E CameraCaptureTests
 

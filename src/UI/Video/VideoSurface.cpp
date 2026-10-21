@@ -20,7 +20,7 @@ const char *const GPU_DRAWING_KEY = "video/gpu_drawing";
 
 constexpr int RESCALE_DELAY_MS = 120;
 
-// Whether an OpenGL context can be had at all. Remote sessions and some old machines have none.
+// remote sessions and some old machines have none
 bool openGlWorks()
 {
     static const bool works = [] {
@@ -69,7 +69,6 @@ void VideoSurface::makeLayerForAPicture()
     if (glLayer || !usesGpu || !isVisible() || !frameSink->hasPicture())
         return;
     glLayer = new GlVideoLayer(this, frameSink);
-    // The container owns the layer's window and keeps it over this widget.
     glContainer = QWidget::createWindowContainer(glLayer, this);
     glContainer->setFocusPolicy(Qt::NoFocus);
     glContainer->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -97,7 +96,7 @@ void VideoSurface::releaseWhatIsNotShown()
 VideoSurface::~VideoSurface()
 {
     frameSink->detach();
-    // Now, while the rest of this is still here for it.
+    // now, while the rest of this still exists for it
     delete glContainer;
 }
 
@@ -124,7 +123,6 @@ void VideoSurface::refresh()
         update();
 }
 
-// For a change to what is drawn over the picture, as opposed to the picture.
 void VideoSurface::refreshOverlays()
 {
     if (glLayer)
@@ -188,7 +186,6 @@ void VideoSurface::clear()
 void VideoSurface::onFrameArrived()
 {
     makeLayerForAPicture();
-    // Not while pictures still come for it, which they do for a while after it is hidden.
     if (!isVisible())
         notShownTimer.start();
     refresh();
@@ -198,11 +195,9 @@ void VideoSurface::onFrameArrived()
 void VideoSurface::reportGeometry(bool evenIfUnchanged)
 {
     const QSize picture = frameSink->pictureSize();
-    // Before the first frame the picture's shape is unknown, so the whole widget stands in.
     const QSize area = picture.isEmpty() ? size() * devicePixelRatioF() : picture;
     const int pixels = area.width() * area.height();
     const bool visible = isVisible() && !window()->isMinimized();
-    // This runs for every frame, and almost never has anything new to say.
     if (!evenIfUnchanged && pixels == reportedPixels && visible == reportedVisible)
         return;
     reportedPixels = pixels;
@@ -255,7 +250,6 @@ void VideoSurface::mouseReleaseEvent(QMouseEvent *event)
 
 void VideoSurface::paintEvent(QPaintEvent *)
 {
-    // With a layer for the graphics card, the layer covers this widget and draws everything.
     if (glLayer)
         return;
 
@@ -270,12 +264,11 @@ void VideoSurface::paintEvent(QPaintEvent *)
         const qreal ratio = devicePixelRatioF();
         const QSize widgetPixels = size() * ratio;
         if (image.size() == fitted(image.size(), widgetPixels)) {
-            // Already at the right size: place it on whole device pixels so it is copied, not resampled.
+            // on whole device pixels, so it is copied, not resampled
             const QPoint offset((widgetPixels.width() - image.width()) / 2, (widgetPixels.height() - image.height()) / 2);
             painter.drawImage(QPointF(offset) / ratio, image);
             return;
         }
-        // While a resize is in progress the picture is still at its old size.
         const QSizeF shown = QSizeF(image.size()).scaled(QSizeF(size()), Qt::KeepAspectRatio);
         const QRectF where(QPointF((width() - shown.width()) / 2.0, (height() - shown.height()) / 2.0), shown);
         painter.drawImage(where, image, QRectF(QPointF(0, 0), QSizeF(image.size())));
@@ -315,8 +308,7 @@ void VideoSurface::paintOverlays(QPainter &painter, bool hasPicture, bool withSp
     }
 
     if (!captionText.isEmpty()) {
-        // Measured with the widget's metrics: the painter may be on the OpenGL framebuffer,
-        // whose own idea of a font's size is not to be relied on.
+        // the painter may be on the GL framebuffer, whose font sizes are unreliable
         painter.setFont(font());
         const QRect bounds = fontMetrics().boundingRect(rect().adjusted(8, 8, -8, -8), Qt::AlignLeft | Qt::AlignBottom, captionText);
         painter.fillRect(bounds.adjusted(-4, -2, 4, 2), QColor(0, 0, 0, 170));
@@ -335,7 +327,6 @@ void VideoSurface::paintOverlays(QPainter &painter, bool hasPicture, bool withSp
         const QFont fixed = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         painter.setFont(fixed);
         const QRect bounds = QFontMetrics(fixed, this).boundingRect(rect().adjusted(8, 8, -8, -8), Qt::AlignLeft | Qt::AlignTop, statsText);
-        // Left off a tile too small to hold them and still show its picture.
         if (bounds.height() <= height() / 2 && bounds.width() <= width() - 16) {
             painter.fillRect(bounds.adjusted(-4, -4, 4, 4), QColor(0, 0, 0, 170));
             painter.setPen(Qt::white);

@@ -106,9 +106,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
 #endif
 #ifdef ACHERON_HAVE_VIDEO
-    streamWatch = new StreamWatcher(client, streamManager, voiceManager, info.id, info.proxy, this);
-    streamBroadcast = new StreamBroadcaster(
-            client, streamManager, voiceManager, info.id, info.proxy, [this] { return screenShareTerms(); }, this);
+    streamWatch = new StreamWatcher(client, streamManager, voiceManager, this);
+    streamBroadcast = new StreamBroadcaster(client, streamManager, voiceManager, [this] { return screenShareTerms(); }, this);
     cameraSend = new CameraSender(
             client, voiceManager, streamBroadcast, [this] { return screenShareTerms().allowed; }, this);
 #endif
@@ -126,18 +125,15 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         callStore->reset();
 #ifdef ACHERON_HAVE_VIDEO
         streamWatch->reset();
-        streamWatch->setGatewaySessionId(gatewaySessionId);
         streamBroadcast->reset();
         cameraSend->reset();
-        // A voice connection can only offer to send video with the codecs known when it is
-        // made, and finding them out takes a while the first time.
+        // a voice connection offers only the send codecs known when it is made, and the first probe is slow
         if (Video::cameraCaptureAvailable())
             Media::whenSendCodecsKnown(voiceManager, [voice = voiceManager](const QList<Discord::Voice::VideoCodec> &codecs) { voice->setEncodableVideoCodecs(Media::cameraCodecs(codecs)); });
-        streamBroadcast->setGatewaySessionId(gatewaySessionId);
 #endif
         streamManager->reset();
         streamPreviewCache->clear();
-        connectSelectedCall(true);
+        connectSelectedCall(CallConnect::Always);
 
         QString connName = Storage::DatabaseManager::instance().getCacheConnectionName(account.id);
         QSqlDatabase db = QSqlDatabase::database(connName);
@@ -367,11 +363,10 @@ void ClientInstance::onVoiceStateUpdated(const Discord::VoiceState &event)
                      << "deaf" << event.selfDeaf.get();
 
     if (event.userId.get() == account.id) {
-        const bool left = event.channelId.isNull() || !event.channelId.get().isValid();
-        const bool heldByThisSession = gatewaySessionId.isEmpty() || event.sessionId.get() == gatewaySessionId;
+        const bool left = !event.channel().isValid();
+        const bool heldByThisSession = event.isHeldBy(gatewaySessionId);
 
-        // Only a voice state this gateway session holds puts this client in voice. One held by
-        // another of the account's sessions means this client is not, or no longer, connected.
+        // only a voice state this gateway session holds puts this client in voice
         const bool takenByAnotherSession = !heldByThisSession && !left && currentVoiceChannelId.isValid();
 
         if (heldByThisSession && !left) {
@@ -401,7 +396,7 @@ void ClientInstance::onCallCreated(const Discord::CallCreate &event)
         return;
 
     for (Discord::VoiceState state : event.voiceStates.get()) {
-        if (state.channelId.isNull() || !state.channelId.get().isValid())
+        if (!state.channel().isValid())
             state.channelId = event.channelId.get();
         onVoiceStateUpdated(state);
     }
@@ -418,10 +413,10 @@ void ClientInstance::onCallDeleted(const Discord::CallDelete &event)
 void ClientInstance::noteChannelSelected(Snowflake channelId)
 {
     selectedChannelId = channelId;
-    connectSelectedCall(false);
+    connectSelectedCall(CallConnect::OncePerChannel);
 }
 
-void ClientInstance::connectSelectedCall(bool force)
+void ClientInstance::connectSelectedCall(CallConnect rule)
 {
     if (!selectedChannelId.isValid() || gatewaySessionId.isEmpty())
         return;
@@ -430,7 +425,7 @@ void ClientInstance::connectSelectedCall(bool force)
     if (!channel || (channel->type != Discord::ChannelType::DM && channel->type != Discord::ChannelType::GROUP_DM))
         return;
 
-    if (callStore->shouldConnect(selectedChannelId, force))
+    if (callStore->claimConnect(selectedChannelId, rule))
         client->sendCallConnect(selectedChannelId);
 }
 
@@ -1472,13 +1467,13 @@ void ClientInstance::markCategoryAsRead(Snowflake guildId, Snowflake categoryId)
 ClientInstance::~ClientInstance()
 {
 #ifdef ACHERON_HAVE_VIDEO
-    // It sends on the voice manager's connection and asks the broadcaster what is shared.
+    // it sends on the voice manager's connection and asks the broadcaster what is shared
     delete cameraSend;
     cameraSend = nullptr;
-    // Its sessions feed the voice manager's mixer, so they go before it does.
+    // its sessions feed the voice manager's mixer
     delete streamWatch;
     streamWatch = nullptr;
-    // It reads the voice manager and the repositories, so it goes before they do as well.
+    // it reads the voice manager and the repositories
     delete streamBroadcast;
     streamBroadcast = nullptr;
 #endif
@@ -1608,7 +1603,7 @@ ShareTerms ClientInstance::screenShareTerms()
 
     shareTerms.tier.guildBoostTier = static_cast<int>(client->getGuildPremiumTier(currentVoiceGuildId));
 
-    // Stage channels have rules of their own, which this client does not follow yet.
+    // stage channels have rules of their own, not followed yet
     const auto channel = getChannel(currentVoiceChannelId);
     if (!channel || channel->type.get() != Discord::ChannelType::GUILD_VOICE)
         return shareTerms;

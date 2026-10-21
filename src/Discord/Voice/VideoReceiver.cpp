@@ -1,5 +1,7 @@
 #include "VideoReceiver.hpp"
 
+#include "RtpPacket.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -7,41 +9,19 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-namespace {
-
-constexpr int VIDEO_CLOCK_KHZ = 90;
-
-// Unwrapped sequence numbers start well above zero so that a packet from just before the first
-// one seen never unwraps to a negative number.
-constexpr qint64 SEQUENCE_BASE = qint64(1) << 20;
-
-} // namespace
-
 VideoReceiver::VideoReceiver(uint32_t ssrc, VideoCodec codec)
     : mediaSsrc(ssrc), videoCodec(codec)
 {
 }
 
-qint64 VideoReceiver::unwrap(uint16_t sequence) const
-{
-    if (highestSequence < 0)
-        return SEQUENCE_BASE + sequence;
-
-    // The 16-bit number nearest to the highest one seen so far.
-    const qint64 delta = static_cast<int16_t>(static_cast<uint16_t>(sequence - static_cast<uint16_t>(highestSequence)));
-    return highestSequence + delta;
-}
-
 void VideoReceiver::noteArrival(uint32_t timestamp, qint64 nowMs)
 {
     const qint64 transit = nowMs * VIDEO_CLOCK_KHZ - static_cast<qint64>(timestamp);
-    if (haveTransit) {
-        // The RTP timestamp wraps, so only the low 32 bits of the difference mean anything.
-        const double difference = std::abs(static_cast<double>(static_cast<int32_t>(static_cast<uint32_t>(transit - lastTransit))));
+    if (lastTransit) {
+        const double difference = std::abs(static_cast<double>(static_cast<int32_t>(static_cast<uint32_t>(transit - *lastTransit))));
         jitter += (difference - jitter) / 16.0;
     }
     lastTransit = transit;
-    haveTransit = true;
 }
 
 void VideoReceiver::insert(uint16_t sequence, uint32_t timestamp, bool marker, PacketPool::Handle payload, qint64 nowMs, Arrival arrival)
@@ -62,76 +42,72 @@ void VideoReceiver::take(uint16_t sequence, uint32_t timestamp, bool marker, Pac
     const bool retransmission = arrival == Arrival::Retransmitted;
     lastPacketMs = nowMs;
 
-    qint64 unwrapped = unwrap(sequence);
+    qint64 unwrapped = sequences.unwrap(sequence);
     counters.packets++;
 
-    const bool farFromExpected = highestSequence >= 0 && std::abs(unwrapped - highestSequence) > MAX_SEQUENCE_JUMP;
+    const std::optional<qint64> highest = sequences.highestSeen();
+    const bool farFromExpected = highest && std::abs(unwrapped - *highest) > MAX_SEQUENCE_JUMP;
     const bool continuesNewNumbering = farFromExpected && sequenceAfterFarPacket == sequence;
     sequenceAfterFarPacket = farFromExpected && !continuesNewNumbering ? std::optional<uint16_t>(static_cast<uint16_t>(sequence + 1)) : std::nullopt;
     if (farFromExpected && !continuesNewNumbering) {
-        // RFC 3550, A.1: one such packet is a stray, a long-delayed duplicate say. Only a
-        // second one following on from it shows that the sender restarted its numbering.
+        // RFC 3550, A.1
         counters.strays++;
         return;
     }
 
     if (continuesNewNumbering) {
-        // Nothing held relates to what comes next.
         resync();
-        highestSequence = -1;
-        baseSequence = -1;
-        received = 0;
-        expectedAtLastReport = 0;
-        receivedAtLastReport = 0;
-        unwrapped = unwrap(sequence);
+        sequences.reset();
+        reception = {};
+        unwrapped = sequences.unwrap(sequence);
     }
 
-    if (held.count(unwrapped) || (nextSequence >= 0 && unwrapped < nextSequence)) {
-        counters.duplicates++;
+    if (held.count(unwrapped) || (nextSequence && unwrapped < *nextSequence))
         return;
-    }
 
-    if (baseSequence < 0)
-        baseSequence = unwrapped;
-    received++;
+    if (!reception.baseSequence)
+        reception.baseSequence = unwrapped;
+    reception.received++;
 
-    if (unwrapped > highestSequence) {
-        if (highestSequence >= 0 && !keyframeWanted) {
-            for (qint64 gap = highestSequence + 1; gap < unwrapped; gap++)
+    const std::optional<qint64> highestBefore = sequences.highestSeen();
+    const bool extendsRun = highestBefore && unwrapped == *highestBefore + 1;
+    const auto predecessor = held.find(unwrapped - 1);
+    const bool continuesFrame = payload && predecessor != held.end() && predecessor->second.payload && predecessor->second.timestamp == timestamp;
+    if (!highestBefore || unwrapped > *highestBefore) {
+        if (highestBefore && !keyframeWanted) {
+            for (qint64 gap = *highestBefore + 1; gap < unwrapped; gap++)
                 missing.emplace(gap, Missing{ nowMs, 0, 0 });
         }
-        highestSequence = unwrapped;
+        sequences.advance(unwrapped);
         if (!retransmission)
             noteArrival(timestamp, nowMs);
     } else if (missing.erase(unwrapped) && retransmission) {
         counters.retransmitted++;
     }
 
-    // The frame begins at its first packet, which may come before this one: senders put
-    // delimiters and the like ahead of the parameter sets.
-    qint64 frameStart = unwrapped;
-    for (auto earlier = held.find(frameStart - 1); earlier != held.end() && earlier->second.payload && earlier->second.timestamp == timestamp; earlier = held.find(frameStart - 1))
-        frameStart--;
-    // A packet that starts the picture but brings no parameter sets is only taken as the
-    // start when the packet before it is here to show that nothing of the frame was missed.
-    // Right after subscribing, the parameter sets may have gone by already.
-    const bool startKnown = payload && (startsWithParameterSets(videoCodec, payload->bytes()) || held.count(frameStart - 1));
+    bool keyframeFound = false;
+    if (keyframeWanted && payload && startsKeyframe(videoCodec, payload->bytes())) {
+        // senders put delimiters and the like before the parameter sets
+        qint64 frameStart = unwrapped;
+        for (auto earlier = held.find(frameStart - 1); earlier != held.end() && earlier->second.payload && earlier->second.timestamp == timestamp; earlier = held.find(frameStart - 1))
+            frameStart--;
+        // right after subscribing, the parameter sets may have gone by
+        keyframeFound = startsWithParameterSets(videoCodec, payload->bytes()) || held.count(frameStart - 1);
+        if (keyframeFound)
+            nextSequence = frameStart;
+    }
 
-    if (keyframeWanted && startKnown && startsKeyframe(videoCodec, payload->bytes())) {
+    if (keyframeFound) {
         keyframeWanted = false;
-        nextSequence = frameStart;
-        held.erase(held.begin(), held.lower_bound(nextSequence));
-        // Losses were not tracked while waiting, so note what is absent behind this packet.
+        held.erase(held.begin(), held.lower_bound(*nextSequence));
         missing.clear();
-        for (qint64 later = unwrapped + 1; later < highestSequence; later++) {
+        for (qint64 later = unwrapped + 1; later < *sequences.highestSeen(); later++) {
             if (!held.count(later))
                 missing.emplace(later, Missing{ nowMs, 0, 0 });
         }
     }
 
-    if (keyframeWanted && nextSequence < 0) {
-        // Nothing before a key frame is of use, but packets of the key frame itself may arrive
-        // ahead of its first one, so a short tail is kept.
+    if (keyframeWanted && !nextSequence) {
         static constexpr int TAIL = 64;
         held.erase(held.begin(), held.lower_bound(unwrapped - TAIL));
     }
@@ -147,29 +123,31 @@ void VideoReceiver::take(uint16_t sequence, uint32_t timestamp, bool marker, Pac
         return;
     }
 
-    assemble();
+    // a packet that only carries on the frame in front of it completes nothing, so a frame of N packets
+    // is put together once instead of looked over N times
+    if (marker || keyframeFound || !extendsRun || !continuesFrame)
+        assemble();
 }
 
 void VideoReceiver::assemble()
 {
     std::vector<std::span<const uint8_t>> payloads;
 
-    while (nextSequence >= 0) {
-        auto first = held.find(nextSequence);
+    while (nextSequence) {
+        auto first = held.find(*nextSequence);
         if (first == held.end())
             return;
         if (!first->second.payload) {
             held.erase(first);
-            nextSequence++;
+            ++*nextSequence;
             continue;
         }
 
-        // A frame is every packet sharing a timestamp; its last one carries the marker.
         payloads.clear();
         auto last = first;
         bool complete = false;
         for (auto it = first; it != held.end(); ++it) {
-            if (it->first != nextSequence + static_cast<qint64>(payloads.size()))
+            if (it->first != *nextSequence + static_cast<qint64>(payloads.size()))
                 return;
             if (!it->second.payload || it->second.timestamp != first->second.timestamp) {
                 complete = true;
@@ -209,9 +187,7 @@ void VideoReceiver::resync()
 {
     held.clear();
     missing.clear();
-    nextSequence = -1;
-    // When the request goes out is left to poll(), which spaces requests apart however often
-    // the stream has to start over.
+    nextSequence.reset();
     keyframeWanted = true;
     counters.resyncs++;
 }
@@ -254,8 +230,8 @@ VideoReceiver::Feedback VideoReceiver::poll(qint64 nowMs)
         feedback.nacks.clear();
     counters.nacked += feedback.nacks.size();
 
-    const bool silent = lastPacketMs < 0 || nowMs - lastPacketMs >= SILENT_AFTER_MS;
-    if (keyframeWanted && !silent && (keyframeRequestedMs < 0 || nowMs - keyframeRequestedMs >= KEYFRAME_REQUEST_INTERVAL_MS)) {
+    const bool silent = !lastPacketMs || nowMs - *lastPacketMs >= SILENT_AFTER_MS;
+    if (keyframeWanted && !silent && (!keyframeRequestedMs || nowMs - *keyframeRequestedMs >= KEYFRAME_REQUEST_INTERVAL_MS)) {
         keyframeRequestedMs = nowMs;
         feedback.keyframeRequest = true;
         counters.keyframeRequests++;
@@ -268,21 +244,22 @@ ReceptionReport VideoReceiver::receptionReport()
 {
     ReceptionReport report;
     report.ssrc = mediaSsrc;
-    if (baseSequence < 0)
+    if (!reception.baseSequence)
         return report;
 
-    const qint64 expected = highestSequence - baseSequence + 1;
-    const qint64 lost = expected - static_cast<qint64>(received);
-    const qint64 expectedNow = expected - expectedAtLastReport;
-    const qint64 receivedNow = static_cast<qint64>(received - receivedAtLastReport);
+    const qint64 highest = *sequences.highestSeen();
+    const qint64 expected = highest - *reception.baseSequence + 1;
+    const qint64 lost = expected - static_cast<qint64>(reception.received);
+    const qint64 expectedNow = expected - reception.expectedAtLastReport;
+    const qint64 receivedNow = static_cast<qint64>(reception.received - reception.receivedAtLastReport);
     const qint64 lostNow = expectedNow - receivedNow;
-    expectedAtLastReport = expected;
-    receivedAtLastReport = received;
+    reception.expectedAtLastReport = expected;
+    reception.receivedAtLastReport = reception.received;
 
     report.cumulativeLost = static_cast<int32_t>(std::clamp<qint64>(lost, -0x800000, 0x7FFFFF));
     if (expectedNow > 0 && lostNow > 0)
         report.fractionLost = static_cast<uint8_t>(std::min<qint64>(255, (lostNow << 8) / expectedNow));
-    report.highestSequence = static_cast<uint32_t>(highestSequence - SEQUENCE_BASE);
+    report.highestSequence = static_cast<uint32_t>(highest - SequenceUnwrapper::BASE);
     report.jitter = static_cast<uint32_t>(jitter);
     return report;
 }

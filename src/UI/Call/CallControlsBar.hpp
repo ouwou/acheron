@@ -18,11 +18,8 @@ namespace UI {
 
 class ElidedLabel;
 
-// The heights and frame rates a live share can change to, checked at the one it has.
 void fillShareQualityMenu(QMenu *menu, Core::StreamBroadcaster *broadcaster);
 
-// The bar of a call view: what the call is and who is in it, the account's own screen share and
-// camera, and how the view is shown. The share and the camera are started and stopped here.
 class CallControlsBar : public QWidget
 {
     Q_OBJECT
@@ -41,7 +38,6 @@ public:
 
     [[nodiscard]] bool nonVideoShown() const;
     [[nodiscard]] bool statsShown() const;
-    void setStatsShown(bool shown);
 
 signals:
     void collapseClicked();

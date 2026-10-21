@@ -1,6 +1,3 @@
-// Tests for the software video surface: a decoded frame handed to its sink ends up on screen in
-// the right place, at the right size and in the right colours, and the surface reports how
-// large the picture is drawn.
 
 #include "Core/Media/HardwareDevices.hpp"
 #include "HardwareTests.hpp"
@@ -22,7 +19,7 @@
 #include <algorithm>
 
 #ifdef Q_OS_WIN
-// Before ffmpeg's header, which would otherwise pull it in as C.
+// before ffmpeg's header, which would otherwise pull it in as C
 #include <d3d11.h>
 #undef small
 #endif
@@ -45,7 +42,6 @@ using Acheron::UI::VideoSurface;
 
 namespace {
 
-// A frame of one colour, given as limited-range Y, Cb and Cr.
 AVFrame *solidFrame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
     AVFrame *frame = av_frame_alloc();
@@ -63,7 +59,6 @@ AVFrame *solidFrame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 }
 
 #ifdef CARD_FORMAT
-// The same picture in memory, laid out as a hardware decoder's are.
 AVFrame *solidNv12Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
     AVFrame *memory = av_frame_alloc();
@@ -85,8 +80,6 @@ AVFrame *solidNv12Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr
 #endif
 
 #ifdef HAVE_D3D11VA
-// The same picture as a hardware decoder hands it over: in one of its textures on the graphics
-// card. Null on a machine with no Direct3D 11 video device.
 AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
     AVBufferRef *device = nullptr;
@@ -121,8 +114,6 @@ void present(VideoSurface &surface, AVFrame *frame)
 
 QImage shot(VideoSurface &surface);
 
-// The windows a surface has put inside its own. The layer for the graphics card is the only
-// one it ever puts there.
 int layersOf(const VideoSurface &surface)
 {
     int layers = 0;
@@ -132,8 +123,6 @@ int layersOf(const VideoSurface &surface)
     return layers;
 }
 
-// A surface has its layer for the graphics card, and knows what that layer can draw, once it
-// has had a picture to draw there.
 QImage drawnOnce(VideoSurface &surface)
 {
     present(surface, solidFrame(64, 36, 16, 128, 128));
@@ -142,8 +131,6 @@ QImage drawnOnce(VideoSurface &surface)
 
 QImage shot(VideoSurface &surface)
 {
-    // With the graphics card the picture is in a window of its own, which is up a moment
-    // after the surface is.
     QImage image = surface.snapshot();
     for (int i = 0; i < 200 && image.isNull(); i++) {
         QTest::qWait(10);
@@ -163,7 +150,6 @@ bool isNear(QRgb pixel, int red, int green, int blue)
 constexpr quint64 MODIFIER_LINEAR = 0;
 constexpr quint64 MODIFIER_INVALID = 0x00ffffffffffffffULL;
 
-// The same picture ten bits deep, which no hardware decoder gives in eight.
 AVFrame *solidP010Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
     AVFrame *memory = av_frame_alloc();
@@ -185,8 +171,6 @@ AVFrame *solidP010Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr
     return memory;
 }
 
-// The surfaces a VAAPI decoder would have on the card behind a render node: so many, or with
-// none given as many as are asked for. Null where that card has no VAAPI, or none so laid out.
 AVBufferRef *vaapiPool(const QByteArray &node, int width, int height, int surfaces = 0, AVPixelFormat layout = AV_PIX_FMT_NV12)
 {
     AVBufferRef *device = nullptr;
@@ -205,7 +189,6 @@ AVBufferRef *vaapiPool(const QByteArray &node, int width, int height, int surfac
     return pool;
 }
 
-// The picture, which is freed, in one of the pool's surfaces. Null when the pool has none left.
 AVFrame *onCard(AVBufferRef *pool, AVFrame *memory)
 {
     AVFrame *frame = av_frame_alloc();
@@ -221,8 +204,6 @@ AVFrame *solidFrameFrom(AVBufferRef *pool, uint8_t y, uint8_t cb, uint8_t cr)
     return onCard(pool, solidNv12Frame(frames->width, frames->height, y, cb, cr));
 }
 
-// A picture in the top left of a frame that is white beyond it, as a decoder's is in a surface
-// of whole blocks: brighter to the right and bluer downwards, so that a misplaced row shows.
 AVFrame *rampNv12Frame(QSize picture, QSize coded)
 {
     AVFrame *memory = solidNv12Frame(coded.width(), coded.height(), 235, 128, 128);
@@ -256,8 +237,6 @@ QList<QByteArray> renderNodes()
     return nodes;
 }
 
-// What OpenGL here runs on, when that is EGL: whether it can be told how a card orders its
-// memory, and the render node of the card it draws with.
 struct EglHere
 {
     bool present = false;
@@ -294,7 +273,6 @@ const EglHere &eglHere()
     return here;
 }
 
-// How the card orders the memory of the frame, as it says when handing it over.
 quint64 modifierOf(const AVFrame *frame)
 {
     AVFrame *exported = av_frame_alloc();
@@ -306,8 +284,6 @@ quint64 modifierOf(const AVFrame *frame)
     return modifier;
 }
 
-// The render node of the card OpenGL draws with here, when a surface does draw its pictures
-// where they are. Empty when it does not.
 QByteArray drawingNode()
 {
     static const QByteArray found = [] {
@@ -328,8 +304,6 @@ QByteArray drawingNode()
     return found;
 }
 
-// The same picture as a hardware decoder hands it over: in one of its surfaces on the graphics
-// card. Null on a machine with no VAAPI on the card that draws.
 AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
     return drawingNode().isEmpty() ? nullptr : solidFrameOnNode(drawingNode(), width, height, y, cb, cr);
@@ -362,11 +336,10 @@ private slots:
     void aSurfaceHasItsLayerOnlyWhileItHasAPicture();
     void aSurfaceLongOffTheScreenGivesUpItsLayerAndKeepsItsPicture();
     void statisticsAreLeftOffASmallTile();
-    // Last: a card found not to hand its pictures over is not asked again while the program runs.
+    // last: a card found not to hand its pictures over isnt asked again in this process
     void pictureFromAnotherCardIsReadBack();
 };
 
-// Which card the surfaces draw with, for whoever reads the results.
 void TestVideoSurface::initTestCase()
 {
     QOffscreenSurface offscreen;
@@ -384,7 +357,6 @@ void TestVideoSurface::frameFillsAMatchingSurface()
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
 
-    // White, from a frame twice the surface's size.
     present(surface, solidFrame(640, 360, 235, 128, 128));
 
     const QImage image = shot(surface);
@@ -400,7 +372,7 @@ void TestVideoSurface::narrowerFrameIsCentredBetweenBars()
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
 
-    // 4:3 in a 16:9 surface: 240 wide, with a 40 pixel bar on each side.
+    // 4:3 in a 16:9 surface: 240 wide, with a 40 pixel bar on each side
     present(surface, solidFrame(640, 480, 235, 128, 128));
 
     const QImage image = shot(surface);
@@ -420,8 +392,7 @@ void TestVideoSurface::coloursFollowTheVideoStandard()
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
 
-    // Pure red is a different triple in BT.709 (HD) and BT.601 (SD); untagged frames are read
-    // by their height.
+    // pure red differs between BT.709 (HD) and BT.601 (SD); untagged frames are read by their height
     present(surface, solidFrame(1280, 720, 63, 102, 240));
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
@@ -435,7 +406,6 @@ void TestVideoSurface::memoryEglCannotBeToldTheOrderOfIsReadBack()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef HAVE_VAAPI
-    // Before anything else is drawn from the card: what EGL makes of it is settled once.
     if (!eglHere().present || eglHere().takesModifiers)
         QSKIP("Only for an EGL that cannot be told how a card orders its memory");
     AVFrame *frame = eglHere().renderNode.isEmpty() ? nullptr : solidFrameOnNode(eglHere().renderNode, 1280, 720, 63, 102, 240);
@@ -452,7 +422,6 @@ void TestVideoSurface::memoryEglCannotBeToldTheOrderOfIsReadBack()
     present(surface, frame);
     const QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
-    // Rows one after another need no telling of, and are drawn where they are.
     QCOMPARE(surface.drawsFromCard(), offered && (modifier == MODIFIER_LINEAR || modifier == MODIFIER_INVALID));
 #else
     QSKIP("VAAPI only");
@@ -468,17 +437,14 @@ void TestVideoSurface::frameOnTheGraphicsCardIsDrawnFromThere()
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
 
-    // The surface knows whether it can once it has drawn.
     drawnOnce(surface);
     if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
         QSKIP("This surface cannot draw the card's picture where it is");
     QVERIFY(!surface.sink()->acceptsHardwareFrames(AV_PIX_FMT_DXVA2_VLD));
 
-    // Red in BT.709, as an HD frame is read.
     AVFrame *frame = solidFrameOnCard(1280, 720, 63, 102, 240);
     if (!frame)
         QSKIP("No video device whose pictures this surface can draw");
-    // The picture is made ready off this thread, and drawn once it is.
     present(surface, frame);
     QTRY_VERIFY(surface.drawsFromCard());
     QImage image = shot(surface);
@@ -486,7 +452,6 @@ void TestVideoSurface::frameOnTheGraphicsCardIsDrawnFromThere()
     QVERIFY(isNear(image.pixel(image.width() - 1, image.height() - 1), 255, 0, 0));
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
-    // Red in BT.601, 4:3, from another device: bars at the sides.
     frame = solidFrameOnCard(640, 480, 81, 90, 240);
     QVERIFY(frame);
     const qreal ratio = image.devicePixelRatio();
@@ -500,14 +465,12 @@ void TestVideoSurface::frameOnTheGraphicsCardIsDrawnFromThere()
     QVERIFY(isNear(image.pixel(qRound(300 * ratio), middle), 0, 0, 0));
     QVERIFY(isNear(image.pixel(image.width() / 2, 0), 255, 0, 0));
 
-    // The overlays go over it as over any picture.
     surface.setSpeaking(true);
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, middle), 255, 0, 0));
     QVERIFY(!isNear(image.pixel(1, middle), 0, 0, 0));
     surface.setSpeaking(false);
 
-    // A frame in memory after that is uploaded as before.
     present(surface, solidFrame(640, 360, 235, 128, 128));
     image = shot(surface);
     QVERIFY(!surface.drawsFromCard());
@@ -525,7 +488,6 @@ void TestVideoSurface::manySurfacesDrawFromTheGraphicsCard()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef CARD_FORMAT
-    // More surfaces in one window than one hand-over worker takes, each with its own picture.
     constexpr int COUNT = 5;
     QWidget window;
     window.resize(COUNT * 160, 90);
@@ -542,7 +504,6 @@ void TestVideoSurface::manySurfacesDrawFromTheGraphicsCard()
     if (!surfaces.first()->sink()->acceptsHardwareFrames(CARD_FORMAT))
         QSKIP("This surface cannot draw the card's picture where it is");
 
-    // Alternately white and red.
     for (int i = 0; i < COUNT; i++) {
         AVFrame *frame = i % 2 == 0 ? solidFrameOnCard(640, 360, 235, 128, 128) : solidFrameOnCard(640, 360, 81, 90, 240);
         if (!frame)
@@ -558,7 +519,6 @@ void TestVideoSurface::manySurfacesDrawFromTheGraphicsCard()
         QVERIFY2(isNear(pixel, 255, i % 2 == 0 ? 255 : 0, i % 2 == 0 ? 255 : 0), qPrintable(QStringLiteral("surface %1").arg(i)));
     }
 
-    // One that is hidden gets no pictures made, and catches up when it is shown again.
     surfaces[1]->hide();
     present(*surfaces[1], solidFrameOnCard(640, 360, 235, 128, 128));
     surfaces[1]->show();
@@ -582,7 +542,6 @@ void TestVideoSurface::pictureFromTheCardIsThePictureInMemory()
     if (drawingNode().isEmpty())
         QSKIP("No video device whose pictures this surface can draw");
 
-    // A picture that does not fill its surface, of a size that a card pads the rows of.
     const QSize picture(500, 282);
     const QSize coded(512, 288);
     AVFrame *memory = rampNv12Frame(picture, coded);
@@ -634,7 +593,6 @@ void TestVideoSurface::tenBitPictureFromTheCardIsReadBack()
     if (!pool)
         QSKIP("No ten-bit surfaces on this card");
 
-    // Not a picture the surface draws where it is, and shown all the same.
     AVFrame *frame = onCard(pool, solidP010Frame(1280, 720, 63, 102, 240));
     av_buffer_unref(&pool);
     QVERIFY(frame);
@@ -644,7 +602,6 @@ void TestVideoSurface::tenBitPictureFromTheCardIsReadBack()
     QVERIFY(!surface.drawsFromCard());
     QVERIFY(!surface.sink()->acceptsHardwareFrames(CARD_FORMAT));
 
-    // That was this stream's doing and not the card's: another surface is offered its pictures.
     VideoSurface other;
     other.resize(320, 180);
     other.show();
@@ -670,7 +627,6 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
     if (drawingNode().isEmpty())
         QSKIP("No video device whose pictures this surface can draw");
 
-    // A decoder with two surfaces, which decodes into whichever nobody holds.
     AVBufferRef *pool = vaapiPool(drawingNode(), 640, 360, 2);
     QVERIFY(pool);
     present(surface, solidFrameFrom(pool, 81, 90, 240));
@@ -678,7 +634,6 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
     QVERIFY(surface.drawsFromCard());
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
-    // The next frame has come but is not drawn yet: the one on screen is still drawn from.
     AVFrame *white = solidFrameFrom(pool, 235, 128, 128);
     QVERIFY(white);
     surface.sink()->present(white);
@@ -686,12 +641,10 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
     AVFrame *spare = av_frame_alloc();
     QVERIFY(av_hwframe_get_buffer(pool, spare, 0) < 0);
 
-    // Once the new one is drawn, the old one goes back.
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
     QCOMPARE(av_hwframe_get_buffer(pool, spare, 0), 0);
 
-    // And so does the new one when the picture is gone, though not before that is drawn.
     surface.clear();
     AVFrame *other = av_frame_alloc();
     QVERIFY(av_hwframe_get_buffer(pool, other, 0) < 0);
@@ -708,8 +661,6 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
 
 void TestVideoSurface::pictureSurvivesAMoveToAnotherWindow()
 {
-    // As when a tile is popped out of the call view and put back: the surface gets a new
-    // window, and with the graphics card a new context, but keeps what it was showing.
     QWidget first;
     first.resize(320, 180);
     auto *surface = new VideoSurface(&first);
@@ -730,7 +681,6 @@ void TestVideoSurface::pictureSurvivesAMoveToAnotherWindow()
     image = shot(*surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
-    // And a new frame is drawn there as it would have been.
     present(*surface, solidFrame(1280, 720, 63, 102, 240));
     image = shot(*surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
@@ -741,7 +691,6 @@ void TestVideoSurface::pictureSurvivesAMoveToAnotherWindow()
             present(*surface, frame);
             QTRY_VERIFY(surface->drawsFromCard());
 
-            // Back to the first window with a picture from the card up.
             surface->setParent(&first);
             surface->setGeometry(0, 0, 320, 180);
             surface->show();
@@ -770,8 +719,6 @@ void TestVideoSurface::clickAndDoubleClickAreReported()
     if (!surface.drawsWithGpu())
         return;
 
-    // With the graphics card the picture is a window over the surface, which gets the mouse
-    // first and has to hand it on.
     drawnOnce(surface);
     QWindow *layer = nullptr;
     const QWindowList windows = QGuiApplication::allWindows();
@@ -806,12 +753,10 @@ void TestVideoSurface::geometryIsReported()
     const qreal ratio = surface.devicePixelRatioF();
     const int fullArea = qRound(320 * ratio) * qRound(180 * ratio);
 
-    // Before a frame, the whole surface stands in for the picture.
     QVERIFY(!geometry.isEmpty());
     QCOMPARE(geometry.last().at(0).toInt(), fullArea);
     QCOMPARE(geometry.last().at(1).toBool(), true);
 
-    // A 4:3 picture covers three quarters of a 16:9 surface.
     present(surface, solidFrame(640, 480, 235, 128, 128));
     QCOMPARE(geometry.last().at(0).toInt(), qRound(240 * ratio) * qRound(180 * ratio));
 
@@ -822,8 +767,7 @@ void TestVideoSurface::geometryIsReported()
 
 void TestVideoSurface::resizeRedrawsTheLastFrame()
 {
-    // Inside a window, as a tile is: the size of a window of its own is the compositor's to
-    // set on Wayland, and it sets it back.
+    // inside a window: on Wayland the compositor sets a top-level window's size and sets it back
     QWidget window;
     window.resize(480, 270);
     VideoSurface surface(&window);
@@ -832,7 +776,6 @@ void TestVideoSurface::resizeRedrawsTheLastFrame()
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     present(surface, solidFrame(640, 360, 235, 128, 128));
 
-    // No new frame arrives after the resize; the surface has to rescale the one it has.
     surface.resize(480, 270);
     QTest::qWait(300);
 
@@ -852,14 +795,12 @@ void TestVideoSurface::messagesDoNotDisturbThePicture()
 
     surface.setStatsText(QStringLiteral("Codec: H264"));
     QImage image = shot(surface);
-    // The statistics sit in the top left corner on a dark backing; the rest is untouched.
     QVERIFY(!isNear(image.pixel(qRound(10 * image.devicePixelRatio()), qRound(10 * image.devicePixelRatio())), 255, 255, 255));
     QVERIFY(isNear(image.pixel(image.width() - 2, image.height() - 2), 255, 255, 255));
 
     surface.setStatsText({});
     surface.setMessage(QStringLiteral("Stream Paused"), QStringLiteral("sit tight"));
     image = shot(surface);
-    // A message dims the whole picture.
     QVERIFY(!isNear(image.pixel(image.width() - 2, image.height() - 2), 255, 255, 255));
 
     surface.setMessage({});
@@ -886,7 +827,6 @@ void TestVideoSurface::avatarStandsInUntilThereIsAPicture()
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
-    // And comes back when the picture is gone.
     surface.clear();
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
@@ -911,8 +851,7 @@ void TestVideoSurface::speakingRingIsDrawn()
     image = shot(surface);
     QVERIFY(isNear(image.pixel(1, image.height() / 2), 0, 0, 0));
 
-    // Around a picture as around none, along every edge and nowhere else. The corners are
-    // left out: the painter cuts them off and the graphics card does not.
+    // the corners are left out: the painter cuts them off and the graphics card doesnt
     present(surface, solidFrame(640, 360, 235, 128, 128));
     surface.setSpeaking(true);
     image = shot(surface);
@@ -939,7 +878,6 @@ void TestVideoSurface::aSurfaceHasItsLayerOnlyWhileItHasAPicture()
     if (!surface.drawsWithGpu())
         QSKIP("This surface draws without the graphics card");
 
-    // All that a tile without video shows is drawn without one.
     QPixmap avatar(64, 64);
     avatar.fill(QColor(0, 200, 0));
     surface.setPlaceholder(avatar);
@@ -961,7 +899,6 @@ void TestVideoSurface::aSurfaceHasItsLayerOnlyWhileItHasAPicture()
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
 
-    // And has one again for the next picture.
     present(surface, solidFrame(1280, 720, 63, 102, 240));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
@@ -978,7 +915,6 @@ void TestVideoSurface::aSurfaceLongOffTheScreenGivesUpItsLayerAndKeepsItsPicture
     if (!surface.drawsWithGpu())
         QSKIP("This surface draws without the graphics card");
 
-    // Red, from the card where the surface draws from there.
     drawnOnce(surface);
     AVFrame *onCard = nullptr;
 #ifdef CARD_FORMAT
@@ -993,14 +929,12 @@ void TestVideoSurface::aSurfaceLongOffTheScreenGivesUpItsLayerAndKeepsItsPicture
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
     QCOMPARE(layersOf(surface), 1);
 
-    // Not at once: a surface that is back in a moment has lost nothing.
     surface.hide();
     QTest::qWait(500);
     QCOMPARE(layersOf(surface), 1);
     QTest::qWait(VideoSurface::NOT_SHOWN_BEFORE_RELEASED_MS);
     QCOMPARE(layersOf(surface), 0);
 
-    // The picture is still there to come back to, out of memory now.
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
     image = shot(surface);
@@ -1021,7 +955,6 @@ void TestVideoSurface::statisticsAreLeftOffASmallTile()
     large.setStatsText(stats);
     large.setCaption(QStringLiteral("caption text"));
     QImage image = shot(large);
-    // Inside the backing but clear of the text, which is itself white.
     QVERIFY(!isNear(image.pixel(5, 5), 255, 255, 255));
 
     VideoSurface small;
@@ -1038,8 +971,6 @@ void TestVideoSurface::pictureFromAnotherCardIsReadBack()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef HAVE_VAAPI
-    // A machine with two cards can decode on the one that does not draw, whose memory the
-    // other may be unable to read where it is.
     const QList<QByteArray> nodes = renderNodes();
     for (const QByteArray &node : nodes) {
         if (node == eglHere().renderNode)
@@ -1055,20 +986,17 @@ void TestVideoSurface::pictureFromAnotherCardIsReadBack()
         if (!frame)
             continue;
 
-        // Drawn either way, and the first frame already.
         present(surface, frame);
         QImage image = shot(surface);
         QVERIFY2(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0), node.constData());
         if (surface.drawsFromCard())
             continue;
 
-        // The decoder is told to read its pictures back from now on, and those are drawn.
         QVERIFY(!surface.sink()->acceptsHardwareFrames(CARD_FORMAT));
         present(surface, solidFrame(640, 360, 235, 128, 128));
         image = shot(surface);
         QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
-        // Nor does a later surface ask for what this one could not draw.
         VideoSurface later;
         later.resize(320, 180);
         later.show();
@@ -1083,8 +1011,7 @@ void TestVideoSurface::pictureFromAnotherCardIsReadBack()
 #endif
 }
 
-// On a real screen the windows of the tests are for nobody to look at: they open on a screen
-// that is not the first one, where there is one, and take the keyboard from nobody.
+// test windows open on a screen other than the first, where there is one, and take no focus
 class OutOfTheWay : public QObject
 {
 protected:

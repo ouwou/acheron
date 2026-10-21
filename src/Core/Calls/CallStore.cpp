@@ -5,11 +5,11 @@ namespace Core {
 
 CallStore::CallStore(QObject *parent) : QObject(parent) { }
 
-bool CallStore::shouldConnect(Snowflake channelId, bool force)
+bool CallStore::claimConnect(Snowflake channelId, CallConnect rule)
 {
     auto it = calls.find(channelId);
     if (it != calls.end())
-        return force;
+        return rule == CallConnect::Always;
 
     CallRecord placeholder;
     placeholder.channelId = channelId;
@@ -50,7 +50,7 @@ void CallStore::handleCallDelete(const Discord::CallDelete &event)
     if (unavailable && it != calls.end()) {
         it->unavailable = true;
     } else {
-        // The call is over, but the channel stays known so opening the DM does not ask again.
+        // the channel stays known so opening the DM doesnt ask again
         CallRecord ended;
         ended.channelId = channelId;
         ended.unavailable = unavailable;

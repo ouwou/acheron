@@ -154,10 +154,9 @@ public:
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
     void ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished);
 
-    // `selfVideo` is whether the account's camera is on in that channel. Every update says so.
+    // every update must say whether the camera is on
     void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
 
-    // Asks the gateway for the call in a DM or group DM; it answers with CALL_CREATE if one exists.
     void sendCallConnect(Snowflake channelId);
 
     void sendStreamCreate(const StreamKey &channel, const QString &preferredRegion);
@@ -168,7 +167,6 @@ public:
 
     using StreamPreviewCallback = std::function<void(const StreamPreviewLookup &)>;
     void fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback);
-    // The thumbnail of a stream this account owns, as a JPEG data URL.
     void uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback);
     void setVoiceConnected(bool connected);
 

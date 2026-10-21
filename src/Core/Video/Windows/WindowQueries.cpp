@@ -15,8 +15,7 @@ namespace Win {
 
 namespace {
 
-// DwmGetWindowAttribute's DWMWA_EXTENDED_FRAME_BOUNDS and DWMWA_CLOAKED, which the headers keep
-// from a build that also targets Windows 7.
+// missing from headers that also target Windows 7
 constexpr DWORD FRAME_BOUNDS_ATTRIBUTE = 9;
 constexpr DWORD CLOAKED_ATTRIBUTE = 14;
 
@@ -42,13 +41,11 @@ QRect fromNative(const RECT &rect)
 
 HWND windowOf(const QString &sourceId)
 {
-    bool numbered = false;
-    const qulonglong handle = sourceId.mid(WINDOW_ID_PREFIX.size()).toULongLong(&numbered);
-    return sourceId.startsWith(WINDOW_ID_PREFIX) && numbered ? reinterpret_cast<HWND>(static_cast<quintptr>(handle)) : nullptr;
+    const std::optional<quint64> handle = windowHandleOf(sourceId);
+    return handle ? reinterpret_cast<HWND>(static_cast<quintptr>(*handle)) : nullptr;
 }
 
-// Kept from the screen by the program (1) or by the shell (2), as the official client counts
-// it. A Windows that does not know the question calls the argument invalid, and has no cloaks.
+// as the official client counts it. a Windows without cloaks calls the argument invalid
 bool isCloaked(HWND window)
 {
     DWORD cloak = 0;
@@ -84,7 +81,6 @@ struct WindowStack
     QRect targetClient;
     QList<StackedWindow> topDown;
     bool reachedTarget = false;
-    // Every window EnumWindows lists, below the target as well, to tell the shell's from.
     std::vector<HWND> ordinary;
 };
 
@@ -110,7 +106,7 @@ BOOL CALLBACK stackDownToTarget(HWND window, LPARAM parameter)
         const LONG_PTR extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
         each.bounds = visibleBounds(window);
         each.cloaked = isCloaked(window);
-        // A window that holds the foreground has come forward, whatever its styles say.
+        // a foreground window has come forward, whatever its styles say
         each.overlay = (extended & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) != 0 && window != stack->foreground;
         each.tabProxy = hasClass(window, L"Windows.Internal.Shell.TabProxyWindow");
         each.livePreview = (extended & WS_EX_TOPMOST) && hasClass(window, L"LivePreview");
@@ -119,11 +115,8 @@ BOOL CALLBACK stackDownToTarget(HWND window, LPARAM parameter)
     return TRUE;
 }
 
-// Task View, the Start menu, the notification centre and the like are windows of the shell on
-// layers above every ordinary window. EnumWindows leaves them out and FindWindowEx does not,
-// so they are the ones only the second finds. They exist all the time and are cloaked until
-// shown, and the official client's walk never sees them: with one of them open it shares
-// whatever part of it lies over the window.
+// Task View, Start and the like are shell windows above every ordinary one, cloaked until shown, which
+// FindWindowEx finds and EnumWindows doesnt. the official client never sees them
 bool shellSurfaceCovers(std::vector<HWND> ordinary, const QRect &client)
 {
     std::sort(ordinary.begin(), ordinary.end());
@@ -140,8 +133,6 @@ bool shellSurfaceCovers(std::vector<HWND> ordinary, const QRect &client)
     return false;
 }
 
-// A window a user would call one: on the screen or minimised, with a title, and not a tool
-// window, an overlay or the desktop.
 bool isShareable(HWND window)
 {
     DWORD process = 0;
@@ -155,8 +146,7 @@ bool isShareable(HWND window)
     return IsIconic(window) || !visibleBounds(window).isEmpty();
 }
 
-// A store app's window belongs to a host process, and the app, which is what plays its sound,
-// to the process of the window inside it.
+// a store app's window belongs to a host process; the app is the process of the window inside it
 quint32 processShownIn(HWND window)
 {
     DWORD process = 0;
@@ -177,7 +167,7 @@ BOOL CALLBACK listShareable(HWND window, LPARAM list)
         return TRUE;
 
     CaptureSource source;
-    source.id = WINDOW_ID_PREFIX + QString::number(static_cast<qulonglong>(reinterpret_cast<quintptr>(window)));
+    source.id = windowSourceId(static_cast<quint64>(reinterpret_cast<quintptr>(window)));
     source.kind = CaptureSource::Kind::Window;
     source.name = QString::fromWCharArray(title);
     source.processId = processShownIn(window);

@@ -8,6 +8,12 @@ namespace Audio {
 
 using Discord::Voice::VoiceClient;
 
+namespace {
+
+constexpr int STOP_TIMEOUT_MS = 5000;
+
+} // namespace
+
 VoiceConnection::VoiceConnection(const Discord::Voice::ConnectionParams &params, QObject *parent)
     : QObject(parent), params(params), voiceClient(new VoiceClient(params)), connectionThread(new QThread(this))
 {
@@ -87,7 +93,7 @@ void VoiceConnection::stop(const std::function<void()> &beforeStop)
             Qt::BlockingQueuedConnection);
 
     connectionThread->quit();
-    if (!connectionThread->wait(5000)) {
+    if (!connectionThread->wait(STOP_TIMEOUT_MS)) {
         qCWarning(LogVoice) << "Voice thread did not stop in time, terminating";
         connectionThread->terminate();
         connectionThread->wait();

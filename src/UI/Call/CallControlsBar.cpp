@@ -137,12 +137,6 @@ bool CallControlsBar::statsShown() const
     return statsButton->isChecked();
 }
 
-void CallControlsBar::setStatsShown(bool shown)
-{
-    statsButton->setChecked(shown);
-}
-
-// Docked, the view can be collapsed to this bar; full screen, it has no bar at all.
 void CallControlsBar::apply(const Chrome &chrome)
 {
     const bool barOnly = !chrome.poppedOut && chrome.collapsed;
@@ -155,7 +149,6 @@ void CallControlsBar::apply(const Chrome &chrome)
     shareButton->setEnabled(sharing || (broadcaster && broadcaster->canShare()));
     shareButton->setText(sharing ? tr("Stop Sharing") : tr("Share Screen"));
     shareButton->setIcon(Core::Theme::Icons::icon(QLatin1String(sharing ? STOP_SHARING_ICON : SHARE_ICON), Core::Theme::Token::ButtonText));
-    // While sharing, the arrow beside the button changes the quality without stopping.
     shareButton->setPopupMode(sharing ? QToolButton::MenuButtonPopup : QToolButton::DelayedPopup);
     shareButton->setMenu(sharing ? shareQualityMenu : nullptr);
 
@@ -216,7 +209,6 @@ void CallControlsBar::fillCameraMenu()
         return;
     }
 
-    // Nothing remembered, or a camera no longer attached, leaves the pipeline to take the first.
     const QString remembered = Core::Video::preferredCamera(devices);
     auto *choices = new QActionGroup(cameraMenu);
     for (const Core::Video::CameraDevice &device : devices) {

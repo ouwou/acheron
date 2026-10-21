@@ -8,6 +8,7 @@
 #include "UI/Call/CallControlsBar.hpp"
 #include "UI/Call/CallStats.hpp"
 #include "UI/Call/CallTile.hpp"
+#include "UI/Call/CallVideoMenu.hpp"
 #include "UI/Video/VideoSurface.hpp"
 
 #include <QApplication>
@@ -40,7 +41,7 @@ constexpr QSize POPPED_OUT_SIZE(960, 600);
 const char *const COLLAPSED_WITHOUT_VIDEO_KEY = "video/call_view_collapsed_without_video";
 const char *const GEOMETRY_KEY = "video/call_view_geometry";
 
-// The official client mirrors the camera for its owner alone.
+// the official client mirrors the camera for its owner alone
 QImage mirrored(const QImage &picture)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
@@ -48,6 +49,11 @@ QImage mirrored(const QImage &picture)
 #else
     return picture.mirrored(true, false);
 #endif
+}
+
+void showReconnecting(VideoSurface *surface)
+{
+    surface->setMessage(CallView::tr("You've been disconnected..."), CallView::tr("Sit tight, we're patching you back in!"));
 }
 
 } // namespace
@@ -92,18 +98,16 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
             tile->surface()->setSpeaking(speaking);
     });
     connect(video, &Core::CallVideo::sendersChanged, this, &CallView::rebuild);
-    // Not at once: it may come from a tile's own menu, and takes the tile away.
+    // queued ones may come from a tile's own menu, and a rebuild can remove that tile
     connect(video, &Core::CallVideo::videoDisabledChanged, this, &CallView::rebuild, Qt::QueuedConnection);
     connect(watcher, &Core::StreamWatcher::sessionOpened, this, &CallView::onStreamOpened);
     connect(watcher, &Core::StreamWatcher::sessionClosed, this, &CallView::rebuild, Qt::QueuedConnection);
     if (broadcaster) {
-        // Not at once: it may come from the own tile's menu, and takes the tile away.
         connect(broadcaster, &StreamBroadcaster::stateChanged, this, &CallView::rebuild, Qt::QueuedConnection);
         connect(broadcaster, &StreamBroadcaster::previewChanged, this, &CallView::showOwnPreview);
         connect(broadcaster, &StreamBroadcaster::failed, this, &CallView::reveal);
     }
     if (camera) {
-        // Not at once: it may come from the own tile's menu, and takes the tile away.
         connect(camera, &CameraSender::stateChanged, this, &CallView::rebuild, Qt::QueuedConnection);
         connect(camera, &CameraSender::previewChanged, this, &CallView::showOwnCameraPreview);
         connect(camera, &CameraSender::failed, this, &CallView::reveal);
@@ -117,7 +121,7 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
 
 CallView::~CallView()
 {
-    // Before the stage takes the surfaces with it, which they would tell of as they go.
+    // before the stage deletes the surfaces, which emit as they go
     tiles.clear();
     if (video)
         video->setFocused(Snowflake::Invalid);
@@ -135,7 +139,7 @@ QString CallView::nameOf(Snowflake userId) const
 
 Discord::StreamKey CallView::streamKeyFor(Snowflake userId) const
 {
-    return Discord::StreamKey::forChannel(voice->currentGuildId(), voice->currentChannelId(), userId);
+    return voice->streamKeyOf(userId);
 }
 
 CallTile *CallView::tileAt(const TileKey &key) const
@@ -185,7 +189,7 @@ void CallView::rebuild()
     QStringList participantNames;
     for (const Core::Audio::VoiceParticipant &participant : voice->currentParticipants()) {
         const bool sending = cameras.contains(participant.userId);
-        facts.participants.append({ participant.userId, participant.selfStream, sending, sending && video->isVideoDisabled(participant.userId) });
+        facts.participants.append({ .userId = participant.userId, .streaming = participant.selfStream, .cameraSending = sending, .cameraDisabled = sending && video->isVideoDisabled(participant.userId) });
         if (participant.userId != accountId)
             participantNames.append(nameOf(participant.userId));
     }
@@ -212,10 +216,7 @@ void CallView::rebuild()
     for (auto &entry : tiles)
         refreshTile(*entry.second);
 
-    if (video) {
-        const bool cameraFocused = focused && !focused->isStream();
-        video->setFocused(cameraFocused ? focused->userId : Snowflake::Invalid);
-    }
+    pushFocusToVideo();
     layoutTiles();
     updatePresence();
 }
@@ -232,7 +233,6 @@ QString CallView::callSummary(const QStringList &participantNames, int videoCoun
 
 void CallView::updatePresence()
 {
-    // With nothing left to show, a window of its own has no reason to stay up.
     if (!videoPresent && poppedOut) {
         setPoppedOut(false);
         return;
@@ -287,7 +287,6 @@ void CallView::bindSession(CallTile &tile, StreamSession *session)
         return;
 
     const TileKey key = tile.key();
-    // The surface is the context, so this goes when the tile does.
     connect(session, &StreamSession::stateChanged, tile.surface(), [this, key] {
         if (CallTile *found = tileAt(key))
             applySessionState(*found);
@@ -315,7 +314,7 @@ void CallView::applySessionState(CallTile &tile)
         surface->setMessage(tr("Stream Paused"), tr("%1 has minimized their application... sit tight!").arg(nameOf(tile.key().userId)));
         break;
     case StreamSession::State::Reconnecting:
-        surface->setMessage(tr("You've been disconnected..."), tr("Sit tight, we're patching you back in!"));
+        showReconnecting(surface);
         break;
     case StreamSession::State::Ended:
         surface->clear();
@@ -335,8 +334,6 @@ void CallView::applySessionState(CallTile &tile)
 void CallView::onStreamOpened(StreamSession *session)
 {
     rebuild();
-    // A stream just asked for is what the viewer wants to look at, unless they are looking at
-    // someone's camera.
     if (!focused || focused->isStream())
         setFocusedTile(TileKey::streamOf(session->key().ownerId));
 }
@@ -362,7 +359,7 @@ void CallView::applyOwnShareState(CallTile &tile)
         surface->setMessage(tr("Starting your screen share..."));
         break;
     case StreamBroadcaster::State::Reconnecting:
-        surface->setMessage(tr("You've been disconnected..."), tr("Sit tight, we're patching you back in!"));
+        showReconnecting(surface);
         break;
     case StreamBroadcaster::State::Live:
         if (broadcaster->stats().captureStalled)
@@ -395,8 +392,6 @@ void CallView::applyOwnCameraState(CallTile &tile)
     case CameraSender::State::Off:
         break;
     case CameraSender::State::Starting:
-        // The camera's picture is there before the call has been told of it, and stays while
-        // the voice connection is made again.
         surface->setMessage(camera->preview().isNull() ? tr("Starting your camera...") : QString());
         break;
     case CameraSender::State::On:
@@ -416,7 +411,6 @@ void CallView::showOwnCameraPreview(const QImage &preview)
         tile->present(mirrored(preview));
 }
 
-// Watched streams, then cameras, then streams not being watched, then everyone else.
 int CallView::rank(const CallTile &tile) const
 {
     const TileKey &key = tile.key();
@@ -429,7 +423,6 @@ int CallView::rank(const CallTile &tile) const
 
 void CallView::layoutTiles()
 {
-    // A tile in its own window has no place here.
     QList<CallTile *> order;
     for (const auto &entry : tiles) {
         if (!entry.second->isPoppedOut())
@@ -463,9 +456,14 @@ void CallView::setFocusedTile(std::optional<TileKey> key)
 {
     const CallTile *wanted = key ? tileAt(*key) : nullptr;
     focused = wanted && !wanted->isPoppedOut() ? key : std::nullopt;
+    pushFocusToVideo();
+    layoutTiles();
+}
+
+void CallView::pushFocusToVideo()
+{
     if (video)
         video->setFocused(focused && !focused->isStream() ? focused->userId : Snowflake::Invalid);
-    layoutTiles();
 }
 
 void CallView::onTileClicked(const TileKey &key)
@@ -485,7 +483,6 @@ void CallView::onTileClicked(const TileKey &key)
         return;
     }
 
-    // A stream not being watched is watched.
     if (key.isStream() && (!tile->session() || tile->session()->isOver())) {
         watchClickTile = key;
         watchClickTimer.start();
@@ -525,8 +522,7 @@ void CallView::setTilePoppedOut(const TileKey &key, bool out)
         layoutTiles();
 }
 
-// A menu that is up while the view or the tile goes away goes with it, so it is shown without
-// a loop of its own and acts on the tile by its key.
+// non-blocking: the view or the tile may go away while it is up
 void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
 {
     const CallTile *tile = tileAt(key);
@@ -547,9 +543,16 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
         connect(menu->addAction(tr("Dismiss")), &QAction::triggered, broadcaster.data(), &StreamBroadcaster::clearFailure);
     } else if (isOwnCamera(key) && camera) {
         connect(menu->addAction(tr("Dismiss")), &QAction::triggered, camera.data(), &CameraSender::clearFailure);
-    } else if (key.isStream() && session && !session->isOver()) {
-        connect(menu->addAction(tr("Stop Watching")), &QAction::triggered, watcher.data(), [watcher = watcher, streamKey] { watcher->stopWatching(streamKey.toString()); });
+    } else if (key.isStream() && watcher) {
+        addStreamActions(menu, watcher, streamKey.toString(), [watcher = watcher, streamKey] {
+            if (watcher)
+                watcher->watch(streamKey);
+        });
+    } else if (tile->hasCamera() && video) {
+        addDisableVideoAction(menu, video, key.userId);
+    }
 
+    if (key.isStream() && session && !session->isOver()) {
         auto *volumeRow = new QWidget(menu);
         auto *rowLayout = new QHBoxLayout(volumeRow);
         rowLayout->setContentsMargins(8, 2, 8, 2);
@@ -563,15 +566,6 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
         auto *volumeAction = new QWidgetAction(menu);
         volumeAction->setDefaultWidget(volumeRow);
         menu->addAction(volumeAction);
-    } else if (key.isStream()) {
-        connect(menu->addAction(session ? tr("Close Stream") : tr("Watch Stream")), &QAction::triggered, watcher.data(), [watcher = watcher, streamKey, closing = session != nullptr] {
-            if (closing)
-                watcher->stopWatching(streamKey.toString());
-            else
-                watcher->watch(streamKey);
-        });
-    } else if (tile->hasCamera() && video) {
-        connect(menu->addAction(tr("Disable Video")), &QAction::triggered, video.data(), [video = video, userId = key.userId] { video->setVideoDisabled(userId, true); });
     }
 
     if (!tile->isPoppedOut()) {
@@ -672,7 +666,6 @@ void CallView::setPoppedOut(bool out)
     poppedOut = false;
     dockAfterFullScreen = false;
     if (!dock || !dock->layout()) {
-        // The main window has gone, and with it anywhere to go back to.
         deleteLater();
         return;
     }
@@ -719,14 +712,13 @@ void CallView::reveal()
 void CallView::applyChrome()
 {
     const bool barOnly = !poppedOut && collapsed;
-    controls->apply({ poppedOut, poppedOut && isFullScreen(), collapsed, videoPresent });
+    controls->apply({ .poppedOut = poppedOut, .fullScreen = poppedOut && isFullScreen(), .collapsed = collapsed, .videoPresent = videoPresent });
     stage->setVisible(!barOnly);
     setMaximumHeight(barOnly ? controls->sizeHint().height() : QWIDGETSIZE_MAX);
 }
 
 void CallView::toggleFullScreen()
 {
-    // Full screen is a state of a window, so a docked view goes out for it and comes back after.
     if (!poppedOut) {
         popOut(true);
         dockAfterFullScreen = true;
@@ -758,7 +750,6 @@ void CallView::changeEvent(QEvent *event)
 
 void CallView::keyPressEvent(QKeyEvent *event)
 {
-    // Only in its own window: docked, these keys are the main window's.
     if (poppedOut && togglesFullScreen(event, isFullScreen())) {
         toggleFullScreen();
         return;
@@ -768,7 +759,6 @@ void CallView::keyPressEvent(QKeyEvent *event)
 
 void CallView::closeEvent(QCloseEvent *event)
 {
-    // Only its own window can be closed, and that puts the view back in the main window.
     event->accept();
     if (poppedOut)
         QTimer::singleShot(0, this, [this] { setPoppedOut(false); });

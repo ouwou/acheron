@@ -17,16 +17,12 @@ class QPushButton;
 namespace Acheron {
 namespace UI {
 
-// Picks the screen or the window to share, how it is captured and what it is sent at. The
-// qualities the account may not use and the capture methods this machine does not have are
-// greyed, and the choices are remembered for the next time.
 class ScreenSharePicker : public BasePopup
 {
     Q_OBJECT
 public:
     explicit ScreenSharePicker(const Core::Video::SharerTier &tier, QWidget *parent = nullptr);
 
-    // The quality last chosen, where `tier` still allows it.
     [[nodiscard]] static Core::Video::SendQuality rememberedQuality(const Core::Video::SharerTier &tier);
     static void rememberQuality(const Core::Video::SendQuality &quality);
 
@@ -55,22 +51,21 @@ private:
     void loadThumbnailsFromTheFirst();
     void loadNextThumbnail();
     [[nodiscard]] QListWidgetItem *chosenItem() const;
+    [[nodiscard]] std::optional<Core::Video::CaptureSource> chosenSource() const;
     [[nodiscard]] QList<Core::Video::CaptureSource> offeredSources() const;
     void listPrograms();
     void onSourceChosen(const Core::Video::CaptureSource &chosen, const QString &failure, quint32 program, bool withAudio);
     void showQuality();
-    void refreshShareButton();
+    void refreshControls();
 
     Core::Video::SharerTier tier;
     Core::Video::SendQuality quality;
-    // Screens first, then windows, each with the item that shows it.
     QList<Core::Video::CaptureSource> sources;
     QList<QListWidgetItem *> sourceItems;
     int thumbnailsLoaded = 0;
     bool thumbnailQueued = false;
     bool encodersKnown = false;
     bool canEncode = false;
-    // The desktop's own dialog is up, or what it last had to say for itself.
     bool choosing = false;
     QString choosingFailure;
 
@@ -80,7 +75,6 @@ private:
     QComboBox *framerateCombo;
     QComboBox *methodCombo;
     QCheckBox *audioCheck;
-    // Whose sound goes with a window the desktop hands over without saying whose it is.
     QComboBox *programCombo;
     QLabel *noteLabel;
     QPushButton *shareButton;

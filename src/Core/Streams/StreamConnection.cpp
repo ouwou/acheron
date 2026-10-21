@@ -1,6 +1,7 @@
 #include "StreamConnection.hpp"
 
 #include "Core/Audio/VoiceConnection.hpp"
+#include "Core/Audio/VoiceManager.hpp"
 #include "Core/Logging.hpp"
 
 namespace Acheron {
@@ -10,13 +11,18 @@ using Discord::Voice::VoiceClient;
 
 namespace {
 
-// A stream's RTC channel is the id one below its RTC server when the gateway names none.
+// the id one below the RTC server's when the gateway names no channel
 Snowflake streamRtcChannelId(Snowflake rtcServerId, Snowflake rtcChannelId)
 {
     return rtcChannelId.isValid() ? rtcChannelId : Snowflake(static_cast<quint64>(rtcServerId) - 1);
 }
 
 } // namespace
+
+StreamConnection::Account StreamConnection::Account::of(const Audio::VoiceManager &voice)
+{
+    return { voice.accountUserId(), voice.currentGatewaySessionId(), voice.accountProxy() };
+}
 
 StreamConnection::StreamConnection(const Account &account, Configure configure, QObject *parent)
     : QObject(parent), account(account), configure(std::move(configure))
@@ -43,7 +49,6 @@ void StreamConnection::apply(const StreamRecord &record)
 
     switch (record.state) {
     case StreamRecord::State::AwaitingEndpoint:
-        // The server is moving the stream; the next update says where to.
         if (!current || endpoint.isEmpty())
             break;
         [[fallthrough]];
@@ -89,7 +94,7 @@ void StreamConnection::connectNow()
     Discord::Voice::StreamDescription screen;
     screen.type = QStringLiteral("screen");
     screen.rid = QStringLiteral("100");
-    screen.quality = 100;
+    screen.quality = Discord::Voice::FULL_QUALITY;
     params.streams = { screen };
     params.streamContext = true;
     params.sendsAudio = false;
@@ -107,7 +112,6 @@ void StreamConnection::connectNow()
     connectTimeout.start();
 }
 
-// Reached on the first connection and again whenever the client has resumed a dropped one.
 void StreamConnection::onStateChanged(VoiceClient::State state)
 {
     if (state != VoiceClient::State::Connected)
@@ -155,7 +159,7 @@ void StreamConnection::dropConnection(const std::function<void()> &beforeStop)
     connectedNow = false;
     going->stop(beforeStop);
     emit closed(going);
-    // Not deleted here: this may be one of its own signals.
+    // not deleted here: this may be one of its own signals
     going->deleteLater();
 }
 

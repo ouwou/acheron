@@ -50,6 +50,11 @@ CameraFrameSourceFactory replacementFactory;
 
 using Clock = std::chrono::steady_clock;
 
+QString cameraText(const char *text)
+{
+    return QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", text);
+}
+
 #ifdef Q_OS_WIN
 constexpr const char *DEVICE = "dshow";
 constexpr const char *URL_BEFORE_ID = "video=";
@@ -60,10 +65,8 @@ constexpr const char *URL_BEFORE_ID = "";
 
 struct Mode
 {
-    // Null asks for nothing, and the camera gives what it gives by default.
     const char *size;
     const char *framerate;
-    // AV_CODEC_ID_NONE takes the first format the camera has at that size and rate.
     AVCodecID codec;
 };
 
@@ -74,14 +77,11 @@ constexpr std::array MODES = {
     Mode{ nullptr, nullptr, AV_CODEC_ID_NONE },
 };
 
-// When ffmpeg's buffer for the device is full it is the newest picture that is dropped and the
-// older ones that stay, so the buffer is kept to two uncompressed 1280x720 pictures of two
-// bytes a pixel, and is read as soon as anything is in it.
+// a full device buffer drops the newest picture, not the oldest, so it is kept small and read at once
 constexpr int DEVICE_BUFFER_BYTES = 2 * 1280 * 720 * 2;
 
-// ffmpeg's blocking read of a DirectShow device cannot be woken, and a camera that goes quiet
-// would hold its reader, and with it whoever stops the camera, for good. So the device is asked
-// without waiting, this often.
+// ffmpeg's blocking DirectShow read cant be woken, and a camera gone quiet would hold its reader for
+// good, so it is polled
 constexpr auto POLL_INTERVAL = std::chrono::milliseconds(1);
 
 using Media::FramePointer;
@@ -109,7 +109,7 @@ AVFormatContext *openInput(const QByteArray &url, const Mode &mode)
     AVFormatContext *input = avformat_alloc_context();
     if (!input)
         return nullptr;
-    // The device has no option for a compressed format: it takes the one named here.
+    // the device has no option for a compressed format, only this
     input->video_codec_id = mode.codec;
     input->flags |= AVFMT_FLAG_NONBLOCK;
 
@@ -119,7 +119,7 @@ AVFormatContext *openInput(const QByteArray &url, const Mode &mode)
         av_dict_set(&options, "framerate", mode.framerate, 0);
     }
     av_dict_set_int(&options, "rtbufsize", DEVICE_BUFFER_BYTES, 0);
-    // A context that could not be opened is freed by the call.
+    // frees the context when it fails
     avformat_open_input(&input, url.constData(), inputDevice(), &options);
     av_dict_free(&options);
     return input;
@@ -131,8 +131,7 @@ AVCodecContext *openDecoder(const AVStream *stream)
     AVCodecContext *decoder = codec ? avcodec_alloc_context3(codec) : nullptr;
     if (!decoder)
         return nullptr;
-    // A decoder that shares its work out among threads hands each picture back that many
-    // pictures late.
+    // threaded decoding returns each picture that many pictures late
     decoder->thread_count = 1;
     decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
     if (avcodec_parameters_to_context(decoder, stream->codecpar) < 0 || avcodec_open2(decoder, codec, nullptr) < 0)
@@ -140,7 +139,6 @@ AVCodecContext *openDecoder(const AVStream *stream)
     return decoder;
 }
 
-// The camera in the first mode it opens in and whose pictures can be decoded, or nothing.
 OpenCamera openCamera(const QByteArray &url)
 {
     for (const Mode &mode : MODES) {
@@ -149,7 +147,7 @@ OpenCamera openCamera(const QByteArray &url)
         if (!camera.input || camera.input->nb_streams == 0 || camera.input->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
             continue;
 #ifdef Q_OS_LINUX
-        // v4l2 opens at the nearest size the camera has to the one asked for, where dshow refuses.
+        // v4l2 opens at the nearest size the camera has, where dshow refuses
         const AVCodecParameters *opened = camera.input->streams[0]->codecpar;
         if (mode.size && QStringLiteral("%1x%2").arg(opened->width).arg(opened->height) != QLatin1String(mode.size))
             continue;
@@ -170,8 +168,7 @@ QString describe(const AVStream *stream)
 }
 
 #ifdef Q_OS_LINUX
-// A v4l2 packet is the driver's own mapped memory, which the raw decoder hands on as the picture
-// and which is unmapped when the camera is closed.
+// a v4l2 packet is the driver's mapped memory, unmapped when the camera closes
 bool copyOutOfTheDriver(AVPacket *packet)
 {
     AVBufferRef *copy = av_buffer_alloc(packet->size + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -240,7 +237,7 @@ QList<CameraDevice> cameraDevices()
     if (!inputDevice() || avdevice_list_input_sources(inputDevice(), nullptr, nullptr, &found) < 0)
         return {};
 
-    // Microphones are in the same list.
+    // microphones are in the same list
     QList<CameraDevice> cameras;
     for (int i = 0; i < found->nb_devices; i++) {
         const AVDeviceInfo *device = found->devices[i];
@@ -259,8 +256,7 @@ QList<CameraDevice> cameraDevices()
     if (!inputDevice())
         return {};
 
-    // udev names a USB camera by its maker, model and serial number, which it keeps when its
-    // /dev/videoN changes.
+    // udev's name for a USB camera survives its /dev/videoN changing
     QHash<QString, QString> lasting;
     const QFileInfoList links = QDir(QStringLiteral("/dev/v4l/by-id")).entryInfoList(QDir::System);
     for (const QFileInfo &link : links)
@@ -276,8 +272,7 @@ QList<CameraDevice> cameraDevices()
             continue;
         const bool answered = ioctl(fd, VIDIOC_QUERYCAP, &device) == 0;
         close(fd);
-        // `capabilities` is of all of a camera's nodes together, and so names capture for the node
-        // its metadata comes from as well.
+        // `capabilities` covers all of a camera's nodes, metadata node included
         const __u32 own = device.capabilities & V4L2_CAP_DEVICE_CAPS ? device.device_caps : device.capabilities;
         if (answered && (own & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)) && (own & V4L2_CAP_STREAMING))
             cameras.append({ lasting.value(path, path), QString::fromUtf8(reinterpret_cast<const char *>(device.card)) });
@@ -299,8 +294,7 @@ CameraCapture::~CameraCapture()
 
 bool CameraCapture::open(const QString &deviceId)
 {
-    // ffmpeg enters a COM apartment where the device is opened and leaves it where the device
-    // is closed, so one thread does both, and the reading in between.
+    // ffmpeg enters a COM apartment on open and leaves it on close, so one thread must do both
     thread = std::thread([this, deviceId] { run(deviceId); });
 
     std::unique_lock lock(mutex);
@@ -354,7 +348,7 @@ void CameraCapture::end(const QString &reason)
 
 void CameraCapture::publish(AVFrame *picture, std::chrono::steady_clock::time_point capturedAt)
 {
-    // The matrix the USB video class gives a camera that names none, at any size.
+    // the USB video class default for a camera that names none
     if (picture->colorspace == AVCOL_SPC_UNSPECIFIED)
         picture->colorspace = AVCOL_SPC_SMPTE170M;
     {
@@ -370,7 +364,7 @@ void CameraCapture::run(const QString &deviceId)
 {
     const QList<CameraDevice> cameras = cameraDevices();
     if (deviceId.isEmpty() && cameras.isEmpty()) {
-        end(QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", "No camera is connected."));
+        end(cameraText("No camera is connected."));
         return;
     }
     const QString id = deviceId.isEmpty() ? cameras.first().id : deviceId;
@@ -378,7 +372,7 @@ void CameraCapture::run(const QString &deviceId)
 
     const OpenCamera camera = openCamera(URL_BEFORE_ID + id.toUtf8());
     if (!camera.input) {
-        end(listed == cameras.end() ? QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", "The camera is not connected.") : QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", "The camera could not be opened. Another program may be using it."));
+        end(listed == cameras.end() ? cameraText("The camera is not connected.") : cameraText("The camera could not be opened. Another program may be using it."));
         return;
     }
     const AVStream *stream = camera.input->streams[0];
@@ -399,21 +393,19 @@ void CameraCapture::run(const QString &deviceId)
         const int got = av_read_frame(camera.input.get(), packet.get());
         if (got == AVERROR(EAGAIN)) {
             if (sincePicture.elapsed() >= NO_PICTURE_TIMEOUT_MS) {
-                end(QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", "The camera is not sending pictures. Another program may be using it."));
+                end(cameraText("The camera is not sending pictures. Another program may be using it."));
                 return;
             }
             std::this_thread::sleep_for(POLL_INTERVAL);
             continue;
         }
         if (got < 0) {
-            end(QCoreApplication::translate("Acheron::Core::Video::CameraPipeline", "The camera was disconnected."));
+            end(cameraText("The camera was disconnected."));
             return;
         }
         sincePicture.start();
         const Clock::time_point readAt = Clock::now();
 
-        // A picture with a newer one already waiting behind it is late, and is passed over
-        // where the newer one can be decoded without it.
         while (everyPictureStandsAlone && av_read_frame(camera.input.get(), newer.get()) >= 0) {
             av_packet_unref(packet.get());
             av_packet_move_ref(packet.get(), newer.get());

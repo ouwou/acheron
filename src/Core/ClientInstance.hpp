@@ -35,6 +35,7 @@ class VoiceManager;
 class ReadStateManager;
 class ForumManager;
 class CallStore;
+enum class CallConnect;
 class StreamManager;
 class StreamPreviews;
 class StreamWatcher;
@@ -76,7 +77,6 @@ public:
     [[nodiscard]] StreamBroadcaster *streamBroadcaster() const;
     [[nodiscard]] CameraSender *cameraSender() const;
 #endif
-    // Unmuted and undeafened, with the camera on only if it is on in that channel already.
     void joinVoice(Snowflake guildId, Snowflake channelId);
     void leaveVoice();
 
@@ -92,8 +92,7 @@ public:
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
 
-    // The channel the user is looking at changed. For a DM or group DM the gateway is asked
-    // about its call, once, as the official client does when a private channel is selected.
+    // as the official client does, once per private channel
     void noteChannelSelected(Snowflake channelId);
 
     [[nodiscard]] QList<Discord::Ban> observedBans(Snowflake guildId) const;
@@ -225,8 +224,6 @@ private:
     StreamWatcher *streamWatch = nullptr;
     StreamBroadcaster *streamBroadcast = nullptr;
     CameraSender *cameraSend = nullptr;
-    // Whether the account may share its screen in the voice channel or call it is in, by the
-    // official client's rule, and what it may share there. The camera goes by the same rule.
     [[nodiscard]] ShareTerms screenShareTerms();
 #endif
 
@@ -241,10 +238,10 @@ private:
     Snowflake currentVoiceChannelId;
     Snowflake currentVoiceGuildId;
 
-    // Empty until READY. Voice states and calls are tied to the gateway session they came from.
+    // voice states and calls belong to the gateway session they came from
     QString gatewaySessionId;
     Snowflake selectedChannelId;
-    void connectSelectedCall(bool force);
+    void connectSelectedCall(CallConnect rule);
 
     // notFound members are kept in here so we dont ask for them again
     QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;

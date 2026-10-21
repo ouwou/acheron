@@ -29,7 +29,7 @@ namespace Video {
 
 namespace {
 
-using Clock = CaptureClock;
+using Clock = std::chrono::steady_clock;
 
 const QLatin1String PORTAL_SCREEN_ID("portal:screen");
 const QLatin1String PORTAL_WINDOW_ID("portal:window");
@@ -37,15 +37,13 @@ const QLatin1String PORTAL_SCREEN_AGAIN_ID("portal:screen:again");
 const QLatin1String PORTAL_WINDOW_AGAIN_ID("portal:window:again");
 const char *const PORTAL_SCREEN_TOKEN_KEY = "video/portal_screen_token";
 const char *const PORTAL_WINDOW_TOKEN_KEY = "video/portal_window_token";
-const QLatin1String PIPEWIRE_ID_PREFIX("pipewire:");
-const QLatin1String WINDOW_ID_PREFIX("window:");
 
 using Media::describeError;
 using Media::FramePointer;
 
 bool isFromPipeWire(const QString &sourceId)
 {
-    return sourceId.startsWith(PIPEWIRE_ID_PREFIX);
+    return sourceId.startsWith(PIPEWIRE_SOURCE_PREFIX);
 }
 
 bool usesPortal(CaptureMethod method)
@@ -58,7 +56,7 @@ CaptureSource chosenInTheDesktopsDialog(CaptureSource::Kind kind)
     CaptureSource choice;
     choice.kind = kind;
     choice.id = kind == CaptureSource::Kind::Window ? PORTAL_WINDOW_ID : PORTAL_SCREEN_ID;
-    choice.name = kind == CaptureSource::Kind::Window ? captureText("Window") : captureText("Screen");
+    choice.name = kindName(kind);
     return choice;
 }
 
@@ -72,8 +70,6 @@ bool standsForTheLastChoice(const CaptureSource &source)
     return source.id == PORTAL_SCREEN_AGAIN_ID || source.id == PORTAL_WINDOW_AGAIN_ID;
 }
 
-// A new choice in the desktop's dialog and, once the desktop has handed out a token to remember
-// one by, the same again without the dialog.
 QList<CaptureSource> offeredByTheDesktop(CaptureSource::Kind kind)
 {
     QList<CaptureSource> offered = { chosenInTheDesktopsDialog(kind) };
@@ -102,24 +98,12 @@ AVPixelFormat formatOfFourcc(uint32_t fourcc)
     return AV_PIX_FMT_NONE;
 }
 
-// The top left of `from` in a black picture of `size`.
 bool placedOnBlack(const AVFrame *from, const QSize &size, AVFrame *into)
 {
-    av_frame_unref(into);
-    into->format = from->format;
-    into->width = size.width();
-    into->height = size.height();
-    if (av_frame_get_buffer(into, 0) < 0)
+    if (Media::prepareWritable(into, from->format, size) < 0)
         return false;
 
-    const int columns = std::min(from->width, into->width);
-    for (int y = 0; y < into->height; y++) {
-        uint8_t *to = into->data[0] + static_cast<qsizetype>(y) * into->linesize[0];
-        const int copied = y < from->height ? columns : 0;
-        if (copied > 0)
-            memcpy(to, from->data[0] + static_cast<qsizetype>(y) * from->linesize[0], static_cast<size_t>(copied) * 4);
-        memset(to + static_cast<qsizetype>(copied) * 4, 0, static_cast<size_t>(into->width - copied) * 4);
-    }
+    copyTopLeftOnBlack(from->data[0], from->linesize[0], QSize(from->width, from->height), into);
     return true;
 }
 
@@ -150,7 +134,6 @@ struct ScreenCapture::Backends
     FramePointer mapped{ av_frame_alloc() };
 };
 
-// A picture the desktop left on the card, as one the card's scaler takes.
 bool ScreenCapture::Backends::mapOntoCard(const AVFrame *prime)
 {
     const auto *layout = reinterpret_cast<const AVDRMFrameDescriptor *>(prime->data[0]);
@@ -243,9 +226,8 @@ void chooseSource(const CaptureSource &source, QObject *receiver, std::function<
         return;
     }
 
-    // A token is good for one use: the desktop hands out the next with what it hands over, and
-    // PortalCapture has put that in the old one's place by the time it reports. A desktop that
-    // no longer knows a token shows its dialog after all.
+    // a token is good once: the desktop hands out the next with what it hands over. a desktop that has
+    // forgotten a token shows its dialog anyway
     static QString tokens[2];
     QString *token = &tokens[source.kind == CaptureSource::Kind::Window ? 1 : 0];
     const char *key = tokenKeyOf(source.kind);
@@ -272,11 +254,11 @@ QImage captureThumbnail(const CaptureSource &source, const QSize &bound)
 
 void restoreIfMinimised(const CaptureSource &window)
 {
-    if (window.id.startsWith(WINDOW_ID_PREFIX))
+    if (window.id.startsWith(WINDOW_SOURCE_PREFIX))
         X11Capture::restoreIfMinimised(window);
 }
 
-QSize encodeSizeOf(const CaptureSource &source, int maxHeight)
+QSize encodeSizeOf(const CaptureSource &source, std::optional<int> maxHeight)
 {
     if (isChosenByTheDesktop(source))
         return {};
@@ -290,13 +272,7 @@ ScreenCapture::~ScreenCapture() = default;
 
 void ScreenCapture::configure(const Request &wanted)
 {
-    request = wanted;
-    failingSince.reset();
-    retryAt = {};
-    closed = false;
-    failed = false;
-    cardScalingResumesAt.reset();
-    failureText.clear();
+    startOver(wanted);
     backends = std::make_unique<Backends>();
 }
 
@@ -312,12 +288,6 @@ QString ScreenCapture::captureName() const
     return isFromPipeWire(request.sourceId) ? QStringLiteral("pipewire") : QStringLiteral("x11grab");
 }
 
-void ScreenCapture::delivered()
-{
-    everDelivered = true;
-    failingSince.reset();
-}
-
 void ScreenCapture::tearDown()
 {
     backends->grabber.reset();
@@ -325,7 +295,7 @@ void ScreenCapture::tearDown()
 
 ScreenCapture::Status ScreenCapture::afterFailure(int error)
 {
-    const QString reason = backends->lastFailure.isEmpty() ? captureText("The screen can no longer be captured (%1).").arg(describeError(error)) : backends->lastFailure;
+    const QString reason = backends->lastFailure.isEmpty() ? captureLostText(CaptureSource::Kind::Screen).arg(describeError(error)) : backends->lastFailure;
     backends->lastFailure.clear();
     tearDown();
     return giveUpOrRetry(reason, false);
@@ -342,7 +312,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     if (!state.grabber) {
         if (waitedForRetry(retryAt))
             return Status::Stalled;
-        state.grabbedOnCard = request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
+        state.grabbedOnCard = scalesOnCard();
         state.grabber = isFromPipeWire(request.sourceId) ? PortalCapture::open(request.sourceId, request.framerate, state.grabbedOnCard) : X11Capture::open(request.sourceId, request.framerate);
         state.announced = QSize();
         state.openedAt = Clock::now();
@@ -352,12 +322,11 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
 
     AVFrame *captured = state.captured.get();
     av_frame_unref(captured);
-    const auto wait = std::chrono::milliseconds(1000 / std::max(1, request.framerate) + NOTHING_NEW_WAIT_MS);
+    const auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(pictureInterval(request.framerate)) + std::chrono::milliseconds(NOTHING_NEW_WAIT_MS);
     switch (state.grabber->grab(captured, wait)) {
     case LinuxGrabber::Result::Frame:
         break;
     case LinuxGrabber::Result::NoFrame:
-        // Twice as long as a capture that never comes up takes to say so.
         if (failingSince && Clock::now() - state.openedAt >= std::chrono::milliseconds(2 * GIVE_UP_AFTER_MS))
             failingSince.reset();
         return Status::NoFrame;
@@ -375,7 +344,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         return afterFailure(AVERROR(EIO));
     }
 
-    // The source is still read, so that its pictures do not pile up, and found to be there.
+    // still read, so its pictures dont pile up
     if (!picturesWanted) {
         av_frame_unref(captured);
         delivered();
@@ -385,10 +354,10 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     const bool onCard = captured->format == AV_PIX_FMT_DRM_PRIME;
     if (!onCard)
         av_frame_apply_cropping(captured, AV_FRAME_CROP_UNALIGNED);
-    const QSize ownSize(captured->width - static_cast<int>(captured->crop_left + captured->crop_right), captured->height - static_cast<int>(captured->crop_top + captured->crop_bottom));
+    const QSize ownSize = visibleArea(captured).size();
     const QSize pictureSize = windowPictureSize(ownSize);
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
-    const bool bt601 = request.bt601Only || !Media::usesBt709AtHeight(size.height());
+    const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
     const bool fillsItsPicture = ownSize.width() >= pictureSize.width() && ownSize.height() >= pictureSize.height();
 
     if (std::exchange(state.announced, size) != size)

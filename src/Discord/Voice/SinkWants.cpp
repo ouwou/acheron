@@ -14,7 +14,6 @@ struct LadderStep
     int pixels;
 };
 
-// Smallest first. Each step is the resolution a sender is asked for at that want value.
 constexpr std::array<LadderStep, 9> LADDER = { {
         { 20, 256 * 144 },
         { 30, 320 * 180 },
@@ -27,7 +26,7 @@ constexpr std::array<LadderStep, 9> LADDER = { {
         { 100, 1280 * 720 },
 } };
 
-constexpr qint64 PIXEL_BUDGET = 1280 * 720;
+constexpr qint64 PIXEL_BUDGET = LADDER.back().pixels;
 constexpr int FULL = 100;
 constexpr int NONE = 0;
 
@@ -72,20 +71,19 @@ SinkWantsPlan planSinkWants(const SinkWantsInput &input)
         }
 
         const int forTile = sinkWantLevel(senderCount, sender.tilePixels);
-        // The large tile gets full quality, unless everyone already does.
         const bool enlarged = sender.userId == input.focusedUser && everyone != FULL;
 
         quint32 taken = sender.layers.first().ssrc;
         if (sender.layers.size() > 1) {
             for (const VideoLayer &layer : sender.layers) {
-                if (layer.quality == FULL) {
+                if (layer.quality == FULL_QUALITY) {
                     plan.wants.bySsrc.insert(layer.ssrc, enlarged ? FULL : NONE);
                     if (enlarged)
                         taken = layer.ssrc;
                 } else if (enlarged) {
                     plan.wants.bySsrc.insert(layer.ssrc, NONE);
                 } else {
-                    // Left to `any`, except in a call of two.
+                    // as the official client
                     if (input.oneToOne)
                         plan.wants.bySsrc.insert(layer.ssrc, forTile);
                     taken = layer.ssrc;

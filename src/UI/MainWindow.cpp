@@ -57,6 +57,7 @@
 #include "Dialogs/UserProfilePopup.hpp"
 #include "StreamPreviewPopup.hpp"
 #ifdef ACHERON_HAVE_VIDEO
+#include "Call/CallVideoMenu.hpp"
 #include "Call/CallView.hpp"
 #include "Core/Streams/StreamWatcher.hpp"
 #include "Core/Video/CallVideo.hpp"
@@ -85,6 +86,7 @@ constexpr int CenterPaneIndex = 1;
 constexpr int MemberPaneIndex = 2;
 constexpr int DefaultChannelListWidth = 240;
 constexpr int DefaultMemberListWidth = 200;
+const QString CALL_VIEW_HEIGHT_KEY = QStringLiteral("video/call_view_height");
 
 QString guildChannelKey(Core::Snowflake accountId, Core::Snowflake guildId)
 {
@@ -293,7 +295,7 @@ MainWindow::~MainWindow()
     for (const QPointer<GuildSettingsWindow> &window : std::as_const(guildSettingsWindows))
         delete window.data();
 #ifdef ACHERON_HAVE_VIDEO
-    // A view in its own window is not a child of this one.
+    // a popped-out view isnt a child of this one
     for (const QPointer<CallView> &view : std::as_const(callViews))
         delete view.data();
 #endif
@@ -1120,9 +1122,7 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 #endif
 
 #ifdef ACHERON_HAVE_VIDEO
-    // A call has a video view for as long as it lasts. A new call, in another channel, gets
-    // a new one; connecting again to the same channel keeps it.
-    const quint64 accountId = static_cast<quint64>(instance->accountId());
+    const Snowflake accountId = instance->accountId();
     connect(instance->voice(), &Core::Audio::VoiceManager::voiceConnected, this,
             [this, accountId, instance = QPointer<ClientInstance>(instance)] {
                 if (!instance)
@@ -1138,7 +1138,6 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
     if (instance->isInVoice())
         ensureCallView(instance);
 
-    // Watching a stream brings the call into sight. The view itself enlarges the stream.
     connect(instance->streamWatcher(), &Core::StreamWatcher::sessionOpened, this,
             [this, instance = QPointer<ClientInstance>(instance)] {
                 if (!instance)
@@ -1163,7 +1162,6 @@ void MainWindow::updateCallHost()
             continue;
         docked = true;
         open = open || !view->isCollapsed();
-        // A collapsed view is as tall as its bar and no taller.
         if (view->isCollapsed())
             barsHeight += view->maximumHeight();
     }
@@ -1172,16 +1170,14 @@ void MainWindow::updateCallHost()
     if (!docked)
         return;
 
-    // A splitter neither takes room from something that has shrunk nor gives it back to
-    // something that had been made small.
+    // a splitter neither takes room from what shrank nor gives it back to what was made small
     const QList<int> sizes = callSplitter->sizes();
     if (sizes.size() != 2)
         return;
     const int total = sizes[0] + sizes[1];
     if (!open) {
-        // What it had is what it gets back when it is opened again.
         if (sizes[0] >= MIN_HEIGHT)
-            QSettings().setValue(QStringLiteral("video/call_view_height"), sizes[0]);
+            QSettings().setValue(CALL_VIEW_HEIGHT_KEY, sizes[0]);
         callSplitter->setSizes({ barsHeight, qMax(0, total - barsHeight) });
         return;
     }
@@ -1191,14 +1187,14 @@ void MainWindow::updateCallHost()
         callSplitter->setSizes({ 2, 3 });
         return;
     }
-    const int wanted = qBound(MIN_HEIGHT, QSettings().value(QStringLiteral("video/call_view_height"), total * 2 / 5).toInt(), total - MIN_HEIGHT);
+    const int wanted = qBound(MIN_HEIGHT, QSettings().value(CALL_VIEW_HEIGHT_KEY, total * 2 / 5).toInt(), total - MIN_HEIGHT);
     callSplitter->setSizes({ wanted, total - wanted });
 #endif
 }
 
 #ifdef ACHERON_HAVE_VIDEO
-// Later, since what asks for it may be the view's own menu or a slot of the view.
-void MainWindow::removeCallView(quint64 accountId)
+// later: the request may come from the view's own menu or slot
+void MainWindow::removeCallView(Snowflake accountId)
 {
     if (CallView *view = callViews.take(accountId)) {
         view->hide();
@@ -1209,8 +1205,7 @@ void MainWindow::removeCallView(quint64 accountId)
 
 CallView *MainWindow::ensureCallView(Core::ClientInstance *instance)
 {
-    const quint64 accountId = static_cast<quint64>(instance->accountId());
-    if (CallView *existing = callViews.value(accountId))
+    if (CallView *existing = callViews.value(instance->accountId()))
         return existing;
     if (!instance->isInVoice())
         return nullptr;
@@ -1224,12 +1219,12 @@ CallView *MainWindow::ensureCallView(Core::ClientInstance *instance)
         if (!users)
             return {};
         const auto user = users->getUser(userId);
-        return user ? users->getAvatarUrl(*user, guildId, 128) : QUrl();
+        return user ? users->getAvatarUrl(*user, guildId, CallView::AVATAR_SIZE.width()) : QUrl();
     };
 
     ChannelNode *channel = channelTreeModel->findChannelTreeNode(instance->voiceChannelId());
     auto *view = new CallView(instance->voice(), instance->streamWatcher(), instance->streamBroadcaster(), instance->cameraSender(), session->getImageManager(), instance->accountId(), names, avatars, channel ? channel->name : tr("Call"), callHost);
-    callViews.insert(accountId, view);
+    callViews.insert(instance->accountId(), view);
     connect(view, &CallView::presenceChanged, this, &MainWindow::updateCallHost);
     updateCallHost();
     return view;
@@ -1258,16 +1253,12 @@ void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
     if (!row || row->userId == row->instance->accountId())
         return;
 
-    Core::ClientInstance *instance = row->instance;
+    Core::StreamWatcher *watcher = row->instance->streamWatcher();
     const Discord::StreamKey key = Discord::StreamKey::forChannel(row->guildId, row->channelId, row->userId);
-    if (instance->streamWatcher()->canWatch(key)) {
-        instance->streamWatcher()->watch(key);
-        return;
-    }
-
-    // Not in the channel yet: join it the usual way, and watch once in.
-    instance->streamWatcher()->watchWhenConnected(key);
-    emit channelTree->joinVoiceChannelRequested(proxyIndex.parent());
+    const bool joinFirst = !watcher->canWatch(key);
+    watcher->watchWhenConnected(key);
+    if (joinFirst)
+        emit channelTree->joinVoiceChannelRequested(proxyIndex.parent());
 #else
     Q_UNUSED(proxyIndex);
 #endif
@@ -1276,7 +1267,6 @@ void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
 void MainWindow::onShowCallVideoRequested(const QModelIndex &proxyIndex)
 {
 #ifdef ACHERON_HAVE_VIDEO
-    // Cameras are only received by someone in the call.
     const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
     if (row && row->instance->voiceChannelId() == row->channelId) {
         if (CallView *view = ensureCallView(row->instance))
@@ -1303,8 +1293,7 @@ void MainWindow::onLiveParticipantHoverChanged(const QModelIndex &proxyIndex)
     const Snowflake channelId = row->channelId;
     const Snowflake guildId = row->guildId;
 
-    // Mirrors the official client: a preview is looked up only by someone who could join the
-    // channel, or is already in it.
+    // as the official client
     const bool mayLook = instance->voiceChannelId() == channelId || !guildId.isValid() || instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
 
     if (!streamPreviewPopup)
@@ -1517,7 +1506,7 @@ void MainWindow::setupUi()
     connect(callSplitter, &QSplitter::splitterMoved, this, [this] {
         const QList<int> sizes = callSplitter->sizes();
         if (callHost->isVisible() && callHost->maximumHeight() == QWIDGETSIZE_MAX && !sizes.isEmpty())
-            QSettings().setValue(QStringLiteral("video/call_view_height"), sizes[0]);
+            QSettings().setValue(CALL_VIEW_HEIGHT_KEY, sizes[0]);
     });
 
     rightLayout->addWidget(callSplitter, 1);
@@ -1774,7 +1763,6 @@ void MainWindow::setupUi()
                 ClientInstance *instance = session->client(accountNode->id);
                 const bool other = instance && node->parent && node->id != instance->accountId();
                 const bool live = other && proxyIndex.data(ChannelTreeModel::IsVoiceLiveRole).toBool();
-                // A camera is only received, and so only disabled, by someone in the call.
                 Core::CallVideo *video = other && instance->voiceChannelId() == node->parent->id ? instance->voice()->video() : nullptr;
                 const bool camera = video && video->senders().contains(node->id);
                 if (live || camera) {
@@ -1782,28 +1770,14 @@ void MainWindow::setupUi()
                     const QPersistentModelIndex row(proxyIndex);
                     const Snowflake userId = node->id;
                     videoEntries = [this, live, camera, userId, streamKey, row, watcher = QPointer<Core::StreamWatcher>(instance->streamWatcher()), video = QPointer<Core::CallVideo>(video)](QMenu &menu) {
-                        const Core::StreamSession *watched = live && watcher ? watcher->session(streamKey) : nullptr;
-                        if (watched && !watched->isOver()) {
-                            connect(menu.addAction(tr("Stop Watching")), &QAction::triggered, this, [watcher, streamKey] {
-                                if (watcher)
-                                    watcher->stopWatching(streamKey);
-                            });
-                        } else if (live && watcher) {
-                            connect(menu.addAction(tr("Watch Stream")), &QAction::triggered, this, [this, row] {
+                        if (live && watcher) {
+                            addStreamActions(&menu, watcher, streamKey, [this, row] {
                                 if (row.isValid())
                                     onWatchStreamRequested(row);
                             });
                         }
-                        if (camera && video) {
-                            // With the video disabled its tile is gone, so this is where it comes back from.
-                            QAction *disable = menu.addAction(tr("Disable Video"));
-                            disable->setCheckable(true);
-                            disable->setChecked(video->isVideoDisabled(userId));
-                            connect(disable, &QAction::toggled, this, [video, userId](bool disabled) {
-                                if (video)
-                                    video->setVideoDisabled(userId, disabled);
-                            });
-                        }
+                        if (camera && video)
+                            addDisableVideoAction(&menu, video, userId);
                         menu.addSeparator();
                     };
                 }

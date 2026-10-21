@@ -8,8 +8,10 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
-#include "Core/ProxyConfig.hpp"
+#include "Core/GatewayNotice.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Streams/StreamConnection.hpp"
 #include "Core/Streams/StreamManager.hpp"
@@ -36,39 +38,30 @@ class VoiceConnection;
 class VoiceManager;
 } // namespace Audio
 
-// What the account may do with a screen share where it is in voice now.
 struct ShareTerms
 {
     bool allowed = false;
     Video::SharerTier tier;
-    // Empty when none is known, which the gateway is told as null.
+    // empty is sent to the gateway as null
     QString preferredRegion;
 };
 
-// The account's own screen share: asks the gateway for the stream, runs the stream's RTC
-// connection as its owner, and feeds it from the capture pipeline. One at a time, in the voice
-// channel or call the account is connected to.
 class StreamBroadcaster : public QObject
 {
     Q_OBJECT
 public:
     enum class State {
         Idle,
-        // The gateway has been asked and has not answered yet.
         Starting,
-        // The stream exists; its RTC connection or its encoder is not up yet.
         Connecting,
         Live,
         Reconnecting,
     };
     Q_ENUM(State)
 
-    // What has become of the sound a share was started with.
     enum class AudioState {
-        // None was asked for, this machine cannot capture any, or the RTC connection is not up.
         Off,
         Capturing,
-        // The capture failed, and the share goes on without sound.
         Failed,
     };
     Q_ENUM(AudioState)
@@ -77,10 +70,8 @@ public:
     {
         Video::PipelineStats encoder;
         Discord::Voice::VideoSendStats network;
-        // What the encoder is asked for, in bits per second.
-        int targetBitrate = 0;
-        // As the server counts them; negative until it has said.
-        int receivers = -1;
+        int targetBitrateBps = 0;
+        std::optional<int> receivers;
         bool encodingSuspended = false;
         bool captureStalled = false;
         AudioState audio = AudioState::Off;
@@ -88,51 +79,35 @@ public:
 
     using TermsProvider = std::function<ShareTerms()>;
 
-    StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, TermsProvider terms, QObject *parent = nullptr);
+    StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, TermsProvider terms, QObject *parent = nullptr);
     ~StreamBroadcaster() override;
 
-    void setGatewaySessionId(const QString &sessionId);
-    // A new gateway session has forgotten the stream, so nothing is sent for it.
     void reset();
 
-    // Whether a share could be started now: connected to voice, somewhere sharing is allowed.
     [[nodiscard]] bool canShare() const;
     [[nodiscard]] Video::SharerTier tier() const { return terms().tier; }
 
     [[nodiscard]] State state() const { return currentState; }
     [[nodiscard]] bool isSharing() const { return currentState != State::Idle; }
     [[nodiscard]] Video::SendQuality quality() const { return sendQuality; }
-    // Whether what is being shared, or was last, is a window rather than a screen.
     [[nodiscard]] bool sharesWindow() const { return source.kind == Video::CaptureSource::Kind::Window; }
     [[nodiscard]] Stats stats() const;
-    // The capture's latest small picture. Null until there is one.
     [[nodiscard]] QImage preview() const { return latestPreview; }
-    // Why the last share ended by itself, in one sentence. Empty once it has been cleared or
-    // another share has started.
     [[nodiscard]] QString failure() const { return failureText; }
     void clearFailure();
 
-    // `withAudio` also sends what the shared window's program is playing or, for a screen,
-    // everything this machine plays except this client's own sound.
     void start(const Video::CaptureSource &source, const Video::SendQuality &quality, bool withAudio);
-    // While live, without reconnecting. A quality the account may not use is not taken.
     void setQuality(const Video::SendQuality &quality);
     void stop();
 
     static constexpr int START_TIMEOUT_MS = 5000;
-    // An encoder that cannot follow a new rate is reopened for it, which starts with a key
-    // frame, so rates that change in quick succession (a viewer dragging a window's edge) are
-    // gathered into one.
+    // a rate change can reopen the encoder and cost a key frame, so changes in quick succession are
+    // gathered into one
     static constexpr int BITRATE_SETTLE_MS = 2000;
-    // How long the server is given to name another codec once the one in use has been withdrawn.
-    static constexpr int CODEC_TIMEOUT_MS = 8000;
 
 signals:
-    // Also sent when the capture stalls or resumes, when the sound starts being captured or
-    // fails, and when a failure is cleared.
     void stateChanged();
     void previewChanged(const QImage &preview);
-    // The share ended without being asked to. failure() has the same sentence.
     void failed(const QString &reason);
 
 private slots:
@@ -148,7 +123,7 @@ private slots:
     void onRtcClosed();
     void onRtcReconnecting();
     void onRtcFailed(Acheron::Core::StreamConnection::Failure failure);
-    void onRtcStateChanged(Acheron::Discord::Voice::VoiceClient::State state);
+    void onRtcConnected();
     void onSendCodecChanged(Acheron::Discord::Voice::VideoCodec codec);
     void onSendStats(const Acheron::Discord::Voice::VideoSendStats &stats);
     void onKeyframeRequested();
@@ -166,8 +141,8 @@ private:
 
     void setState(State state);
     void sendCreate(const QList<Discord::Voice::VideoCodec> &codecs);
-    void end(bool tellGateway);
-    void fail(const QString &reason, bool tellGateway = true);
+    void end(GatewayNotice notice);
+    void fail(const QString &reason, GatewayNotice notice = GatewayNotice::Send);
 
     void openRtc();
     [[nodiscard]] bool sendsSound() const;
@@ -190,10 +165,7 @@ private:
     Discord::Client *client;
     StreamManager *streams;
     Audio::VoiceManager *voice;
-    Snowflake accountId;
-    ProxyConfig proxy;
     TermsProvider terms;
-    QString gatewaySessionId;
 
     State currentState = State::Idle;
     QString failureText;
@@ -202,27 +174,21 @@ private:
     bool audioWanted = false;
     Video::SendQuality sendQuality;
     QString preferredRegion;
-    // What this share offers to send with: the codecs this machine encodes, less those whose
-    // encoder would have added black to a size the share has had. One that is withdrawn stays
-    // so until the share ends, or a window dragged by its edge would have the server change
-    // the codec back and forth.
+    // a withdrawn codec stays withdrawn for the share, or dragging a window's edge would flip the codec
+    // back and forth
     QList<Discord::Voice::VideoCodec> offeredCodecs;
-    quint64 encoderProbeAttempt = 0;
+    Media::SendCodecRequest sendCodecs;
     bool createSent = false;
-    // A stream the gateway did not answer for in time. If it turns up after all it is ended.
     QString abandonedStreamKey;
 
     StreamConnection *rtc = nullptr;
-    bool rtcConnected = false;
-    // The codec the server last named, and the one the pipeline was started with.
     Discord::Voice::VideoCodec serverCodec = Discord::Voice::VideoCodec::Unknown;
     Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;
     Discord::Voice::LocalVideoDescription announced;
-    int receivers = -1;
+    std::optional<int> receivers;
 
-    // The sound that goes with the share, for as long as one RTC connection lasts: captured on
-    // a thread of the capture's own, encoded and sent on the connection's.
+    // lives as long as one RTC connection
     std::unique_ptr<StreamAudio> streamAudio;
     std::unique_ptr<Audio::LoopbackCapture> soundCapture;
     bool soundCaptureFailed = false;

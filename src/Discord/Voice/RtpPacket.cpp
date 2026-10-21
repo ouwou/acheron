@@ -16,7 +16,7 @@ constexpr uint8_t EXTENSION_ID_PADDING = 0;
 constexpr uint8_t EXTENSION_ID_RESERVED = 15;
 constexpr int MAX_ONE_BYTE_EXTENSION_VALUE = 16;
 
-// The second-byte values discord_voice.node treats as RTCP; narrower than rtcp-mux's 192..223.
+// what discord_voice.node treats as RTCP; narrower than rtcp-mux's 192..223
 constexpr uint8_t RTCP_SECOND_BYTE_FIRST = 194;
 constexpr uint8_t RTCP_SECOND_BYTE_LAST = 223;
 
@@ -70,13 +70,13 @@ std::optional<ParsedRtp> parseRtp(std::span<const uint8_t> packet)
     return parsed;
 }
 
-int rtpPaddingSize(std::span<const uint8_t> payload)
+std::optional<int> rtpPaddingSize(std::span<const uint8_t> payload)
 {
     if (payload.empty())
-        return -1;
+        return std::nullopt;
     const int padding = payload.back();
     if (padding == 0 || padding > static_cast<int>(payload.size()))
-        return -1;
+        return std::nullopt;
     return padding;
 }
 

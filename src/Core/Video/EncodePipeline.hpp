@@ -28,16 +28,8 @@ struct PipelineStats
     quint64 framesDropped = 0;
 };
 
-// What a screen's and a camera's pictures are encoded by. Each pipeline captures and encodes on
-// a thread of its own and emits its signals from there, so connect to them queued or from an
-// object on another thread. Connected in the pipeline's own context, what it had on its way
-// when it is let go of goes with it.
-//
-// Encoded frames are whole access units as the RTP sender wants them, with a 90 kHz timestamp
-// taken from when the picture was captured: Annex B for H264 and H265, every key frame led by
-// its parameter sets; OBUs with their sizes for AV1, every key frame holding a sequence header;
-// a bare frame for VP8. A pipeline may encode its pictures more than once, each encoding a
-// layer of its own: layer 0 is the one its settings describe.
+// emits from its own thread. connected in the pipeline's own context, whatever it still had on the way
+// goes with it when it is released
 class EncodePipeline : public QObject
 {
     Q_OBJECT
@@ -45,13 +37,10 @@ public:
     ~EncodePipeline() override;
 
 signals:
-    // Again whenever the size or frame rate a layer is encoded at changes.
     void started(const QSize &encodedSize, int framerate, int layer);
     void frameEncoded(const Acheron::Core::Video::EncodedFramePointer &frame, int layer);
     void previewReady(const QImage &preview);
-    // Nothing more will come: the source is gone, or no encoder could be opened.
     void failed(const QString &reason);
-    // About once a second.
     void statsUpdated(const Acheron::Core::Video::PipelineStats &stats, int layer);
 
 protected:

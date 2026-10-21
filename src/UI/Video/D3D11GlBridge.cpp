@@ -5,6 +5,8 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 
+#include "GlTextures.hpp"
+
 #include <cstring>
 
 #include <d3d11_4.h>
@@ -19,6 +21,11 @@ extern "C" {
 #endif
 }
 
+#ifdef ACHERON_HAVE_D3D11VA
+#include "Core/Media/RgbScaler.hpp"
+#include "Core/Video/Windows/Direct3D.hpp"
+#endif
+
 namespace Acheron {
 namespace UI {
 
@@ -28,17 +35,8 @@ constexpr GLenum ACCESS_READ_ONLY = 0x0000;
 constexpr DWORD DRAW_TIMEOUT_MS = 100;
 constexpr DXGI_FORMAT TARGET_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 
-template <typename T>
-void drop(T *&object)
-{
-    if (object)
-        object->Release();
-    object = nullptr;
-}
-
 } // namespace
 
-// WGL_NV_DX_interop2, looked up in the context it is used from.
 struct D3D11GlBridge::Wgl
 {
     HANDLE(WINAPI *openDevice)(void *) = nullptr;
@@ -51,7 +49,7 @@ struct D3D11GlBridge::Wgl
     static std::unique_ptr<Wgl> resolve()
     {
         QOpenGLContext *context = QOpenGLContext::currentContext();
-        // ANGLE is OpenGL ES over Direct3D and has no WGL.
+        // ANGLE has no WGL
         if (!context || context->isOpenGLES())
             return nullptr;
 
@@ -77,7 +75,6 @@ D3D11GlBridge::D3D11GlBridge() = default;
 
 D3D11GlBridge::~D3D11GlBridge()
 {
-    // release() has run by now wherever there was an OpenGL context to run it in.
     av_buffer_unref(&hardwareDevice);
 }
 
@@ -88,7 +85,7 @@ bool D3D11GlBridge::contextSupportsIt()
     return false;
 }
 
-bool D3D11GlBridge::update(const AVFrame *, QSize, bool, bool)
+bool D3D11GlBridge::update(const AVFrame *, QSize)
 {
     return false;
 }
@@ -104,56 +101,7 @@ void D3D11GlBridge::release() { }
 
 #else
 
-namespace {
-
-AVD3D11VADeviceContext *direct3d(AVBufferRef *device)
-{
-    return static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWDeviceContext *>(device->data)->hwctx);
-}
-
-// The device's one drawing context is shared with every decoder using the device.
-class DeviceLock
-{
-public:
-    explicit DeviceLock(AVD3D11VADeviceContext *device)
-        : device(device)
-    {
-        device->lock(device->lock_ctx);
-    }
-    ~DeviceLock() { device->unlock(device->lock_ctx); }
-    DeviceLock(const DeviceLock &) = delete;
-    DeviceLock &operator=(const DeviceLock &) = delete;
-
-private:
-    AVD3D11VADeviceContext *device;
-};
-
-void setColourSpaces(ID3D11VideoContext *context, ID3D11VideoProcessor *processor, bool bt709, bool fullRange)
-{
-    // The older call leaves the meaning of the RGB range to the driver, and drivers disagree.
-    ID3D11VideoContext1 *modern = nullptr;
-    if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D11VideoContext1), reinterpret_cast<void **>(&modern)))) {
-        DXGI_COLOR_SPACE_TYPE input;
-        if (bt709)
-            input = fullRange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
-        else
-            input = fullRange ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P601 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601;
-        modern->VideoProcessorSetStreamColorSpace1(processor, 0, input);
-        modern->VideoProcessorSetOutputColorSpace1(processor, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
-        modern->Release();
-        return;
-    }
-
-    D3D11_VIDEO_PROCESSOR_COLOR_SPACE input = {};
-    input.YCbCr_Matrix = bt709 ? 1 : 0;
-    input.Nominal_Range = fullRange ? D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255 : D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
-    context->VideoProcessorSetStreamColorSpace(processor, 0, &input);
-    // All zero is full-range RGB.
-    const D3D11_VIDEO_PROCESSOR_COLOR_SPACE output = {};
-    context->VideoProcessorSetOutputColorSpace(processor, &output);
-}
-
-} // namespace
+using namespace Core::Video::Win;
 
 bool D3D11GlBridge::contextSupportsIt()
 {
@@ -198,15 +146,7 @@ bool D3D11GlBridge::createTarget(int inputFormat, QSize input, QSize output)
     releaseTarget();
     AVD3D11VADeviceContext *device = direct3d(hardwareDevice);
 
-    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = {};
-    content.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
-    content.InputFrameRate = { 60, 1 };
-    content.InputWidth = static_cast<UINT>(input.width());
-    content.InputHeight = static_cast<UINT>(input.height());
-    content.OutputFrameRate = { 60, 1 };
-    content.OutputWidth = static_cast<UINT>(output.width());
-    content.OutputHeight = static_cast<UINT>(output.height());
-    content.Usage = D3D11_VIDEO_USAGE_PLAYBACK_NORMAL;
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = processorContent(input, output);
     if (FAILED(device->video_device->CreateVideoProcessorEnumerator(&content, &enumerator)))
         return false;
 
@@ -241,10 +181,7 @@ bool D3D11GlBridge::createTarget(int inputFormat, QSize input, QSize output)
     if (!interopObject || !lock())
         return false;
     gl->glBindTexture(GL_TEXTURE_2D, glTexture);
-    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    setSampling(gl, GL_LINEAR);
     gl->glBindTexture(GL_TEXTURE_2D, 0);
     unlock();
 
@@ -252,9 +189,8 @@ bool D3D11GlBridge::createTarget(int inputFormat, QSize input, QSize output)
         DeviceLock guard(device);
         ID3D11VideoContext *context = device->video_context;
         context->VideoProcessorSetStreamFrameFormat(processor, 0, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE);
-        // No sharpening, noise reduction or the like: the picture is shown as it was sent.
         context->VideoProcessorSetStreamAutoProcessingMode(processor, 0, FALSE);
-        // The texture is as large as the coded picture, which is rounded up to whole blocks.
+        // the texture is the coded size, rounded up to whole blocks
         const RECT source = { 0, 0, input.width(), input.height() };
         context->VideoProcessorSetStreamSourceRect(processor, 0, TRUE, &source);
         const RECT whole = { 0, 0, output.width(), output.height() };
@@ -285,15 +221,15 @@ ID3D11VideoProcessorInputView *D3D11GlBridge::inputView(ID3D11Texture2D *texture
     return view;
 }
 
-bool D3D11GlBridge::update(const AVFrame *frame, QSize size, bool bt709, bool fullRange)
+bool D3D11GlBridge::update(const AVFrame *frame, QSize size)
 {
     if (frame->format != AV_PIX_FMT_D3D11 || !frame->hw_frames_ctx || !frame->data[0] || size.isEmpty())
         return false;
     if (!openDevice(frame))
         return false;
 
-    auto *texture = reinterpret_cast<ID3D11Texture2D *>(frame->data[0]);
-    const auto slice = static_cast<unsigned int>(reinterpret_cast<quintptr>(frame->data[1]));
+    ID3D11Texture2D *texture = textureOf(frame);
+    const UINT slice = sliceOf(frame);
     D3D11_TEXTURE2D_DESC description;
     texture->GetDesc(&description);
 
@@ -305,18 +241,16 @@ bool D3D11GlBridge::update(const AVFrame *frame, QSize size, bool bt709, bool fu
         }
     }
 
-    // A reopened decoder has new textures; views of the old ones would only keep them alive.
+    // a reopened decoder has new textures; views of the old ones would only keep them alive
     if (frame->hw_frames_ctx->data != framePool) {
-        for (auto &[key, view] : inputViews)
-            view->Release();
-        inputViews.clear();
+        releaseInputViews();
         framePool = frame->hw_frames_ctx->data;
     }
     ID3D11VideoProcessorInputView *view = inputView(texture, slice);
     if (!view)
         return false;
 
-    // OpenGL has to let go of the target while Direct3D draws into it.
+    // OpenGL must release the target while Direct3D draws into it
     unlock();
 
     AVD3D11VADeviceContext *device = direct3d(hardwareDevice);
@@ -327,7 +261,7 @@ bool D3D11GlBridge::update(const AVFrame *frame, QSize size, bool bt709, bool fu
     bool signalled = false;
     {
         DeviceLock guard(device);
-        setColourSpaces(device->video_context, processor, bt709, fullRange);
+        setColourSpaces(device->video_context, processor, yuvColourSpace(Core::Media::usesBt709(frame), Core::Media::isFullRange(frame)), DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
         if (FAILED(device->video_context->VideoProcessorBlt(processor, outputView, 0, 1, &stream)))
             return false;
 
@@ -339,8 +273,7 @@ bool D3D11GlBridge::update(const AVFrame *frame, QSize size, bool bt709, bool fu
         }
     }
 
-    // OpenGL's lock on the target waits for this drawing as well, but it spins while it does.
-    // Waiting here first costs no processor time, and leaves the lock nothing to wait for.
+    // OpenGL's lock also waits for this drawing, but spins while it does; waiting here first costs no CPU
     if (signalled && SUCCEEDED(fence->SetEventOnCompletion(fenceValue, fenceEvent)))
         WaitForSingleObject(fenceEvent, DRAW_TIMEOUT_MS);
     return true;
@@ -366,6 +299,13 @@ void D3D11GlBridge::unlock()
     locked = false;
 }
 
+void D3D11GlBridge::releaseInputViews()
+{
+    for (auto &[key, view] : inputViews)
+        view->Release();
+    inputViews.clear();
+}
+
 void D3D11GlBridge::releaseTarget()
 {
     unlock();
@@ -378,9 +318,7 @@ void D3D11GlBridge::releaseTarget()
     }
     glTexture = 0;
 
-    for (auto &[key, view] : inputViews)
-        view->Release();
-    inputViews.clear();
+    releaseInputViews();
     framePool = nullptr;
     drop(outputView);
     drop(processor);

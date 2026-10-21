@@ -20,8 +20,7 @@ namespace Win {
 
 namespace {
 
-// PrintWindow's PW_RENDERFULLCONTENT, which the headers keep from a build that also targets
-// Windows 7.
+// missing from headers that also target Windows 7
 constexpr UINT RENDER_FULL_CONTENT = 2;
 constexpr int THUMBNAIL_DRAWING_LIMIT_MS = 500;
 
@@ -32,7 +31,7 @@ Bitmap::Bitmap(const QSize &size) : extent(size), memory(CreateCompatibleDC(null
     BITMAPINFO layout = {};
     layout.bmiHeader.biSize = sizeof(layout.bmiHeader);
     layout.bmiHeader.biWidth = size.width();
-    // Negative for rows that run from the top down.
+    // negative for top-down rows
     layout.bmiHeader.biHeight = -size.height();
     layout.bmiHeader.biPlanes = 1;
     layout.bmiHeader.biBitCount = 32;
@@ -53,7 +52,7 @@ Bitmap::~Bitmap()
 
 QImage shrunk(HDC from, const QRect &area, const QSize &bound)
 {
-    const QSize size = area.width() > bound.width() || area.height() > bound.height() ? area.size().scaled(bound, Qt::KeepAspectRatio).expandedTo(QSize(1, 1)) : area.size();
+    const QSize size = shrunkToFit(area.size(), bound);
     const Bitmap reduced(size);
     if (!reduced.usable())
         return {};
@@ -65,13 +64,10 @@ QImage shrunk(HDC from, const QRect &area, const QSize &bound)
     GdiFlush();
 
     QImage image(size, QImage::Format_RGB32);
-    for (int y = 0; y < size.height(); y++) {
-        const quint32 *source = reduced.row(y);
-        auto *to = reinterpret_cast<quint32 *>(image.scanLine(y));
-        // GDI leaves the byte an image keeps for opacity at zero.
-        for (int x = 0; x < size.width(); x++)
-            to[x] = source[x] | 0xFF000000u;
-    }
+    for (int y = 0; y < size.height(); y++)
+        std::memcpy(image.scanLine(y), reduced.row(y), static_cast<size_t>(size.width()) * RGB32_BYTES_PER_PIXEL);
+    // GDI leaves the alpha byte at zero
+    makeOpaque(image);
     return image;
 }
 
@@ -187,8 +183,7 @@ QImage windowThumbnail(HWND window, const QSize &bound)
     if (!drew)
         return {};
 
-    // What shows of the window, placed in a bitmap that may be at the smaller size a scaled
-    // program draws itself at.
+    // a scaled program may draw smaller than it shows
     const QRect outer = fromNative(whole);
     const QRect shown = visibleBounds(window).translated(-outer.topLeft()) & QRect(QPoint(0, 0), outer.size());
     const QSize drawn = drawer->drawn().size();
@@ -198,14 +193,7 @@ QImage windowThumbnail(HWND window, const QSize &bound)
 
 void copyTopLeft(const Bitmap &from, AVFrame *bgra)
 {
-    const int columns = std::min(from.size().width(), bgra->width);
-    for (int y = 0; y < bgra->height; y++) {
-        uint8_t *to = bgra->data[0] + static_cast<qsizetype>(y) * bgra->linesize[0];
-        const int copied = y < from.size().height() ? columns : 0;
-        if (copied > 0)
-            memcpy(to, from.row(y), static_cast<size_t>(copied) * 4);
-        memset(to + static_cast<qsizetype>(copied) * 4, 0, static_cast<size_t>(bgra->width - copied) * 4);
-    }
+    copyTopLeftOnBlack(reinterpret_cast<const uint8_t *>(from.row(0)), static_cast<qsizetype>(from.size().width()) * RGB32_BYTES_PER_PIXEL, from.size(), bgra);
 }
 
 bool showsTopLeftOf(const Bitmap &from, const AVFrame *bgra)

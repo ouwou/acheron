@@ -1,6 +1,3 @@
-// Tests for the UDP leg of an RTC connection against loopback stand-ins for Discord's media
-// server and for a SOCKS5 proxy. The proxied cases assert the property that matters for a
-// proxied account: the media server never sees a datagram that did not come from the relay.
 
 #include "Core/ProxyConfig.hpp"
 #include "Discord/Voice/PacketBuffer.hpp"
@@ -66,7 +63,6 @@ private:
     QUdpSocket socket;
 };
 
-// Accepts one UDP ASSOCIATE without authentication and relays IPv4 datagrams both ways.
 class FakeSocks5Proxy : public QObject
 {
 public:
@@ -276,14 +272,12 @@ void TestUdpTransport::socks5CarriesDiscoveryAndPacketsThroughRelay()
     const uint8_t *contentAddress = packet->data();
     transport.send(*packet);
 
-    // The relay header lived in the packet's headroom only for the duration of the send.
     QCOMPARE(contentsOf(*packet), outbound);
     QCOMPARE(static_cast<const void *>(packet->data()), static_cast<const void *>(contentAddress));
 
     QTRY_COMPARE(server.received.size(), 2);
     QCOMPARE(server.received.last().payload, outbound);
 
-    // Nothing reached the media server except through the relay, addressed to the media server.
     for (const Datagram &datagram : server.received) {
         QCOMPARE(datagram.senderPort, proxy.relayPort());
         QVERIFY(datagram.senderPort != transport.localPort());
@@ -314,7 +308,6 @@ void TestUdpTransport::socks5DropsFragmentsAndUnwrappedDatagrams()
     proxy.sendRawToClient(QByteArray("\x00\x00\x00\x09", 4) + payload);
     proxy.sendRawToClient(QByteArray("\x00\x00", 2));
 
-    // A datagram straight from the media server, bypassing the relay, must not be trusted.
     server.sendTo(transport.localPort(), payload);
 
     const QByteArray marker = rtpLikePayload('m', 200);
@@ -328,7 +321,6 @@ void TestUdpTransport::socks5SendsNothingBeforeAssociationOrAfterItFails()
 {
     FakeMediaServer server;
 
-    // A proxy that accepts the TCP connection and then never answers.
     QTcpServer silentProxy;
     QVERIFY(silentProxy.listen(LOOPBACK, 0));
     ProxyConfig config;
@@ -346,7 +338,6 @@ void TestUdpTransport::socks5SendsNothingBeforeAssociationOrAfterItFails()
     QTest::qWait(200);
     QVERIFY(server.received.isEmpty());
 
-    // And once an association is lost, the transport reports failure instead of going direct.
     FakeSocks5Proxy proxy(server.port());
     UdpTransport proxied{ proxy.config() };
     QSignalSpy failed(&proxied, &UdpTransport::ipDiscoveryFailed);
@@ -376,7 +367,7 @@ void TestUdpTransport::socks5ReportsRelayLossAfterDiscovery()
     server.answerDiscovery(proxy.relayPort(), "198.51.100.9", 43210);
     QTRY_COMPARE(discovered.size(), 1);
 
-    // RFC 1928 ties the relay's life to the control connection, so its loss ends the media path.
+    // RFC 1928 ties the relay's life to the control connection
     proxy.closeControlConnection();
     QTRY_COMPARE(relayLost.size(), 1);
     QVERIFY(discoveryFailed.isEmpty());

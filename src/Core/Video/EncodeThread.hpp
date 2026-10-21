@@ -12,28 +12,24 @@
 #include <optional>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/RgbScaler.hpp"
+#include "Core/Media/VideoEncoder.hpp"
+#include "Core/Video/EncodePipeline.hpp"
 
 namespace Acheron {
 namespace Core {
 namespace Video {
 
-// The parts of an encode pipeline's own thread that the screen's and the camera's share.
+[[nodiscard]] int usableBitrate(std::optional<int> wanted, std::optional<int> most);
 
-// The bitrate to open an encoder at, of one asked for (none when it is not above zero) and the
-// most allowed (none when it is not above zero).
-[[nodiscard]] int usableBitrate(int wanted, int most);
-
-// Small stills of what is encoded, each in an image of its own, no larger than `bound`.
-// Pictures on the graphics card are brought into memory for it.
 class PreviewMaker
 {
 public:
     explicit PreviewMaker(const QSize &bound) : bound(bound) {}
 
-    // Null when the picture could not be had.
     [[nodiscard]] QImage make(const AVFrame *picture);
 
 private:
@@ -43,8 +39,22 @@ private:
     Media::FramePointer downloaded{ av_frame_alloc() };
 };
 
-// 90 kHz timestamps from when pictures were captured. They run on from one capture to the
-// next, so that a restarted one never goes back.
+class EncodeCounters
+{
+public:
+    // a picture that came out as nothing counts as dropped
+    void deliver(std::vector<Discord::Voice::EncodedVideoFrame> &encoded, EncodePipeline *pipeline, int layer);
+    [[nodiscard]] PipelineStats takeStats(double seconds, const Media::VideoEncoder::Stats &encoder, const QString &encoderName, const QString &source, const QSize &encodedSize, int capturedLately);
+
+private:
+    quint64 framesEncoded = 0;
+    quint64 framesDropped = 0;
+    int encodedLately = 0;
+    quint64 bytesLately = 0;
+};
+
+[[nodiscard]] QString encoderOrNone(const Media::VideoEncoder::Stats &encoder);
+
 class RtpClock
 {
 public:
@@ -55,15 +65,13 @@ private:
     int64_t last = -1;
 };
 
-// Runs a capture on a thread of its own with each start's settings, until it is started again
-// or stopped. `capture` is given the settings and the session they belong to, and returns once
-// isCurrent() says the session is over or it has given up.
+// `capture` returns once isCurrent() says its session is over, or it has given up
 template <typename Settings>
 class CaptureThread
 {
 public:
     using Capture = std::function<void(const Settings &settings, quint64 session)>;
-    // Runs under the lock change() takes, as a start is taken up.
+    // runs under change()'s lock
     using Taken = std::function<void(const Settings &settings)>;
 
     explicit CaptureThread(Capture capture, Taken taken = {})
@@ -104,8 +112,7 @@ public:
 
     [[nodiscard]] bool isCurrent(quint64 session) const { return generation == session; }
 
-    // `change` is given the settings of a start that has not been taken up yet, if there is
-    // one, under the lock that a capture also takes for what it reads of its owner's requests.
+    // under the lock a capture also takes to read its owner's requests
     template <typename Change>
     void change(Change &&change)
     {
@@ -139,7 +146,6 @@ private:
     std::condition_variable wake;
     std::optional<Settings> pending;
     bool quitting = false;
-    // Moves on with every start and stop; a capture ends when it is no longer its own.
     std::atomic<quint64> generation{ 0 };
     std::thread thread;
 };

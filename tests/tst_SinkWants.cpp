@@ -1,6 +1,5 @@
-// Tests for what a voice call asks the server for in opcode 15, and for which tiles keep their
-// video once out of view. The expected values are the official client's: its ladder
-// (docs/video-re/re-voice-gateway-video.md, section 5) and its off-screen rules.
+// the expected values are the official client's: its ladder (docs/video-re/re-voice-gateway-video.md,
+// section 5) and its off-screen rules
 
 #include "Core/Video/TileVisibility.hpp"
 #include "Discord/Voice/SinkWants.hpp"
@@ -84,12 +83,10 @@ void TestSinkWants::ladderFollowsTheSenderCount()
 
 void TestSinkWants::ladderStepsDownForASmallTile()
 {
-    // The first step at least as large as the tile, however few are sending.
     QCOMPARE(sinkWantLevel(1, 100000), 60);
     QCOMPARE(sinkWantLevel(1, 36863), 20);
     QCOMPARE(sinkWantLevel(1, 921600), 100);
     QCOMPARE(sinkWantLevel(1, 5000000), 100);
-    // Never above what the sender count allows.
     QCOMPARE(sinkWantLevel(4, 900000), 70);
     QCOMPARE(sinkWantLevel(4, 100000), 60);
 }
@@ -116,7 +113,6 @@ void TestSinkWants::oneSenderWithTwoEncodings()
     SinkWantsInput input;
     input.senders = { camera(1, 500) };
 
-    // The large encoding is turned off and the small one falls under `any`.
     const SinkWantsPlan plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"500":0,"any":100})"));
     QCOMPARE(plan.deliver.value(Snowflake(1)), 502u);
@@ -146,7 +142,6 @@ void TestSinkWants::focusedSenderGetsFullQuality()
     QCOMPARE(plan.deliver.value(Snowflake(2)), 600u);
     QCOMPARE(plan.deliver.value(Snowflake(3)), 700u);
 
-    // A sender with a single encoding is asked for it at full quality.
     input.focusedUser = Snowflake(3);
     plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"500":0,"600":0,"700":100,"any":80})"));
@@ -170,7 +165,6 @@ void TestSinkWants::unwantedSenderGetsNothing()
     input.senders = { camera(1, 500), camera(2, 600) };
     input.senders[1].wanted = false;
 
-    // They still count as a sender for everyone else's share.
     const SinkWantsPlan plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"500":0,"600":0,"602":0,"any":90})"));
     QVERIFY(plan.deliver.contains(Snowflake(1)));
@@ -225,14 +219,12 @@ void TestSinkWants::onlyTheMostRecentlyHiddenAreKept()
         tiles.setVisible(Snowflake(user), false, static_cast<qint64>(user) * 100);
     }
 
-    // Hidden in the order 1 to 5: the last three keep their video.
     QVERIFY(!tiles.wanted(Snowflake(1), 600));
     QVERIFY(!tiles.wanted(Snowflake(2), 600));
     QVERIFY(tiles.wanted(Snowflake(3), 600));
     QVERIFY(tiles.wanted(Snowflake(4), 600));
     QVERIFY(tiles.wanted(Snowflake(5), 600));
 
-    // One of them coming back makes room for the next most recent.
     tiles.setVisible(Snowflake(5), true, 700);
     QVERIFY(tiles.wanted(Snowflake(2), 700));
     QVERIFY(!tiles.wanted(Snowflake(1), 700));
@@ -249,7 +241,6 @@ void TestSinkWants::comingBackIntoViewResetsTheWait()
     QVERIFY(tiles.wanted(Snowflake(1), 1000 + TileVisibility::HIDDEN_GRACE_MS));
     QVERIFY(!tiles.wanted(Snowflake(1), 25000 + TileVisibility::HIDDEN_GRACE_MS));
 
-    // Being told again that it is hidden does not restart the wait.
     tiles.setVisible(Snowflake(1), false, 40000);
     QVERIFY(!tiles.wanted(Snowflake(1), 25000 + TileVisibility::HIDDEN_GRACE_MS));
 }

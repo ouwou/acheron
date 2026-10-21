@@ -6,8 +6,6 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-// Where nothing can be captured. The capture is in LoopbackCaptureWindows.cpp and
-// LoopbackCapturePipeWire.cpp.
 #if !defined(Q_OS_WIN) && !defined(ACHERON_HAVE_PIPEWIRE)
 
 class LoopbackCapture::Worker

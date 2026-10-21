@@ -12,11 +12,10 @@ namespace Core {
 
 using Discord::Voice::VoiceClient;
 
-StreamSession::StreamSession(const Discord::StreamKey &key, Snowflake accountId, const QString &gatewaySessionId, const ProxyConfig &proxy, Audio::VoiceManager *voice, quint32 audioSource, QObject *parent)
+StreamSession::StreamSession(const Discord::StreamKey &key, Audio::VoiceManager *voice, quint32 audioSource, QObject *parent)
     : QObject(parent), streamKey(key), voice(voice), audioSource(audioSource)
 {
-    const StreamConnection::Account account{ accountId, gatewaySessionId, proxy };
-    rtc = new StreamConnection(account, [](Discord::Voice::ConnectionParams &params) { params.videoCodecs = Media::offeredVideoCodecs(); }, this);
+    rtc = new StreamConnection(StreamConnection::Account::of(*voice), [](Discord::Voice::ConnectionParams &params) { params.videoCodecs = Media::offeredVideoCodecs(); }, this);
     connect(rtc, &StreamConnection::opened, this, &StreamSession::onRtcOpened);
     connect(rtc, &StreamConnection::connected, this, &StreamSession::onRtcConnected);
     connect(rtc, &StreamConnection::closed, this, &StreamSession::onRtcClosed);
@@ -62,19 +61,10 @@ void StreamSession::apply(const StreamRecord &record)
 void StreamSession::end(StreamEndReason reason)
 {
     rtc->close();
-    switch (reason) {
-    case StreamEndReason::StreamFull:
+    if (reason == StreamEndReason::StreamFull)
         setState(State::Full);
-        break;
-    case StreamEndReason::Unauthorized:
-    case StreamEndReason::SafetyGuildRateLimited:
-        setState(State::Failed);
-        break;
-    case StreamEndReason::UserRequested:
-    case StreamEndReason::Other:
-        setState(State::Ended);
-        break;
-    }
+    else
+        setState(isRefusal(reason) ? State::Failed : State::Ended);
 }
 
 void StreamSession::onRtcOpened(Audio::VoiceConnection *connection)
@@ -83,10 +73,10 @@ void StreamSession::onRtcOpened(Audio::VoiceConnection *connection)
 
     decoder = std::make_unique<Media::VideoDecoder>();
     decoder->setSink(frameSink);
-    // The decoder outlives every call the client can still make: the connection is stopped
-    // before the decoder is let go of.
+    // the decoder outlives every call the client can still make: the connection stops before the decoder
+    // is released
     decoder->setKeyframeRequester([client] { QMetaObject::invokeMethod(client, &VoiceClient::requestVideoKeyframeFromEveryone); });
-    decoder->setCodecFailureHandler([client](Discord::Voice::VideoCodec codec) { QMetaObject::invokeMethod(client, [client, codec] { client->withdrawVideoCodec(codec); }); });
+    decoder->setCodecFailureHandler(client->queuedCodecWithdrawal());
     client->setVideoFrameHandler([target = decoder.get()](Snowflake, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
         target->push(codec, std::move(frame));
     });
@@ -184,7 +174,6 @@ void StreamSession::setSurface(int pixelCount, bool visible)
     if (pixelCount == surfacePixels && visible == surfaceVisible)
         return;
 
-    // Resizes are batched, but coming into view should not wait.
     const bool appeared = visible && !surfaceVisible;
     surfacePixels = pixelCount;
     surfaceVisible = visible;
@@ -203,7 +192,7 @@ void StreamSession::pushWants()
 
     const int pixels = demand.pixelsToAskFor(surfacePixels, fullPicturePixels);
     const bool wanted = surfaceVisible;
-    rtc->connection()->run([pixels, wanted](VoiceClient *client) { client->setVideoWants(pixels, wanted); });
+    rtc->run([pixels, wanted](VoiceClient *client) { client->setVideoWants(pixels, wanted); });
 }
 
 void StreamSession::setVolume(float volume)

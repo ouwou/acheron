@@ -9,6 +9,7 @@
 #include "Core/ImageManager.hpp"
 #include "Core/Streams/StreamPreviews.hpp"
 #include "Core/Theme/Manager.hpp"
+#include "UI/LivePill.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -24,13 +25,9 @@ StreamPreviewPopup::StreamPreviewPopup(Core::ImageManager *imageManager, QWidget
     titleFont.setBold(true);
     title->setFont(titleFont);
 
-    auto *livePill = new QLabel(tr("LIVE"), this);
-    QFont pillFont = livePill->font();
-    pillFont.setBold(true);
-    pillFont.setPointSizeF(pillFont.pointSizeF() * 0.8);
-    livePill->setFont(pillFont);
-    const QColor liveColor = Core::Theme::Manager::instance().color(Core::Theme::Token::ChatError);
-    livePill->setStyleSheet(QStringLiteral("QLabel { background: %1; color: white; border-radius: 3px; padding: 0px 4px; }").arg(liveColor.name()));
+    auto *livePill = new QLabel(livePillText(), this);
+    livePill->setFont(livePillFont(livePill->font()));
+    livePill->setStyleSheet(QStringLiteral("QLabel { background: %1; color: white; border-radius: %2px; padding: 0px %3px; }").arg(livePillColour().name()).arg(LIVE_PILL_RADIUS).arg(LIVE_PILL_PADDING));
 
     auto *header = new QHBoxLayout;
     header->setContentsMargins(0, 0, 0, 0);
@@ -98,7 +95,7 @@ void StreamPreviewPopup::showThumbnail(const QUrl &url)
         return;
     thumbnailUrl = url;
 
-    // Fetched through the account's own route, so a proxied account's thumbnails are proxied.
+    // through the account's own route, so a proxied account's thumbnails are proxied
     imageManager->fetch(url, accountId, this, [this, url](const QByteArray &bytes) {
         if (url != thumbnailUrl)
             return;

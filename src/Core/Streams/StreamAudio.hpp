@@ -21,10 +21,8 @@ namespace Audio {
 class OpusEncoder;
 }
 
-// Whether a frame of 16-bit samples has nothing in it to hear. Frames are captured for as long
-// as anything at all is played on the machine, and silence does not come as zeros: it is the
-// noise that rounding to 16 bits leaves, which was measured at a root mean square of 0.5 for a
-// program that plays nothing and of up to 1.8 for everything but one program.
+// captured silence is 16-bit rounding noise, measured at an RMS of 0.5 for a program playing nothing
+// and up to 1.8 for everything but one program
 [[nodiscard]] inline bool isSilence(const QByteArray &pcm)
 {
     constexpr qint64 LOUDEST_SILENCE_RMS = 6;
@@ -35,23 +33,16 @@ class OpusEncoder;
     return squares <= LOUDEST_SILENCE_RMS * LOUDEST_SILENCE_RMS * count;
 }
 
-// Cuts what is captured into runs of sound, as the microphone's frames are cut into talk
-// spurts: a run starts with the first frame that has something in it and goes on through a
-// short silence, so that a pause in the music does not end it.
 class SoundRuns
 {
 public:
     enum class Step {
-        // Silence outside a run. Nothing is sent for it.
         Skip,
-        // The first frame of a run.
         Begin,
         Continue,
-        // The silence has lasted too long: the run is over, and this frame is not part of it.
         End,
     };
 
-    // As long as a talk spurt is held open after the last of the voice.
     static constexpr int HELD_SILENT_FRAMES = 25;
 
     Step offer(bool silent)
@@ -70,7 +61,6 @@ public:
         return Step::End;
     }
 
-    // Frames have stopped coming, or cannot be sent. True when that ends a run.
     bool stop() { return std::exchange(open, false); }
 
 private:
@@ -78,18 +68,13 @@ private:
     int silentFramesLeft = 0;
 };
 
-// The sound that goes with the account's own stream. Takes what is captured, as 20 ms frames
-// of 48 kHz stereo, and sends the runs of sound in it as Opus on the stream's RTC connection.
-// It works on that connection's thread, which adopting it moves it to.
 class StreamAudio : public QObject
 {
     Q_OBJECT
 public:
-    // What the official client raises a stream's audio to when sound goes with it, unless the
-    // voice bitrate is higher still.
+    // what the official client raises stream audio to, unless the voice bitrate is higher
     static constexpr int MIN_BITRATE = 128000;
-    // Nothing is captured while the machine plays nothing at all. This long without a frame
-    // ends a run.
+    // nothing is captured while the machine plays nothing
     static constexpr int SOUND_GONE_MS = 100;
 
     StreamAudio(Discord::Voice::VoiceClient *rtc, int bitrate);

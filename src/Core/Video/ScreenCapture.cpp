@@ -2,12 +2,13 @@
 
 #include "Core/Logging.hpp"
 #include "Core/Video/CaptureCommon.hpp"
+#include "Core/Video/CardScaler.hpp"
 
 #include <QSettings>
 
 #include <algorithm>
+#include <array>
 
-// Where the platforms' own capture is, in ScreenCaptureWindows.cpp and ScreenCaptureLinux.cpp.
 #if defined(Q_OS_WIN) && defined(ACHERON_HAVE_AVFILTER)
 #define ACHERON_WINDOWS_SCREEN_CAPTURE
 #endif
@@ -22,49 +23,39 @@ namespace Video {
 namespace {
 
 const char *const CAPTURE_METHOD_KEY = "video/capture_method";
-const QLatin1String AUTO_METHOD("auto");
-const QLatin1String GRAPHICS_CAPTURE_METHOD("graphics_capture");
-const QLatin1String DESKTOP_DUPLICATION_METHOD("desktop_duplication");
-const QLatin1String PORTAL_METHOD("portal");
-const QLatin1String X11_METHOD("x11");
+
+struct StoredMethod
+{
+    CaptureMethod method;
+    QLatin1String name;
+};
+
+const std::array<StoredMethod, 5> STORED_METHODS = { {
+        { CaptureMethod::Auto, QLatin1String("auto") },
+        { CaptureMethod::GraphicsCapture, QLatin1String("graphics_capture") },
+        { CaptureMethod::DesktopDuplication, QLatin1String("desktop_duplication") },
+        { CaptureMethod::Portal, QLatin1String("portal") },
+        { CaptureMethod::X11, QLatin1String("x11") },
+} };
 
 } // namespace
 
-QSize encodeSizeFor(const QSize &source, int maxHeight)
+QSize encodeSizeFor(const QSize &source, std::optional<int> maxHeight)
 {
-    QSize size = source;
-    const QSize bound(maxHeight * 16 / 9, maxHeight);
-    if (maxHeight > 0 && (source.width() > bound.width() || source.height() > bound.height()))
-        size = source.scaled(bound, Qt::KeepAspectRatio);
-    return QSize(std::max(2, size.width() & ~1), std::max(2, size.height() & ~1));
+    return maxHeight ? fittedInside(source, QSize(*maxHeight * 16 / 9, *maxHeight)) : evenSize(source);
 }
 
 CaptureMethod captureMethod()
 {
     const QString stored = QSettings().value(CAPTURE_METHOD_KEY).toString();
-    if (stored == GRAPHICS_CAPTURE_METHOD)
-        return CaptureMethod::GraphicsCapture;
-    if (stored == DESKTOP_DUPLICATION_METHOD)
-        return CaptureMethod::DesktopDuplication;
-    if (stored == PORTAL_METHOD)
-        return CaptureMethod::Portal;
-    if (stored == X11_METHOD)
-        return CaptureMethod::X11;
-    return CaptureMethod::Auto;
+    const auto found = std::find_if(STORED_METHODS.begin(), STORED_METHODS.end(), [&stored](const StoredMethod &each) { return stored == each.name; });
+    return found == STORED_METHODS.end() ? CaptureMethod::Auto : found->method;
 }
 
 void setCaptureMethod(CaptureMethod method)
 {
-    QLatin1String stored = AUTO_METHOD;
-    if (method == CaptureMethod::GraphicsCapture)
-        stored = GRAPHICS_CAPTURE_METHOD;
-    else if (method == CaptureMethod::DesktopDuplication)
-        stored = DESKTOP_DUPLICATION_METHOD;
-    else if (method == CaptureMethod::Portal)
-        stored = PORTAL_METHOD;
-    else if (method == CaptureMethod::X11)
-        stored = X11_METHOD;
-    QSettings().setValue(CAPTURE_METHOD_KEY, QString(stored));
+    const auto found = std::find_if(STORED_METHODS.begin(), STORED_METHODS.end(), [method](const StoredMethod &each) { return method == each.method; });
+    QSettings().setValue(CAPTURE_METHOD_KEY, QString(found == STORED_METHODS.end() ? STORED_METHODS.front().name : found->name));
 }
 
 #if !defined(ACHERON_LINUX_SCREEN_CAPTURE)
@@ -117,7 +108,7 @@ bool windowIsCovered(const QList<StackedWindow> &topDown, int target)
 
 ScreenCapture::Status ScreenCapture::giveUpOrRetry(const QString &reason, bool clockStartsOver)
 {
-    const auto now = CaptureClock::now();
+    const auto now = std::chrono::steady_clock::now();
     if (!failingSince || clockStartsOver)
         failingSince = now;
     if (now - *failingSince >= std::chrono::milliseconds(GIVE_UP_AFTER_MS)) {
@@ -126,19 +117,51 @@ ScreenCapture::Status ScreenCapture::giveUpOrRetry(const QString &reason, bool c
         qCWarning(LogVideo) << "Giving up on capturing" << request.sourceId << ":" << reason;
         return Status::Failed;
     }
-    retryAt = now + std::chrono::milliseconds(RETRY_INTERVAL_MS);
+    retryLater();
     return Status::Stalled;
+}
+
+void ScreenCapture::retryLater()
+{
+    retryAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(RETRY_INTERVAL_MS);
 }
 
 void ScreenCapture::suspendCardScaling()
 {
-    cardScalingResumesAt = CaptureClock::now() + std::chrono::milliseconds(CARD_SCALING_RETRY_MS);
+    cardScalingResumesAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(CARD_SCALING_RETRY_MS);
 }
 
 bool ScreenCapture::cardScalingSuspended() const
 {
-    return cardScalingResumesAt && CaptureClock::now() < *cardScalingResumesAt;
+    return cardScalingResumesAt && std::chrono::steady_clock::now() < *cardScalingResumesAt;
 }
+
+#if defined(ACHERON_WINDOWS_SCREEN_CAPTURE) || defined(ACHERON_LINUX_SCREEN_CAPTURE)
+
+void ScreenCapture::startOver(const Request &wanted)
+{
+    tearDown();
+    request = wanted;
+    failingSince.reset();
+    retryAt = {};
+    closed = false;
+    failed = false;
+    cardScalingResumesAt.reset();
+    failureText.clear();
+}
+
+void ScreenCapture::delivered()
+{
+    everDelivered = true;
+    failingSince.reset();
+}
+
+bool ScreenCapture::scalesOnCard() const
+{
+    return request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
+}
+
+#endif
 
 #if !defined(ACHERON_WINDOWS_SCREEN_CAPTURE) && !defined(ACHERON_LINUX_SCREEN_CAPTURE)
 
@@ -180,7 +203,7 @@ void restoreIfMinimised(const CaptureSource &)
 {
 }
 
-QSize encodeSizeOf(const CaptureSource &, int)
+QSize encodeSizeOf(const CaptureSource &, std::optional<int>)
 {
     return {};
 }

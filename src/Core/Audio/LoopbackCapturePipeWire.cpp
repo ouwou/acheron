@@ -54,21 +54,12 @@ QString failureText(const QString &detail)
     return LoopbackCapture::tr("PipeWire could not capture the sound (%1).").arg(detail);
 }
 
-bool initPipeWire()
-{
-    if (!Media::pipeWireCanBeCalled())
-        return false;
-    static std::once_flag once;
-    std::call_once(once, [] { pw_init(nullptr, nullptr); });
-    return true;
-}
-
 quint32 parentOf(quint32 processId)
 {
     QFile stat(QStringLiteral("/proc/%1/stat").arg(processId));
     if (!stat.open(QIODevice::ReadOnly))
         return 0;
-    // The name comes second, in brackets, and may itself hold brackets and spaces.
+    // the name is in brackets and may itself hold brackets and spaces
     const QByteArray line = stat.readAll();
     return line.mid(line.lastIndexOf(')') + 2).split(' ').value(1).toUInt();
 }
@@ -141,7 +132,7 @@ public:
     {
         if (!core)
             return;
-        // Disconnecting frees only the proxies that were destroyed first.
+        // disconnecting frees only the proxies destroyed before it
         for (auto &[id, client] : clients)
             pw_proxy_destroy(client.proxy);
         for (auto &[id, node] : nodes)
@@ -265,14 +256,12 @@ private:
         if (!info->props || !(info->change_mask & PW_NODE_CHANGE_MASK_PROPS))
             return;
 
-        // The two ends of a loopback or a filter name the group that links them inside. What
-        // such a stream plays is what other streams played first.
+        // a loopback's or filter's two ends share a link group; what it plays was played by others first
         node->chained = spa_dict_lookup(info->props, PW_KEY_NODE_LINK_GROUP) != nullptr;
         node->known = true;
         node->graph->tell();
     }
 
-    // A node's ports are laid out as the sink it plays on. Its format is the program's own.
     static void shape(void *data, int, uint32_t, uint32_t, uint32_t, const spa_pod *format)
     {
         auto *node = static_cast<Node *>(data);
@@ -292,8 +281,7 @@ private:
         if (client == clients.end() || !info->props)
             return;
 
-        // PulseAudio's programs come through its server, which gives its own process as the
-        // connection's and theirs as the application's. Only the connection's is the kernel's word.
+        // pipewire-pulse reports its own process as the connection's; only that one comes from the kernel
         const bool throughPulse = spa_streq(spa_dict_lookup(info->props, PW_KEY_CLIENT_API), "pipewire-pulse");
         client->second.processId = QByteArray(spa_dict_lookup(info->props, throughPulse ? PW_KEY_APP_PROCESS_ID : PW_KEY_SEC_PID)).toUInt();
         client->second.name = QString::fromUtf8(spa_dict_lookup(info->props, PW_KEY_APP_NAME));
@@ -312,7 +300,7 @@ private:
 
 void consult(int roundTrips, const std::function<void(const Graph &)> &read)
 {
-    pw_main_loop *loop = initPipeWire() ? pw_main_loop_new(nullptr) : nullptr;
+    pw_main_loop *loop = Media::pipeWireReady() ? pw_main_loop_new(nullptr) : nullptr;
     pw_context *context = loop ? pw_context_new(pw_main_loop_get_loop(loop), nullptr, 0) : nullptr;
     {
         Graph graph(context);
@@ -360,7 +348,7 @@ public:
         wanted = target;
         requests++;
         if (target && !loop) {
-            const bool installed = initPipeWire();
+            const bool installed = Media::pipeWireReady();
             loop = installed ? pw_thread_loop_new("acheron-loopback", nullptr) : nullptr;
             asked = loop ? pw_loop_add_event(pw_thread_loop_get_loop(loop), [](void *worker, uint64_t) { static_cast<Worker *>(worker)->serve(); }, this) : nullptr;
             const int unstarted = installed ? -errno : -ENOENT;
@@ -408,7 +396,7 @@ private:
             context = pw_context_new(events, nullptr, 0);
         graph = std::make_unique<Graph>(context);
         pace = graph->core ? pw_loop_add_timer(events, [](void *worker, uint64_t) { static_cast<Worker *>(worker)->sendNext(); }, this) : nullptr;
-        // Left unlinked by the session manager, which only links what asks to be connected.
+        // the session manager links only what asks to be connected
         stream = pace ? pw_stream_new(graph->core, LoopbackCapture::tr("Shared sound").toUtf8().constData(), pw_properties_new(PW_KEY_MEDIA_TYPE, "Audio", PW_KEY_MEDIA_CATEGORY, "Capture", PW_KEY_NODE_AUTOCONNECT, "false", nullptr)) : nullptr;
         if (!stream) {
             fail(QString::fromLocal8Bit(strerror(errno)));
@@ -458,7 +446,7 @@ private:
         streaming = false;
     }
 
-    // The capture is taken down from the loop, not from inside what PipeWire called to tell of it.
+    // not from inside PipeWire's callback
     void fail(const QString &detail)
     {
         broken = failureText(detail);
@@ -479,8 +467,7 @@ private:
         pw_loop_update_timer(pw_thread_loop_get_loop(loop), pace, &period, &period, false);
     }
 
-    // PipeWire hands over a whole cycle of the graph at once, which may be many frames long.
-    // One goes out at once, and the rest a frame's length apart, to be gone before the next cycle.
+    // PipeWire hands over a whole graph cycle at once
     void read()
     {
         while (sendFrame()) {}
@@ -500,8 +487,7 @@ private:
 
     void mixDown(const qint16 *captured, quint32 sampleFrames)
     {
-        // What PipeWire's own mixer gives the centre and surrounds, and the bass, when it makes
-        // stereo of them (channelmix-ops.c).
+        // PipeWire's own downmix gains (channelmix-ops.c)
         constexpr float BESIDE = 0.707106781f;
         constexpr float BASS = 0.353553391f;
 
@@ -524,8 +510,7 @@ private:
         return true;
     }
 
-    // PipeWire only runs a node once something running is linked to it. Until then, while
-    // others play, the silence is made here.
+    // PipeWire runs a node only once something running links to it
     void sendNext()
     {
         if (sendFrame() || streaming)
@@ -556,8 +541,7 @@ private:
         return ofTree == (target.scope == LoopbackCapture::Scope::ProcessTree);
     }
 
-    // On a surround sink PipeWire fills the channels a program does not have from the ones it
-    // has. Those are no part of what the program plays, and its front pair is unchanged by it.
+    // on a surround sink PipeWire fills a program's missing channels from its own
     [[nodiscard]] static bool carries(const Graph::Node &node, const QByteArray &played, const QByteArray &captured)
     {
         if (captured == "FL" || captured == "FR")
@@ -610,7 +594,7 @@ private:
     pw_thread_loop *loop = nullptr;
     spa_source *asked = nullptr;
 
-    // The rest belongs to the loop's thread.
+    // the rest belongs to the loop's thread
     quint64 served = 0;
     pw_context *context = nullptr;
     Target target;
@@ -630,12 +614,11 @@ bool processLoopbackAvailable()
     static bool available = false;
     static QElapsedTimer asked;
 
-    // No may be for now only: a session manager that is still starting, an output not yet plugged in.
     const std::lock_guard lock(mutex);
     if (available || (asked.isValid() && asked.elapsed() < ASKED_AGAIN_AFTER_MS))
         return available;
 
-    // A PipeWire that only carries screens, beside a PulseAudio that plays, has no outputs.
+    // a PipeWire that only carries screens, beside a PulseAudio that plays, has no outputs
     consult(1, [](const Graph &graph) { available = graph.sinkSeen; });
     asked.start();
     if (!available)
@@ -648,7 +631,6 @@ QList<PlayingProgram> playingPrograms()
     if (!processLoopbackAvailable())
         return {};
 
-    // A program is told of in answer to binding it, which is asked as the registry lists it.
     QMap<quint32, QString> names;
     consult(2, [&names](const Graph &graph) {
         const auto self = static_cast<quint32>(getpid());

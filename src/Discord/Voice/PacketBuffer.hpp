@@ -10,9 +10,8 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// One datagram's worth of storage. The content sits after HEADROOM spare bytes so a
-// SOCKS5 relay header can be written in front of it, and the cipher's tag and nonce
-// behind it, without moving the payload.
+// HEADROOM spare bytes before the content let a SOCKS5 relay header be written in front, and the
+// cipher's tag and nonce behind, without moving the payload
 class PacketBuffer
 {
 public:
@@ -34,6 +33,7 @@ public:
 
     [[nodiscard]] std::span<uint8_t> bytes() { return { data(), static_cast<size_t>(length) }; }
     [[nodiscard]] std::span<const uint8_t> bytes() const { return { data(), static_cast<size_t>(length) }; }
+    [[nodiscard]] std::span<uint8_t> writable() { return { data(), static_cast<size_t>(CAPACITY - start) }; }
 
     bool resize(int newLength)
     {
@@ -76,8 +76,7 @@ private:
     int length = 0;
 };
 
-// Recycles PacketBuffers so the steady-state packet path does not touch the heap.
-// Not thread-safe: a pool and every handle it gave out stay on one thread.
+// not thread safe: a pool and its handles stay on one thread
 class PacketPool
 {
 public:

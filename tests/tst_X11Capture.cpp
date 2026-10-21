@@ -3,6 +3,7 @@
 #include "Core/Video/LinuxCapture.hpp"
 
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
+#include "ProcessUsage.hpp"
 #include "X11TestWindow.hpp"
 
 #include <QElapsedTimer>
@@ -28,6 +29,7 @@ extern "C" {
 
 using namespace Acheron;
 using namespace Acheron::Core::Video;
+using ProcessUsage::processCpuMs;
 
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
 
@@ -43,7 +45,6 @@ constexpr quint32 RED = 0xC8281E;
 constexpr quint32 GREEN = 0x1EB43C;
 constexpr quint32 BLUE = 0x2846D2;
 constexpr quint32 ORANGE = 0xF08C14;
-// The pointer may lie over a window, and is drawn into its picture.
 constexpr double NEARLY_ALL = 0.95;
 constexpr int SETTLE_MS = 300;
 
@@ -100,13 +101,6 @@ bool showsWithin(LinuxGrabber &grabber, AVFrame *frame, quint32 colour, const QR
             return true;
     }
     return false;
-}
-
-double processCpuMs()
-{
-    timespec spent = {};
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &spent);
-    return static_cast<double>(spent.tv_sec) * 1000.0 + static_cast<double>(spent.tv_nsec) / 1e6;
 }
 
 struct Pace
@@ -360,7 +354,7 @@ void TestX11Capture::windowsAreListedWithoutThisProgramsOwn()
     QTRY_VERIFY(own.isShown());
     QTest::qWait(200);
 
-    // Their titles are the user's own business and stay out of the log.
+    // window titles stay out of the log
     const QList<CaptureSource> windows = X11Capture::windows();
     qInfo() << windows.size() << "windows listed";
     QStringList ids;
@@ -403,7 +397,7 @@ void TestX11Capture::otherProgramsWindowsAreListedTopFirst()
     QCOMPARE(messages.geometry.size(), QSize(300, 200));
     QVERIFY(quietScreen.geometry.contains(messages.geometry));
     QCOMPARE(messages.geometry, TestWindow::onRoot(*display, messages.id.mid(7).toUInt()));
-    // xmessage does not say which process it is.
+    // xmessage doesnt say which process it is
     QCOMPARE(messages.processId, 0u);
     QCOMPARE(X11Capture::sizeOf(messages), QSize(300, 200));
 
@@ -559,7 +553,7 @@ void TestX11Capture::aWindowIsCapturedWithoutTheShadowItDrawsItself()
     if (!connection)
         QSKIP(NO_DISPLAY);
 
-    // As GTK has it: so much of the window's left, right, top and bottom is its shadow.
+    // as GTK has it: this much of the window's left, right, top and bottom is shadow
     TestWindow::Look outside = look(QSize(480, 360), GREEN);
     outside.title = titleFor("with a shadow");
     outside.ours = false;
@@ -600,7 +594,6 @@ void TestX11Capture::aWindowIsCapturedWithoutTheShadowItDrawsItself()
     QCOMPARE(sizeOf(frame.get()), QSize(400, 300));
     QCOMPARE(X11Capture::sizeOf(listed), QSize(400, 300));
 
-    // As when GTK makes a window fill the screen, and it has no shadow left.
     content.moveTo(QPoint(0, 0));
     content.resizeInside(QSize(480, 360));
     window.set("_GTK_FRAME_EXTENTS", XCB_ATOM_CARDINAL, { 0, 0, 0, 0 });
@@ -666,7 +659,6 @@ void TestX11Capture::aWindowThatCannotBeReadFails()
     if (composite && composite->present)
         QSKIP("this X server keeps a picture of every window being captured, so there is none it cannot read: it has the Composite extension");
 
-    // Partly off the screen, which is as much of a window as such a server has to read.
     TestWindow::Look look;
     look.inside = QSize(400, 300);
     look.at = QPoint(-100, 80);
@@ -694,7 +686,6 @@ void TestX11Capture::aWindowMadeSmallerAsItIsReadIsReadAgain()
         QSKIP(NO_DISPLAY);
 
     TestWindow window(look(QSize(400, 300), RED));
-    // A picture every 200 ms, most of which a grab spends waiting for it.
     const std::unique_ptr<LinuxGrabber> grabber = X11Capture::open(window.source().id, 5);
     const FramePointer frame(av_frame_alloc());
     QVERIFY2(showsWithin(*grabber, frame.get(), RED), qPrintable(grabber->failure()));
@@ -915,7 +906,7 @@ void TestX11Capture::aThumbnailHasTheWindowsColour()
     QVERIFY(!shrunk.isNull());
     QCOMPARE(shrunk.size(), QSize(120, 90));
     QCOMPARE(shrunk.format(), QImage::Format_RGB32);
-    // QImage::pixel() says a pixel of this format is opaque whatever its fourth byte holds.
+    // QImage::pixel() calls a pixel of this format opaque whatever its fourth byte holds
     int same = 0;
     for (int y = 0; y < shrunk.height(); y++) {
         const auto *row = reinterpret_cast<const quint32 *>(shrunk.constScanLine(y));

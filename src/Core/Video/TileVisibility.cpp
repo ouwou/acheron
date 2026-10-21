@@ -22,11 +22,6 @@ void TileVisibility::remove(Snowflake userId)
     tiles.remove(userId);
 }
 
-void TileVisibility::clear()
-{
-    tiles.clear();
-}
-
 bool TileVisibility::wanted(Snowflake userId, qint64 nowMs) const
 {
     auto it = tiles.constFind(userId);
@@ -37,12 +32,11 @@ bool TileVisibility::wanted(Snowflake userId, qint64 nowMs) const
     if (nowMs - it->hiddenSinceMs >= HIDDEN_GRACE_MS)
         return false;
 
-    // Among the hidden, only the most recently hidden few are kept.
     int hiddenMoreRecently = 0;
     for (auto other = tiles.constBegin(); other != tiles.constEnd(); ++other) {
         if (other.key() == userId || other->visible)
             continue;
-        if (other->hiddenSinceMs > it->hiddenSinceMs || (other->hiddenSinceMs == it->hiddenSinceMs && static_cast<quint64>(other.key()) > static_cast<quint64>(userId)))
+        if (other->hiddenSinceMs > it->hiddenSinceMs || (other->hiddenSinceMs == it->hiddenSinceMs && other.key() > userId))
             hiddenMoreRecently++;
     }
     return hiddenMoreRecently < HIDDEN_KEPT;

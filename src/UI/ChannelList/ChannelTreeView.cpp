@@ -11,7 +11,7 @@
 namespace Acheron {
 namespace UI {
 
-// The official client shows a live user's stream preview after hovering their row this long.
+// as the official client
 static constexpr int LIVE_HOVER_DELAY_MS = 100;
 
 static bool isAlwaysExpanded(ChannelNode::Type type)
@@ -19,7 +19,6 @@ static bool isAlwaysExpanded(ChannelNode::Type type)
     return type == ChannelNode::Type::Forum;
 }
 
-// A voice participant's row whose `role` is set, such as IsVoiceLiveRole.
 static bool isParticipantWith(const QModelIndex &proxyIndex, int role)
 {
     return proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(role).toBool();
@@ -58,25 +57,27 @@ void ChannelTreeView::leaveEvent(QEvent *event)
     setHoveredLiveParticipant(QModelIndex());
 }
 
+void ChannelTreeView::hideLiveHover()
+{
+    if (!shownLiveHover.isValid())
+        return;
+    shownLiveHover = QPersistentModelIndex();
+    emit liveParticipantHoverChanged(QModelIndex());
+}
+
 void ChannelTreeView::setHoveredLiveParticipant(const QModelIndex &proxyIndex)
 {
     if (!isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceLiveRole)) {
         liveHoverDelay.stop();
         pendingLiveHover = QPersistentModelIndex();
-        if (shownLiveHover.isValid()) {
-            shownLiveHover = QPersistentModelIndex();
-            emit liveParticipantHoverChanged(QModelIndex());
-        }
+        hideLiveHover();
         return;
     }
 
     if (proxyIndex == shownLiveHover || proxyIndex == pendingLiveHover)
         return;
 
-    if (shownLiveHover.isValid()) {
-        shownLiveHover = QPersistentModelIndex();
-        emit liveParticipantHoverChanged(QModelIndex());
-    }
+    hideLiveHover();
     pendingLiveHover = proxyIndex;
     liveHoverDelay.start();
 }

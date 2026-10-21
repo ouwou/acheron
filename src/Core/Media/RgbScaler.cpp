@@ -44,7 +44,7 @@ bool isFullRange(const AVFrame *frame)
     if (frame->color_range == AVCOL_RANGE_JPEG)
         return true;
 
-    // The formats ffmpeg keeps for full-range pictures from decoders that do not set the range.
+    // formats ffmpeg keeps for full-range pictures from decoders that dont set the range
     switch (frame->format) {
     case AV_PIX_FMT_YUVJ420P:
     case AV_PIX_FMT_YUVJ422P:
@@ -78,7 +78,7 @@ bool RgbScaler::scale(const AVFrame *frame, QImage &into)
 {
     if (into.isNull() || into.depth() != 32)
         return false;
-    // Writing into a shared image would have Qt copy it into memory with no room to spare.
+    // writing into a shared image would make Qt copy it into memory with no room to spare
     if (!into.isDetached())
         into = allocate(into.size(), into.format());
     if (into.isNull())

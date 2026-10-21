@@ -23,7 +23,7 @@
 class X11TestWindow
 {
 public:
-    // WM_STATE's states (ICCCM 4.1.3.1).
+    // ICCCM 4.1.3.1
     static constexpr quint32 WITHDRAWN_STATE = 0;
     static constexpr quint32 NORMAL_STATE = 1;
     static constexpr quint32 ICONIC_STATE = 3;
@@ -111,7 +111,7 @@ public:
         return XCB_NONE;
     }
 
-    // As a program asks the window manager to (ICCCM 4.1.4).
+    // ICCCM 4.1.4
     static void minimise(const Display &display, xcb_window_t window)
     {
         xcb_client_message_event_t message = {};
@@ -134,7 +134,7 @@ public:
         const xcb_colormap_t colours = look.ownOpacity ? xcb_generate_id(connection) : static_cast<xcb_colormap_t>(XCB_COPY_FROM_PARENT);
         if (look.ownOpacity)
             xcb_create_colormap(connection, XCB_COLORMAP_ALLOC_NONE, colours, display.root, visual);
-        // A window of another depth than the one it is in has to name its border and its colours.
+        // a window of another depth than its parent must name its border and colours
         const uint32_t values[] = { look.ownOpacity ? 0xFF000000u | look.colour : look.colour, 0, !look.framed, colours };
         id = xcb_generate_id(connection);
         xcb_create_window(connection, look.ownOpacity ? 32 : XCB_COPY_FROM_PARENT, id, look.within ? look.within : display.root, static_cast<int16_t>(look.at.x()), static_cast<int16_t>(look.at.y()), static_cast<uint16_t>(look.inside.width()), static_cast<uint16_t>(look.inside.height()), 0, XCB_WINDOW_CLASS_INPUT_OUTPUT, visual, XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_COLORMAP, values);
@@ -148,7 +148,7 @@ public:
         }
         if (look.ours)
             set("_NET_WM_PID", XCB_ATOM_CARDINAL, { static_cast<quint32>(getpid()) });
-        // WM_SIZE_HINTS, whose first number says the user chose the place and the size (ICCCM 4.1.2.3).
+        // WM_SIZE_HINTS; the first number says the user chose the place and size (ICCCM 4.1.2.3)
         std::vector<quint32> hints(18, 0);
         hints[0] = 1 | 2;
         set("WM_NORMAL_HINTS", XCB_ATOM_WM_SIZE_HINTS, hints);
@@ -208,7 +208,7 @@ public:
     {
         xcb_map_window(display.connection, id);
         xcb_flush(display.connection);
-        // KWin shows a window before it has put it in its place, and lists it once it has.
+        // KWin shows a window before placing it, and lists it once it has
         const bool listed = managed && aWindowManagerRuns(display);
         for (int waited = 0; topLevel && !(isShown() && (!listed || isListed())) && waited < 5000; waited += 5)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));

@@ -225,8 +225,7 @@ struct UpdateVoiceStateData : Core::JsonUtils::JsonObject
 };
 using UpdateVoiceState = Outbound<OpCode::VOICE_STATE_UPDATE, UpdateVoiceStateData>;
 
-// An invalid guild is a private call and an invalid channel leaves voice; both are sent as null.
-// `selfVideo` is whether the account's camera is on, which every update repeats.
+// an invalid guild is a private call and an invalid channel leaves voice; both go as null
 inline UpdateVoiceState voiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo)
 {
     UpdateVoiceState update;

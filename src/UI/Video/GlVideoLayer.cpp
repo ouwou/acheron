@@ -1,5 +1,6 @@
 #include "GlVideoLayer.hpp"
 
+#include "GlTextures.hpp"
 #include "VideoFrameStore.hpp"
 #include "VideoSurface.hpp"
 
@@ -27,14 +28,12 @@ namespace UI {
 
 namespace {
 
-// Not in the settings window: a way out for a machine whose drivers get this wrong.
+// a way out, not in the settings window, for drivers that get this wrong
 const char *const DIRECT_FRAMES_KEY = "video/direct_frames";
 
 using Core::Media::isFullRange;
 using Core::Media::usesBt709;
 
-// Every window of this kind shares its textures with the others, so that one set of hand-over
-// workers serves them all.
 QOpenGLContext *sharedContext()
 {
     static QOpenGLContext *const root = [] {
@@ -50,8 +49,7 @@ QOpenGLContext *sharedContext()
 GlVideoLayer::GlVideoLayer(VideoSurface *owner, std::shared_ptr<VideoFrameStore> frames)
     : QOpenGLWindow(sharedContext()), owner(owner), frames(std::move(frames))
 {
-    // Several of these draw from one thread; waiting for the screen in each would have them
-    // hold one another up.
+    // several layers draw from one thread; waiting for vsync in each would stall the others
     QSurfaceFormat format = requestedFormat();
     format.setSwapInterval(0);
     setFormat(format);
@@ -77,7 +75,7 @@ QImage GlVideoLayer::snapshot()
     QImage image(area, QImage::Format_RGBA8888);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glReadPixels(0, 0, area.width(), area.height(), GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
-    // OpenGL counts rows from the bottom.
+    // OpenGL counts rows from the bottom
     image = image.mirrored();
     image.setDevicePixelRatio(devicePixelRatio());
     return image;
@@ -85,7 +83,7 @@ QImage GlVideoLayer::snapshot()
 
 bool GlVideoLayer::event(QEvent *event)
 {
-    // The last moment at which the context can be made current on this window.
+    // the last moment the context can be made current on this window
     if (event->type() == QEvent::PlatformSurface && static_cast<QPlatformSurfaceEvent *>(event)->surfaceEventType() == QPlatformSurfaceEvent::SurfaceAboutToBeDestroyed && glReady) {
         makeCurrent();
         releaseGl();
@@ -94,7 +92,6 @@ bool GlVideoLayer::event(QEvent *event)
     return QOpenGLWindow::event(event);
 }
 
-// Mouse and keys land on this window, but belong to the surface it is in.
 void GlVideoLayer::mousePressEvent(QMouseEvent *event)
 {
     QCoreApplication::sendEvent(owner, event);
@@ -122,13 +119,11 @@ void GlVideoLayer::keyPressEvent(QKeyEvent *event)
 void GlVideoLayer::focusInEvent(QFocusEvent *event)
 {
     QOpenGLWindow::focusInEvent(event);
-    // A click here brings the surface's window forward, and that is all it should do: whatever
-    // was being typed into keeps the keyboard.
+    // brings the window forward without taking the keyboard from whatever was being typed into
     if (QWindow *top = owner->window()->windowHandle())
         top->requestActivate();
 }
 
-// A new context: whatever was made in the last one went with it.
 void GlVideoLayer::initializeGL()
 {
     forgetGl();
@@ -141,8 +136,7 @@ void GlVideoLayer::setupGl()
     plainProgram = std::make_unique<QOpenGLShaderProgram>();
     glReady = true;
 
-    // Written for OpenGL ES 2 and the desktop versions it is a subset of, so that the same
-    // source runs through ANGLE and on old drivers.
+    // GLSL ES 2, which desktop GL also accepts, so it runs through ANGLE and on old drivers
     static const char *const VERTEX = R"(
         attribute vec2 position;
         attribute vec2 texcoord;
@@ -181,7 +175,6 @@ void GlVideoLayer::setupGl()
     program->bindAttributeLocation("texcoord", 1);
     usable = usable && program->link();
 
-    // A texture that is already RGB: the overlays, and a picture made on the card.
     static const char *const PLAIN_FRAGMENT = R"(
         #ifdef GL_ES
         precision mediump float;
@@ -202,18 +195,12 @@ void GlVideoLayer::setupGl()
 
     glGenTextures(1, &overlayTexture);
     glBindTexture(GL_TEXTURE_2D, overlayTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    setSampling(this, GL_NEAREST);
 
     glGenTextures(static_cast<GLsizei>(textures.size()), textures.data());
     for (const GLuint texture : textures) {
         glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        setSampling(this, GL_LINEAR);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -223,7 +210,7 @@ void GlVideoLayer::setupGl()
             card = std::make_shared<CardPicture>(std::move(worker));
             frames->setCard(card);
         }
-        // Making the worker's context can leave this one no longer current.
+        // making the worker's context can leave this one not current
         makeCurrent();
     }
 #elif defined(ACHERON_HAVE_DMABUF)
@@ -288,7 +275,6 @@ void GlVideoLayer::updateFromCard(bool onCard)
         else if (shown == Shown::OnCard)
             shown = Shown::Nothing;
     } else if (card && shown == Shown::Nothing) {
-        // An old picture is not to come back when the next one is still on its way.
         card->discard();
     }
 #else
@@ -310,8 +296,7 @@ void GlVideoLayer::takeFromCard(const AVFrame *frame, quint64 serial)
         return;
     }
     nv12 = true;
-    // The surface is as large as the coded picture, which is rounded up to whole blocks. As
-    // with rows in memory, the shader is told how much of it to read.
+    // the surface is the coded size, rounded up to whole blocks
     lumaScale = QVector2D((static_cast<float>(frame->width) - 0.5f) / static_cast<float>(exported->width), (static_cast<float>(frame->height) - 0.5f) / static_cast<float>(exported->height));
     chromaScale = QVector2D((static_cast<float>((frame->width + 1) / 2) - 0.5f) / static_cast<float>((exported->width + 1) / 2), (static_cast<float>((frame->height + 1) / 2) - 0.5f) / static_cast<float>((exported->height + 1) / 2));
     setConversion(frame);
@@ -322,7 +307,6 @@ void GlVideoLayer::takeFromCard(const AVFrame *frame, quint64 serial)
 
 void GlVideoLayer::releaseGl()
 {
-    // The card's pictures are in textures of this context's share group.
     closeCard();
     glDeleteTextures(static_cast<GLsizei>(textures.size()), textures.data());
     glDeleteTextures(1, &overlayTexture);
@@ -375,7 +359,6 @@ void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader)
     static const GLfloat POSITIONS[] = { -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f };
     static const GLfloat TEXCOORDS[] = { 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f };
 
-    // The arrays are in memory, which only means that with no buffer bound.
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     shader.enableAttributeArray(0);
     shader.enableAttributeArray(1);
@@ -469,9 +452,7 @@ void GlVideoLayer::upload(const AVFrame *frame)
     const int chromaHeight = (frame->height + 1) / 2;
     nv12 = frame->format == AV_PIX_FMT_NV12;
 
-    // A row in memory is wider than the picture; the whole row goes up, and the shader is told
-    // how much of it to read. Half a texel is held back so that filtering at the edge does not
-    // reach into the padding.
+    // whole rows go up, padding included. half a texel is held back so filtering doesnt reach it
     uploadPlane(0, GL_LUMINANCE, frame->linesize[0], frame->height, frame->data[0]);
     lumaScale = QVector2D((static_cast<float>(frame->width) - 0.5f) / static_cast<float>(frame->linesize[0]), 1.0f);
 
@@ -485,12 +466,10 @@ void GlVideoLayer::upload(const AVFrame *frame)
         chromaScale = QVector2D((static_cast<float>(chromaWidth) - 0.5f) / static_cast<float>(frame->linesize[1]), 1.0f);
     }
     glActiveTexture(GL_TEXTURE0);
-    // Back to the default, which the overlay texture is uploaded with.
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     setConversion(frame);
 }
 
-// Y'CbCr to RGB for the frame's standard and range.
 void GlVideoLayer::setConversion(const AVFrame *frame)
 {
     const bool bt709 = usesBt709(frame);
@@ -515,7 +494,7 @@ void GlVideoLayer::draw(QSize picture)
 
     program->bind();
     const size_t first = shown == Shown::OnCard ? FIRST_CARD_TEXTURE : 0;
-    for (int unit = 0; unit < 3; unit++) {
+    for (int unit = 0; unit < PICTURE_PLANES; unit++) {
         glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
         glBindTexture(GL_TEXTURE_2D, textures[first + static_cast<size_t>(unit)]);
     }

@@ -24,8 +24,6 @@ namespace {
 const char *const SEND_CODECS_OFF_KEY = "video/send_codecs_off";
 constexpr int FIRST_PAYLOAD_TYPE = 101;
 
-// Sizes that an encoder which codes in whole blocks changes: the rows of the first and the
-// columns of the second are no whole number of any block in use.
 constexpr std::array SIZES_NOT_OF_WHOLE_BLOCKS = { QSize(640, 360), QSize(1000, 700) };
 
 using SendCodecsKnown = std::function<void(const QList<VideoCodec> &)>;
@@ -47,6 +45,11 @@ EncoderProbe &encoderProbe()
 
 } // namespace
 
+void startSendCodecProbe()
+{
+    whenSendCodecsKnown(nullptr, [](const QList<VideoCodec> &) {});
+}
+
 void whenSendCodecsKnown(QObject *context, SendCodecsKnown then)
 {
     EncoderProbe &probe = encoderProbe();
@@ -60,8 +63,7 @@ void whenSendCodecsKnown(QObject *context, SendCodecsKnown then)
         return;
     probe.running = true;
 
-    // A thread of its own rather than one of the pool's, which the application waits for as it
-    // quits: a trial can take seconds before it gives up on an encoder.
+    // not the thread pool, which the application waits for as it quits: a trial can take seconds
     std::thread([] {
         const QList<VideoCodec> encodable = encodableVideoCodecs();
         QMetaObject::invokeMethod(
@@ -80,15 +82,24 @@ void whenSendCodecsKnown(QObject *context, SendCodecsKnown then)
     }).detach();
 }
 
+namespace {
+
+QStringList sendCodecsTurnedOff()
+{
+    return QSettings().value(SEND_CODECS_OFF_KEY).toStringList();
+}
+
+} // namespace
+
 bool sendCodecAllowed(VideoCodec codec)
 {
-    return !QSettings().value(SEND_CODECS_OFF_KEY).toStringList().contains(Discord::Voice::videoCodecName(codec));
+    return !sendCodecsTurnedOff().contains(Discord::Voice::videoCodecName(codec));
 }
 
 void setSendCodecAllowed(VideoCodec codec, bool allowed)
 {
     const QString name = Discord::Voice::videoCodecName(codec);
-    QStringList off = QSettings().value(SEND_CODECS_OFF_KEY).toStringList();
+    QStringList off = sendCodecsTurnedOff();
     off.removeAll(name);
     if (!allowed)
         off.append(name);
@@ -97,9 +108,10 @@ void setSendCodecAllowed(VideoCodec codec, bool allowed)
 
 QList<VideoCodec> allowedSendCodecs(const QList<VideoCodec> &encodable)
 {
+    const QStringList off = sendCodecsTurnedOff();
     QList<VideoCodec> allowed;
     for (VideoCodec codec : encodable) {
-        if (sendCodecAllowed(codec))
+        if (!off.contains(Discord::Voice::videoCodecName(codec)))
             allowed.append(codec);
     }
     return allowed;

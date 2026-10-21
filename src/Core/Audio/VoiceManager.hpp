@@ -18,6 +18,7 @@
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Discord/Events.hpp"
+#include "Discord/StreamKey.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 
 namespace Acheron {
@@ -41,6 +42,12 @@ struct VoiceParticipant
     bool selfVideo = false;
     bool selfStream = false;
     bool speaking = false;
+
+    [[nodiscard]] static VoiceParticipant of(Snowflake userId, const Discord::VoiceState &state)
+    {
+        return { userId, state.selfMute.get(), state.selfDeaf.get(), state.mute.get(), state.deaf.get(), state.suppress.get(), state.selfVideo.get(), state.selfStream.valueOr(false) };
+    }
+    [[nodiscard]] bool operator==(const VoiceParticipant &) const = default;
 };
 
 class VoiceManager : public QObject
@@ -53,11 +60,9 @@ public:
     void handleVoiceStateUpdate(const Discord::VoiceState &state);
     void handleVoiceServerUpdate(const Discord::VoiceServerUpdate &event);
 
-    // The id of the gateway session this client is, from READY. A voice state for this account
-    // carrying any other session id belongs to another of the account's devices.
+    // from READY. a voice state for this account with any other session id is another device's
     void setGatewaySessionId(const QString &sessionId);
 
-    // A private call ended: everyone the gateway listed in it is gone.
     void forgetChannelVoiceStates(Snowflake channelId);
 
     void disconnect();
@@ -66,19 +71,17 @@ public:
     [[nodiscard]] Discord::Voice::VoiceClient::State clientState() const;
     [[nodiscard]] Snowflake currentChannelId() const { return channelId; }
     [[nodiscard]] Snowflake currentGuildId() const { return guildId; }
-    // The account's own voice state as the server last gave it for this client's connection.
+    [[nodiscard]] Discord::StreamKey streamKeyOf(Snowflake userId) const { return Discord::StreamKey::forChannel(guildId, channelId, userId); }
+    [[nodiscard]] Snowflake accountUserId() const { return accountId; }
+    [[nodiscard]] const ProxyConfig &accountProxy() const { return proxy; }
+    [[nodiscard]] const QString &currentGatewaySessionId() const { return gatewaySessionId; }
     [[nodiscard]] bool isSelfMuted() const { return selfMute; }
     [[nodiscard]] bool isSelfDeafened() const { return selfDeaf; }
     [[nodiscard]] bool isSelfVideo() const { return selfVideo; }
 
-    // The voice connection, for what else is sent on it (the account's camera). It goes when
-    // the call does: rtcConnectionCreated announces each one before it starts, and
-    // rtcConnectionClosing its end.
+    // announced by rtcConnectionCreated before it starts and by rtcConnectionClosing at its end
     [[nodiscard]] VoiceConnection *rtcConnection() const { return voiceConnection; }
 
-    // The codecs voice connections offer to send video with, which is the camera: those this
-    // machine has turned out to encode, as far as the camera can be sent with them. A
-    // connection that is already up is told now.
     void setEncodableVideoCodecs(const QList<Discord::Voice::VideoCodec> &codecs);
 
     void setInputGain(float gain);
@@ -118,14 +121,11 @@ public:
     [[nodiscard]] QList<Snowflake> channelVoiceUsers(Snowflake channelId) const;
     [[nodiscard]] std::optional<Discord::VoiceState> voiceStateForUser(Snowflake userId) const;
 
-    // Mixes the audio of another RTC connection, such as a watched stream, into this voice
-    // connection's output under its own volume. `source` is any non-zero number unique to it.
     void attachAudioSource(quint32 source, Discord::Voice::VoiceClient *client);
     void detachAudioSource(quint32 source);
     void setAudioSourceVolume(quint32 source, float volume);
 
 #ifdef ACHERON_HAVE_VIDEO
-    // The cameras of the call this account is in.
     [[nodiscard]] CallVideo *video() const { return callVideo; }
 #endif
 
@@ -140,10 +140,7 @@ signals:
     void voiceConnected();
     void voiceDisconnected();
     void rtcConnectionCreated(Acheron::Core::Audio::VoiceConnection *connection);
-    // The connection can still be called, and is stopped straight after.
     void rtcConnectionClosing();
-    // Another session of this account joined voice while this client was connected, which ends
-    // this client's connection without it having asked to leave.
     void takenOverByAnotherSession(Snowflake channelId, Snowflake guildId);
     void voiceStateChanged();
     void audioLevelChanged(float rms);
@@ -168,7 +165,8 @@ private slots:
 
 private:
     void connectToVoiceServer(const QString &endpoint, const QString &token);
-    void stopVoiceThread();
+    void closeVoiceConnection();
+    void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
     IAudioBackend *backend() const;
 
@@ -182,7 +180,7 @@ private:
     Snowflake channelId;
     bool selfMute = false;
     bool selfDeaf = false;
-    // Set by the server while this account has a stream up; the client never asks for it.
+    // set by the server while the account streams; the client never asks for it
     bool selfStream = false;
     bool selfVideo = false;
     QList<Discord::Voice::VideoCodec> encodableVideoCodecs;
@@ -231,7 +229,6 @@ private:
         QPointer<Discord::Voice::VoiceClient> client;
         float volume = 1.0f;
     };
-    // Kept apart from the pipeline, which is replaced whenever the voice connection is.
     QHash<quint32, AudioSource> audioSources;
     void feedAudioSourceToPipeline(quint32 source);
     CallVideo *callVideo = nullptr;

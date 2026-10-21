@@ -6,7 +6,7 @@
 
 #include <optional>
 
-#include "Core/ProxyConfig.hpp"
+#include "Core/GatewayNotice.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Streams/StreamManager.hpp"
 #include "Core/Streams/StreamSession.hpp"
@@ -23,34 +23,26 @@ namespace Audio {
 class VoiceManager;
 }
 
-// Starts and stops watching other people's streams, following the official client's rules for
-// when watching one stream ends another.
+// follows the official client's rules for when watching one stream ends another
 class StreamWatcher : public QObject
 {
     Q_OBJECT
 public:
-    StreamWatcher(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, Snowflake accountId, const ProxyConfig &proxy, QObject *parent = nullptr);
+    StreamWatcher(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, QObject *parent = nullptr);
 
-    void setGatewaySessionId(const QString &sessionId);
-
-    // A stream can be watched from the voice channel it is in, by anyone but its owner.
     [[nodiscard]] bool canWatch(const Discord::StreamKey &key) const;
     void watch(const Discord::StreamKey &key);
     void stopWatching(const QString &streamKey);
     void stopAll();
 
-    // A new gateway session has forgotten every stream, so nothing is sent for them.
     void reset();
 
     [[nodiscard]] StreamSession *session(const QString &streamKey) const;
     [[nodiscard]] QList<StreamSession *> openSessions() const { return sessions.values(); }
 
-    // Watches the stream as soon as this account is in its channel, for when joining the
-    // channel and watching are asked for in one gesture.
     void watchWhenConnected(const Discord::StreamKey &key);
 
 signals:
-    // Also sent for a stream already being watched, when it is asked for again.
     void sessionOpened(Acheron::Core::StreamSession *session);
     void sessionClosed(const QString &streamKey);
 
@@ -62,19 +54,16 @@ private slots:
     void onParticipantChanged(Snowflake userId);
 
 private:
-    void remove(const QString &streamKey, bool tellGateway);
+    void remove(const QString &streamKey, GatewayNotice notice);
     void autoWatchStreamOf(Snowflake userId);
 
     Discord::Client *client;
     StreamManager *streams;
     Audio::VoiceManager *voice;
     Snowflake accountId;
-    ProxyConfig proxy;
-    QString gatewaySessionId;
 
     QHash<QString, StreamSession *> sessions;
     std::optional<Discord::StreamKey> pendingWatch;
-    // Streams that turned this account away for being full; not asked for again on its behalf.
     QSet<QString> fullStreams;
     QString lastAutoWatched;
     quint32 nextAudioSource = 1;

@@ -21,7 +21,6 @@ namespace Voice {
 
 namespace {
 
-// The wall clock as a sender report states it: seconds since 1900 over a binary fraction.
 uint64_t ntpTimeNow()
 {
     constexpr quint64 SECONDS_FROM_1900_TO_1970 = 2208988800ULL;
@@ -46,25 +45,35 @@ std::optional<discord::dave::Codec> daveCodecOf(VideoCodec codec)
     return std::nullopt;
 }
 
+template <typename T>
+std::optional<T> worstOf(std::optional<T> a, std::optional<T> b)
+{
+    if (a && b)
+        return std::max(*a, *b);
+    return a ? a : b;
+}
+
 } // namespace
 
-VoiceClient::VideoSendPath::VideoSendPath(VoiceClient &client) : client(client)
+VoiceClient::VideoSendPath::VideoSendPath(VoiceClient &client)
+    : client(client), paceTimer(std::make_unique<QTimer>(&client)), sendReportTimer(std::make_unique<QTimer>(&client)), keyframeTimer(std::make_unique<QTimer>(&client))
 {
     clock.start();
+
+    paceTimer->setTimerType(Qt::PreciseTimer);
+    QObject::connect(paceTimer.get(), &QTimer::timeout, &client, [this] { onPaceTick(); });
+    QObject::connect(sendReportTimer.get(), &QTimer::timeout, &client, [this] { onSendReportTick(); });
+    keyframeTimer->setSingleShot(true);
+    QObject::connect(keyframeTimer.get(), &QTimer::timeout, &client, [this] { askLayersForKeyframe([](const Layer &layer) { return layer.keyframeAskWaiting; }); });
 }
 
-VoiceClient::VideoSendPath::~VideoSendPath()
-{
-    delete paceTimer;
-    delete sendReportTimer;
-    delete keyframeTimer;
-}
+VoiceClient::VideoSendPath::~VideoSendPath() = default;
 
 void VoiceClient::VideoSendPath::reset()
 {
-    delete std::exchange(paceTimer, nullptr);
-    delete std::exchange(sendReportTimer, nullptr);
-    delete std::exchange(keyframeTimer, nullptr);
+    paceTimer->stop();
+    sendReportTimer->stop();
+    keyframeTimer->stop();
     for (Layer &layer : layers) {
         Layer fresh;
         fresh.quality = layer.quality;
@@ -73,9 +82,9 @@ void VoiceClient::VideoSendPath::reset()
         layer = std::move(fresh);
     }
     estimator = SendSideEstimator();
-    reportedDelayEstimateBps = 0;
+    reportedDelayEstimateBps.reset();
     started.reset();
-    receiverEstimateBps = 0;
+    receiverEstimateBps.reset();
     announcedStreams.clear();
     keyframeRequests = 0;
 }
@@ -84,12 +93,9 @@ void VoiceClient::VideoSendPath::takeStreams(const VoiceReady &ready)
 {
     streams = ready.streams.valueOr();
     if (streams.isEmpty()) {
-        // Given none, the official client takes the two SSRCs that follow its audio one.
-        StreamDescription stream;
-        stream.type = QStringLiteral("video");
-        stream.rid = QStringLiteral("100");
+        // given none, the official client takes the two SSRCs after its audio one
+        StreamDescription stream = cameraStreams(false).front();
         stream.ssrc = client.localSsrc + 1;
-        stream.quality = FULL_QUALITY;
         stream.rtxSsrc = client.localSsrc + 2;
         streams.append(stream);
     }
@@ -102,7 +108,7 @@ void VoiceClient::VideoSendPath::takeStreams(const VoiceReady &ready)
         Layer layer;
         layer.quality = stream.quality.valueOr(FULL_QUALITY);
         layer.ssrc = ssrc;
-        layer.rtxSsrc = stream.rtxSsrc.hasValue() && stream.rtxSsrc.get() != 0 ? stream.rtxSsrc.get() : ssrc + 1;
+        layer.rtxSsrc = stream.rtxSsrcOrNext();
         layers.push_back(std::move(layer));
     }
     emitLayersKnown();
@@ -128,8 +134,8 @@ VoiceClient::VideoSendPath::Layer *VoiceClient::VideoSendPath::layerOf(quint32 s
     return found == layers.end() ? nullptr : &*found;
 }
 
-// The official client's limits for what it captures go to the full-quality layer, and its
-// SSRC is the one an announcement names at the top.
+// the official client's capture limits apply to the full-quality layer, whose SSRC an announcement
+// names at the top
 const VoiceClient::VideoSendPath::Layer *VoiceClient::VideoSendPath::fullLayer() const
 {
     const auto full = std::find_if(layers.cbegin(), layers.cend(), [](const Layer &layer) { return layer.quality == FULL_QUALITY; });
@@ -153,12 +159,8 @@ void VoiceClient::VideoSendPath::setServerCodec(const QString &name)
 {
     serverCodecName = name;
 
-    // The server picks among the codecs this client said it encodes.
-    VideoCodec codec = VideoCodec::Unknown;
-    for (const Codec &offered : client.params.videoCodecs) {
-        if (offered.name.get() == name && offered.encode.valueOr(false))
-            codec = videoCodecFromName(name);
-    }
+    const VideoCodec named = videoCodecFromName(name);
+    const VideoCodec codec = offeredForEncoding(named) ? named : VideoCodec::Unknown;
     if (codec == sendCodec)
         return;
 
@@ -166,18 +168,23 @@ void VoiceClient::VideoSendPath::setServerCodec(const QString &name)
     sendCodec = codec;
     if (started) {
         prepareSenders();
-        // Frames of the old codec may still be on their way here.
         for (Layer &layer : layers)
             layer.awaitsKeyframe = true;
     }
     emit client.videoSendCodecChanged(codec);
 }
 
-bool VoiceClient::VideoSendPath::prepareSenders()
+const Codec *VoiceClient::VideoSendPath::offeredForEncoding(VideoCodec codec) const
 {
     const QList<Codec> &offeredCodecs = client.params.videoCodecs;
-    const auto offered = std::find_if(offeredCodecs.cbegin(), offeredCodecs.cend(), [this](const Codec &codec) { return videoCodecFromName(codec.name) == sendCodec && codec.encode.valueOr(false); });
-    if (layers.empty() || offered == offeredCodecs.cend() || !VideoPacketizer::supports(sendCodec)) {
+    const auto offered = std::find_if(offeredCodecs.cbegin(), offeredCodecs.cend(), [codec](const Codec &each) { return videoCodecFromName(each.name) == codec && each.encode.valueOr(false); });
+    return offered == offeredCodecs.cend() ? nullptr : &*offered;
+}
+
+bool VoiceClient::VideoSendPath::prepareSenders()
+{
+    const Codec *offered = offeredForEncoding(sendCodec);
+    if (layers.empty() || !offered || !VideoPacketizer::supports(sendCodec)) {
         for (Layer &layer : layers) {
             if (layer.sender)
                 layer.sender->setCodec(VideoCodec::Unknown, 0, std::nullopt);
@@ -191,9 +198,7 @@ bool VoiceClient::VideoSendPath::prepareSenders()
 
     for (Layer &layer : layers) {
         if (!layer.sender) {
-            // As WebRTC starts them: the sequence numbers and the picture id anywhere in the
-            // lower half of their range, the transport-wide numbering at one. That one is the
-            // connection's, and runs through every layer's packets.
+            // as WebRTC starts them
             QRandomGenerator *random = QRandomGenerator::global();
             VideoSendStream::Numbering first;
             first.sequence = static_cast<uint16_t>(random->bounded(1, 0x8000));
@@ -224,7 +229,7 @@ void VoiceClient::VideoSendPath::setBitrate(int bitrateBps, int quality)
 
 int VoiceClient::VideoSendPath::announcedMaxBitrate(const Layer &layer) const
 {
-    return &layer == fullLayer() || started->secondLayerMaxBitrate <= 0 ? started->maxBitrate : started->secondLayerMaxBitrate;
+    return &layer == fullLayer() || !started->secondLayerMaxBitrateBps ? started->maxBitrateBps : *started->secondLayerMaxBitrateBps;
 }
 
 void VoiceClient::VideoSendPath::paceByBitrate()
@@ -263,15 +268,10 @@ void VoiceClient::VideoSendPath::start(const LocalVideoDescription &description)
         sendReportedUs = nowUs();
         for (Layer &layer : layers)
             layer.bytesAtSendReport = layer.sender ? layer.sender->stats().bytesWritten : 0;
-        if (!sendReportTimer) {
-            sendReportTimer = new QTimer(&client);
-            QObject::connect(sendReportTimer, &QTimer::timeout, &client, [this] { onSendReportTick(); });
-        }
         sendReportTimer->start(SEND_REPORT_INTERVAL_MS);
     }
     paceByBitrate();
     announce();
-    // Said again for whoever began to listen after the connection was made.
     emitLayersKnown();
 }
 
@@ -286,8 +286,7 @@ void VoiceClient::VideoSendPath::describe(const LocalVideoDescription &descripti
 
 void VoiceClient::VideoSendPath::stop()
 {
-    // Video that was never on is not said to be off either: the official client tells the
-    // server nothing of its video until it has been on once.
+    // as the official client, video that was never on isnt announced off
     if (!started)
         return;
     started.reset();
@@ -299,10 +298,9 @@ void VoiceClient::VideoSendPath::stop()
         if (layer.sender)
             layer.sender->clear();
     }
-    for (QTimer *timer : { paceTimer, sendReportTimer, keyframeTimer }) {
-        if (timer)
-            timer->stop();
-    }
+    paceTimer->stop();
+    sendReportTimer->stop();
+    keyframeTimer->stop();
     announceOff();
 }
 
@@ -312,14 +310,12 @@ void VoiceClient::VideoSendPath::announce()
         return;
 
     StreamResolution resolution;
-    const bool sourceSized = started->maxWidth == 0 && started->maxHeight == 0;
-    resolution.type = sourceSized ? QStringLiteral("source") : QStringLiteral("fixed");
-    resolution.width = started->maxWidth;
-    resolution.height = started->maxHeight;
+    resolution.type = started->maxSize ? QStringLiteral("fixed") : QStringLiteral("source");
+    resolution.width = started->maxSize ? started->maxSize->width() : 0;
+    resolution.height = started->maxSize ? started->maxSize->height() : 0;
 
-    // The official client says of every layer that it is active while it sends video at all,
-    // and announces the same size and frame rate for each: which of them is being encoded is
-    // between the server and its native module, and goes by who receives it.
+    // as the official client: every layer is announced active, at the same size and rate, while video is
+    // on
     announcedStreams = streams;
     for (StreamDescription &stream : announcedStreams) {
         const Layer *layer = layerOf(stream.ssrc.valueOr(0));
@@ -335,8 +331,7 @@ void VoiceClient::VideoSendPath::announce()
     LocalVideoState state;
     state.audioSsrc = client.localSsrc;
     state.videoSsrc = ssrc;
-    // Always the SSRC after the video one, as the official client has it, whatever READY gave
-    // the layer for its retransmissions.
+    // as the official client, always the SSRC after the video one, whatever READY gave
     state.rtxSsrc = ssrc == 0 ? 0 : ssrc + 1;
     state.streams = announcedStreams;
     client.gateway->sendVideo(state);
@@ -360,13 +355,13 @@ void VoiceClient::VideoSendPath::announceOff()
 void VoiceClient::VideoSendPath::sendFrame(const EncodedVideoFrame &frame, int quality)
 {
     Layer *layer = layerOfQuality(quality);
-    if (client.currentState != State::Connected || !client.encryption || !client.udpTransport || !started || !layer || !layer->sender)
+    if (!client.canSendMedia() || !started || !layer || !layer->sender)
         return;
 
     DaveSession *dave = client.daveSession.get();
     if (dave && !dave->isDaveEnabled() && !dave->isDowngraded()) {
-        // Keys are still being agreed, and no picture goes out without them. The official
-        // client fills the gap with placeholder frames; sending nothing serves as well.
+        // the official client sends placeholder frames until DAVE keys are agreed; sending nothing works as
+        // well
         layer->awaitsKeyframe = true;
         return;
     }
@@ -392,44 +387,29 @@ void VoiceClient::VideoSendPath::sendFrame(const EncodedVideoFrame &frame, int q
     startPacing();
 }
 
-// The whole frame is encrypted before it is cut into packets, and comes out in another shape:
-// the encryptor appends its trailer, widens the short start codes of H264 and H265, and of AV1
-// drops the OBUs that are not sent and the size field of the last one.
 bool VoiceClient::VideoSendPath::daveEncrypt(std::span<const uint8_t> frame, quint32 ssrc, std::vector<uint8_t> &encrypted)
 {
-    auto *encryptor = client.daveSession->encryptor();
-    // The encryptor writes its trailer without looking at how much room it was given, and the
-    // size it asks for allows 64 bytes beyond the frame. A frame of many units outgrows that:
-    // each NAL or OBU can add a widened start code and a pair of range numbers, nine bytes at
-    // most, to a unit that may be only two bytes long.
-    encrypted.resize(encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size()) + frame.size() * 5);
+    // the encryptor writes its trailer without checking the room it was given, and its size estimate
+    // allows only 64 bytes over the frame, while each NAL or OBU can grow by up to nine bytes
+    encrypted.resize(client.daveSession->maxCiphertextSize(discord::dave::MediaType::Video, frame.size()) + frame.size() * 5);
 
-    size_t bytesWritten = 0;
-    const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, ssrc, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(encrypted.data(), encrypted.size()), &bytesWritten);
-    if (result != discord::dave::IEncryptor::Success) {
-        qCWarning(LogDave) << "DAVE video encrypt failed: result =" << static_cast<int>(result) << "frameSize =" << frame.size();
+    const std::optional<size_t> written = client.daveSession->encrypt(discord::dave::MediaType::Video, ssrc, frame, encrypted);
+    if (!written)
         return false;
-    }
-    encrypted.resize(bytesWritten);
+    encrypted.resize(*written);
     return true;
 }
 
 void VoiceClient::VideoSendPath::startPacing()
 {
-    if (!paceTimer) {
-        paceTimer = new QTimer(&client);
-        paceTimer->setTimerType(Qt::PreciseTimer);
-        QObject::connect(paceTimer, &QTimer::timeout, &client, [this] { onPaceTick(); });
-    }
     if (!paceTimer->isActive())
         paceTimer->start(VideoSendStream::PACE_INTERVAL_MS);
 }
 
-// A frame's packets written to the socket all at once overrun queues on the way and come out
-// the far end as loss, so each tick lets only a share of them go.
+// writing a whole frame's packets at once overruns queues on the way and comes out as loss
 void VoiceClient::VideoSendPath::onPaceTick()
 {
-    if (client.currentState != State::Connected || !client.encryption || !client.udpTransport || !anyWaiting()) {
+    if (!client.canSendMedia() || !anyWaiting()) {
         paceTimer->stop();
         return;
     }
@@ -451,30 +431,41 @@ void VoiceClient::VideoSendPath::onSendReportTick()
     if (!started)
         return;
     const qint64 now = nowUs();
-    const Layer *full = fullLayer();
+    sendSenderReports(now);
+    emitSendStats(now);
+}
 
+void VoiceClient::VideoSendPath::sendSenderReports(qint64 now)
+{
+    if (!client.canSendMedia())
+        return;
+    for (Layer &layer : layers) {
+        if (!layer.sender || !layer.sender->canReport())
+            continue;
+        PacketPool::Handle packet = client.udpTransport->acquirePacket();
+        packet->resize(packet->tailroom() - VoiceEncryption::TRAILER_SIZE);
+        const int size = layer.sender->writeSenderReport(packet->bytes(), now, ntpTimeNow());
+        if (size > 0 && packet->resize(size) && client.encryption->seal(*packet, RTCP_CLEAR_SIZE))
+            client.udpTransport->send(*packet);
+    }
+}
+
+void VoiceClient::VideoSendPath::emitSendStats(qint64 now)
+{
     VideoSendStats stats;
     stats.codec = videoCodecName(sendCodec);
     stats.keyframeRequests = keyframeRequests;
-    stats.receivers = full ? full->receivers.value_or(-1) : -1;
+    if (const Layer *full = fullLayer())
+        stats.receivers = full->receivers;
     stats.receiverEstimateBps = receiverEstimateBps;
-    stats.delayEstimateBps = static_cast<quint64>(estimator.estimate());
-    stats.acknowledgedBps = static_cast<quint64>(estimator.acknowledged());
+    stats.delayEstimateBps = estimator.estimate();
+    stats.acknowledgedBps = estimator.acknowledged();
     reportedDelayEstimateBps = stats.delayEstimateBps;
 
-    // What every layer sent, taken together.
     quint64 bytesSince = 0;
     for (Layer &layer : layers) {
         if (!layer.sender)
             continue;
-        if (layer.sender->canReport() && client.currentState == State::Connected && client.encryption && client.udpTransport) {
-            PacketPool::Handle packet = client.udpTransport->acquirePacket();
-            packet->resize(packet->tailroom() - VoiceEncryption::TRAILER_SIZE);
-            const int size = layer.sender->writeSenderReport(packet->bytes(), now, ntpTimeNow());
-            if (size > 0 && packet->resize(size) && client.encryption->seal(*packet, RTCP_CLEAR_SIZE))
-                client.udpTransport->send(*packet);
-        }
-
         const VideoSendStream::Stats &sent = layer.sender->stats();
         stats.packets += sent.packets;
         stats.bytes += sent.bytes;
@@ -482,13 +473,13 @@ void VoiceClient::VideoSendPath::onSendReportTick()
         stats.keyframes += sent.keyframes;
         stats.retransmitted += sent.retransmitted;
         stats.nacksReceived += sent.nacksReceived;
-        stats.lossFraction = std::max(stats.lossFraction, sent.lossFraction);
-        stats.roundTripMs = std::max(stats.roundTripMs, sent.roundTripMs);
+        stats.lossFraction = worstOf(stats.lossFraction, sent.lossFraction);
+        stats.roundTripMs = worstOf(stats.roundTripMs, sent.roundTripMs);
         bytesSince += sent.bytesWritten - layer.bytesAtSendReport;
         layer.bytesAtSendReport = sent.bytesWritten;
     }
     if (now > sendReportedUs)
-        stats.bitrateBps = bytesSince * 8 * 1000000 / static_cast<quint64>(now - sendReportedUs);
+        stats.bitrateBps = static_cast<quint64>(rateOf(static_cast<qint64>(bytesSince), now - sendReportedUs));
     sendReportedUs = now;
 
     emit client.videoSendStatsUpdated(stats);
@@ -504,10 +495,10 @@ void VoiceClient::VideoSendPath::receiveRtcp(const ReceivedRtcp &received)
             noteReceivers(*layer, count.receivers);
     }
 
-    if (received.hasReceiverEstimate) {
-        if (received.receiverEstimateBitsPerSecond != receiverEstimateBps)
-            qCDebug(LogVoice) << "Receiving side's estimate of the way from here:" << received.receiverEstimateBitsPerSecond << "bps";
-        receiverEstimateBps = received.receiverEstimateBitsPerSecond;
+    if (received.receiverEstimateBps) {
+        if (received.receiverEstimateBps != receiverEstimateBps)
+            qCDebug(LogVoice) << "Receiving side's estimate of the way from here:" << *received.receiverEstimateBps << "bps";
+        receiverEstimateBps = received.receiverEstimateBps;
     }
 
     if (!started)
@@ -526,8 +517,8 @@ void VoiceClient::VideoSendPath::receiveRtcp(const ReceivedRtcp &received)
         if (!layer || !layer->sender)
             continue;
         layer->sender->onReceptionReport(report, now);
-        if (layer->sender->stats().roundTripMs >= 0)
-            estimator.setRoundTrip(qint64(layer->sender->stats().roundTripMs) * 1000);
+        if (const std::optional<int> roundTripMs = layer->sender->stats().roundTripMs)
+            estimator.setRoundTrip(qint64(*roundTripMs) * 1000);
     }
 
     for (const ReceivedRtcp::TransportReport &report : received.transportReports) {
@@ -535,11 +526,9 @@ void VoiceClient::VideoSendPath::receiveRtcp(const ReceivedRtcp &received)
             qCInfo(LogVoice) << "The server reports when this client's video packets reach it";
         estimator.onReport(report, now);
     }
-    // Whoever sets the encoder's bitrate hears of it with the statistics, which a way that
-    // has just been found to fall behind is not left to wait for.
-    const quint64 estimate = static_cast<quint64>(estimator.estimate());
-    if (estimate > 0 && (reportedDelayEstimateBps == 0 || estimate < reportedDelayEstimateBps * DELAY_ESTIMATE_STEP) && sendReportTimer && sendReportTimer->isActive()) {
-        qCDebug(LogVoice) << "The way from here is falling behind: it is taken to carry" << estimate << "bps of the" << estimator.acknowledged() << "the server acknowledges";
+    const std::optional<qint64> estimate = estimator.estimate();
+    if (estimate && (!reportedDelayEstimateBps || *estimate < *reportedDelayEstimateBps * DELAY_ESTIMATE_STEP) && sendReportTimer->isActive()) {
+        qCDebug(LogVoice) << "The way from here is falling behind: it is taken to carry" << *estimate << "bps of the" << estimator.acknowledged().value_or(0) << "the server acknowledges";
         onSendReportTick();
         sendReportTimer->start(SEND_REPORT_INTERVAL_MS);
     }
@@ -558,7 +547,6 @@ void VoiceClient::VideoSendPath::noteReceivers(Layer &layer, int receivers)
     if (layer.receivers == receivers)
         return;
 
-    // Whoever has only now begun to receive has seen none of what was sent so far.
     const bool firstReceiver = layer.receivers.value_or(0) <= 0 && receivers > 0;
     layer.receivers = receivers;
     emit client.videoReceiversChanged(receivers, layer.quality);
@@ -592,14 +580,7 @@ void VoiceClient::VideoSendPath::askForKeyframe(Layer &layer)
     const qint64 now = clock.elapsed();
     const qint64 wait = layer.keyframeAskedMs ? *layer.keyframeAskedMs + KEYFRAME_INTERVAL_MS - now : 0;
     if (wait > 0) {
-        // Too soon after the last one: this request is passed on when the interval is over,
-        // together with any others that come until then.
         layer.keyframeAskWaiting = true;
-        if (!keyframeTimer) {
-            keyframeTimer = new QTimer(&client);
-            keyframeTimer->setSingleShot(true);
-            QObject::connect(keyframeTimer, &QTimer::timeout, &client, [this] { askLayersForKeyframe([](const Layer &layer) { return layer.keyframeAskWaiting; }); });
-        }
         if (!keyframeTimer->isActive())
             keyframeTimer->start(static_cast<int>(wait));
         return;
@@ -610,9 +591,7 @@ void VoiceClient::VideoSendPath::askForKeyframe(Layer &layer)
     emit client.videoKeyframeRequested(layer.quality);
 }
 
-// What is said of a layer's own SSRC counts before what is said of any, and when neither
-// says anything all of it is wanted: a want of nothing is read as a want of everything, as
-// the official client reads it.
+// a want of nothing reads as a want of everything, as in the official client
 void VoiceClient::VideoSendPath::onMediaSinkWants(const MediaSinkWants &wants)
 {
     for (const Layer &layer : layers) {

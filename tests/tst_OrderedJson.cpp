@@ -83,7 +83,7 @@ void TestOrderedJson::testStringEscaping()
     obj.insert("slash", "a/b");
     obj.insert("uni", QString::fromUtf8("caf\xC3\xA9 \xF0\x9F\x98\x80"));
     obj.insert(QString::fromUtf8("k\xC3\xA9y"), 1);
-    // Kept out of QCOMPARE: Visual Studio 2022 cannot turn a raw string with \" in it into the text of a macro argument.
+    // outside QCOMPARE: Visual Studio 2022 cant stringize a raw string containing \" in a macro argument
     const QByteArray expected = QByteArray(R"({"q":"say \"hi\"","bs":"a\\b","ctl":"tab\tnl\ncr\rbs\bff\f",)"
                                            R"("low":"\u0001\u001f","slash":"a/b","uni":"caf)") +
                                 QByteArray("\xC3\xA9 \xF0\x9F\x98\x80") + QByteArray(R"(","k)") + QByteArray("\xC3\xA9") + QByteArray(R"(y":1})");

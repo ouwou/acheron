@@ -1,7 +1,3 @@
-// The estimate of what the way to the server carries, made from the server's reports of when
-// each packet reached it. The way is one of the test's own: a queue that lets so many bits a
-// second through, with the server's reports written by the same code this client reports to
-// the server with.
 
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/SendSideEstimator.hpp"
@@ -23,7 +19,6 @@ constexpr qint64 REPORT_EVERY_US = 100'000;
 constexpr uint32_t SERVER_SSRC = 0xAABBCCDD;
 constexpr uint32_t VIDEO_SSRC = 0x11223344;
 
-// A queue that lets `capacity` bits a second through, and takes `delayUs` on top.
 struct Way
 {
     double capacity = 0;
@@ -38,8 +33,6 @@ struct Way
     }
 };
 
-// A sender of evenly spaced packets, the way between it and the server, and the server's
-// reports every tenth of a second.
 class Call
 {
 public:
@@ -49,7 +42,6 @@ public:
         estimator.restart(firstSequence);
     }
 
-    // Sends for `seconds` at what `rate` gives each time it is asked, in bits per second.
     void run(double seconds, const std::function<double()> &rate)
     {
         const qint64 untilUs = nowUs + static_cast<qint64>(seconds * 1e6);
@@ -124,8 +116,6 @@ private slots:
 
 void TestSendSideEstimator::aReportIsReadAsItWasWritten()
 {
-    // Packets 10 to 15 with 12 missing, one of them arriving before the one numbered ahead
-    // of it, and one a long while after the rest.
     TransportFeedback server;
     server.onPacket(10, 5'000'000);
     server.onPacket(11, 5'001'250);
@@ -146,7 +136,7 @@ void TestSendSideEstimator::aReportIsReadAsItWasWritten()
     QCOMPARE(report.referenceTime, 5'000'000 / 64'000);
     QCOMPARE(report.packets.size(), size_t(6));
 
-    // In quarter milliseconds from the reference time, which is 8 ms before the first.
+    // quarter milliseconds from the reference time, which is 8 ms before the first
     const std::vector<std::pair<bool, int>> expected = { { true, 32 }, { true, 5 }, { false, 0 }, { true, 7 }, { true, -2 }, { true, 350 } };
     for (size_t i = 0; i < expected.size(); i++) {
         QCOMPARE(report.packets[i].received, expected[i].first);
@@ -165,8 +155,6 @@ void TestSendSideEstimator::aReportCutShortIsNotRead()
     packet.resize(static_cast<size_t>(size));
     QCOMPARE(parseRtcp(packet).transportReports.size(), size_t(1));
 
-    // The length in the header shortened by a word at a time: nothing of it can be read
-    // once deltas are missing, and nothing is read past the end.
     for (int words = 1; size - 4 * words >= 20; words++) {
         std::vector<uint8_t> shorter(packet.begin(), packet.end() - 4 * words);
         qToBigEndian(static_cast<uint16_t>(shorter.size() / 4 - 1), shorter.data() + 2);
@@ -180,22 +168,21 @@ void TestSendSideEstimator::nothingIsKnownOfAWayThatKeepsUp()
     Call call(5'000'000);
     call.run(20, 2'000'000);
 
-    QCOMPARE(call.estimator.estimate(), qint64(0));
+    QVERIFY(!call.estimator.estimate());
     QVERIFY(!call.estimator.overusing());
     QVERIFY(call.estimator.reportsTaken() > 150);
-    const qint64 acknowledged = call.estimator.acknowledged();
+    const qint64 acknowledged = call.estimator.acknowledged().value_or(0);
     QVERIFY2(acknowledged > 1'800'000 && acknowledged < 2'200'000, qPrintable(QString::number(acknowledged)));
 }
 
 void TestSendSideEstimator::aWayThatFallsBehindIsBackedOffFrom()
 {
-    // Twice what the way carries: every packet waits longer than the one before.
     Call call(1'000'000);
     call.run(3, 2'000'000);
 
-    const qint64 estimate = call.estimator.estimate();
+    const qint64 estimate = call.estimator.estimate().value_or(0);
     QVERIFY2(estimate > 700'000 && estimate < 950'000, qPrintable(QString::number(estimate)));
-    const qint64 acknowledged = call.estimator.acknowledged();
+    const qint64 acknowledged = call.estimator.acknowledged().value_or(0);
     QVERIFY2(acknowledged > 900'000 && acknowledged < 1'100'000, qPrintable(QString::number(acknowledged)));
     QVERIFY(call.changes > 0);
 }
@@ -204,36 +191,32 @@ void TestSendSideEstimator::itClimbsBackOnceTheWayKeepsUp()
 {
     Call call(1'000'000);
     call.run(3, 2'000'000);
-    const qint64 backedOff = call.estimator.estimate();
+    const qint64 backedOff = call.estimator.estimate().value_or(0);
     QVERIFY(backedOff > 0);
 
-    // The way widens, and the sender goes by the estimate: it creeps while it is near
-    // where the way gave out, then climbs by a share of itself, never far above what is
-    // seen to arrive.
     call.way.capacity = 6'000'000;
-    call.run(5, [&call] { return static_cast<double>(call.estimator.estimate()); });
-    const qint64 soonAfter = call.estimator.estimate();
+    call.run(5, [&call] { return static_cast<double>(call.estimator.estimate().value_or(0)); });
+    const qint64 soonAfter = call.estimator.estimate().value_or(0);
     QVERIFY2(soonAfter > backedOff && soonAfter < backedOff * 1.6, qPrintable(QStringLiteral("%1 after %2").arg(soonAfter).arg(backedOff)));
 
-    call.run(40, [&call] { return static_cast<double>(call.estimator.estimate()); });
-    const qint64 later = call.estimator.estimate();
+    call.run(40, [&call] { return static_cast<double>(call.estimator.estimate().value_or(0)); });
+    const qint64 later = call.estimator.estimate().value_or(0);
     QVERIFY2(later > backedOff * 3 && later < 6'000'000, qPrintable(QStringLiteral("%1 after %2").arg(later).arg(backedOff)));
-    QVERIFY(later <= call.estimator.acknowledged() * 1.5 + 10'000 + 1);
+    QVERIFY(later <= call.estimator.acknowledged().value_or(0) * 1.5 + 10'000 + 1);
 }
 
 void TestSendSideEstimator::theNumberingRunsThroughItsWrap()
 {
-    // 2 Mbps is some two hundred packets a second, so the numbering wraps within three.
+    // 2 Mbps is some two hundred packets a second, so the numbering wraps within three
     Call call(6'000'000, 65'000);
     call.run(4, 2'000'000);
-    const qint64 acknowledged = call.estimator.acknowledged();
+    const qint64 acknowledged = call.estimator.acknowledged().value_or(0);
     QVERIFY2(acknowledged > 1'800'000 && acknowledged < 2'200'000, qPrintable(QString::number(acknowledged)));
 
-    // What is acknowledged from here on is all of packets numbered after the wrap.
     call.run(4, 3'000'000);
-    const qint64 afterTheWrap = call.estimator.acknowledged();
+    const qint64 afterTheWrap = call.estimator.acknowledged().value_or(0);
     QVERIFY2(afterTheWrap > 2'700'000 && afterTheWrap < 3'300'000, qPrintable(QString::number(afterTheWrap)));
-    QCOMPARE(call.estimator.estimate(), qint64(0));
+    QVERIFY(!call.estimator.estimate());
 }
 
 void TestSendSideEstimator::aReportOnPacketsNotSentIsPassedOver()
@@ -250,8 +233,8 @@ void TestSendSideEstimator::aReportOnPacketsNotSentIsPassedOver()
     for (int i = 0; i < 10; i++)
         estimator.numberPacket(1'000'000 + i * 1000, PACKET_BYTES);
     QVERIFY(!estimator.onReport(report, 2'000'000));
-    QCOMPARE(estimator.acknowledged(), qint64(0));
-    QCOMPARE(estimator.estimate(), qint64(0));
+    QVERIFY(!estimator.acknowledged());
+    QVERIFY(!estimator.estimate());
 }
 
 QTEST_GUILESS_MAIN(TestSendSideEstimator)

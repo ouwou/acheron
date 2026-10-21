@@ -929,6 +929,9 @@ struct VoiceState : Core::JsonUtils::JsonObject
     Field<bool> suppress;
     Field<QString, true> requestToSpeakTimestamp;
 
+    [[nodiscard]] Core::Snowflake channel() const { return channelId.isNull() ? Core::Snowflake::Invalid : channelId.get(); }
+    [[nodiscard]] bool isHeldBy(const QString &gatewaySessionId) const { return gatewaySessionId.isEmpty() || sessionId.get() == gatewaySessionId; }
+
     static VoiceState fromJson(const QJsonObject &obj)
     {
         VoiceState state;

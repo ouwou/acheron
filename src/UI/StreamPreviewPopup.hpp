@@ -16,14 +16,12 @@ class StreamPreviews;
 
 namespace UI {
 
-// The thumbnail shown beside a live user's row in the channel list while it is hovered.
 class StreamPreviewPopup : public QFrame
 {
     Q_OBJECT
 public:
     explicit StreamPreviewPopup(Core::ImageManager *imageManager, QWidget *parent = nullptr);
 
-    // `previews` is null when the account may not look at the stream.
     void showFor(Core::StreamPreviews *previews, Core::Snowflake accountId, const QString &streamKey, const QRect &rowOnScreen);
     void dismiss();
 

@@ -15,7 +15,7 @@ StreamAudio::StreamAudio(VoiceClient *rtc, int bitrate)
     if (encoder->init(Audio::AUDIO_SAMPLE_RATE, Audio::AUDIO_CHANNELS, OPUS_APPLICATION_AUDIO)) {
         encoder->setBitrate(bitrate);
         encoder->setSignalType(OPUS_SIGNAL_MUSIC);
-        // Opus's error correction belongs to its speech coder, which is not what encodes this.
+        // Opus FEC belongs to its speech coder, which doesnt encode this
         encoder->setFec(false);
     } else {
         encoder.reset();
@@ -33,7 +33,6 @@ void StreamAudio::onFrameCaptured(const QByteArray &pcm)
     if (!encoder)
         return;
 
-    // What comes once the connection is back is a run of its own.
     if (rtc->state() != VoiceClient::State::Connected) {
         runs.stop();
         soundGone.stop();

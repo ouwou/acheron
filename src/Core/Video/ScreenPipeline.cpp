@@ -23,8 +23,7 @@ using Discord::Voice::VideoCodec;
 constexpr int PREVIEW_INTERVAL_MS = 500;
 constexpr QSize PREVIEW_BOUND(512, 288);
 constexpr int STATS_INTERVAL_MS = 1000;
-// How long a window has to have been hidden before its share is paused. One that is being
-// closed is hidden for a moment first, and that is the end of the share and not a pause.
+// a window being closed is hidden for a moment first; that ends the share rather than pausing it
 constexpr int HIDDEN_BEFORE_PAUSED_MS = 200;
 
 QString noEncoderFor(VideoCodec codec)
@@ -64,8 +63,7 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
     Media::VideoEncoder::Settings encoding;
     encoding.codec = settings.codec;
     encoding.framerate = std::max(1, settings.framerate);
-    encoding.bitrate = usableBitrate(bitrateBps, settings.maxBitrateBps);
-    encoding.keyframeIntervalMs = settings.keyframeIntervalMs;
+    encoding.bitrateBps = usableBitrate(bitrateBps.load(), settings.maxBitrateBps);
     encoding.content = Media::VideoEncoder::Content::Screen;
     Media::VideoEncoder encoder(encoding);
     if (!encoder.hasEncoder()) {
@@ -81,14 +79,12 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
     request.softwareFormat = encoder.softwareFormat();
     request.keepOnCard = encoder.takesCardFrames();
     request.rgbOnCard = encoder.takesRgbCardFrames();
-    request.bt601Only = settings.codec == VideoCodec::VP8;
+    request.bt601Only = Discord::Voice::carriesOnlyBt601(settings.codec);
     ScreenCapture screen;
     screen.configure(request);
-    // A window that has stopped answering is not waited for once this capture is over.
     screen.setStillWanted([this, session] { return thread.isCurrent(session); });
 
     const Media::FramePointer frame(av_frame_alloc());
-    // The last picture of a source that has one only when it shows something new.
     const Media::FramePointer kept(av_frame_alloc());
     PreviewMaker previews(PREVIEW_BOUND);
     QImage preview;
@@ -103,20 +99,15 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
     bool stalled = false;
     QElapsedTimer hiddenFor;
     bool wasSuspended = false;
-    quint64 framesEncoded = 0;
-    quint64 framesDropped = 0;
+    EncodeCounters counters;
     int capturedLately = 0;
-    int encodedLately = 0;
-    quint64 bytesLately = 0;
 
     while (thread.isCurrent(session)) {
-        // An encoder that turned pictures on the card down for a while takes them again.
         if (!request.keepOnCard && encoder.takesCardFrames()) {
             request.keepOnCard = true;
             screen.configure(request);
         }
 
-        // With nobody watching, a picture is only wanted for a preview.
         const bool suspendedNow = suspended;
         const bool pictureWanted = !suspendedNow || !announcedSize.isValid() || !sincePreview.isValid() || sincePreview.elapsed() >= PREVIEW_INTERVAL_MS;
         screen.setPicturesWanted(pictureWanted);
@@ -132,8 +123,6 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
             return;
         }
 
-        // A hidden window is known to show nothing, also before its first picture. A source
-        // that cannot be read has until its first picture to settle before that is a stall.
         const bool hidden = status == ScreenCapture::Status::Hidden;
         if (hidden && !hiddenFor.isValid())
             hiddenFor.start();
@@ -174,14 +163,12 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
         const QSize size(picture->width, picture->height);
         capturedLately++;
 
-        // Nothing is encoded of a size the encoder would add too much black to. The size is
-        // still reported, and it is for whoever started this to have another codec chosen.
         const QSize codedSize = encoder.codedSize(size);
         const bool heldBack = !Media::paddingIsAcceptable(size, codedSize);
 
         const bool keyframeAsked = keyframeWanted.exchange(false);
         if (!suspendedNow && !heldBack) {
-            encoder.setBitrate(usableBitrate(bitrateBps, settings.maxBitrateBps));
+            encoder.setBitrate(usableBitrate(bitrateBps.load(), settings.maxBitrateBps));
             if (keyframeAsked || wasSuspended)
                 encoder.requestKeyframe();
 
@@ -204,26 +191,17 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
         }
         wasSuspended = suspendedNow;
 
-        // Again whenever a window has changed its size, which the picture follows.
         if (std::exchange(announcedSize, size) != size) {
             if (heldBack)
                 qCInfo(LogVideo) << "Not encoding" << Discord::Voice::videoCodecName(settings.codec) << "at" << size << "which its encoder would code as" << codedSize;
             emit pipeline->started(size, encoding.framerate, 0);
         }
 
-        if (!suspendedNow && !heldBack) {
-            framesDropped += encoded.empty() ? 1 : 0;
-            for (EncodedVideoFrame &each : encoded) {
-                framesEncoded++;
-                encodedLately++;
-                bytesLately += each.data.size();
-                emit pipeline->frameEncoded(std::make_shared<const EncodedVideoFrame>(std::move(each)), 0);
-            }
-        }
+        if (!suspendedNow && !heldBack)
+            counters.deliver(encoded, pipeline, 0);
 
         if (!sincePreview.isValid() || sincePreview.elapsed() >= PREVIEW_INTERVAL_MS) {
             sincePreview.start();
-            // A picture sent again because nothing new has come is the one the last preview is of.
             if (!std::exchange(previewIsOfThisPicture, true))
                 preview = previews.make(picture);
             if (!preview.isNull())
@@ -232,25 +210,9 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
 
         if (sinceStats.elapsed() >= STATS_INTERVAL_MS) {
             const double seconds = static_cast<double>(sinceStats.restart()) / 1000.0;
-            const Media::VideoEncoder::Stats &encoderStats = encoder.stats();
-            PipelineStats stats;
-            // The capture goes into the name for want of a place of its own in the statistics.
-            QString encoderName = encoderStats.encoderName.isEmpty() ? QStringLiteral("no encoder yet") : encoderStats.encoderName;
-            if (heldBack)
-                encoderName = QStringLiteral("none while %1 would add black to this size").arg(Discord::Voice::videoCodecName(settings.codec));
-            stats.encoderName = QStringLiteral("%1, from %2").arg(encoderName, screen.captureName());
-            stats.hardware = encoderStats.hardware;
-            stats.encodedSize = size;
-            stats.capturedFps = capturedLately / seconds;
-            stats.encodedFps = encodedLately / seconds;
-            stats.averageEncodeMs = encoderStats.averageEncodeMs;
-            stats.bitrateBps = static_cast<quint64>(static_cast<double>(bytesLately) * 8.0 / seconds);
-            stats.framesEncoded = framesEncoded;
-            stats.framesDropped = framesDropped;
-            emit pipeline->statsUpdated(stats, 0);
+            const QString encoderName = heldBack ? QStringLiteral("none while %1 would add black to this size").arg(Discord::Voice::videoCodecName(settings.codec)) : encoderOrNone(encoder.stats());
+            emit pipeline->statsUpdated(counters.takeStats(seconds, encoder.stats(), encoderName, screen.captureName(), size, capturedLately), 0);
             capturedLately = 0;
-            encodedLately = 0;
-            bytesLately = 0;
         }
 
         av_frame_unref(frame.get());
@@ -263,7 +225,7 @@ ScreenPipeline::~ScreenPipeline() = default;
 
 void ScreenPipeline::start(const ScreenSettings &settings)
 {
-    worker->bitrateBps = settings.bitrateBps;
+    worker->bitrateBps = usableBitrate(settings.bitrateBps, settings.maxBitrateBps);
     worker->thread.start({ settings, captureMethod() });
 }
 

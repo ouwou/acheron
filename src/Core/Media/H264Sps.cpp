@@ -1,5 +1,8 @@
 #include "Core/Media/H264Sps.hpp"
 
+#include "Core/Media/BitReader.hpp"
+#include "Discord/Voice/NalUnits.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -11,77 +14,17 @@ namespace H264 {
 
 namespace {
 
-constexpr uint8_t NAL_TYPE_MASK = 0x1F;
-constexpr uint8_t NAL_SPS = 7;
 constexpr uint8_t EMULATION_PREVENTION = 3;
-constexpr size_t START_CODE_SIZE = 3;
 
-// The profiles whose SPS says its chroma format, bit depths and scaling lists.
 constexpr std::array<uint32_t, 13> PROFILES_WITH_CHROMA_FORMAT = { 100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135 };
 
-// The standard's own limits, which also keep a malformed SPS from being read for long.
-constexpr int MOST_LEADING_ZEROS = 31;
 constexpr uint32_t MOST_PICTURES_IN_ORDER_CYCLE = 255;
 constexpr uint32_t MOST_CODED_PICTURE_BUFFERS = 32;
 
-// What the official client writes into a restriction it adds.
+// what the official client writes into a restriction it adds
 constexpr uint32_t ADDED_MAX_BYTES_PER_PIC_DENOM = 2;
 constexpr uint32_t ADDED_MAX_BITS_PER_MB_DENOM = 1;
 constexpr uint32_t ADDED_LOG2_MAX_MV_LENGTH = 16;
-
-// A read past the end fails, and so does every read after it: the reading is checked once,
-// when it is over.
-class BitReader
-{
-public:
-    explicit BitReader(std::span<const uint8_t> data) : data(data) {}
-
-    [[nodiscard]] bool failed() const { return hasFailed; }
-    [[nodiscard]] size_t position() const { return at; }
-    void fail() { hasFailed = true; }
-
-    void skip(size_t count)
-    {
-        if (hasFailed || data.size() * 8 - at < count)
-            hasFailed = true;
-        else
-            at += count;
-    }
-
-    uint32_t bits(int count)
-    {
-        const size_t from = at;
-        skip(static_cast<size_t>(count));
-        uint32_t value = 0;
-        for (size_t i = from; i < at; i++)
-            value = (value << 1) | ((data[i / 8] >> (7 - i % 8)) & 1);
-        return value;
-    }
-
-    bool flag() { return bits(1) != 0; }
-
-    uint32_t ue()
-    {
-        int zeros = 0;
-        while (!hasFailed && !flag()) {
-            if (++zeros > MOST_LEADING_ZEROS)
-                hasFailed = true;
-        }
-        return hasFailed ? 0 : (uint32_t(1) << zeros) - 1 + bits(zeros);
-    }
-
-    int32_t se()
-    {
-        const uint32_t code = ue();
-        const int32_t magnitude = static_cast<int32_t>(code / 2 + code % 2);
-        return code % 2 ? magnitude : -magnitude;
-    }
-
-private:
-    std::span<const uint8_t> data;
-    size_t at = 0;
-    bool hasFailed = false;
-};
 
 class BitWriter
 {
@@ -103,7 +46,6 @@ public:
         put(code, length);
     }
 
-    // The last byte is filled up with zeros, as an RBSP is after its stop bit.
     [[nodiscard]] const std::vector<uint8_t> &aligned() const { return bytes; }
 
 private:
@@ -145,15 +87,13 @@ struct ParsedSps
 {
     std::vector<uint8_t> unescaped;
     SpsReordering reordering;
-    // The bits a rewrite keeps as they are: all that come before the first one it writes.
     size_t keptBits = 0;
 };
 
-// Sections 7.3.2.1.1 and E.1.1 of the standard, whose names for what is passed over are in
-// the comments.
+// sections 7.3.2.1.1 and E.1.1; skipped fields are named as in the standard
 std::optional<ParsedSps> parse(std::span<const uint8_t> sps)
 {
-    if (sps.empty() || (sps[0] & NAL_TYPE_MASK) != NAL_SPS)
+    if (sps.empty() || Discord::Voice::h264Type(sps[0]) != Discord::Voice::H264_SPS)
         return std::nullopt;
 
     ParsedSps parsed;
@@ -248,19 +188,10 @@ std::optional<ParsedSps> parse(std::span<const uint8_t> sps)
         }
     }
 
-    // An SPS cut short ends without its stop bit. What comes after the bit is not looked at.
+    // a truncated SPS has no stop bit
     if (!reader.flag() || reader.failed())
         return std::nullopt;
     return parsed;
-}
-
-size_t startCodeFrom(std::span<const uint8_t> data, size_t from)
-{
-    for (size_t i = from; i + START_CODE_SIZE <= data.size(); i++) {
-        if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
-            return i;
-    }
-    return data.size();
 }
 
 } // namespace
@@ -294,7 +225,7 @@ std::vector<uint8_t> withEmulationPrevention(std::span<const uint8_t> payload)
         zeros = byte == 0 ? zeros + 1 : 0;
         nal.push_back(byte);
     }
-    // A zero at the very end would run into the start code that follows.
+    // a zero at the very end would run into the next start code
     if (zeros > 0)
         nal.push_back(EMULATION_PREVENTION);
     return nal;
@@ -321,8 +252,6 @@ std::optional<std::vector<uint8_t>> rewrittenSps(std::span<const uint8_t> sps)
     }
     if (!parsed->reordering.hasVui) {
         writer.put(1, 1);
-        // No aspect ratio, overscan, video signal type, chroma location, timing, NAL HRD, VCL
-        // HRD or picture structure: a flag each.
         writer.put(0, 8);
     }
     if (!parsed->reordering.hasBitstreamRestriction) {
@@ -344,17 +273,14 @@ bool rewriteSpsIn(std::vector<uint8_t> &accessUnit)
     const std::span<const uint8_t> data(accessUnit);
     std::vector<uint8_t> rewritten;
     size_t copied = 0;
-    for (size_t startCode = startCodeFrom(data, 0); startCode < data.size();) {
-        const size_t begin = startCode + START_CODE_SIZE;
-        startCode = startCodeFrom(data, begin);
-        // A zero before a start code is the first byte of one of four.
-        const size_t end = startCode < data.size() && startCode > begin && data[startCode - 1] == 0 ? startCode - 1 : startCode;
-        const std::optional<std::vector<uint8_t>> sps = rewrittenSps(data.subspan(begin, end - begin));
+    for (const std::span<const uint8_t> nal : Discord::Voice::splitAnnexB(data)) {
+        const std::optional<std::vector<uint8_t>> sps = rewrittenSps(nal);
         if (!sps)
             continue;
+        const size_t begin = static_cast<size_t>(nal.data() - data.data());
         rewritten.insert(rewritten.end(), data.begin() + copied, data.begin() + begin);
         rewritten.insert(rewritten.end(), sps->begin(), sps->end());
-        copied = end;
+        copied = begin + nal.size();
     }
     if (rewritten.empty())
         return false;

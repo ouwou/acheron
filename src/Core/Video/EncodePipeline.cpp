@@ -1,5 +1,6 @@
 #include "Core/Video/EncodePipeline.hpp"
 
+#include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/EncodeThread.hpp"
 
 #include <algorithm>
@@ -27,13 +28,10 @@ EncodePipeline::EncodePipeline(QObject *parent) : QObject(parent)
 
 EncodePipeline::~EncodePipeline() = default;
 
-int usableBitrate(int wanted, int most)
+int usableBitrate(std::optional<int> wanted, std::optional<int> most)
 {
-    if (wanted <= 0)
-        wanted = BITRATE_WHEN_NONE_GIVEN;
-    if (most > 0)
-        wanted = std::min(wanted, most);
-    return std::max(wanted, MIN_BITRATE);
+    const int bitrate = wanted.value_or(BITRATE_WHEN_NONE_GIVEN);
+    return std::max(most ? std::min(bitrate, *most) : bitrate, MIN_BITRATE);
 }
 
 QImage PreviewMaker::make(const AVFrame *frame)
@@ -47,14 +45,45 @@ QImage PreviewMaker::make(const AVFrame *frame)
         picture = downloaded.get();
     }
 
-    const QSize full(picture->width, picture->height);
-    const bool fits = full.width() <= bound.width() && full.height() <= bound.height();
-    const QSize size = fits ? full : full.scaled(bound, Qt::KeepAspectRatio).expandedTo(QSize(1, 1));
+    const QSize size = shrunkToFit(QSize(picture->width, picture->height), bound);
     if (image.size() != size)
         image = Media::RgbScaler::allocate(size, QImage::Format_RGB32);
     const bool scaled = scaler.scale(picture, image);
     av_frame_unref(downloaded.get());
     return scaled ? image : QImage();
+}
+
+void EncodeCounters::deliver(std::vector<Discord::Voice::EncodedVideoFrame> &encoded, EncodePipeline *pipeline, int layer)
+{
+    framesDropped += encoded.empty() ? 1 : 0;
+    for (Discord::Voice::EncodedVideoFrame &each : encoded) {
+        framesEncoded++;
+        encodedLately++;
+        bytesLately += each.data.size();
+        emit pipeline->frameEncoded(std::make_shared<const Discord::Voice::EncodedVideoFrame>(std::move(each)), layer);
+    }
+}
+
+PipelineStats EncodeCounters::takeStats(double seconds, const Media::VideoEncoder::Stats &encoder, const QString &encoderName, const QString &source, const QSize &encodedSize, int capturedLately)
+{
+    PipelineStats stats;
+    stats.encoderName = QStringLiteral("%1, from %2").arg(encoderName, source);
+    stats.hardware = encoder.hardware;
+    stats.encodedSize = encodedSize;
+    stats.capturedFps = capturedLately / seconds;
+    stats.encodedFps = encodedLately / seconds;
+    stats.averageEncodeMs = encoder.averageEncodeMs;
+    stats.bitrateBps = static_cast<quint64>(static_cast<double>(bytesLately) * 8.0 / seconds);
+    stats.framesEncoded = framesEncoded;
+    stats.framesDropped = framesDropped;
+    encodedLately = 0;
+    bytesLately = 0;
+    return stats;
+}
+
+QString encoderOrNone(const Media::VideoEncoder::Stats &encoder)
+{
+    return encoder.encoderName.isEmpty() ? QStringLiteral("no encoder yet") : encoder.encoderName;
 }
 
 int64_t RtpClock::timestampOf(std::chrono::steady_clock::time_point capturedAt)

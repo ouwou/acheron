@@ -14,8 +14,7 @@ namespace Voice {
 
 namespace {
 
-// curl calls this while it connects and while it waits, and gives up when it says so: a
-// connection that is stopped while its proxy or its server keeps it waiting goes at once.
+// lets a stopped connection go at once while its proxy or server keeps it waiting
 int abortOnceStopped(void *gateway, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 {
     return static_cast<const VoiceGateway *>(gateway)->isStopping() ? 1 : 0;
@@ -326,7 +325,7 @@ void VoiceGateway::identify()
     id.sessionId = params.sessionId;
     id.token = params.token;
     if (params.video) {
-        id.video = *params.video;
+        id.video = true;
         id.streams = params.streams;
     }
     sendPayload(VoiceOpCode::IDENTIFY, id.toJson());

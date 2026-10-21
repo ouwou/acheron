@@ -1,6 +1,5 @@
 #include "Core/Video/ScreenCapture.hpp"
 
-// Capture is ffmpeg's desktop duplication and graphics capture sources, which are in libavfilter.
 #if defined(Q_OS_WIN) && defined(ACHERON_HAVE_AVFILTER)
 
 #include "Core/Logging.hpp"
@@ -10,6 +9,7 @@
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/PictureConverter.hpp"
 #include "Core/Video/Windows/CardPictures.hpp"
+#include "Core/Video/Windows/Direct3D.hpp"
 #include "Core/Video/Windows/GraphicsCaptureSession.hpp"
 #include "Core/Video/Windows/Monitors.hpp"
 #include "Core/Video/Windows/WindowDrawer.hpp"
@@ -40,16 +40,23 @@ using namespace Win;
 
 namespace {
 
-using Clock = CaptureClock;
+using Clock = std::chrono::steady_clock;
 using Media::describeError;
 
-// How far a window may reach past the edge of its screen and still be cut out of it, as the
-// official client has it.
+// as the official client
 constexpr int REACH_PAST_SCREEN = 15;
-// How long after a window was last seen hidden, or its capture begun, its pictures are read
-// back and looked at, unless one with something in it comes sooner. Only a window that has
-// nothing to show wherever it is looked at is held up for all of it.
+// graphics capture can hand over empty pictures for a while after a window is shown or captured
 constexpr int EMPTY_PICTURES_FOR_MS = 3000;
+
+bool rgbStaysOnCard(const ScreenCapture::Request &request)
+{
+    return request.keepOnCard && request.rgbOnCard;
+}
+
+QByteArray duplicationChain(const Monitor &monitor, int framerate)
+{
+    return "ddagrab=output_idx=" + QByteArray::number(monitor.output) + ":framerate=" + QByteArray::number(framerate);
+}
 
 bool usesGraphicsCapture(CaptureMethod method, bool forWindow)
 {
@@ -59,8 +66,6 @@ bool usesGraphicsCapture(CaptureMethod method, bool forWindow)
 
 } // namespace
 
-// The part of its screen's picture that shows a window, and where in the window's own picture
-// that part belongs. They differ in size only where the window reaches past its screen.
 struct ScreenCapture::CutOut
 {
     QRect onScreen;
@@ -71,7 +76,6 @@ struct ScreenCapture::CutOut
 
 enum class ScreenCapture::Drawing {
     Failed,
-    // What the window drew is what the last picture, which it also drew, shows.
     Unchanged,
     Drawn,
 };
@@ -87,20 +91,13 @@ struct ScreenCapture::Backends
     HWND window = nullptr;
     QSize clientSize;
     Clock::time_point sizeChangedAt;
-    // What is captured of a window, before any scaling. It follows the size of the window's
-    // inside once that has held.
     QSize pictureSize;
     Clock::time_point pictureDue;
 
     std::shared_ptr<GraphicsCaptureSession> session;
-    // Not before this is a capture made again that ended by itself.
     Clock::time_point remakeAt;
-    // Until then, or until one comes that has something in it, a picture of the window may
-    // have nothing in it: the window was hidden a moment ago, or its capture has just begun.
     Clock::time_point emptyPicturesUntil;
 
-    // For a window by duplication: the screen it is on, the card that screen is on, and the
-    // pictures of the window on that card, which both ways of capturing it fill.
     HMONITOR screenHandle = nullptr;
     std::optional<Monitor> screen;
     bool screenChanged = true;
@@ -111,7 +108,6 @@ struct ScreenCapture::Backends
     quint64 cutOutPictures = 0;
     quint64 drawnPictures = 0;
     std::optional<bool> lastWasCutOut;
-    // Why the last picture could not be cut out of the screen, for the log.
     const char *drawnBecause = "";
 
     PictureConverter converter;
@@ -122,24 +118,16 @@ struct ScreenCapture::Backends
     Media::FramePointer bgra{ av_frame_alloc() };
     Media::FramePointer asDrawn{ av_frame_alloc() };
 
-    // How a screen's pictures last went on from the card, for the log.
     const char *wentOn = "";
-    // `video/skip_unchanged_pictures`, for turning off what follows: a picture that duplication
-    // or the window itself gives again unchanged is not delivered again.
     bool skipsUnchanged = true;
-    // The screen's picture the last picture delivered was made of, and for a window where
-    // in it the window was.
     Media::FramePointer lastOfScreen{ av_frame_alloc() };
     CutOut lastCut;
-    // The size of the bitmap `bgra` was filled from, while the last picture delivered is that
-    // one. Not valid otherwise.
     QSize drawingDelivered;
     QSize drawingInBgra;
 };
 
 bool screenCaptureAvailable()
 {
-    // Desktop duplication came with Windows 8.
     static const bool available = avfilter_get_by_name("ddagrab") && QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows8;
     return available;
 }
@@ -175,7 +163,7 @@ QList<CaptureSource> captureSources(CaptureMethod)
     for (size_t i = 0; i < monitors.size(); i++) {
         CaptureSource source;
         source.id = screenSourceId(monitors[i]);
-        source.name = captureText("Screen %1").arg(i + 1);
+        source.name = numberedScreenName(i + 1);
         source.geometry = monitors[i].geometry;
         sources.append(source);
     }
@@ -213,7 +201,7 @@ void restoreIfMinimised(const CaptureSource &window)
         ShowWindowAsync(handle, SW_RESTORE);
 }
 
-QSize encodeSizeOf(const CaptureSource &source, int maxHeight)
+QSize encodeSizeOf(const CaptureSource &source, std::optional<int> maxHeight)
 {
     if (source.kind == CaptureSource::Kind::Screen)
         return source.geometry.isEmpty() ? QSize() : encodeSizeFor(evenSize(source.geometry.size()), maxHeight);
@@ -233,20 +221,11 @@ ScreenCapture::~ScreenCapture()
 
 void ScreenCapture::configure(const Request &wanted)
 {
-    tearDown();
-    request = wanted;
-    failingSince.reset();
-    retryAt = {};
-    closed = false;
-    failed = false;
-    cardScalingResumesAt.reset();
-    failureText.clear();
-
+    startOver(wanted);
     backends = std::make_unique<Backends>();
     backends->window = windowOf(request.sourceId);
     backends->skipsUnchanged = QSettings().value(QStringLiteral("video/skip_unchanged_pictures"), true).toBool();
-    // ddagrab hands over a turned screen's picture as the screen has it, on its side or upside
-    // down, which graphics capture turns upright.
+    // ddagrab hands a turned screen's picture over unrotated; graphics capture turns it upright
     const std::vector<Monitor> monitors = backends->window ? std::vector<Monitor>() : attachedMonitors();
     const Monitor *monitor = monitorOf(monitors, request.sourceId);
     const bool turned = monitor && monitor->turned;
@@ -289,7 +268,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         if (watched != Status::Frame)
             return watched;
     }
-    // Only duplication of a screen has to be read to stay in time with it.
+    // ddagrab must keep being read to stay in time with the screen
     if (!picturesWanted && path != Path::Duplication) {
         std::this_thread::sleep_for(pictureInterval(request.framerate));
         return Status::NoFrame;
@@ -305,8 +284,6 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     return readDuplication(into);
 }
 
-// Whether the window is still there and showing, and how large the picture of it is to be.
-// Status::Frame when there is a window to read.
 ScreenCapture::Status ScreenCapture::watchWindow()
 {
     Backends &state = *backends;
@@ -317,14 +294,14 @@ ScreenCapture::Status ScreenCapture::watchWindow()
         return Status::Closed;
     }
 
-    // Graphics capture leaves out by itself a window that has asked to be kept out of
-    // captures. Duplication would show it black, and it is not asked to draw itself either.
+    // graphics capture leaves out a window excluded from capture by itself; duplication would show it
+    // black
     DWORD affinity = 0;
     const bool keptOutOfCaptures = path == Path::WindowByDuplication && GetWindowDisplayAffinity(state.window, &affinity) && affinity != 0;
     const QRect client = IsIconic(state.window) || !IsWindowVisible(state.window) || keptOutOfCaptures ? QRect() : clientOnScreen(state.window);
     if (client.isEmpty()) {
-        // Hiding a window ends its graphics capture, and minimising it does not.
-        if (state.session && state.session->endedWith() != 0)
+        // hiding a window ends its graphics capture; minimising it doesnt
+        if (state.session && state.session->endedWith())
             state.session.reset();
         dropDuplication();
         state.clientSize = QSize();
@@ -353,24 +330,9 @@ ScreenCapture::Status ScreenCapture::watchWindow()
     return Status::Frame;
 }
 
-void ScreenCapture::delivered()
-{
-    everDelivered = true;
-    failingSince.reset();
-}
-
-// Whether pictures that have to be scaled, or converted for an encoder that takes none of the
-// screen's own, stay on the card for it.
-bool ScreenCapture::scalesOnCard() const
-{
-    return request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
-}
-
-// `area` of a picture on the card made `placed` of the one that is sent, which stays on the
-// card. False when the card would not, after which this capture scales in software.
 bool ScreenCapture::scaleOnCard(const AVFrame *from, const QRect &area, const QSize &size, const QRect &placed, AVFrame *into)
 {
-    const CardScaler::Output output = { size, request.bt601Only || !Media::usesBt709AtHeight(size.height()), request.rgbOnCard };
+    const CardScaler::Output output = { size, Media::encodesAsBt601(size.height(), request.bt601Only), request.rgbOnCard };
     if (backends->scaler.scale(from, area, output, placed, into))
         return true;
     suspendCardScaling();
@@ -387,8 +349,8 @@ ScreenCapture::Status ScreenCapture::readDuplication(AVFrame *into)
             return afterFailure(built);
     }
 
-    // Read whether or not a picture is wanted: ddagrab keeps the time between pictures, and
-    // makes up for a read that did not come by handing the next ones over at once.
+    // read even when no picture is wanted: ddagrab makes up a missed read by handing the next pictures over
+    // at once
     Backends &state = *backends;
     AVFrame *captured = state.captured.get();
     const int got = av_buffersink_get_frame(sink, captured);
@@ -422,15 +384,12 @@ ScreenCapture::Status ScreenCapture::readGraphicsCapture(AVFrame *into)
 
     const auto interval = pictureInterval(request.framerate);
     const auto giveUpAt = std::max(Clock::now(), state.pictureDue) + std::chrono::milliseconds(NOTHING_NEW_WAIT_MS);
-    // A picture that comes a little before one is due is the one a source at twice the rate
-    // has ready, and the next would be late.
+    // a picture a little early is the one a source at twice the rate has ready; the next would be late
     const GraphicsCaptureSession::Taken taken = state.session->take(state.captured.get(), state.pictureDue - interval / 4, giveUpAt);
     if (taken == GraphicsCaptureSession::Taken::Ended) {
-        const int ended = state.session->endedWith();
+        const int ended = *state.session->endedWith();
         if (ended != AVERROR_EOF || !state.window)
             return afterFailure(ended);
-        // Windows ends the capture of a window that is hidden or closed. Neither is a failure,
-        // and which it was the next look at the window tells.
         state.session.reset();
         state.remakeAt = Clock::now() + std::chrono::milliseconds(RETRY_INTERVAL_MS);
         return Status::NoFrame;
@@ -438,11 +397,8 @@ ScreenCapture::Status ScreenCapture::readGraphicsCapture(AVFrame *into)
     if (taken == GraphicsCaptureSession::Taken::Nothing)
         return Status::NoFrame;
     state.pictureDue = std::max(state.pictureDue + interval, Clock::now() + interval / 2);
-    // Graphics capture hands over a picture with nothing in it, transparent all over, as a
-    // window is hidden or closed, and another as it is shown, before the window has drawn
-    // itself. Sent on, it is black for as long as the window stays away. Those of before it
-    // was hidden wait in the capture until it shows again, so how long after is no measure:
-    // they are looked for until the first picture that has something in it.
+    // graphics capture hands over a fully transparent picture as a window is hidden, shown or closed, and
+    // old pictures wait in it, so pictures are checked until the first one with content
     bool undrawn = state.window && !showsItself(state.window);
     if (state.window && !undrawn && Clock::now() < state.emptyPicturesUntil) {
         undrawn = isEmptyPicture(state.captured.get(), state.bgra.get());
@@ -459,16 +415,14 @@ ScreenCapture::Status ScreenCapture::readGraphicsCapture(AVFrame *into)
     return deliverFromCard(state.captured.get(), into);
 }
 
-// A picture on the card made what the encoder is to have: handed over as it is, scaled on the
-// card, or read back and scaled in software. `captured` is left empty.
 ScreenCapture::Status ScreenCapture::deliverFromCard(AVFrame *captured, AVFrame *into)
 {
     Backends &state = *backends;
     const QSize ownSize(captured->width, captured->height);
     const QSize size = encodeSizeFor(ownSize, request.maxHeight);
     const char *wentOn = "read back and scaled in software";
-    const bool bt601 = request.bt601Only || !Media::usesBt709AtHeight(size.height());
-    if (request.keepOnCard && request.rgbOnCard && size == ownSize) {
+    const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
+    if (rgbStaysOnCard(request) && size == ownSize) {
         wentOn = "kept on the graphics card as it is";
         av_frame_move_ref(into, captured);
         markColours(into, false);
@@ -491,10 +445,7 @@ ScreenCapture::Status ScreenCapture::deliverFromCard(AVFrame *captured, AVFrame 
     return Status::Frame;
 }
 
-// The official client's way with a window on Windows 10. Every picture is first looked for on
-// the screen, and where the screen cannot give the window by itself the window draws that
-// picture. Either way it ends up the same size and in the same place, so the encoder never
-// knows which it was.
+// the official client's way with a window on Windows 10
 ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
 {
     Backends &state = *backends;
@@ -504,7 +455,7 @@ ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
     const QRect client = clientOnScreen(state.window);
     const bool screenDuplicated = duplicateScreenOf(client);
     const QSize size = encodeSizeFor(state.pictureSize, request.maxHeight);
-    const bool asCaptured = state.pool && request.keepOnCard && request.rgbOnCard && size == state.pictureSize;
+    const bool asCaptured = state.pool && rgbStaysOnCard(request) && size == state.pictureSize;
     const bool scaledOnCard = state.pool && !asCaptured && scalesOnCard();
     const bool staysOnCard = asCaptured || scaledOnCard;
 
@@ -525,13 +476,12 @@ ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
     if (cutOut && scaledOnCard) {
         ready = scaleOnCard(whole, cut.onScreen, size, scaledPart(cut.inPicture, state.pictureSize, size), into);
     } else {
-        // The window's own picture first: on the card if that is where it stays, in memory if not.
         if (cutOut)
             ready = cutOntoCard(whole, cut.onScreen, state.pool, cut.inPicture.topLeft(), card) && (staysOnCard || (prepareBgra(bgra, state.pictureSize) && av_hwframe_transfer_data(bgra, card, 0) >= 0));
         else if (staysOnCard)
             ready = av_hwframe_get_buffer(state.pool, card, 0) >= 0 && av_hwframe_transfer_data(card, bgra, 0) >= 0;
 
-        const bool bt601 = !staysOnCard && (request.bt601Only || !Media::usesBt709AtHeight(size.height()));
+        const bool bt601 = !staysOnCard && Media::encodesAsBt601(size.height(), request.bt601Only);
         if (ready && scaledOnCard)
             ready = scaleOnCard(card, wholeOf(card), size, QRect(QPoint(0, 0), size), into);
         else if (ready && staysOnCard)
@@ -561,8 +511,6 @@ ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
     return Status::Frame;
 }
 
-// Sees to it that the screen under the middle of the window is being duplicated, and that
-// there is a card to keep the window's pictures on. False when that screen cannot be read now.
 bool ScreenCapture::duplicateScreenOf(const QRect &client)
 {
     Backends &state = *backends;
@@ -586,13 +534,12 @@ bool ScreenCapture::duplicateScreenOf(const QRect &client)
         av_buffer_unref(&state.pool);
         av_buffer_unref(&state.device);
         state.deviceAdapter = adapter;
-        if (av_hwdevice_ctx_create(&state.device, AV_HWDEVICE_TYPE_D3D11VA, QByteArray::number(adapter).constData(), nullptr, 0) < 0)
-            retryAt = Clock::now() + std::chrono::milliseconds(RETRY_INTERVAL_MS);
+        if (openDirect3dDevice(&state.device, QByteArray::number(adapter)) < 0)
+            retryLater();
     }
     if (state.device && !state.pool)
         state.pool = cardPictures(state.device, state.pictureSize);
 
-    // ddagrab does not turn a turned screen's picture upright.
     if (!state.pool || !state.screen || state.screen->turned)
         return false;
     if (graph)
@@ -600,25 +547,18 @@ bool ScreenCapture::duplicateScreenOf(const QRect &client)
     if (!retryDue)
         return false;
 
-    const QByteArray chain = "ddagrab=output_idx=" + QByteArray::number(state.screen->output) + ":framerate=" + QByteArray::number(request.framerate);
-    const int built = assemble(chain, state.device, &graph, &sink);
+    const int built = assemble(duplicationChain(*state.screen, request.framerate), state.device, &graph, &sink);
     if (built < 0) {
-        // Until Windows gives the screen back, which it also takes for a mode it may come
-        // back in another size with.
+        // Windows takes the screen away for a mode change, and it may come back another size
         state.screenChanged = true;
-        retryAt = Clock::now() + std::chrono::milliseconds(RETRY_INTERVAL_MS);
+        retryLater();
     }
     return built >= 0;
 }
 
-// Where the window's picture is in the screen's, which is then the picture read last. False
-// when the screen does not show the window by itself, or not where it was when the screen was
-// read.
 bool ScreenCapture::cutOutOfScreen(const QRect &client, CutOut *cut)
 {
     Backends &state = *backends;
-    // While its size is changing, and where it is smaller than what is sent, the window does
-    // not fill the picture.
     state.drawnBecause = "its size is changing, or is smaller than what is sent";
     if (evenSize(client.size()) != state.pictureSize)
         return false;
@@ -641,13 +581,11 @@ bool ScreenCapture::cutOutOfScreen(const QRect &client, CutOut *cut)
         if (got != AVERROR(EAGAIN)) {
             dropDuplication();
             state.screenChanged = true;
-            retryAt = Clock::now() + std::chrono::milliseconds(RETRY_INTERVAL_MS);
+            retryLater();
         }
         return false;
     }
 
-    // The read waits for the screen, and a window moved or covered meanwhile has left its
-    // place there to something else.
     state.drawnBecause = "it moved or was covered while its screen was read";
     if (clientOnScreen(state.window) != client || isCoveredOnScreen(state.window, client, ShellSurfaces::LookedFor)) {
         av_frame_unref(whole);
@@ -657,7 +595,6 @@ bool ScreenCapture::cutOutOfScreen(const QRect &client, CutOut *cut)
     return true;
 }
 
-// The window's picture as the window draws it, into the BGRA picture kept for it.
 ScreenCapture::Drawing ScreenCapture::drawnByItself(const QRect &client)
 {
     Backends &state = *backends;
@@ -683,7 +620,7 @@ ScreenCapture::Drawing ScreenCapture::drawnByItself(const QRect &client)
         return Drawing::Drawn;
     }
 
-    // A program Windows scales for the screen draws itself at its own, smaller size.
+    // a program Windows scales for the screen draws itself smaller than it shows
     AVFrame *asDrawn = state.asDrawn.get();
     if (!prepareBgra(asDrawn, drawn.size()))
         return Drawing::Failed;
@@ -692,21 +629,17 @@ ScreenCapture::Drawing ScreenCapture::drawnByItself(const QRect &client)
     return state.rescaler.convert(asDrawn, state.pictureSize, AV_PIX_FMT_BGRA, false, bgra) >= 0 ? Drawing::Drawn : Drawing::Failed;
 }
 
-// Neither source recovers from losing what it captures: ddagrab not from losing the screen nor
-// from a changed screen mode, graphics capture not from its window being hidden. The capture
-// has to be made again, and until Windows gives the source back that fails.
+// neither source recovers by itself: ddagrab not from losing its screen or a mode change, graphics
+// capture not from its window being hidden
 ScreenCapture::Status ScreenCapture::afterFailure(int error)
 {
     tearDown();
-    const QString reason = backends->window ? captureText("The window can no longer be captured (%1).") : captureText("The screen can no longer be captured (%1).");
-    // Access is denied for as long as the secure desktop shows, which is as long as the
-    // user leaves a UAC prompt open or the machine locked, and no reason to stop sharing.
+    const QString reason = captureLostText(backends->window ? CaptureSource::Kind::Window : CaptureSource::Kind::Screen);
+    // access is denied while the secure desktop shows (a UAC prompt, the lock screen)
     const bool secureDesktopShowing = error == AVERROR(EPERM) && everDelivered;
     return giveUpOrRetry(reason.arg(describeError(error)), secureDesktopShowing);
 }
 
-// The screen's pictures come out of the duplication on the card whatever is made of them
-// after, because that is where one that shows nothing new can be told from the one before it.
 int ScreenCapture::buildDuplication()
 {
     const std::vector<Monitor> monitors = attachedMonitors();
@@ -714,14 +647,13 @@ int ScreenCapture::buildDuplication()
     if (!monitor)
         return AVERROR(ENODEV);
 
-    // ddagrab counts outputs on the adapter of the device it is given.
+    // ddagrab counts outputs on the adapter of the device it is given
     AVBufferRef *device = nullptr;
-    int result = av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, QByteArray::number(monitor->adapter).constData(), nullptr, 0);
+    int result = openDirect3dDevice(&device, QByteArray::number(monitor->adapter));
     if (result < 0)
         return result;
 
-    const QByteArray chain = "ddagrab=output_idx=" + QByteArray::number(monitor->output) + ":framerate=" + QByteArray::number(request.framerate);
-    result = assemble(chain, device, &graph, &sink);
+    result = assemble(duplicationChain(*monitor, request.framerate), device, &graph, &sink);
     av_buffer_unref(&device);
     backends->wentOn = "";
     return result;
@@ -746,17 +678,16 @@ int ScreenCapture::buildGraphicsCapture()
         adapter = QByteArray::number(monitor->adapter);
     }
 
-    // Graphics capture scales by itself, into BGRA pictures an encoder has to take as they are.
-    // It stretches whatever it has captured over the whole picture, which is right for a source
-    // that fills its picture, and a window smaller than the smallest picture does not.
+    // graphics capture stretches what it captured over the whole picture, which is wrong for a window
+    // smaller than the smallest picture
     const QSize size = encodeSizeFor(ownSize, request.maxHeight);
-    const bool asCaptured = request.keepOnCard && request.rgbOnCard && size == ownSize;
+    const bool asCaptured = rgbStaysOnCard(request) && size == ownSize;
     const bool fillsItsPicture = !state.window || evenSize(state.clientSize) == ownSize;
-    const bool scalesByItself = request.keepOnCard && request.rgbOnCard && size != ownSize && fillsItsPicture;
+    const bool scalesByItself = rgbStaysOnCard(request) && size != ownSize && fillsItsPicture;
     const QSize captured = scalesByItself ? size : ownSize;
 
-    // The size is given because the filter otherwise fixes it before the first picture, from
-    // what Windows says the window measures, which is not always what it then hands over.
+    // otherwise the filter fixes a size before the first picture from what Windows says the window
+    // measures, which isnt always what it hands over
     QByteArray chain = "gfxcapture=max_framerate=" + QByteArray::number(request.framerate) + source + ":width=" + QByteArray::number(captured.width()) + ":height=" + QByteArray::number(captured.height());
     if (scalesByItself)
         chain += ":resize_mode=scale";
@@ -773,7 +704,6 @@ int ScreenCapture::buildGraphicsCapture()
 
     if (result == AVERROR(ENOSYS))
         ruleOutGraphicsCapture();
-    // Left to choose, what graphics capture will not take is duplicated.
     const bool leftToChoose = request.method == CaptureMethod::Auto && state.window && !everDelivered;
     if ((result == AVERROR(ENOSYS) || leftToChoose) && screenCaptureAvailable()) {
         qCInfo(LogVideo) << "Graphics capture of" << request.sourceId << "failed (" << describeError(result) << "); using desktop duplication";

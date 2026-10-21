@@ -14,9 +14,7 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-// Whether ffmpeg can be asked for a device of this kind without ending the process. The
-// prebuilt ffmpeg loads libva only when a VAAPI device is first asked for, and aborts when it
-// is not installed, so there that is found out first.
+// the prebuilt ffmpeg loads libva on the first VAAPI request and aborts when it is missing
 [[nodiscard]] inline bool hardwareDeviceCanBeAskedFor(AVHWDeviceType type)
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
@@ -24,7 +22,7 @@ namespace Media {
         return true;
 
     static const bool loadable = [] {
-        // An ffmpeg linked against libva in the ordinary way has brought it with it.
+        // an ffmpeg linked against libva normally has loaded it already
         if (void *linked = dlopen("libva.so.2", RTLD_NOLOAD | RTLD_LAZY)) {
             dlclose(linked);
             return true;
