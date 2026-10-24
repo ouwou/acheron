@@ -148,8 +148,20 @@ AVPixelFormat hardwareFormat(const AVCodec *decoder, AVHWDeviceType type)
 
 // Takes the hardware format when the decoder offers it for this stream, and otherwise the
 // first software one, which the caller notices and answers by reopening in software.
+// ffmpeg renamed its profile constants between versions
+constexpr int H264_PROFILE_BASELINE = 66;
+
+// phones send plain baseline, which ffmpeg only gives a card listing constrained baseline, main or high
+// when told to. no real encoder uses the baseline tools those decoders lack
+void allowBaselineOnMainDecoders(AVCodecContext *context)
+{
+    if (context->codec_id == AV_CODEC_ID_H264 && context->profile == H264_PROFILE_BASELINE)
+        context->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+}
+
 AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats)
 {
+    allowBaselineOnMainDecoders(context);
     const int wanted = *static_cast<const int *>(context->opaque);
     const AVPixelFormat *software = nullptr;
     AVPixelFormat chosen = AV_PIX_FMT_NONE;
@@ -404,6 +416,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     awaitingKeyframe = true;
     framesSinceOpen = 0;
     decodeErrorsLogged = 0;
+    hardwareTurnedDown = false;
     describeDecoder();
     qCInfo(LogVideo).noquote() << "[hwdiag] decoding" << Discord::Voice::videoCodecName(codec) << "with" << counters.decoderName << "(hardware allowed:" << hardwareAllowed << ", ruled out:" << hardwareRuledOut << ", earlier failures:" << hardwareFailuresOf(codec).load() << ")";
     return true;
@@ -536,11 +549,15 @@ void VideoDecoder::decode(Queued &queued)
 
     const Discord::Voice::VideoCodec codec = openCodec;
     const QString hardware = QString::fromUtf8(hardwareName);
+    const bool countsAgainstCodec = !hardwareTurnedDown;
     hardwareRuledOut = true;
     if (open(codec) && queued.frame.keyframe) {
         if (decodeWithOpenDecoder(queued.frame, size)) {
             qCWarning(LogVideo) << "Hardware decoding of" << Discord::Voice::videoCodecName(codec) << "through" << hardware << "failed on a frame software decodes; using software";
-            hardwareFailuresOf(codec)++;
+            if (countsAgainstCodec)
+                hardwareFailuresOf(codec)++;
+            else
+                qCInfo(LogVideo).noquote() << "[hwdiag] the card refused only this stream, so it stays in use for others";
             return;
         }
         // Software cannot decode the frame either, so the stream was at fault and not the
@@ -589,7 +606,8 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         if (hardwareDevice) {
             // A decoder that turned the hardware format down for this stream is decoding in
             // software with none of a software decoder's threads, so it is replaced.
-            bool failed = decoded->format != hardwarePixelFormat;
+            hardwareTurnedDown = decoded->format != hardwarePixelFormat;
+            bool failed = hardwareTurnedDown;
             if (failed)
                 qCWarning(LogVideo).noquote() << "[hwdiag]" << context->codec->name << "gave a picture in" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(decoded->format)) << "instead of" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(hardwarePixelFormat));
             // The picture is on the graphics card. It is brought into memory unless whoever

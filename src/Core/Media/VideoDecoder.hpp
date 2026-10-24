@@ -153,6 +153,8 @@ private:
     bool hardwareAllowed;
     int softwareThreads;
     bool hardwareRuledOut = false;
+    // the card refused this stream (its profile or size), which says nothing about the codec's other streams
+    bool hardwareTurnedDown = false;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
     double averageReadBackMs = 0;
