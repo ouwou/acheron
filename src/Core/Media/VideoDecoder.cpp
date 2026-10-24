@@ -111,8 +111,20 @@ AVPixelFormat hardwareFormat(const AVCodec *decoder, AVHWDeviceType type)
     }
 }
 
+// ffmpeg renamed its profile constants between versions
+constexpr int H264_PROFILE_BASELINE = 66;
+
+// phones send plain baseline, which ffmpeg only gives a card listing constrained baseline, main or high
+// when told to. no real encoder uses the baseline tools those decoders lack
+void allowBaselineOnMainDecoders(AVCodecContext *context)
+{
+    if (context->codec_id == AV_CODEC_ID_H264 && context->profile == H264_PROFILE_BASELINE)
+        context->hwaccel_flags |= AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH;
+}
+
 AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats)
 {
+    allowBaselineOnMainDecoders(context);
     const int wanted = *static_cast<const int *>(context->opaque);
     const AVPixelFormat *software = nullptr;
     for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; format++) {
@@ -334,6 +346,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     awaitingKeyframe = true;
     framesSinceOpen = 0;
     hardwareProven = false;
+    hardwareTurnedDown = false;
     describeDecoder();
     return true;
 }
@@ -477,12 +490,12 @@ void VideoDecoder::decode(Queued &queued)
 
     const Discord::Voice::VideoCodec codec = openCodec;
     const QString hardware = QString::fromUtf8(hardwareName);
-    const bool wasProven = hardwareProven;
+    const bool countsAgainstCodec = !hardwareProven && !hardwareTurnedDown;
     hardwareRuledOutUntil = std::chrono::steady_clock::now() + HARDWARE_RETRY_AFTER;
     if (open(codec) && queued.frame.keyframe) {
         if (decodeWithOpenDecoder(queued.frame, size)) {
             qCWarning(LogVideo) << "Hardware decoding of" << Discord::Voice::videoCodecName(codec) << "through" << hardware << "failed on a frame software decodes; using software";
-            if (!wasProven)
+            if (countsAgainstCodec)
                 hardwareFailuresOf(codec)++;
             return;
         }
@@ -525,7 +538,8 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         const AVFrame *output = decoded;
         if (hardwareDevice) {
             // a decoder that turned the hardware format down decodes in software without threads
-            bool failed = decoded->format != hardwarePixelFormat;
+            hardwareTurnedDown = decoded->format != hardwarePixelFormat;
+            bool failed = hardwareTurnedDown;
             if (!failed && !(sink && sink->acceptsHardwareFrames(decoded->format))) {
                 av_frame_unref(downloaded);
                 failed = av_hwframe_transfer_data(downloaded, decoded, 0) < 0;

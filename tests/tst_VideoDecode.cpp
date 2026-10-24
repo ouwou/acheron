@@ -166,6 +166,26 @@ private:
     bool open = false;
 };
 
+constexpr uint8_t H264_PROFILE_BASELINE = 66;
+constexpr uint8_t H264_PROFILE_EXTENDED = 88;
+constexpr uint8_t H264_CONSTRAINT_SET1 = 0x40;
+constexpr uint8_t H264_NAL_SPS = 7;
+
+// baseline and extended SPSs share their syntax, so only profile_idc and the constraint flags change
+std::vector<EncodedFrame> withH264Profile(std::vector<EncodedFrame> clip, uint8_t profile)
+{
+    for (EncodedFrame &frame : clip) {
+        Bytes &data = frame.data;
+        for (size_t i = 0; i + 5 < data.size(); i++) {
+            if (data[i] != 0 || data[i + 1] != 0 || data[i + 2] != 1 || (data[i + 3] & 0x1F) != H264_NAL_SPS)
+                continue;
+            data[i + 4] = profile;
+            data[i + 5] &= static_cast<uint8_t>(~H264_CONSTRAINT_SET1);
+        }
+    }
+    return clip;
+}
+
 EncodedVideoFrame forDecoder(VideoCodec codec, const EncodedFrame &frame)
 {
     EncodedVideoFrame encoded;
@@ -244,6 +264,8 @@ private slots:
     void aDiscardedQueueStartsOverAtAKeyframe();
     void aQueueThatHasWaitedTooLongIsDiscarded();
     void aDamagedStreamIsNotHeldAgainstTheHardware();
+    void plainBaselineDecodesOnTheCard();
+    void aStreamTheCardRefusesIsNotHeldAgainstTheCodec();
 
 private:
     static void codecCases();
@@ -488,6 +510,59 @@ void TestVideoDecode::aDamagedStreamIsNotHeldAgainstTheHardware()
         QCOMPARE(outcome.shown, static_cast<int>(clip.size()));
     }
     QVERIFY(decodeClip(0).hardware);
+}
+
+namespace {
+
+struct ClipOutcome
+{
+    bool hardware = false;
+    int shown = 0;
+};
+
+ClipOutcome decodeH264Clip(const CodecCase &h264, const std::vector<EncodedFrame> &clip)
+{
+    Chain chain(h264.codec, true);
+    for (const EncodedFrame &frame : clip)
+        chain.send(h264, frame);
+    ClipOutcome outcome;
+    outcome.shown = chain.waitForDecoded(static_cast<int>(clip.size()));
+    outcome.hardware = chain.decoder.stats().hardware;
+    return outcome;
+}
+
+} // namespace
+
+void TestVideoDecode::plainBaselineDecodesOnTheCard()
+{
+    const CodecCase h264{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } };
+    const std::vector<EncodedFrame> clip = encodeClip(h264);
+    if (clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+    if (!decodeH264Clip(h264, clip).hardware)
+        QSKIP("no hardware H264 decoder on this machine");
+
+    const ClipOutcome baseline = decodeH264Clip(h264, withH264Profile(clip, H264_PROFILE_BASELINE));
+    QVERIFY(baseline.hardware);
+    QCOMPARE(baseline.shown, static_cast<int>(clip.size()));
+}
+
+void TestVideoDecode::aStreamTheCardRefusesIsNotHeldAgainstTheCodec()
+{
+    const CodecCase h264{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } };
+    const std::vector<EncodedFrame> clip = encodeClip(h264);
+    if (clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+    if (!decodeH264Clip(h264, clip).hardware)
+        QSKIP("no hardware H264 decoder on this machine");
+
+    const std::vector<EncodedFrame> refused = withH264Profile(clip, H264_PROFILE_EXTENDED);
+    for (int attempt = 0; attempt < 3; attempt++) {
+        const ClipOutcome outcome = decodeH264Clip(h264, refused);
+        QVERIFY(!outcome.hardware);
+        QCOMPARE(outcome.shown, static_cast<int>(clip.size()));
+    }
+    QVERIFY(decodeH264Clip(h264, clip).hardware);
 }
 
 QTEST_GUILESS_MAIN(TestVideoDecode)

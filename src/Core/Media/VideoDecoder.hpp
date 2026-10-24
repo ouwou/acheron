@@ -125,6 +125,8 @@ private:
     int softwareThreads;
     std::optional<std::chrono::steady_clock::time_point> hardwareRuledOutUntil;
     bool hardwareProven = false;
+    // the card refused this stream (its profile or size), which says nothing about the codec's other streams
+    bool hardwareTurnedDown = false;
     std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
