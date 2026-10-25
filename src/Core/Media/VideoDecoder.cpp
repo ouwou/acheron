@@ -128,12 +128,15 @@ AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats
     const int wanted = *static_cast<const int *>(context->opaque);
     const AVPixelFormat *software = nullptr;
     for (const AVPixelFormat *format = formats; *format != AV_PIX_FMT_NONE; format++) {
-        if (*format == wanted)
+        if (*format == wanted) {
+            qCInfo(LogVideo).noquote() << "[hwdiag]" << context->codec->name << context->coded_width << "x" << context->coded_height << "profile" << context->profile << "level" << context->level << "decoded on the card as" << av_get_pix_fmt_name(*format);
             return *format;
+        }
         const AVPixFmtDescriptor *description = av_pix_fmt_desc_get(*format);
         if (!software && description && !(description->flags & AV_PIX_FMT_FLAG_HWACCEL))
             software = format;
     }
+    qCInfo(LogVideo).noquote() << "[hwdiag]" << context->codec->name << context->coded_width << "x" << context->coded_height << "profile" << context->profile << "level" << context->level << "wanted" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(wanted)) << "(THE CARD WAS TURNED DOWN FOR THIS STREAM)";
     return software ? *software : AV_PIX_FMT_NONE;
 }
 
@@ -348,6 +351,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     hardwareProven = false;
     hardwareTurnedDown = false;
     describeDecoder();
+    qCInfo(LogVideo).noquote() << "[hwdiag] decoding" << Discord::Voice::videoCodecName(codec) << "with" << counters.decoderName << "(hardware allowed:" << hardwareAllowed << ", ruled out:" << ruledOut << ", earlier failures:" << hardwareFailuresOf(codec).load() << ")";
     return true;
 }
 
@@ -539,6 +543,8 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         if (hardwareDevice) {
             // a decoder that turned the hardware format down decodes in software without threads
             hardwareTurnedDown = decoded->format != hardwarePixelFormat;
+            if (hardwareTurnedDown)
+                qCInfo(LogVideo).noquote() << "[hwdiag]" << context->codec->name << "gave a picture in" << av_get_pix_fmt_name(static_cast<AVPixelFormat>(decoded->format)) << "; the card refused only this stream, so it stays in use for others";
             bool failed = hardwareTurnedDown;
             if (!failed && !(sink && sink->acceptsHardwareFrames(decoded->format))) {
                 av_frame_unref(downloaded);
@@ -567,7 +573,22 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
             counters.averageDecodeMs = withSample(counters.averageDecodeMs, elapsedMs, counters.decoded);
         }
         av_frame_unref(decoded);
+        logSummaryNow();
     }
+}
+
+void VideoDecoder::logSummaryNow()
+{
+    static constexpr qint64 SUMMARY_EVERY_MS = 10000;
+    if (!summaryTimer.isValid()) {
+        summaryTimer.start();
+        return;
+    }
+    if (summaryTimer.elapsed() < SUMMARY_EVERY_MS)
+        return;
+    summaryTimer.restart();
+    const Stats now = stats();
+    qCInfo(LogVideo).noquote() << "[hwdiag] decoder" << now.decoderName << now.width << "x" << now.height << ": decoded" << now.decoded << "dropped" << now.dropped << "errors" << now.errors << "queues discarded" << now.queuesDiscarded << "backlog" << now.backlogMs << "ms, decode" << QString::number(now.averageDecodeMs, 'f', 2) << "ms";
 }
 
 } // namespace Media

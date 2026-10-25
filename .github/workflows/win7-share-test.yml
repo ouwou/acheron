@@ -1,0 +1,228 @@
+name: Windows 7 screen sharing test kit
+
+# The kit handed to a Windows 7 tester, built here so its source and build can be checked.
+on:
+  push:
+    branches: [win7-share-test]
+  workflow_dispatch:
+
+env:
+  CURL_IMPERSONATE_VERSION: v2.0.0
+  # BtbN keeps only the last couple of weeks of daily autobuilds plus one build per
+  # month, so pin a month-end tag: a daily one gets deleted out from under us and
+  # every ffmpeg download starts 404ing.
+  FFMPEG_RELEASE_TAG: autobuild-2026-07-31-14-10
+  FFMPEG_WINDOWS_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1
+  FFMPEG_WINDOWS_SHA256: c222a490dde4e7059f45495deef6bfb98dbcacc2b43df5b607546252037aa95c
+  # Ubuntu 22.04's ffmpeg is 4.4, older than the 5.1 the player needs, so the
+  # AppImage builds against this prebuilt prefix and bundles it.
+  FFMPEG_LINUX_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-shared-8.1
+  FFMPEG_LINUX_SHA256: c882a80f06617149198a98a07a0880a7e881953ae9f9cb931f5be09a4f93caae
+  # makes the stubs through which the AppImage loads libpipewire when it is first called
+  IMPLIB_COMMIT: a3e167cf978a5b8a38ec0f710d8c4331e8dcdd9a
+  # aqtinstall 3.3.0, still the newest release, cannot find Qt 6.11+ for Windows: the
+  # repository moved to one folder per compiler (jurplel/install-qt-action#374).
+  AQT_FOR_WINDOWS_QT6: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+  FFMPEG_GPL_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-win64-gpl-8.1
+  FFMPEG_GPL_SHA256: cc4156d51387566ea8ba653fc3a04897bdf812fddf652428d9030bbf7ae24835
+
+jobs:
+  win7-share-test:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    # Visual Studio 2022: its C++ runtime (14.4x) is the last that loads on Windows 7,
+    # and the artifact carries it beside the exe. what a newer toolset builds crashes
+    # at its first std::mutex on an installed runtime older than that toolset
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      # Qt 5.15.2 (Win7 SP1 floor). qtsvg + qtimageformats ship in the default Qt5
+      # archive set, so no explicit modules are needed. Building 5.15.2 with the
+      # runner's current MSVC toolset relies on the src/qt5_compat.h shim that
+      # CMakeLists force-includes (MSVC + Qt5 only).
+      - name: Install Qt (5.15.2)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: win64_msvc2019_64
+          cache: true
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.bat
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v6
+        with:
+          path: build/vcpkg_installed
+          # Keyed apart from the Qt6 jobs: this one also holds the from-source ffmpeg,
+          # and restoring their cache would rebuild it on every run.
+          key: vcpkg-x64-windows-static-md-ffmpeg-vs2022-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install curl-impersonate
+        shell: pwsh
+        run: |
+          $url = "https://github.com/lexiforest/curl-impersonate/releases/download/${{ env.CURL_IMPERSONATE_VERSION }}/libcurl-impersonate-${{ env.CURL_IMPERSONATE_VERSION }}.x86_64-win32.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
+          New-Item -ItemType Directory -Path curl-impersonate -Force
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Fetch OpenSSL 1.1 (Qt5 runtime TLS)
+        shell: pwsh
+        run: |
+          # Qt 5.15.2's QNetworkAccessManager loads OpenSSL 1.1 at runtime for HTTPS
+          # (avatars/attachments/emoji). The Qt repo only ships OpenSSL 3 now, which the
+          # official 5.15.2 binaries can't use, so pull the 1.1.1 x64 DLLs from FireDaemon.
+          Invoke-WebRequest -Uri "https://download.firedaemon.com/FireDaemon-OpenSSL/openssl-1.1.1w.zip" -OutFile openssl.zip
+          if ((Get-FileHash openssl.zip -Algorithm SHA256).Hash -ne '1870B15BF6749E65FFBBADF52CDFF3EE0E9F02943550BF4395574BB432AF3EB8') {
+              throw "OpenSSL zip checksum mismatch"
+          }
+          Expand-Archive openssl.zip -DestinationPath openssl11 -Force
+          New-Item -ItemType Directory -Path openssl-bin -Force | Out-Null
+          Get-ChildItem -Path openssl11 -Recurse -Include 'libssl-1_1-x64.dll','libcrypto-1_1-x64.dll' |
+            ForEach-Object { Copy-Item $_.FullName openssl-bin -Force }
+          if (-not (Test-Path openssl-bin/libssl-1_1-x64.dll)) { throw "OpenSSL 1.1 x64 DLLs not found in archive" }
+
+      # No prebuilt ffmpeg here: the BtbN DLLs are Windows 10 binaries. Their avcodec
+      # imports SetThreadDescription (1607+) and WaitOnAddress (8+), and since the
+      # exe links avcodec directly, bundling it stops this artifact from even
+      # starting on Windows 7. FFMPEG_FROM_VCPKG builds ffmpeg from source instead
+      # and links it statically.
+      - name: Configure
+        shell: pwsh
+        run: |
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          cmake -B build -S . `
+            -DCMAKE_BUILD_TYPE=MinSizeRel `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+            -DCURL_INCLUDE_DIR="$curlDir/include" `
+            -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
+            -DBUILD_TESTS=ON `
+            -DFFMPEG_FROM_VCPKG=ON `
+            -DCMAKE_CXX_FLAGS_MINSIZEREL="/O1 /Ob1 /DNDEBUG /Zi" `
+            -DCMAKE_EXE_LINKER_FLAGS_MINSIZEREL="/DEBUG /OPT:REF /OPT:ICF"
+
+      - name: Build
+        run: cmake --build build --config MinSizeRel --parallel
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
+          # without this Qt Test writes its report to the debugger, and a failure shows nothing here
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          ctest --test-dir build -C MinSizeRel --output-on-failure --timeout 600
+
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          $exe = "${{ github.workspace }}/build/MinSizeRel/acheron.exe"
+          windeployqt --no-translations --no-opengl-sw --no-angle --no-system-d3d-compiler $exe
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $out = "acheron-windows-qt5-MinSizeRel"
+          $binDir = "build/MinSizeRel"
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          New-Item -ItemType Directory -Path $out -Force
+
+          # Copy build output (binary, certs/, fonts/, and everything windeployqt placed alongside it)
+          Copy-Item "$binDir/*" $out -Recurse -Force
+
+          # Copy curl-impersonate DLL
+          Copy-Item "$curlDir/lib/*.dll" $out -Force
+
+          # Bundle OpenSSL 1.1 (fetched from FireDaemon above) next to the exe: Qt5's
+          # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
+          Copy-Item "openssl-bin/*.dll" $out -Force
+
+          # the C++ runtime this job built against, so that the machine's own, which may
+          # be older, isnt the one loaded. vccorlib140 is left out: it is for WinRT
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Sort-Object FullName | Select-Object -Last 1
+          Copy-Item "$($crt.FullName)\msvcp140*.dll","$($crt.FullName)\vcruntime140*.dll" $out -Force
+
+          # Drop build leftovers, and the plugins the app can never reach: main.cpp
+          # forces the Fusion style and Storage only ever opens QSQLITE. The .exp
+          # (and its .lib) exist because static ffmpeg marks its API dllexport, so
+          # the linker writes an import library for the exe.
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/*.exp","$out/styles","$out/generic" `
+            -Recurse -ErrorAction SilentlyContinue
+          Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll | Remove-Item
+      - name: Check Windows 7 loadability
+        run: python .github/check_win7_imports.py acheron-windows-qt5-MinSizeRel
+
+      # Only to encode the test clips; nothing from it is shipped.
+      - name: Make test clips
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/${{ env.FFMPEG_RELEASE_TAG }}/${{ env.FFMPEG_GPL_BUILD }}.zip" -OutFile ffmpeg-gpl.zip
+          if ((Get-FileHash ffmpeg-gpl.zip -Algorithm SHA256).Hash -ne '${{ env.FFMPEG_GPL_SHA256 }}') {
+              throw "ffmpeg zip checksum mismatch"
+          }
+          Expand-Archive ffmpeg-gpl.zip -DestinationPath ffmpeg-gpl -Force
+          $ffmpeg = "ffmpeg-gpl/${{ env.FFMPEG_GPL_BUILD }}/bin/ffmpeg.exe"
+          $out = "video-samples"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          $clips = @(
+            @("1280x720", 30, "yuv420p", 3, "h264-baseline-720p30.h264", "-c:v libx264 -profile:v baseline -preset veryfast -tune zerolatency -b:v 2500k"),
+            @("1920x1080", 60, "yuv420p", 3, "h264-high-1080p60.h264", "-c:v libx264 -profile:v high -preset veryfast -tune zerolatency -b:v 8000k"),
+            @("3840x2160", 30, "yuv420p", 1, "h264-high-2160p30.h264", "-c:v libx264 -profile:v high -preset veryfast -tune zerolatency -b:v 20000k"),
+            @("1920x1080", 30, "yuv420p", 3, "hevc-main-1080p30.hevc", "-c:v libx265 -profile:v main -preset veryfast -tune zerolatency -b:v 5000k"),
+            @("1920x1080", 30, "yuv420p10le", 2, "hevc-main10-1080p30.hevc", "-c:v libx265 -profile:v main10 -preset veryfast -tune zerolatency -b:v 5000k"),
+            @("1920x1080", 30, "yuv420p", 3, "av1-1080p30.ivf", "-c:v libsvtav1 -preset 10 -b:v 4000k -svtav1-params lookahead=0:pred-struct=1:rc=2"),
+            @("1280x720", 30, "yuv420p", 3, "vp8-720p30.ivf", "-c:v libvpx -b:v 2500k -lag-in-frames 0")
+          )
+          foreach ($c in $clips) {
+            $codec = $c[5] -split ' '
+            & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=$($c[0]):rate=$($c[1]),format=$($c[2])" -t $c[3] @codec -g 1000 -bf 0 "$out/$($c[4])"
+            if ($LASTEXITCODE -ne 0) { throw "encoding $($c[4]) failed" }
+          }
+          Get-ChildItem $out
+
+      - name: Prepare tester kit
+        shell: pwsh
+        run: |
+          $kit = "acheron-win7-share-test"
+          New-Item -ItemType Directory -Path $kit -Force | Out-Null
+          Copy-Item "acheron-windows-qt5-MinSizeRel/*" $kit -Recurse -Force
+          Copy-Item ".github/win7-share-test/*" $kit -Force
+          Copy-Item "video-samples" $kit -Recurse -Force
+          @(
+            "Built by GitHub Actions from https://github.com/${{ github.repository }}/commit/${{ github.sha }}",
+            "Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "",
+            "Check that acheron.exe is the one this run built (needs the GitHub CLI):",
+            "  gh attestation verify acheron.exe --repo ${{ github.repository }}"
+          ) | Set-Content "$kit/BUILT-BY-GITHUB.txt"
+          New-Item -ItemType Directory -Path symbols -Force | Out-Null
+          Copy-Item "build/MinSizeRel/acheron.pdb" symbols
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            acheron-win7-share-test/*.exe
+            acheron-win7-share-test/*.dll
+
+      - name: Upload tester kit
+        uses: actions/upload-artifact@v7
+        with:
+          name: acheron-win7-share-test
+          path: acheron-win7-share-test
+
+      - name: Upload symbols
+        uses: actions/upload-artifact@v7
+        with:
+          name: acheron-win7-share-test-symbols
+          path: symbols

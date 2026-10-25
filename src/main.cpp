@@ -11,6 +11,10 @@
 #include <QFontDatabase>
 #include <QSettings>
 
+#ifdef ACHERON_HAVE_VIDEO
+#include "Core/Media/HardwareDiagnostics.hpp"
+#endif
+
 #ifndef ACHERON_NO_VOICE
 #include <dave/dave.h>
 #include <dave/logger.h>
@@ -94,6 +98,12 @@ int main(int argc, char *argv[])
 
     qCInfo(LogCore) << "Starting Acheron...";
 
+#ifdef ACHERON_HAVE_VIDEO
+    if (Core::Media::onlyDiagnosticsWereAskedFor(app.arguments()))
+        Core::Media::runOnlyDiagnosticsAndExit();
+    Core::Media::startHardwareDiagnostics();
+#endif
+
 #ifdef Q_OS_WINDOWS
     int emojiFontId = QFontDatabase::addApplicationFont(
             QCoreApplication::applicationDirPath() + "/fonts/TwemojiCOLRv0.ttf");
@@ -128,6 +138,10 @@ int main(int argc, char *argv[])
     }
 
     Storage::DatabaseManager::instance().shutdown();
+
+#ifdef ACHERON_HAVE_VIDEO
+    Core::Media::finishHardwareDiagnostics();
+#endif
 
     curl_global_cleanup();
 

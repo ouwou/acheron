@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QString>
 
@@ -100,6 +101,8 @@ private:
     [[nodiscard]] bool decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size);
     void startOverAtNextKeyframe();
     void reportUndecodableFrame();
+    // TEMPORARY (Windows 7 bring-up): a "[hwdiag]" summary in the log every ten seconds
+    void logSummaryNow();
     void describeDecoder();
 
     mutable std::mutex mutex;
@@ -127,6 +130,7 @@ private:
     bool hardwareProven = false;
     // the card refused this stream (its profile or size), which says nothing about the codec's other streams
     bool hardwareTurnedDown = false;
+    QElapsedTimer summaryTimer;
     std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;

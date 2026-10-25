@@ -445,6 +445,7 @@ if(ENABLE_VOICE)
             src/Core/Media/DecodeDemand.cpp
             src/Core/Media/VideoDecoder.cpp
             src/Core/Media/VideoEncoder.cpp
+            src/Core/Media/HardwareDiagnostics.cpp
             src/Core/Media/H264Sps.cpp
             src/Core/Audio/LoopbackCapture.cpp
             src/Core/Audio/PlayedSoundRemover.cpp
