@@ -55,6 +55,8 @@ enum class CaptureMethod {
     // a window is cut out of its screen while nothing overlaps it and drawn by itself otherwise, as the
     // official client does on Windows 10
     DesktopDuplication,
+    // the only way Windows 7 has; what draws straight to the screen, like a full-screen game, comes out black
+    ScreenCopy,
     Portal,
     X11,
 };

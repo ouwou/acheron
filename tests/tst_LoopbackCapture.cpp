@@ -1,6 +1,7 @@
 
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Core/Audio/LoopbackCapture.hpp"
+#include "Core/Audio/PlayedSound.hpp"
 #include "Core/Streams/StreamAudio.hpp"
 #include "HardwareTests.hpp"
 
@@ -8,11 +9,15 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QScopeGuard>
+#include <QSettings>
 #include <QTest>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <numbers>
+#include <random>
 
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
 #define MINIAUDIO_IMPLEMENTATION
@@ -118,6 +123,83 @@ class Tone
 public:
     [[nodiscard]] bool isPlaying() const { return false; }
 };
+
+#endif
+
+#ifdef Q_OS_WIN
+
+constexpr float OWN_SOUND_LEVEL = 0.02f;
+const char WHOLE_DEVICE_KEY[] = "audio/stream_sound_from_whole_device";
+
+// quiet noise in bursts, played and recorded as this program's own sound the way the voice backend does
+class OwnSound
+{
+public:
+    OwnSound()
+    {
+        ma_device_config config = ma_device_config_init(ma_device_type_playback);
+        config.playback.format = ma_format_s16;
+        config.playback.channels = Audio::AUDIO_CHANNELS;
+        config.sampleRate = Audio::AUDIO_SAMPLE_RATE;
+        config.dataCallback = &OwnSound::fill;
+        config.pUserData = this;
+        const ma_backend backends[] = { ma_backend_wasapi };
+        hasContext = ma_context_init(backends, 1, nullptr, &context) == MA_SUCCESS;
+        opened = hasContext && ma_device_init(&context, &config, &device) == MA_SUCCESS;
+        playing = opened && ma_device_start(&device) == MA_SUCCESS;
+    }
+
+    ~OwnSound()
+    {
+        if (opened)
+            ma_device_uninit(&device);
+        if (hasContext)
+            ma_context_uninit(&context);
+    }
+
+    [[nodiscard]] bool isPlaying() const { return playing; }
+
+    static constexpr double MEAN_SQUARE_WHILE_ON = OWN_SOUND_LEVEL * 32768.0 * OWN_SOUND_LEVEL * 32768.0;
+
+private:
+    static void fill(ma_device *device, void *output, const void *, ma_uint32 sampleFrames)
+    {
+        constexpr int ON = Audio::AUDIO_SAMPLE_RATE / 5;
+        constexpr int OFF = Audio::AUDIO_SAMPLE_RATE / 10;
+
+        auto *own = static_cast<OwnSound *>(device->pUserData);
+        auto *samples = static_cast<qint16 *>(output);
+        for (ma_uint32 i = 0; i < sampleFrames; i++) {
+            const bool on = own->position++ % (ON + OFF) < ON;
+            for (int channel = 0; channel < Audio::AUDIO_CHANNELS; channel++)
+                samples[Audio::AUDIO_CHANNELS * i + channel] = on ? static_cast<qint16>(std::clamp(own->noise(own->random), -32768.0f, 32767.0f)) : 0;
+        }
+        own->recorded->record(samples, static_cast<int>(sampleFrames), Audio::PlayedSound::now());
+    }
+
+    std::shared_ptr<Audio::PlayedSound> recorded = Audio::PlayedSounds::startRecording();
+    std::mt19937 random{ 7 };
+    std::normal_distribution<float> noise{ 0.0f, OWN_SOUND_LEVEL * 32768.0f };
+    qint64 position = 0;
+    ma_context context;
+    bool hasContext = false;
+    ma_device device;
+    bool opened = false;
+    bool playing = false;
+};
+
+double meanSquare(const QList<QByteArray> &frames)
+{
+    double sum = 0;
+    qint64 count = 0;
+    for (const QByteArray &pcm : frames) {
+        const auto *samples = reinterpret_cast<const qint16 *>(pcm.constData());
+        for (qsizetype i = 0; i < pcm.size() / 2; i++)
+            sum += static_cast<double>(samples[i]) * samples[i];
+        count += pcm.size() / 2;
+    }
+    return count == 0 ? 0 : sum / count;
+}
 
 #endif
 
@@ -340,6 +422,7 @@ private slots:
     void aProcessThatDoesNotExistHasNoSound();
     void startingAndStoppingLeavesNoThreadBehind();
     void thisProgramIsNotAmongThePlayingPrograms();
+    void theWholeDeviceLeavesOutWhatThisProgramPlays();
 #ifdef ACHERON_HAVE_PIPEWIRE
     void whatALoopbackPlaysAgainIsLeftOut();
     void framesComeEvenlyHoweverLongTheGraphsCycle();
@@ -420,6 +503,48 @@ void TestLoopbackCapture::everythingButThisProgramLeavesItsToneOut()
     QVERIFY(hasTone(own.sound()));
     QVERIFY(others.everyFrameIsWhole());
     QVERIFY(!hasTone(others.sound()));
+}
+
+void TestLoopbackCapture::theWholeDeviceLeavesOutWhatThisProgramPlays()
+{
+#ifndef Q_OS_WIN
+    QSKIP("Only Windows captures the whole output device.");
+#else
+    SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
+    constexpr int ALIGNED_AFTER_MS = 3000;
+    constexpr int MEASURED_FOR_MS = 1500;
+    QCoreApplication::setOrganizationName(QStringLiteral("AcheronTests"));
+    QSettings().setValue(WHOLE_DEVICE_KEY, true);
+    const auto forget = qScopeGuard([] { QSettings().remove(WHOLE_DEVICE_KEY); });
+
+    OwnSound own;
+    if (!own.isPlaying())
+        QSKIP(CANNOT_PLAY);
+    Recording everything;
+    everything.capture.start(static_cast<quint32>(QCoreApplication::applicationPid()), LoopbackCapture::Scope::AllButProcessTree);
+    QTest::qWait(ALIGNED_AFTER_MS);
+    const qsizetype aligned = everything.frames.size();
+    QTest::qWait(MEASURED_FOR_MS);
+    const qsizetype measured = everything.frames.size();
+    {
+        Tone tone;
+        if (!tone.isPlaying())
+            QSKIP(CANNOT_PLAY);
+        QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
+    }
+    everything.capture.stop();
+
+    QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
+    QVERIFY(everything.everyFrameIsWhole());
+    QVERIFY(measured - aligned >= MEASURED_FOR_MS / Audio::AUDIO_FRAME_DURATION_MS / 2);
+    const double left = meanSquare(everything.frames.mid(aligned, measured - aligned)) / (OwnSound::MEAN_SQUARE_WHILE_ON * 2 / 3);
+    qInfo() << "this program's own sound left in the capture:" << 10 * std::log10(std::max(left, 1e-12)) << "dB";
+    QVERIFY(left < 0.01);
+    QByteArray afterwards;
+    for (const QByteArray &pcm : everything.frames.mid(measured))
+        afterwards.append(pcm);
+    QVERIFY(hasTone(afterwards));
+#endif
 }
 
 void TestLoopbackCapture::aProcessThatDoesNotExistHasNoSound()

@@ -91,6 +91,7 @@ private:
         Duplication,
         GraphicsCapture,
         WindowByDuplication,
+        ScreenCopy,
     };
 
     struct Backends;
@@ -101,6 +102,7 @@ private:
     Status readDuplication(AVFrame *into);
     Status readGraphicsCapture(AVFrame *into);
     Status readWindowByDuplication(AVFrame *into);
+    Status readScreenCopy(AVFrame *into);
     bool cutOutOfScreen(const QRect &client, CutOut *cut);
     bool duplicateScreenOf(const QRect &client);
     Drawing drawnByItself(const QRect &client);

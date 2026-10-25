@@ -20,6 +20,7 @@ inline QComboBox *makeCaptureMethodCombo(QWidget *parent)
 #ifdef Q_OS_WIN
     combo->addItem(text("Graphics Capture"), static_cast<int>(CaptureMethod::GraphicsCapture));
     combo->addItem(text("Desktop Duplication"), static_cast<int>(CaptureMethod::DesktopDuplication));
+    combo->addItem(text("Screen Copy (GDI)"), static_cast<int>(CaptureMethod::ScreenCopy));
 #else
     combo->addItem(text("Desktop Portal"), static_cast<int>(CaptureMethod::Portal));
     combo->addItem(text("X11"), static_cast<int>(CaptureMethod::X11));

@@ -145,6 +145,7 @@ private:
     void fail(const QString &reason, GatewayNotice notice = GatewayNotice::Send);
 
     void openRtc();
+    [[nodiscard]] bool soundIsOneProgram() const;
     [[nodiscard]] bool sendsSound() const;
     void startSoundCapture();
     void useServerCodec();

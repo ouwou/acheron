@@ -46,6 +46,17 @@ private:
     void *bits = nullptr;
 };
 
+// draws the pointer where it shows over `area` onto `onto`, which pictures `area` at `size`
+class PointerPainter
+{
+public:
+    void paint(HDC onto, const QSize &size, const QRect &area, HWND onlyOver = nullptr);
+
+private:
+    HCURSOR hotspotOf = nullptr;
+    QPoint hotspot;
+};
+
 // PrintWindow never returns from a hung program, so it runs on its own thread; an abandoned drawer goes
 // when the call returns
 class WindowDrawer
@@ -78,8 +89,7 @@ private:
     bool drawing = false;
     bool drew = false;
     bool abandoned = false;
-    HCURSOR hotspotOf = nullptr;
-    QPoint hotspot;
+    PointerPainter pointer;
 };
 
 [[nodiscard]] QImage shrunk(HDC from, const QRect &area, const QSize &bound);

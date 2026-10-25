@@ -28,6 +28,11 @@ bool processLoopbackAvailable()
     return false;
 }
 
+bool everythingButThisProgramCapturable()
+{
+    return false;
+}
+
 QList<PlayingProgram> playingPrograms()
 {
     return {};

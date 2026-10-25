@@ -130,7 +130,7 @@ ScreenSharePicker::ScreenSharePicker(const Core::Video::SharerTier &tier, QWidge
     connect(buttons, &QDialogButtonBox::accepted, this, &ScreenSharePicker::onShareClicked);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    const bool soundCapturable = Core::Audio::processLoopbackAvailable();
+    const bool soundCapturable = Core::Audio::everythingButThisProgramCapturable();
     audioCheck->setEnabled(soundCapturable);
     audioCheck->setChecked(soundCapturable && QSettings().value(AUDIO_KEY, true).toBool());
 

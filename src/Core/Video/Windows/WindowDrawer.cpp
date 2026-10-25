@@ -113,16 +113,20 @@ bool WindowDrawer::draw(std::chrono::milliseconds limit, const std::function<boo
     return !drawing && drew;
 }
 
-void WindowDrawer::drawPointer(const QRect &client)
+void PointerPainter::paint(HDC onto, const QSize &size, const QRect &area, HWND onlyOver)
 {
     CURSORINFO cursor = {};
     cursor.cbSize = sizeof(cursor);
     if (!GetCursorInfo(&cursor) || !(cursor.flags & CURSOR_SHOWING))
         return;
     const QPoint at(cursor.ptScreenPos.x, cursor.ptScreenPos.y);
-    const HWND under = WindowFromPoint(cursor.ptScreenPos);
-    if (!client.contains(at) || !under || GetAncestor(under, GA_ROOT) != window)
+    if (!area.contains(at))
         return;
+    if (onlyOver) {
+        const HWND under = WindowFromPoint(cursor.ptScreenPos);
+        if (!under || GetAncestor(under, GA_ROOT) != onlyOver)
+            return;
+    }
 
     if (cursor.hCursor != hotspotOf) {
         ICONINFO icon = {};
@@ -135,9 +139,13 @@ void WindowDrawer::drawPointer(const QRect &client)
         }
         hotspotOf = cursor.hCursor;
     }
-    const QSize size = bitmap->size();
-    DrawIconEx(bitmap->context(), (at.x() - client.x()) * size.width() / client.width() - hotspot.x(), (at.y() - client.y()) * size.height() / client.height() - hotspot.y(), cursor.hCursor, 0, 0, 0, nullptr, DI_NORMAL);
+    DrawIconEx(onto, (at.x() - area.x()) * size.width() / area.width() - hotspot.x(), (at.y() - area.y()) * size.height() / area.height() - hotspot.y(), cursor.hCursor, 0, 0, 0, nullptr, DI_NORMAL);
     GdiFlush();
+}
+
+void WindowDrawer::drawPointer(const QRect &client)
+{
+    pointer.paint(bitmap->context(), bitmap->size(), client, window);
 }
 
 QSize WindowDrawer::sizeAsTheWindowMeasures() const

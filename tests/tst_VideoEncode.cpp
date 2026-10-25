@@ -644,6 +644,18 @@ bool looksLike(const Yuv &seen, COLORREF colour)
     return distance(seen, inYuv(GetRValue(colour), GetGValue(colour), GetBValue(colour), true)) < CLOSE || distance(seen, inYuv(GetRValue(colour), GetGValue(colour), GetBValue(colour), false)) < CLOSE;
 }
 
+QString captureNameOf(Core::Video::CaptureMethod method)
+{
+    switch (method) {
+    case Core::Video::CaptureMethod::GraphicsCapture:
+        return QStringLiteral("gfxcapture");
+    case Core::Video::CaptureMethod::ScreenCopy:
+        return QStringLiteral("BitBlt");
+    default:
+        return QStringLiteral("ddagrab");
+    }
+}
+
 double offItsOwnCoefficients(const Decoded &decoded, const Yuv &seen, COLORREF colour)
 {
     const bool named = decoded.colorspace == AVCOL_SPC_BT709 || decoded.colorspace == AVCOL_SPC_SMPTE170M || decoded.colorspace == AVCOL_SPC_BT470BG;
@@ -2336,6 +2348,7 @@ void TestVideoEncode::thePipelineSharesTheScreen_data()
         QTest::newRow(qPrintable(videoCodecName(encodable.first()) + QStringLiteral(" at 720p, by graphics capture"))) << EncoderCase{ encodable.first(), {}, 720 } << CaptureMethod::GraphicsCapture;
         QTest::newRow(qPrintable(videoCodecName(encodable.first()) + QStringLiteral(" at the screen's own size, by graphics capture"))) << EncoderCase{ encodable.first(), {}, 0 } << CaptureMethod::GraphicsCapture;
         QTest::newRow(qPrintable(videoCodecName(encodable.first()) + QStringLiteral(" at 720p, a second screen by duplication"))) << EncoderCase{ encodable.first(), {}, 720 } << CaptureMethod::DesktopDuplication;
+        QTest::newRow(qPrintable(videoCodecName(encodable.first()) + QStringLiteral(" at 720p, by screen copy"))) << EncoderCase{ encodable.first(), {}, 720 } << CaptureMethod::ScreenCopy;
     }
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
     for (VideoCodec codec : encodable) {
@@ -2368,6 +2381,9 @@ void TestVideoEncode::thePipelineSharesTheScreen()
     if (!aScreenIsOnAGraphicsCard())
         QSKIP("no screen of this machine is on a graphics card");
     setCaptureMethod(method);
+    // the screen holds still, and the pictures' pacing is measured
+    QSettings().setValue(QStringLiteral("video/skip_unchanged_pictures"), false);
+    const auto skipAgain = qScopeGuard([] { QSettings().remove(QStringLiteral("video/skip_unchanged_pictures")); });
     CaptureSource source = sources.first();
 #ifdef Q_OS_WIN
     std::unique_ptr<TestWindow> stirring;
@@ -2498,8 +2514,9 @@ void TestVideoEncode::thePipelineSharesTheScreen()
 #endif
     QVERIFY2(lastStats.capturedFps > FRAMERATE * FEWEST && lastStats.capturedFps < FRAMERATE * 1.2, qPrintable(QString::number(lastStats.capturedFps)));
 #ifdef Q_OS_WIN
-    QVERIFY(lastStats.encoderName.endsWith(method == CaptureMethod::GraphicsCapture ? QStringLiteral(", from gfxcapture") : QStringLiteral(", from ddagrab")));
-    QCOMPARE(lastStats.encoderName.contains(onDevice(cardDevice())), reachesTheEncoderOnTheCard(codec, expectedSize != source.geometry.size(), method == CaptureMethod::GraphicsCapture));
+    QVERIFY2(lastStats.encoderName.endsWith(QStringLiteral(", from ") + captureNameOf(method)), qPrintable(lastStats.encoderName));
+    const bool copiedIntoMemory = method == CaptureMethod::ScreenCopy;
+    QCOMPARE(lastStats.encoderName.contains(onDevice(cardDevice())), !copiedIntoMemory && reachesTheEncoderOnTheCard(codec, expectedSize != source.geometry.size(), method == CaptureMethod::GraphicsCapture));
 #endif
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
     if (desktop) {
@@ -2566,6 +2583,7 @@ void TestVideoEncode::aScaledScreenIsHandedOverAsItsEncoderTakesIt_data()
     QTest::addColumn<CaptureMethod>("method");
     QTest::newRow("by duplication") << CaptureMethod::DesktopDuplication;
     QTest::newRow("by graphics capture") << CaptureMethod::GraphicsCapture;
+    QTest::newRow("by screen copy") << CaptureMethod::ScreenCopy;
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
     QTest::newRow("handed over by PipeWire") << CaptureMethod::Portal;
 #endif
@@ -2685,6 +2703,9 @@ void TestVideoEncode::aScaledScreenIsHandedOverAsItsEncoderTakesIt()
     const QSize size = encodeSizeFor(source.geometry.size(), MAX_HEIGHT);
     if (size == source.geometry.size())
         QSKIP("the screen is no larger than 720p, so nothing is scaled");
+    // the screen holds still, and every picture is to be looked at
+    QSettings().setValue(QStringLiteral("video/skip_unchanged_pictures"), false);
+    const auto skipAgain = qScopeGuard([] { QSettings().remove(QStringLiteral("video/skip_unchanged_pictures")); });
 
     struct Way
     {
@@ -2736,7 +2757,8 @@ void TestVideoEncode::aScaledScreenIsHandedOverAsItsEncoderTakesIt()
         QCOMPARE(read, PICTURES);
 
         const bool scaledByTheSource = method == CaptureMethod::GraphicsCapture && way.rgbOnCard;
-        QVERIFY2((onCard == (way.keepOnCard && (scaledByTheSource || CardScaler::usable()) ? read : 0)) && nv12 == (scaledByTheSource ? 0 : read), qPrintable(QStringLiteral("%1: %2 of %3 pictures on the card, %4 of them NV12").arg(QLatin1String(way.name)).arg(onCard).arg(read).arg(nv12)));
+        const bool copiedIntoMemory = method == CaptureMethod::ScreenCopy;
+        QVERIFY2((onCard == (way.keepOnCard && !copiedIntoMemory && (scaledByTheSource || CardScaler::usable()) ? read : 0)) && nv12 == (scaledByTheSource ? 0 : read), qPrintable(QStringLiteral("%1: %2 of %3 pictures on the card, %4 of them NV12").arg(QLatin1String(way.name)).arg(onCard).arg(read).arg(nv12)));
     }
 #elif defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
     QFETCH(Core::Video::CaptureMethod, method);
@@ -3081,6 +3103,9 @@ void TestVideoEncode::theCaptureMethodIsRemembered()
     setCaptureMethod(CaptureMethod::DesktopDuplication);
     QCOMPARE(captureMethod(), CaptureMethod::DesktopDuplication);
     QCOMPARE(QSettings().value(key).toString(), QStringLiteral("desktop_duplication"));
+    setCaptureMethod(CaptureMethod::ScreenCopy);
+    QCOMPARE(captureMethod(), CaptureMethod::ScreenCopy);
+    QCOMPARE(QSettings().value(key).toString(), QStringLiteral("screen_copy"));
     setCaptureMethod(CaptureMethod::Portal);
     QCOMPARE(captureMethod(), CaptureMethod::Portal);
     QCOMPARE(QSettings().value(key).toString(), QStringLiteral("portal"));

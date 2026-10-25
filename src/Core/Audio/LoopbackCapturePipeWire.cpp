@@ -651,6 +651,11 @@ QList<PlayingProgram> playingPrograms()
     return programs;
 }
 
+bool everythingButThisProgramCapturable()
+{
+    return processLoopbackAvailable();
+}
+
 LoopbackCapture::LoopbackCapture(QObject *parent) : QObject(parent), worker(std::make_unique<Worker>(this)) {}
 
 LoopbackCapture::~LoopbackCapture() = default;

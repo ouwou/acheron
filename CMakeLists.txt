@@ -435,6 +435,7 @@ if(ENABLE_VOICE)
         src/Discord/Voice/TransportFeedback.cpp
         src/Core/Audio/VoiceConnection.cpp
         src/Core/Audio/OpusEncoder.cpp
+        src/Core/Audio/PlayedSound.cpp
         src/Core/Video/TileVisibility.cpp
     )
     if(ACHERON_HAVE_VIDEO)
@@ -446,6 +447,7 @@ if(ENABLE_VOICE)
             src/Core/Media/VideoEncoder.cpp
             src/Core/Media/H264Sps.cpp
             src/Core/Audio/LoopbackCapture.cpp
+            src/Core/Audio/PlayedSoundRemover.cpp
             src/Core/Audio/LoopbackCaptureWindows.cpp
             src/Core/Audio/LoopbackCapturePipeWire.cpp
             src/Core/Streams/StreamConnection.cpp
@@ -493,7 +495,7 @@ if(ENABLE_VOICE)
         target_compile_definitions(acheron_media PUBLIC ACHERON_HAVE_FFMPEG)
         target_link_libraries(acheron_media PUBLIC ffmpeg linuxcapture ${QT_OPENGL_LIBRARIES})
         if(WIN32)
-            target_link_libraries(acheron_media PUBLIC ole32)
+            target_link_libraries(acheron_media PUBLIC ole32 dwmapi)
         endif()
     endif()
 endif()
@@ -612,6 +614,7 @@ if(BUILD_TESTS)
 
         if(ACHERON_HAVE_VIDEO)
             add_media_test(TestLoopbackCapture LoopbackCaptureTests tests/tst_LoopbackCapture.cpp)
+            add_media_test(TestPlayedSoundRemover PlayedSoundRemoverTests tests/tst_PlayedSoundRemover.cpp)
             add_media_test(TestH264Sps H264SpsTests tests/tst_H264Sps.cpp)
             add_media_test(TestRtpVideo RtpVideoTests tests/tst_RtpVideo.cpp)
             add_media_test(TestVideoDecode VideoDecodeTests tests/tst_VideoDecode.cpp)
@@ -717,7 +720,7 @@ if (MSVC)
             list(APPEND _msvc_test_targets TestRtp TestOpusEncoder TestUdpTransport TestSinkWants TestVoiceClient)
         endif()
         if(TARGET TestRtpVideo)
-            list(APPEND _msvc_test_targets TestRtpVideo TestVideoDecode TestVideoSurface TestVideoSend TestSendSideEstimator TestVideoEncode TestCameraCapture TestLoopbackCapture TestH264Sps)
+            list(APPEND _msvc_test_targets TestRtpVideo TestVideoDecode TestVideoSurface TestVideoSend TestSendSideEstimator TestVideoEncode TestCameraCapture TestLoopbackCapture TestPlayedSoundRemover TestH264Sps)
         endif()
         foreach(test_target ${_msvc_test_targets})
             target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)

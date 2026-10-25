@@ -188,6 +188,7 @@ bool captureMethodUsable(CaptureMethod method)
         return X11Capture::usable();
     case CaptureMethod::GraphicsCapture:
     case CaptureMethod::DesktopDuplication:
+    case CaptureMethod::ScreenCopy:
         return false;
     case CaptureMethod::Auto:
         break;

@@ -12,6 +12,8 @@ namespace Core {
 namespace Audio {
 
 [[nodiscard]] bool processLoopbackAvailable();
+// what a shared screen sounds like: everything playing but this program
+[[nodiscard]] bool everythingButThisProgramCapturable();
 
 struct PlayingProgram
 {
@@ -34,6 +36,7 @@ public:
     {
         quint32 processId = 0;
         Scope scope = Scope::ProcessTree;
+        bool wholeDevice = false;
     };
 
     explicit LoopbackCapture(QObject *parent = nullptr);

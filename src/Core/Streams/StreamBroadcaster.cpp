@@ -310,9 +310,14 @@ void StreamBroadcaster::onRtcOpened(Audio::VoiceConnection *connection)
     sendFramesToRtc();
 }
 
+bool StreamBroadcaster::soundIsOneProgram() const
+{
+    return source.kind == Video::CaptureSource::Kind::Window && !(source.processId == 0 && Video::isHandedOverByTheDesktop(source));
+}
+
 bool StreamBroadcaster::sendsSound() const
 {
-    return audioWanted && Audio::processLoopbackAvailable();
+    return audioWanted && (soundIsOneProgram() ? Audio::processLoopbackAvailable() : Audio::everythingButThisProgramCapturable());
 }
 
 void StreamBroadcaster::onRtcClosed()
@@ -352,8 +357,7 @@ void StreamBroadcaster::startSoundCapture()
         return;
 
     const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
-    const bool ofWindow = source.kind == Video::CaptureSource::Kind::Window;
-    const bool ofProgram = ofWindow && !(source.processId == 0 && Video::isHandedOverByTheDesktop(source));
+    const bool ofProgram = soundIsOneProgram();
     if (ofProgram && source.processId == 0) {
         onSoundCaptureFailed(tr("The program the shared window belongs to is not known."));
         return;

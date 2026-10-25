@@ -24,6 +24,8 @@
           "default-features": false,
           "features": [
             "avcodec",
+            "avdevice",
+            "avfilter",
             "avformat",
             "dav1d",
             "openssl",

@@ -3,6 +3,7 @@
 #include "MiniaudioAudioBackend.hpp"
 
 #include "Core/Audio/AudioBackends.hpp"
+#include "Core/Audio/PlayedSound.hpp"
 #include "Core/Logging.hpp"
 
 #include <algorithm>
@@ -259,15 +260,18 @@ bool MiniaudioAudioBackend::startPlayback()
     if (!selectedOutputId.isEmpty() && DeserializeDeviceId(selectedOutputId, deviceId))
         config.playback.pDeviceID = &deviceId;
 
+    played = PlayedSounds::startRecording();
     ma_result initResult = ma_device_init(&ma->context, &config, &ma->playbackDevice);
     if (initResult != MA_SUCCESS) {
         qCWarning(LogVoice) << "Failed to init miniaudio playback device:" << ma_result_description(initResult);
+        played.reset();
         return false;
     }
 
     if (ma_device_start(&ma->playbackDevice) != MA_SUCCESS) {
         qCWarning(LogVoice) << "Failed to start miniaudio playback device";
         ma_device_uninit(&ma->playbackDevice);
+        played.reset();
         return false;
     }
 
@@ -285,6 +289,7 @@ void MiniaudioAudioBackend::stopPlayback()
     // ma_device_uninit stops the device and waits for callbacks to finish
     ma_device_uninit(&ma->playbackDevice);
     ma->playbackDeviceInit = false;
+    played.reset();
 
     qCInfo(LogVoice) << "Miniaudio playback stopped";
 }
@@ -401,6 +406,7 @@ void MiniaudioAudioBackend::handlePlaybackFrames(void *output, unsigned int fram
                                                          static_cast<int32_t>(INT16_MAX)));
         }
     }
+    played->record(static_cast<const int16_t *>(output), static_cast<int>(frameCount), PlayedSound::now());
 }
 
 } // namespace Audio

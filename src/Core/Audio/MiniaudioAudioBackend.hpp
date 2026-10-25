@@ -11,6 +11,8 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
+class PlayedSound;
+
 struct MiniaudioState;
 
 class MiniaudioAudioBackend : public IAudioBackend
@@ -60,6 +62,7 @@ private:
 
     std::atomic<float> inputGain{ 1.0f };
     std::atomic<float> outputVolume{ 1.0f };
+    std::shared_ptr<PlayedSound> played;
 };
 
 } // namespace Audio

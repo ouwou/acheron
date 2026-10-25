@@ -30,10 +30,11 @@ struct StoredMethod
     QLatin1String name;
 };
 
-const std::array<StoredMethod, 5> STORED_METHODS = { {
+const std::array<StoredMethod, 6> STORED_METHODS = { {
         { CaptureMethod::Auto, QLatin1String("auto") },
         { CaptureMethod::GraphicsCapture, QLatin1String("graphics_capture") },
         { CaptureMethod::DesktopDuplication, QLatin1String("desktop_duplication") },
+        { CaptureMethod::ScreenCopy, QLatin1String("screen_copy") },
         { CaptureMethod::Portal, QLatin1String("portal") },
         { CaptureMethod::X11, QLatin1String("x11") },
 } };
