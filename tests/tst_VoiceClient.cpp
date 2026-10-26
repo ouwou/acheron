@@ -2,7 +2,9 @@
 // side to bring a connection up and pass video both ways
 
 #include "Core/Audio/VoiceConnection.hpp"
+#ifdef ACHERON_HAVE_VIDEO
 #include "Core/Streams/StreamConnection.hpp"
+#endif
 #include "Discord/Voice/DaveSession.hpp"
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
@@ -810,7 +812,9 @@ private slots:
     void initTestCase()
     {
         QVERIFY(VoiceEncryption::initialize());
+#ifdef ACHERON_HAVE_VIDEO
         qRegisterMetaType<Core::StreamConnection::Failure>();
+#endif
     }
 
     void connectsAndSaysWhatItCanReceive();
@@ -851,12 +855,14 @@ private slots:
     void aProxiedConnectionReachesTheServerThroughTheProxyAlone_data();
     void aProxiedConnectionReachesTheServerThroughTheProxyAlone();
 
+#ifdef ACHERON_HAVE_VIDEO
     void aStreamConnectionIsMadeWhereTheGatewaySays();
     void aDroppedStreamConnectionIsMadeAgainAfterAPing();
     void aStreamConnectionDroppingEveryTimeIsGivenUpOn();
     void aStreamThatMovesIsFollowed();
     void aStreamConnectionNotUpInTimeFails();
     void aStreamConnectionRefusesAProxyThatCannotCarryIt();
+#endif
 };
 
 void TestVoiceClient::connectsAndSaysWhatItCanReceive()
@@ -1849,6 +1855,7 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
     QCOMPARE(call.server.undecryptable, 0);
 }
 
+#ifdef ACHERON_HAVE_VIDEO
 namespace {
 
 Core::StreamRecord readyAt(const FakeVoiceServer &server, const QString &token = QStringLiteral("token"))
@@ -2001,6 +2008,7 @@ void TestVoiceClient::aStreamConnectionRefusesAProxyThatCannotCarryIt()
     QTest::qWait(200);
     QCOMPARE(server.gatewayConnections(), 0);
 }
+#endif
 
 QTEST_GUILESS_MAIN(TestVoiceClient)
 #include "tst_VoiceClient.moc"

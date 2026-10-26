@@ -613,6 +613,7 @@ if(BUILD_TESTS)
         add_media_test(TestVoiceClient VoiceClientTests tests/tst_VoiceClient.cpp)
 
         if(ACHERON_HAVE_VIDEO)
+            target_compile_definitions(TestVoiceClient PRIVATE ACHERON_HAVE_VIDEO)
             add_media_test(TestLoopbackCapture LoopbackCaptureTests tests/tst_LoopbackCapture.cpp)
             add_media_test(TestPlayedSoundRemover PlayedSoundRemoverTests tests/tst_PlayedSoundRemover.cpp)
             add_media_test(TestH264Sps H264SpsTests tests/tst_H264Sps.cpp)
