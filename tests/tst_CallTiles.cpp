@@ -21,7 +21,7 @@ CallFacts callWith(const QList<CallParticipant> &others)
 {
     CallFacts facts;
     facts.accountId = SELF;
-    facts.participants.append({ SELF });
+    facts.participants.append(CallParticipant{ SELF });
     facts.participants.append(others);
     return facts;
 }
