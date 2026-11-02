@@ -8,6 +8,7 @@
 #include "Core/Video/ScreenCapture.hpp"
 #include "Core/Video/SendQuality.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
+#include "UI/AdvancedToggle.hpp"
 #include "UI/CaptureMethodCombo.hpp"
 #include "UI/Video/VideoSurface.hpp"
 
@@ -70,31 +71,34 @@ VideoPage::VideoPage(QWidget *parent)
     : QWidget(parent)
 {
     auto *layout = new QVBoxLayout(this);
-
-    // both fall back by themselves when the machine cant; these are for when it can but should not
-    auto *hardwareDecode = new QCheckBox(tr("Decode video with the graphics card"), this);
-    hardwareDecode->setChecked(Core::Media::hardwareDecodingEnabled());
-    layout->addWidget(hardwareDecode);
-    connect(hardwareDecode, &QCheckBox::toggled, this, [](bool enabled) { Core::Media::setHardwareDecodingEnabled(enabled); });
-
-    auto *gpuDrawing = new QCheckBox(tr("Draw video with the graphics card"), this);
-    gpuDrawing->setChecked(VideoSurface::gpuDrawingEnabled());
-    layout->addWidget(gpuDrawing);
-    connect(gpuDrawing, &QCheckBox::toggled, this, [](bool enabled) { VideoSurface::setGpuDrawingEnabled(enabled); });
-
-    auto *maxDecoders = new QSpinBox(this);
-    maxDecoders->setRange(1, MOST_DECODERS);
-    maxDecoders->setValue(std::min(Core::CallVideo::maxDecoders(), MOST_DECODERS));
-    labelledRow(layout, tr("Videos decoded at once"), maxDecoders);
-    connect(maxDecoders, qOverload<int>(&QSpinBox::valueChanged), this, [](int decoders) { Core::CallVideo::setMaxDecoders(decoders); });
+    auto *advanced = new QWidget(this);
+    auto *advancedLayout = new QVBoxLayout(advanced);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
 
     auto *previews = new QCheckBox(tr("Send previews of what I share"), this);
     previews->setChecked(Core::StreamPreviewUploader::enabled());
     layout->addWidget(previews);
     connect(previews, &QCheckBox::toggled, this, [](bool enabled) { Core::StreamPreviewUploader::setEnabled(enabled); });
 
-    QComboBox *captureMethod = makeCaptureMethodCombo(this);
-    labelledRow(layout, tr("Capture Method"), captureMethod);
+    // both fall back by themselves when the machine cant; these are for when it can but should not
+    auto *hardwareDecode = new QCheckBox(tr("Decode video with the graphics card"), advanced);
+    hardwareDecode->setChecked(Core::Media::hardwareDecodingEnabled());
+    advancedLayout->addWidget(hardwareDecode);
+    connect(hardwareDecode, &QCheckBox::toggled, this, [](bool enabled) { Core::Media::setHardwareDecodingEnabled(enabled); });
+
+    auto *gpuDrawing = new QCheckBox(tr("Draw video with the graphics card"), advanced);
+    gpuDrawing->setChecked(VideoSurface::gpuDrawingEnabled());
+    advancedLayout->addWidget(gpuDrawing);
+    connect(gpuDrawing, &QCheckBox::toggled, this, [](bool enabled) { VideoSurface::setGpuDrawingEnabled(enabled); });
+
+    auto *maxDecoders = new QSpinBox(advanced);
+    maxDecoders->setRange(1, MOST_DECODERS);
+    maxDecoders->setValue(std::min(Core::CallVideo::maxDecoders(), MOST_DECODERS));
+    labelledRow(advancedLayout, tr("Videos decoded at once"), maxDecoders);
+    connect(maxDecoders, qOverload<int>(&QSpinBox::valueChanged), this, [](int decoders) { Core::CallVideo::setMaxDecoders(decoders); });
+
+    QComboBox *captureMethod = makeCaptureMethodCombo(advanced);
+    labelledRow(advancedLayout, tr("Capture Method"), captureMethod);
     connect(captureMethod, qOverload<int>(&QComboBox::activated), this, [captureMethod] { Core::Video::setCaptureMethod(chosenCaptureMethod(captureMethod)); });
 
     if (Core::Video::cameraCaptureAvailable()) {
@@ -109,15 +113,18 @@ VideoPage::VideoPage(QWidget *parent)
             Core::Video::setPreferredCamera(camera->itemData(index).toString());
         });
 
-        auto *secondLayer = new QCheckBox(tr("Send the camera in two layers"), this);
+        auto *secondLayer = new QCheckBox(tr("Send the camera in two layers"), advanced);
         secondLayer->setChecked(Core::Video::cameraSecondLayerEnabled());
-        layout->addWidget(secondLayer);
+        advancedLayout->addWidget(secondLayer);
         connect(secondLayer, &QCheckBox::toggled, this, [](bool enabled) { Core::Video::setCameraSecondLayerEnabled(enabled); });
     }
 
     const QList<VideoCodec> everyCodec(Discord::Voice::VIDEO_CODECS_BEST_FIRST.begin(), Discord::Voice::VIDEO_CODECS_BEST_FIRST.end());
-    addCodecRow(layout, this, tr("Send with"), everyCodec, sendCodecChecks, Core::Media::sendCodecAllowed, Core::Media::setSendCodecAllowed);
-    addCodecRow(layout, this, tr("Receive with"), Core::Media::decodableVideoCodecs(), receiveCodecChecks, Core::Media::receiveCodecAllowed, Core::Media::setReceiveCodecAllowed);
+    addCodecRow(advancedLayout, advanced, tr("Send with"), everyCodec, sendCodecChecks, Core::Media::sendCodecAllowed, Core::Media::setSendCodecAllowed);
+    addCodecRow(advancedLayout, advanced, tr("Receive with"), Core::Media::decodableVideoCodecs(), receiveCodecChecks, Core::Media::receiveCodecAllowed, Core::Media::setReceiveCodecAllowed);
+
+    layout->addWidget(makeAdvancedToggle(advanced, this));
+    layout->addWidget(advanced);
 
     auto *note = new QLabel(tr("Video settings apply to streams, cameras and calls opened afterwards."), this);
     QFont noteFont = note->font();

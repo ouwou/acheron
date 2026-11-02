@@ -2,6 +2,7 @@
 
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/ImageManager.hpp"
+#include "UI/AdvancedToggle.hpp"
 #include "UI/StatusIndicator.hpp"
 
 #include <QContextMenuEvent>
@@ -468,22 +469,10 @@ void VoiceWindow::setupUi()
 
 void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
 {
-    advancedToggle = new QToolButton(this);
-    advancedToggle->setText(tr("Advanced"));
-    advancedToggle->setCheckable(true);
-    advancedToggle->setChecked(false);
-    advancedToggle->setArrowType(Qt::RightArrow);
-    advancedToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    advancedToggle->setAutoRaise(true);
-    advancedToggle->setCursor(Qt::PointingHandCursor);
-    advancedToggle->setStyleSheet(
-            "QToolButton { font-size: 10px; font-weight: bold; text-transform: uppercase;"
-            "  color: palette(text); background: transparent; border: none; padding: 4px 0; }"
-            "QToolButton:hover { color: palette(highlight); }");
+    advancedContainer = new QWidget(this);
+    advancedToggle = makeAdvancedToggle(advancedContainer, this);
     parentLayout->addWidget(advancedToggle);
 
-    advancedContainer = new QWidget(this);
-    advancedContainer->setVisible(false);
     auto *advLayout = new QFormLayout(advancedContainer);
     advLayout->setContentsMargins(0, 0, 0, 0);
     advLayout->setSpacing(4);
@@ -549,9 +538,7 @@ void VoiceWindow::buildAdvancedSection(QVBoxLayout *parentLayout)
     installResetOnDoubleClick(rnnoiseVadCheckbox, true);
 #endif
 
-    connect(advancedToggle, &QToolButton::toggled, this, [this](bool checked) {
-        advancedToggle->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
-        advancedContainer->setVisible(checked);
+    connect(advancedToggle, &QToolButton::toggled, this, [this] {
         if (!isMaximized() && !isFullScreen())
             adjustSize();
     });
