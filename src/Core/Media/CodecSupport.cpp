@@ -162,7 +162,7 @@ QList<Discord::Voice::Codec> offeredVideoCodecs(const QList<VideoCodec> &encodab
         codec.payloadType = FIRST_PAYLOAD_TYPE + 2 * i;
         codec.rtxPayloadType = FIRST_PAYLOAD_TYPE + 2 * i + 1;
         codec.encode = encodable.contains(codecs[i]);
-        codec.decode = !notReceived.contains(Discord::Voice::videoCodecName(codecs[i]));
+        codec.decode = !notReceived.contains(Discord::Voice::videoCodecName(codecs[i])) && !decodingGivenUpOn(codecs[i]);
         offered.append(codec);
     }
     return offered;

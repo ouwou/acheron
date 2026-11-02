@@ -38,6 +38,24 @@ private:
     int raiseAfterMs = FIRST_RAISE_AFTER_MS;
 };
 
+// a codec that leaves a decoder no time to spare is better swapped than decoded. drivers that do part of
+// the work on the processor pass for hardware (a GTX 750 Ti's H265), so the time taken is all that shows it
+class DecodeStrain
+{
+public:
+    // true when the decoder has been busy most of the time for long enough
+    bool observe(double decodeMs, qint64 nowMs);
+
+    static constexpr int WINDOW_MS = 5000;
+    static constexpr double BUSY_SHARE = 0.7;
+    static constexpr int WINDOWS_IN_A_ROW = 3;
+
+private:
+    std::optional<qint64> windowStartMs;
+    double busyMs = 0.0;
+    int strainedWindows = 0;
+};
+
 } // namespace Media
 } // namespace Core
 } // namespace Acheron

@@ -142,6 +142,18 @@ public:
     std::atomic<int> quarterTurns{ -1 };
 };
 
+class SlowSink : public Core::Media::VideoFrameSink
+{
+public:
+    void present(const AVFrame *) override
+    {
+        QThread::msleep(30);
+        frames++;
+    }
+
+    std::atomic<int> frames{ 0 };
+};
+
 class GatedSink : public Core::Media::VideoFrameSink
 {
 public:
@@ -274,6 +286,8 @@ private slots:
     void aDamagedStreamIsNotHeldAgainstTheHardware();
     void plainBaselineDecodesOnTheCard();
     void aStreamTheCardRefusesIsNotHeldAgainstTheCodec();
+    // last, as a codec given up stays given up
+    void aCodecLeavingNoTimeToSpareIsGivenUpDownToH264();
 
 private:
     static void codecCases();
@@ -619,6 +633,56 @@ void TestVideoDecode::aStreamTheCardRefusesIsNotHeldAgainstTheCodec()
         QCOMPARE(outcome.shown, static_cast<int>(clip.size()));
     }
     QVERIFY(decodeH264Clip(h264, clip).hardware);
+}
+
+void TestVideoDecode::aCodecLeavingNoTimeToSpareIsGivenUpDownToH264()
+{
+    struct Strained
+    {
+        explicit Strained(const CodecCase &codecCase) : codec(codecCase.codec), clip(encodeClip(codecCase)), sink(std::make_shared<SlowSink>()), decoder(false)
+        {
+            decoder.setSink(sink);
+            decoder.setCodecFailureHandler([this](VideoCodec) { reports++; });
+        }
+
+        // the decoder never finds its queue empty, which is what strain is
+        void keepBusy()
+        {
+            if (pushed - static_cast<size_t>(sink->frames.load()) > 1)
+                return;
+            decoder.push(codec, forDecoder(codec, clip[pushed % clip.size()]));
+            pushed++;
+        }
+
+        VideoCodec codec;
+        std::vector<EncodedFrame> clip;
+        std::shared_ptr<SlowSink> sink;
+        Core::Media::VideoDecoder decoder;
+        std::atomic<int> reports{ 0 };
+        size_t pushed = 0;
+    };
+
+    Strained heavy(CodecCase{ VideoCodec::H265, AV_CODEC_ID_HEVC, { "libkvazaar", "libx265" } });
+    Strained light(CodecCase{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } });
+    if (heavy.clip.empty() || light.clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+
+    QElapsedTimer timer;
+    timer.start();
+    const qint64 longest = 2 * Core::Media::DecodeStrain::WINDOWS_IN_A_ROW * Core::Media::DecodeStrain::WINDOW_MS;
+    while (heavy.reports == 0 && timer.elapsed() < longest) {
+        heavy.keepBusy();
+        light.keepBusy();
+        QThread::msleep(1);
+    }
+
+    QCOMPARE(heavy.reports.load(), 1);
+    QCOMPARE(light.reports.load(), 0);
+    QVERIFY(Core::Media::decodingGivenUpOn(VideoCodec::H265));
+    QVERIFY(!Core::Media::decodingGivenUpOn(VideoCodec::H264));
+
+    for (const Codec &offered : Core::Media::offeredVideoCodecs())
+        QCOMPARE(offered.decode.get(), videoCodecFromName(offered.name.get()) != VideoCodec::H265);
 }
 
 QTEST_GUILESS_MAIN(TestVideoDecode)

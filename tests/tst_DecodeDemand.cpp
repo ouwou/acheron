@@ -3,6 +3,7 @@
 #include <QTest>
 
 using Acheron::Core::Media::DecodeDemand;
+using Acheron::Core::Media::DecodeStrain;
 
 namespace {
 
@@ -20,12 +21,28 @@ bool observeFor(DecodeDemand &demand, qint64 &nowMs, int seconds, int backlogMs,
     return changed;
 }
 
+constexpr int FRAMES_A_SECOND = 60;
+
+int strainFoundIn(DecodeStrain &strain, qint64 &nowMs, int seconds, double decodeMs)
+{
+    int found = 0;
+    for (int frame = 0; frame < seconds * FRAMES_A_SECOND; frame++) {
+        nowMs += 1000 / FRAMES_A_SECOND;
+        found += strain.observe(decodeMs, nowMs) ? 1 : 0;
+    }
+    return found;
+}
+
 } // namespace
 
 class TestDecodeDemand : public QObject
 {
     Q_OBJECT
 private slots:
+    void aDecoderWithTimeToSpareIsLeftAlone();
+    void aDecoderBusyMostOfTheTimeIsNoticed();
+    void aMomentOfStrainIsForgiven();
+    void aPauseInThePictureEndsAStrain();
     void aShortBacklogChangesNothing();
     void stayingBehindHalvesWhatIsAskedFor();
     void theSenderIsGivenTimeBeforeTheNextHalving();
@@ -116,6 +133,44 @@ void TestDecodeDemand::halfOfWhatIsSentNotOfTheSurface()
     QCOMPARE(demand.pixelsToAskFor(SURFACE, FULL_HD), FULL_HD / 2);
     QCOMPARE(demand.pixelsToAskFor(FULL_HD / 4, FULL_HD), FULL_HD / 8);
     QCOMPARE(demand.pixelsToAskFor(SURFACE, 0), SURFACE / 2);
+}
+
+void TestDecodeDemand::aDecoderWithTimeToSpareIsLeftAlone()
+{
+    DecodeStrain strain;
+    qint64 nowMs = 0;
+    QCOMPARE(strainFoundIn(strain, nowMs, 600, 8.0), 0);
+}
+
+void TestDecodeDemand::aDecoderBusyMostOfTheTimeIsNoticed()
+{
+    DecodeStrain strain;
+    qint64 nowMs = 0;
+    const int windows = DecodeStrain::WINDOWS_IN_A_ROW * DecodeStrain::WINDOW_MS / 1000;
+    QCOMPARE(strainFoundIn(strain, nowMs, windows - 2, 15.0), 0);
+    QCOMPARE(strainFoundIn(strain, nowMs, 4, 15.0), 1);
+}
+
+void TestDecodeDemand::aMomentOfStrainIsForgiven()
+{
+    DecodeStrain strain;
+    qint64 nowMs = 0;
+    const int seconds = (DecodeStrain::WINDOWS_IN_A_ROW - 1) * DecodeStrain::WINDOW_MS / 1000;
+    for (int i = 0; i < 20; i++) {
+        QCOMPARE(strainFoundIn(strain, nowMs, seconds, 15.0), 0);
+        QCOMPARE(strainFoundIn(strain, nowMs, DecodeStrain::WINDOW_MS / 1000, 4.0), 0);
+    }
+}
+
+void TestDecodeDemand::aPauseInThePictureEndsAStrain()
+{
+    DecodeStrain strain;
+    qint64 nowMs = 0;
+    const int seconds = (DecodeStrain::WINDOWS_IN_A_ROW - 1) * DecodeStrain::WINDOW_MS / 1000;
+    QCOMPARE(strainFoundIn(strain, nowMs, seconds, 15.0), 0);
+    nowMs += 60'000;
+    QVERIFY(!strain.observe(15.0, nowMs));
+    QCOMPARE(strainFoundIn(strain, nowMs, seconds, 15.0), 0);
 }
 
 QTEST_GUILESS_MAIN(TestDecodeDemand)

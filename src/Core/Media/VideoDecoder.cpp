@@ -1,6 +1,7 @@
 #include "Core/Media/VideoDecoder.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Media/RunningAverage.hpp"
 
@@ -49,6 +50,13 @@ constexpr std::chrono::seconds HARDWARE_RETRY_AFTER(60);
 std::atomic<int> &hardwareFailuresOf(VideoCodec codec)
 {
     return hardwareFailures[static_cast<size_t>(codec)];
+}
+
+std::array<std::atomic<bool>, Discord::Voice::VIDEO_CODEC_COUNT> decodingGivenUp = {};
+
+bool hasLighterCodec(VideoCodec codec)
+{
+    return codec == VideoCodec::AV1 || codec == VideoCodec::H265;
 }
 
 // ffmpeg's own AV1 decoder only works through a hardware accelerator
@@ -225,6 +233,11 @@ void setHardwareDecodingEnabled(bool enabled)
     QSettings().setValue(HARDWARE_DECODE_KEY, enabled);
 }
 
+bool decodingGivenUpOn(VideoCodec codec)
+{
+    return decodingGivenUp[static_cast<size_t>(codec)];
+}
+
 QList<Discord::Voice::VideoCodec> decodableVideoCodecs()
 {
     static const QList<VideoCodec> codecs = [] {
@@ -369,6 +382,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     framesSinceOpen = 0;
     hardwareProven = false;
     hardwareTurnedDown = false;
+    strain = {};
     describeDecoder();
     return true;
 }
@@ -475,13 +489,7 @@ void VideoDecoder::decode(Queued &queued)
     }
     if (queued.codec != openCodec && !open(queued.codec)) {
         unopenableCodec = queued.codec;
-        std::function<void(Discord::Voice::VideoCodec)> handler;
-        {
-            std::lock_guard lock(mutex);
-            handler = codecFailureHandler;
-        }
-        if (handler)
-            handler(queued.codec);
+        reportCodecFailure(queued.codec);
         return;
     }
     unopenableCodec.reset();
@@ -525,6 +533,29 @@ void VideoDecoder::decode(Queued &queued)
         close();
     }
     reportUndecodableFrame();
+}
+
+void VideoDecoder::reportCodecFailure(Discord::Voice::VideoCodec codec)
+{
+    std::function<void(Discord::Voice::VideoCodec)> handler;
+    {
+        std::lock_guard lock(mutex);
+        handler = codecFailureHandler;
+    }
+    if (handler)
+        handler(codec);
+}
+
+void VideoDecoder::giveUpCodecUnderStrain(double decodeMs)
+{
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const qint64 nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    if (!strain.observe(decodeMs, nowMs) || !hasLighterCodec(openCodec) || !receiveCodecAllowed(VideoCodec::H264))
+        return;
+
+    if (!decodingGivenUp[static_cast<size_t>(openCodec)].exchange(true))
+        qCInfo(LogVideo) << "Decoding" << Discord::Voice::videoCodecName(openCodec) << "leaves no time to spare, so a lighter codec is asked for until Acheron restarts";
+    reportCodecFailure(openCodec);
 }
 
 bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size)
@@ -582,14 +613,15 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         framesSinceOpen++;
         hardwareProven = hardwareProven || (hardwareDevice && framesSinceOpen >= HARDWARE_TRIAL_FRAMES);
 
+        const double elapsedMs = static_cast<double>(timer.nsecsElapsed()) / 1e6;
         {
             std::lock_guard lock(mutex);
             counters.decoded++;
             counters.width = output->width;
             counters.height = output->height;
-            const double elapsedMs = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             counters.averageDecodeMs = withSample(counters.averageDecodeMs, elapsedMs, counters.decoded);
         }
+        giveUpCodecUnderStrain(elapsedMs);
         av_frame_unref(decoded);
     }
 }

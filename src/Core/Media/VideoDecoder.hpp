@@ -12,6 +12,7 @@
 #include <optional>
 #include <thread>
 
+#include "Core/Media/DecodeDemand.hpp"
 #include "Discord/Voice/VideoFrame.hpp"
 
 struct AVBufferRef;
@@ -28,6 +29,9 @@ namespace Media {
 void setHardwareDecodingEnabled(bool enabled);
 
 [[nodiscard]] QList<Discord::Voice::VideoCodec> decodableVideoCodecs();
+
+// left no decoder time to spare, so not offered again until the program restarts
+[[nodiscard]] bool decodingGivenUpOn(Discord::Voice::VideoCodec codec);
 
 // clockwise, to be seen the right way up. carried as the display matrix decoders also read from a stream
 [[nodiscard]] int quarterTurnsOf(const AVFrame *frame);
@@ -104,6 +108,8 @@ private:
     [[nodiscard]] bool decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size);
     void startOverAtNextKeyframe();
     void reportUndecodableFrame();
+    void reportCodecFailure(Discord::Voice::VideoCodec codec);
+    void giveUpCodecUnderStrain(double decodeMs);
     void describeDecoder();
 
     mutable std::mutex mutex;
@@ -134,6 +140,7 @@ private:
     std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
+    DecodeStrain strain;
 
     std::thread thread;
 };
