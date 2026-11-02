@@ -391,7 +391,8 @@ jobs:
           retention-days: 7
 
   build-linux:
-    runs-on: ubuntu-latest
+    # not -latest: mlspp builds with -Werror, which fails on ubuntu-26.04's gcc 15
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -506,7 +507,7 @@ jobs:
         with:
           path: build/vcpkg_installed
           # Keyed separately from build-linux: its cache is built on
-          # ubuntu-latest and restoring it here would raise the glibc floor.
+          # ubuntu-24.04 and restoring it here would raise the glibc floor.
           key: vcpkg-x64-linux-jammy-${{ hashFiles('vcpkg.json') }}
 
       - name: Install curl-impersonate
