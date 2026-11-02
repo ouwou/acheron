@@ -45,7 +45,7 @@ bool near(qint64 a, qint64 b)
 PlayedSoundRemover::PlayedSoundRemover(Sources sources) : sources(std::move(sources)), captured(static_cast<size_t>(CAPTURE_KEPT_FRAMES) * 2)
 {
     const float unscaled = 1.0f;
-    if (av_tx_init(&forward, &forwardTransform, AV_TX_FLOAT_FFT, 0, TRANSFORM_SIZE, &unscaled, 0) < 0 || av_tx_init(&inverse, &inverseTransform, AV_TX_FLOAT_FFT, 1, TRANSFORM_SIZE, &unscaled, 0) < 0)
+    if (av_tx_init(&forward, &forwardTransform, AV_TX_FLOAT_FFT, 0, TRANSFORM_SIZE, &unscaled, AV_TX_UNALIGNED) < 0 || av_tx_init(&inverse, &inverseTransform, AV_TX_FLOAT_FFT, 1, TRANSFORM_SIZE, &unscaled, AV_TX_UNALIGNED) < 0)
         qCWarning(LogVoice) << "No transform for finding this program's own sound; the shared sound keeps it";
 }
 

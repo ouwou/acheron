@@ -22,6 +22,7 @@ using Discord::Voice::VideoCodec;
 namespace {
 
 const char *const SEND_CODECS_OFF_KEY = "video/send_codecs_off";
+const char *const RECEIVE_CODECS_OFF_KEY = "video/receive_codecs_off";
 constexpr int FIRST_PAYLOAD_TYPE = 101;
 
 constexpr std::array SIZES_NOT_OF_WHOLE_BLOCKS = { QSize(640, 360), QSize(1000, 700) };
@@ -84,31 +85,46 @@ void whenSendCodecsKnown(QObject *context, SendCodecsKnown then)
 
 namespace {
 
-QStringList sendCodecsTurnedOff()
+QStringList codecsTurnedOff(const char *key)
 {
-    return QSettings().value(SEND_CODECS_OFF_KEY).toStringList();
+    return QSettings().value(key).toStringList();
+}
+
+void setCodecTurnedOff(const char *key, VideoCodec codec, bool turnedOff)
+{
+    const QString name = Discord::Voice::videoCodecName(codec);
+    QStringList off = codecsTurnedOff(key);
+    off.removeAll(name);
+    if (turnedOff)
+        off.append(name);
+    QSettings().setValue(key, off);
 }
 
 } // namespace
 
 bool sendCodecAllowed(VideoCodec codec)
 {
-    return !sendCodecsTurnedOff().contains(Discord::Voice::videoCodecName(codec));
+    return !codecsTurnedOff(SEND_CODECS_OFF_KEY).contains(Discord::Voice::videoCodecName(codec));
 }
 
 void setSendCodecAllowed(VideoCodec codec, bool allowed)
 {
-    const QString name = Discord::Voice::videoCodecName(codec);
-    QStringList off = sendCodecsTurnedOff();
-    off.removeAll(name);
-    if (!allowed)
-        off.append(name);
-    QSettings().setValue(SEND_CODECS_OFF_KEY, off);
+    setCodecTurnedOff(SEND_CODECS_OFF_KEY, codec, !allowed);
+}
+
+bool receiveCodecAllowed(VideoCodec codec)
+{
+    return !codecsTurnedOff(RECEIVE_CODECS_OFF_KEY).contains(Discord::Voice::videoCodecName(codec));
+}
+
+void setReceiveCodecAllowed(VideoCodec codec, bool allowed)
+{
+    setCodecTurnedOff(RECEIVE_CODECS_OFF_KEY, codec, !allowed);
 }
 
 QList<VideoCodec> allowedSendCodecs(const QList<VideoCodec> &encodable)
 {
-    const QStringList off = sendCodecsTurnedOff();
+    const QStringList off = codecsTurnedOff(SEND_CODECS_OFF_KEY);
     QList<VideoCodec> allowed;
     for (VideoCodec codec : encodable) {
         if (!off.contains(Discord::Voice::videoCodecName(codec)))
@@ -137,6 +153,7 @@ QList<Discord::Voice::Codec> offeredVideoCodecs(const QList<VideoCodec> &encodab
 {
     QList<Discord::Voice::Codec> offered;
     const QList<VideoCodec> codecs = decodableVideoCodecs();
+    const QStringList notReceived = codecsTurnedOff(RECEIVE_CODECS_OFF_KEY);
     for (int i = 0; i < codecs.size(); i++) {
         Discord::Voice::Codec codec;
         codec.name = Discord::Voice::videoCodecName(codecs[i]);
@@ -145,7 +162,7 @@ QList<Discord::Voice::Codec> offeredVideoCodecs(const QList<VideoCodec> &encodab
         codec.payloadType = FIRST_PAYLOAD_TYPE + 2 * i;
         codec.rtxPayloadType = FIRST_PAYLOAD_TYPE + 2 * i + 1;
         codec.encode = encodable.contains(codecs[i]);
-        codec.decode = true;
+        codec.decode = !notReceived.contains(Discord::Voice::videoCodecName(codecs[i])) && !decodingGivenUpOn(codecs[i]);
         offered.append(codec);
     }
     return offered;

@@ -59,6 +59,7 @@ struct RtpExtension
 // Discord's ids
 inline constexpr uint8_t TRANSMISSION_OFFSET_EXTENSION = 2;
 inline constexpr uint8_t ABS_SEND_TIME_EXTENSION = 3;
+inline constexpr uint8_t VIDEO_ORIENTATION_EXTENSION = 4;
 inline constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
 
 inline constexpr int VIDEO_CLOCK_KHZ = 90;

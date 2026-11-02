@@ -13,6 +13,7 @@
 #include <optional>
 #include <thread>
 
+#include "Core/Media/DecodeDemand.hpp"
 #include "Discord/Voice/VideoFrame.hpp"
 
 struct AVBufferRef;
@@ -29,6 +30,13 @@ namespace Media {
 void setHardwareDecodingEnabled(bool enabled);
 
 [[nodiscard]] QList<Discord::Voice::VideoCodec> decodableVideoCodecs();
+
+// left no decoder time to spare, so not offered again until the program restarts
+[[nodiscard]] bool decodingGivenUpOn(Discord::Voice::VideoCodec codec);
+
+// clockwise, to be seen the right way up. carried as the display matrix decoders also read from a stream
+[[nodiscard]] int quarterTurnsOf(const AVFrame *frame);
+void setQuarterTurns(AVFrame *frame, int quarterTurns);
 
 // present() runs on the decoder's thread and must take its own reference to keep the frame
 class VideoFrameSink
@@ -103,6 +111,8 @@ private:
     void reportUndecodableFrame();
     // TEMPORARY (Windows 7 bring-up): a "[hwdiag]" summary in the log every ten seconds
     void logSummaryNow();
+    void reportCodecFailure(Discord::Voice::VideoCodec codec);
+    void giveUpCodecUnderStrain(double decodeMs);
     void describeDecoder();
 
     mutable std::mutex mutex;
@@ -131,9 +141,11 @@ private:
     // the card refused this stream (its profile or size), which says nothing about the codec's other streams
     bool hardwareTurnedDown = false;
     QElapsedTimer summaryTimer;
+    qint64 processorMsAtSummary = 0;
     std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;
+    DecodeStrain strain;
 
     std::thread thread;
 };

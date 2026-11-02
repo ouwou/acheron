@@ -12,21 +12,20 @@ findstr /C:"[acheron.video]" /C:"=== Acheron startup" "%LOGDIR%\acheron.log" > "
 echo Done.
 echo.
 
-echo Step 2 of 3: starting Acheron. In a voice call with someone:
-echo   1. Share your screen with "Share audio" ticked, play a video or some music,
-echo      and ask whoever watches whether they hear it, and whether they hear
-echo      themselves or the others in the call a second time.
-echo   2. Watch someone else's stream or camera if you can.
+echo Step 2 of 3: starting Acheron. See "What to test" in README-TESTER.txt:
+echo   1. Watch a stream that arrives as H265, with Stats on, for a minute.
+echo   2. Share your screen with "Share audio" ticked and ask whoever watches
+echo      what they see and hear.
 echo Then close Acheron normally (the X button).
 set ACHERON_NO_HWDIAG=1
 start "" /wait "%HERE%acheron.exe"
 set ACHERON_NO_HWDIAG=
 
 echo Step 3 of 3: collecting the report (dxdiag takes up to a minute)...
-findstr /C:"[acheron.video]" /C:"=== Acheron startup" /C:"Starting Acheron" /C:"[CRT]" /C:"[FTL]" /C:"own sound" /C:"output device" /C:"Screen share" /C:"Sound capture" /C:"could not capture the sound" "%LOGDIR%\acheron.log" > "%OUT%\video-log.txt"
+findstr /C:"[acheron.video]" /C:"=== Acheron startup" /C:"Starting Acheron" /C:"[CRT]" /C:"[FTL]" /C:"own sound" /C:"output device" /C:"Screen share" /C:"Sound capture" /C:"could not capture the sound" /C:"Withdrawing" /C:"decoder backlog" "%LOGDIR%\acheron.log" > "%OUT%\video-log.txt"
 copy /y "%LOGDIR%\acheron-crash-*.dmp" "%OUT%\" >nul 2>&1
 start "" /wait dxdiag /whql:off /t "%OUT%\dxdiag.txt"
 echo.
 echo Done. Please send the folder "%OUT%" to the developer,
-echo with a sentence about what the shared screen looked and sounded like to the others.
+echo with your answers to the questions in README-TESTER.txt.
 pause

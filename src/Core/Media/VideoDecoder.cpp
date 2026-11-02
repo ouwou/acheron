@@ -1,7 +1,9 @@
 #include "Core/Media/VideoDecoder.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/CodecSupport.hpp"
 #include "Core/Media/HardwareDevices.hpp"
+#include "Core/Media/HardwareDiagnostics.hpp"
 #include "Core/Media/RunningAverage.hpp"
 
 #include <QElapsedTimer>
@@ -10,12 +12,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <span>
 #include <utility>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
@@ -47,6 +51,13 @@ constexpr std::chrono::seconds HARDWARE_RETRY_AFTER(60);
 std::atomic<int> &hardwareFailuresOf(VideoCodec codec)
 {
     return hardwareFailures[static_cast<size_t>(codec)];
+}
+
+std::array<std::atomic<bool>, Discord::Voice::VIDEO_CODEC_COUNT> decodingGivenUp = {};
+
+bool hasLighterCodec(VideoCodec codec)
+{
+    return codec == VideoCodec::AV1 || codec == VideoCodec::H265;
 }
 
 // ffmpeg's own AV1 decoder only works through a hardware accelerator
@@ -226,6 +237,11 @@ void setHardwareDecodingEnabled(bool enabled)
     QSettings().setValue(HARDWARE_DECODE_KEY, enabled);
 }
 
+bool decodingGivenUpOn(VideoCodec codec)
+{
+    return decodingGivenUp[static_cast<size_t>(codec)];
+}
+
 QList<Discord::Voice::VideoCodec> decodableVideoCodecs()
 {
     static const QList<VideoCodec> codecs = [] {
@@ -237,6 +253,26 @@ QList<Discord::Voice::VideoCodec> decodableVideoCodecs()
         return found;
     }();
     return codecs;
+}
+
+int quarterTurnsOf(const AVFrame *frame)
+{
+    const AVFrameSideData *matrix = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
+    if (!matrix)
+        return 0;
+    const double counterclockwise = av_display_rotation_get(reinterpret_cast<const int32_t *>(matrix->data));
+    if (std::isnan(counterclockwise))
+        return 0;
+    const int turns = static_cast<int>(std::lround(-counterclockwise / 90.0));
+    return (turns % 4 + 4) % 4;
+}
+
+void setQuarterTurns(AVFrame *frame, int quarterTurns)
+{
+    av_frame_remove_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
+    AVFrameSideData *matrix = av_frame_new_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX, 9 * sizeof(int32_t));
+    if (matrix)
+        av_display_rotation_set(reinterpret_cast<int32_t *>(matrix->data), quarterTurns * 90.0);
 }
 
 VideoDecoder::VideoDecoder(bool allowHardware, int softwareThreads)
@@ -350,6 +386,7 @@ bool VideoDecoder::open(Discord::Voice::VideoCodec codec)
     framesSinceOpen = 0;
     hardwareProven = false;
     hardwareTurnedDown = false;
+    strain = {};
     describeDecoder();
     qCInfo(LogVideo).noquote() << "[hwdiag] decoding" << Discord::Voice::videoCodecName(codec) << "with" << counters.decoderName << "(hardware allowed:" << hardwareAllowed << ", ruled out:" << ruledOut << ", earlier failures:" << hardwareFailuresOf(codec).load() << ")";
     return true;
@@ -457,13 +494,7 @@ void VideoDecoder::decode(Queued &queued)
     }
     if (queued.codec != openCodec && !open(queued.codec)) {
         unopenableCodec = queued.codec;
-        std::function<void(Discord::Voice::VideoCodec)> handler;
-        {
-            std::lock_guard lock(mutex);
-            handler = codecFailureHandler;
-        }
-        if (handler)
-            handler(queued.codec);
+        reportCodecFailure(queued.codec);
         return;
     }
     unopenableCodec.reset();
@@ -509,6 +540,29 @@ void VideoDecoder::decode(Queued &queued)
     reportUndecodableFrame();
 }
 
+void VideoDecoder::reportCodecFailure(Discord::Voice::VideoCodec codec)
+{
+    std::function<void(Discord::Voice::VideoCodec)> handler;
+    {
+        std::lock_guard lock(mutex);
+        handler = codecFailureHandler;
+    }
+    if (handler)
+        handler(codec);
+}
+
+void VideoDecoder::giveUpCodecUnderStrain(double decodeMs)
+{
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    const qint64 nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+    if (!strain.observe(decodeMs, nowMs) || !hasLighterCodec(openCodec) || !receiveCodecAllowed(VideoCodec::H264))
+        return;
+
+    if (!decodingGivenUp[static_cast<size_t>(openCodec)].exchange(true))
+        qCInfo(LogVideo) << "Decoding" << Discord::Voice::videoCodecName(openCodec) << "leaves no time to spare, so a lighter codec is asked for until Acheron restarts";
+    reportCodecFailure(openCodec);
+}
+
 bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size)
 {
     QElapsedTimer timer;
@@ -539,7 +593,7 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         if (received < 0)
             return false;
 
-        const AVFrame *output = decoded;
+        AVFrame *output = decoded;
         if (hardwareDevice) {
             // a decoder that turned the hardware format down decodes in software without threads
             hardwareTurnedDown = decoded->format != hardwarePixelFormat;
@@ -559,19 +613,22 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
             }
         }
 
+        if (paddedFrame.quarterTurns != 0)
+            setQuarterTurns(output, paddedFrame.quarterTurns);
         if (sink)
             sink->present(output);
         framesSinceOpen++;
         hardwareProven = hardwareProven || (hardwareDevice && framesSinceOpen >= HARDWARE_TRIAL_FRAMES);
 
+        const double elapsedMs = static_cast<double>(timer.nsecsElapsed()) / 1e6;
         {
             std::lock_guard lock(mutex);
             counters.decoded++;
             counters.width = output->width;
             counters.height = output->height;
-            const double elapsedMs = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             counters.averageDecodeMs = withSample(counters.averageDecodeMs, elapsedMs, counters.decoded);
         }
+        giveUpCodecUnderStrain(elapsedMs);
         av_frame_unref(decoded);
         logSummaryNow();
     }
@@ -580,13 +637,18 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
 void VideoDecoder::logSummaryNow()
 {
     static constexpr qint64 SUMMARY_EVERY_MS = 10000;
+    const ProcessorTime used = processorTimeSoFar();
+    const qint64 processorMs = used.userMs + used.kernelMs;
     if (!summaryTimer.isValid()) {
         summaryTimer.start();
+        processorMsAtSummary = processorMs;
         return;
     }
     if (summaryTimer.elapsed() < SUMMARY_EVERY_MS)
         return;
-    summaryTimer.restart();
+    const qint64 elapsedMs = summaryTimer.restart();
+    qCInfo(LogVideo).noquote() << "[hwdiag] the whole program used" << (processorMs - processorMsAtSummary) * 100 / elapsedMs << "% of one processor thread while decoding";
+    processorMsAtSummary = processorMs;
     const Stats now = stats();
     qCInfo(LogVideo).noquote() << "[hwdiag] decoder" << now.decoderName << now.width << "x" << now.height << ": decoded" << now.decoded << "dropped" << now.dropped << "errors" << now.errors << "queues discarded" << now.queuesDiscarded << "backlog" << now.backlogMs << "ms, decode" << QString::number(now.averageDecodeMs, 'f', 2) << "ms";
 }

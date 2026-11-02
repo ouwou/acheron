@@ -55,6 +55,26 @@ int DecodeDemand::pixelsToAskFor(int shownPixels, qint64 sentPixels) const
     return halvings == 0 ? shownPixels : static_cast<int>(useful >> halvings);
 }
 
+bool DecodeStrain::observe(double decodeMs, qint64 nowMs)
+{
+    if (!windowStartMs)
+        windowStartMs = nowMs;
+    busyMs += decodeMs;
+
+    const qint64 elapsedMs = nowMs - *windowStartMs;
+    if (elapsedMs < WINDOW_MS)
+        return false;
+
+    strainedWindows = busyMs >= BUSY_SHARE * static_cast<double>(elapsedMs) ? strainedWindows + 1 : 0;
+    windowStartMs = nowMs;
+    busyMs = 0.0;
+    if (strainedWindows < WINDOWS_IN_A_ROW)
+        return false;
+
+    strainedWindows = 0;
+    return true;
+}
+
 } // namespace Media
 } // namespace Core
 } // namespace Acheron

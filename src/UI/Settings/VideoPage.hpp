@@ -16,6 +16,7 @@ public:
 
 private:
     QList<QCheckBox *> sendCodecChecks;
+    QList<QCheckBox *> receiveCodecChecks;
 };
 
 } // namespace UI

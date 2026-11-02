@@ -5,6 +5,7 @@
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/RgbScaler.hpp"
+#include "Core/Media/HardwareDiagnostics.hpp"
 #include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/PictureConverter.hpp"
@@ -18,6 +19,7 @@
 #include <dwmapi.h>
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QOperatingSystemVersion>
 #include <QSettings>
 
@@ -73,6 +75,41 @@ bool usesGraphicsCapture(CaptureMethod method, bool forWindow)
     const bool preferred = method == CaptureMethod::GraphicsCapture || (method == CaptureMethod::Auto && forWindow);
     return graphicsCaptureUsable() && (preferred || !duplicationUsable());
 }
+
+// TEMPORARY (Windows 7 bring-up): where a copied picture's time goes, in the log every ten seconds
+struct CopyTimes
+{
+    qint64 blitNs = 0;
+    qint64 pointerNs = 0;
+    qint64 compareNs = 0;
+    qint64 copyNs = 0;
+    qint64 convertNs = 0;
+    int pictures = 0;
+    int unchanged = 0;
+    Media::ProcessorTime processorAtStart;
+    QElapsedTimer since;
+
+    void logNow()
+    {
+        if (!since.isValid()) {
+            processorAtStart = Media::processorTimeSoFar();
+            since.start();
+            return;
+        }
+        const qint64 elapsedMs = since.elapsed();
+        if (elapsedMs < 10000)
+            return;
+
+        const auto average = [](qint64 ns, int count) { return QString::number(static_cast<double>(ns) / 1e6 / std::max(count, 1), 'f', 2); };
+        const int reads = pictures + unchanged;
+        const Media::ProcessorTime now = Media::processorTimeSoFar();
+        qCInfo(LogVideo).noquote() << "[hwdiag] screen copy:" << pictures << "pictures sent and" << unchanged << "unchanged in" << elapsedMs << "ms; BitBlt" << average(blitNs, reads) << "ms, pointer" << average(pointerNs, reads) << "ms, compare" << average(compareNs, reads) << "ms, second copy" << average(copyNs, pictures) << "ms, scale and convert" << average(convertNs, pictures) << "ms; the whole program used" << (now.userMs - processorAtStart.userMs) * 100 / elapsedMs << "% user and" << (now.kernelMs - processorAtStart.kernelMs) * 100 / elapsedMs << "% kernel of one processor thread";
+
+        *this = {};
+        processorAtStart = now;
+        since.start();
+    }
+};
 
 // with the desktop composited, layered windows are in the copy already, and asking for them makes the pointer flicker
 DWORD screenCopyOperation()
@@ -563,24 +600,40 @@ ScreenCapture::Status ScreenCapture::readScreenCopy(AVFrame *into)
     if (!state.screenCopy->usable())
         return afterFailure(AVERROR(ENOMEM));
 
+    static thread_local CopyTimes times;
+    QElapsedTimer stage;
+    stage.start();
+
     const HDC screen = GetDC(nullptr);
     const bool copied = screen && BitBlt(state.screenCopy->context(), 0, 0, area.width(), area.height(), screen, area.x(), area.y(), screenCopyOperation());
     if (screen)
         ReleaseDC(nullptr, screen);
+    times.blitNs += stage.nsecsElapsed();
+    stage.restart();
     // as with duplication, the secure desktop (a UAC prompt, the lock screen) refuses to be copied
     if (!copied) {
         state.screen.reset();
         return afterFailure(AVERROR(EPERM));
     }
     state.pointer.paint(state.screenCopy->context(), area.size(), area);
+    times.pointerNs += stage.nsecsElapsed();
+    stage.restart();
 
     AVFrame *bgra = state.bgra.get();
     const QSize pictureSize = evenSize(area.size());
-    if (state.skipsUnchanged && state.copyDelivered && bgra->width == pictureSize.width() && showsTopLeftOf(*state.screenCopy, bgra))
+    if (state.skipsUnchanged && state.copyDelivered && bgra->width == pictureSize.width() && showsTopLeftOf(*state.screenCopy, bgra)) {
+        times.compareNs += stage.nsecsElapsed();
+        times.unchanged++;
+        times.logNow();
         return Status::NoFrame;
+    }
+    times.compareNs += stage.nsecsElapsed();
+    stage.restart();
     if (!prepareBgra(bgra, pictureSize))
         return afterFailure(AVERROR(ENOMEM));
     copyTopLeft(*state.screenCopy, bgra);
+    times.copyNs += stage.nsecsElapsed();
+    stage.restart();
 
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
     const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
@@ -589,6 +642,9 @@ ScreenCapture::Status ScreenCapture::readScreenCopy(AVFrame *into)
     if (converted < 0)
         return afterFailure(converted);
     markColours(into, bt601);
+    times.convertNs += stage.nsecsElapsed();
+    times.pictures++;
+    times.logNow();
 
     const char *const wentOn = "copied by GDI and scaled in software";
     if (std::exchange(state.wentOn, wentOn) != wentOn)

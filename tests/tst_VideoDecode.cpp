@@ -5,6 +5,7 @@
 #include "Discord/Voice/VideoReceiver.hpp"
 #include "VideoRtpSupport.hpp"
 
+#include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTest>
 #include <QThread>
@@ -131,12 +132,26 @@ public:
     {
         width = frame->width;
         height = frame->height;
+        quarterTurns = Core::Media::quarterTurnsOf(frame);
         frames++;
     }
 
     std::atomic<int> frames{ 0 };
     std::atomic<int> width{ 0 };
     std::atomic<int> height{ 0 };
+    std::atomic<int> quarterTurns{ -1 };
+};
+
+class SlowSink : public Core::Media::VideoFrameSink
+{
+public:
+    void present(const AVFrame *) override
+    {
+        QThread::msleep(30);
+        frames++;
+    }
+
+    std::atomic<int> frames{ 0 };
 };
 
 class GatedSink : public Core::Media::VideoFrameSink
@@ -219,6 +234,7 @@ struct Chain
 
         for (EncodedVideoFrame &assembled : receiver.takeFrames()) {
             prepareForDecoder(codec, assembled.data);
+            assembled.quarterTurns = quarterTurns;
             decoder.push(codec, std::move(assembled));
             pushed++;
         }
@@ -243,6 +259,7 @@ struct Chain
     uint16_t sequence = 65500;
     qint64 now = 0;
     int pushed = 0;
+    int quarterTurns = 0;
 };
 
 } // namespace
@@ -254,6 +271,9 @@ class TestVideoDecode : public QObject
     Q_OBJECT
 private slots:
     void decodableCodecsAreOffered();
+    void aCodecTurnedOffIsNoLongerOfferedForDecoding();
+    void aPictureSaysHowItIsToBeTurned_data();
+    void aPictureSaysHowItIsToBeTurned();
 
     void everyFrameDecodes_data() { codecCases(); }
     void everyFrameDecodes();
@@ -266,6 +286,8 @@ private slots:
     void aDamagedStreamIsNotHeldAgainstTheHardware();
     void plainBaselineDecodesOnTheCard();
     void aStreamTheCardRefusesIsNotHeldAgainstTheCodec();
+    // last, as a codec given up stays given up
+    void aCodecLeavingNoTimeToSpareIsGivenUpDownToH264();
 
 private:
     static void codecCases();
@@ -303,6 +325,52 @@ void TestVideoDecode::decodableCodecsAreOffered()
             expected.append(codec);
     }
     QVERIFY(decodable == expected);
+}
+
+void TestVideoDecode::aCodecTurnedOffIsNoLongerOfferedForDecoding()
+{
+    QCoreApplication::setOrganizationName(QStringLiteral("AcheronTests"));
+    const QList<Codec> before = Core::Media::offeredVideoCodecs();
+    QVERIFY(!before.isEmpty());
+    const VideoCodec turnedOff = Core::Media::decodableVideoCodecs().first();
+
+    Core::Media::setReceiveCodecAllowed(turnedOff, false);
+    const bool stillAllowed = Core::Media::receiveCodecAllowed(turnedOff);
+    const QList<Codec> after = Core::Media::offeredVideoCodecs({ turnedOff });
+    Core::Media::setReceiveCodecAllowed(turnedOff, true);
+
+    QVERIFY(!stillAllowed);
+    QVERIFY(Core::Media::receiveCodecAllowed(turnedOff));
+    QCOMPARE(after.size(), before.size());
+    // the rest keep the payload types their position gave them
+    for (int i = 0; i < after.size(); i++) {
+        QCOMPARE(after[i].payloadType.get(), before[i].payloadType.get());
+        QCOMPARE(after[i].decode.get(), i != 0);
+    }
+    QCOMPARE(after[0].encode.get(), true);
+}
+
+void TestVideoDecode::aPictureSaysHowItIsToBeTurned_data()
+{
+    QTest::addColumn<int>("quarterTurns");
+    for (int turns = 0; turns < 4; turns++)
+        QTest::addRow("%d quarter turns", turns) << turns;
+}
+
+void TestVideoDecode::aPictureSaysHowItIsToBeTurned()
+{
+    QFETCH(int, quarterTurns);
+    const CodecCase h264{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } };
+    const std::vector<EncodedFrame> clip = encodeClip(h264);
+    if (clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+
+    Chain chain(h264.codec);
+    chain.quarterTurns = quarterTurns;
+    for (const EncodedFrame &frame : clip)
+        chain.send(h264, frame);
+    QCOMPARE(chain.waitForDecoded(static_cast<int>(clip.size())), static_cast<int>(clip.size()));
+    QCOMPARE(chain.sink->quarterTurns.load(), quarterTurns);
 }
 
 void TestVideoDecode::everyFrameDecodes()
@@ -557,12 +625,64 @@ void TestVideoDecode::aStreamTheCardRefusesIsNotHeldAgainstTheCodec()
         QSKIP("no hardware H264 decoder on this machine");
 
     const std::vector<EncodedFrame> refused = withH264Profile(clip, H264_PROFILE_EXTENDED);
+    if (decodeH264Clip(h264, refused).hardware)
+        QSKIP("the card decodes extended profile streams too");
     for (int attempt = 0; attempt < 3; attempt++) {
         const ClipOutcome outcome = decodeH264Clip(h264, refused);
         QVERIFY(!outcome.hardware);
         QCOMPARE(outcome.shown, static_cast<int>(clip.size()));
     }
     QVERIFY(decodeH264Clip(h264, clip).hardware);
+}
+
+void TestVideoDecode::aCodecLeavingNoTimeToSpareIsGivenUpDownToH264()
+{
+    struct Strained
+    {
+        explicit Strained(const CodecCase &codecCase) : codec(codecCase.codec), clip(encodeClip(codecCase)), sink(std::make_shared<SlowSink>()), decoder(false)
+        {
+            decoder.setSink(sink);
+            decoder.setCodecFailureHandler([this](VideoCodec) { reports++; });
+        }
+
+        // the decoder never finds its queue empty, which is what strain is
+        void keepBusy()
+        {
+            if (pushed - static_cast<size_t>(sink->frames.load()) > 1)
+                return;
+            decoder.push(codec, forDecoder(codec, clip[pushed % clip.size()]));
+            pushed++;
+        }
+
+        VideoCodec codec;
+        std::vector<EncodedFrame> clip;
+        std::shared_ptr<SlowSink> sink;
+        Core::Media::VideoDecoder decoder;
+        std::atomic<int> reports{ 0 };
+        size_t pushed = 0;
+    };
+
+    Strained heavy(CodecCase{ VideoCodec::H265, AV_CODEC_ID_HEVC, { "libkvazaar", "libx265" } });
+    Strained light(CodecCase{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } });
+    if (heavy.clip.empty() || light.clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+
+    QElapsedTimer timer;
+    timer.start();
+    const qint64 longest = 2 * Core::Media::DecodeStrain::WINDOWS_IN_A_ROW * Core::Media::DecodeStrain::WINDOW_MS;
+    while (heavy.reports == 0 && timer.elapsed() < longest) {
+        heavy.keepBusy();
+        light.keepBusy();
+        QThread::msleep(1);
+    }
+
+    QCOMPARE(heavy.reports.load(), 1);
+    QCOMPARE(light.reports.load(), 0);
+    QVERIFY(Core::Media::decodingGivenUpOn(VideoCodec::H265));
+    QVERIFY(!Core::Media::decodingGivenUpOn(VideoCodec::H264));
+
+    for (const Codec &offered : Core::Media::offeredVideoCodecs())
+        QCOMPARE(offered.decode.get(), videoCodecFromName(offered.name.get()) != VideoCodec::H265);
 }
 
 QTEST_GUILESS_MAIN(TestVideoDecode)

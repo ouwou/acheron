@@ -29,7 +29,7 @@ public:
     void setFrameHandler(VideoFrameHandler handler) { frameHandler = std::move(handler); }
 
     bool receive(const ParsedRtp &rtp, PacketPool::Handle &packet);
-    void noteTransportSequence(std::span<const uint8_t> extensions);
+    void noteRtpExtensions(std::span<const uint8_t> extensions);
     void receiveRtcp(const ReceivedRtcp &received);
 
     void onConnected();
@@ -54,6 +54,7 @@ private:
         Core::Snowflake userId;
         quint32 rtxSsrc = 0;
         std::unique_ptr<VideoReceiver> receiver;
+        int quarterTurns = 0;
     };
 
     struct HeardSenderReport
@@ -108,6 +109,7 @@ private:
 
     Session state;
     std::vector<uint8_t> decrypted;
+    std::optional<int> turnsOfOpenedPacket;
 };
 
 } // namespace Voice

@@ -65,6 +65,8 @@ struct EncodedVideoFrame
     std::vector<uint8_t> data;
     uint32_t rtpTimestamp = 0;
     bool keyframe = false;
+    // clockwise, to be seen the right way up
+    int quarterTurns = 0;
 };
 
 } // namespace Voice

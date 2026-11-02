@@ -1,5 +1,6 @@
 
 #include "Core/Media/HardwareDevices.hpp"
+#include "Core/Media/VideoDecoder.hpp"
 #include "HardwareTests.hpp"
 #include "UI/Video/VideoSurface.hpp"
 
@@ -58,6 +59,15 @@ AVFrame *solidFrame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
     return frame;
 }
 
+// white on the left, grey on the right
+AVFrame *frameOfTwoHalves(int width, int height)
+{
+    AVFrame *frame = solidFrame(width, height, 235, 128, 128);
+    for (int row = 0; row < height; row++)
+        memset(frame->data[0] + row * frame->linesize[0] + width / 2, 126, static_cast<size_t>(width - width / 2));
+    return frame;
+}
+
 #ifdef CARD_FORMAT
 AVFrame *solidNv12Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
 {
@@ -80,11 +90,15 @@ AVFrame *solidNv12Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr
 #endif
 
 #ifdef HAVE_D3D11VA
-AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+AVFrame *onCard(AVFrame *memory)
 {
+    const int width = memory->width;
+    const int height = memory->height;
     AVBufferRef *device = nullptr;
-    if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) < 0)
+    if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) < 0) {
+        av_frame_free(&memory);
         return nullptr;
+    }
     AVBufferRef *pool = av_hwframe_ctx_alloc(device);
     av_buffer_unref(&device);
     auto *frames = reinterpret_cast<AVHWFramesContext *>(pool->data);
@@ -95,13 +109,25 @@ AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t 
     frames->initial_pool_size = 2;
     static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = D3D11_BIND_DECODER;
 
-    AVFrame *memory = solidNv12Frame(width, height, y, cb, cr);
     AVFrame *frame = av_frame_alloc();
     if (av_hwframe_ctx_init(pool) < 0 || av_hwframe_get_buffer(pool, frame, 0) < 0 || av_hwframe_transfer_data(frame, memory, 0) < 0)
         av_frame_free(&frame);
     av_frame_free(&memory);
     av_buffer_unref(&pool);
     return frame;
+}
+
+AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+{
+    return onCard(solidNv12Frame(width, height, y, cb, cr));
+}
+
+AVFrame *frameOfTwoHalvesOnCard(int width, int height)
+{
+    AVFrame *memory = solidNv12Frame(width, height, 235, 128, 128);
+    for (int row = 0; row < height; row++)
+        memset(memory->data[0] + row * memory->linesize[0] + width / 2, 126, static_cast<size_t>(width - width / 2));
+    return onCard(memory);
 }
 #endif
 
@@ -315,10 +341,17 @@ AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t 
 class TestVideoSurface : public QObject
 {
     Q_OBJECT
+    void turnedPictureRows();
+    void verifyTurnedPicture(const QImage &image);
+
 private slots:
     void initTestCase();
     void frameFillsAMatchingSurface();
     void narrowerFrameIsCentredBetweenBars();
+    void aTurnedPictureIsDrawnTheRightWayUp_data() { turnedPictureRows(); }
+    void aTurnedPictureIsDrawnTheRightWayUp();
+    void aTurnedPictureOnTheCardIsDrawnTheRightWayUp_data() { turnedPictureRows(); }
+    void aTurnedPictureOnTheCardIsDrawnTheRightWayUp();
     void coloursFollowTheVideoStandard();
     void memoryEglCannotBeToldTheOrderOfIsReadBack();
     void frameOnTheGraphicsCardIsDrawnFromThere();
@@ -383,6 +416,74 @@ void TestVideoSurface::narrowerFrameIsCentredBetweenBars()
     QVERIFY(isNear(image.pixel(qRound(45 * ratio), middle), 255, 255, 255));
     QVERIFY(isNear(image.pixel(qRound(275 * ratio), middle), 255, 255, 255));
     QVERIFY(isNear(image.pixel(image.width() / 2, 0), 255, 255, 255));
+}
+
+void TestVideoSurface::turnedPictureRows()
+{
+    QTest::addColumn<int>("quarterTurns");
+    QTest::addColumn<QPointF>("whiteAt");
+    QTest::addColumn<QPointF>("greyAt");
+    QTest::addColumn<bool>("sideways");
+    QTest::newRow("upright") << 0 << QPointF(0.25, 0.5) << QPointF(0.75, 0.5) << false;
+    QTest::newRow("90 degrees") << 1 << QPointF(0.5, 0.25) << QPointF(0.5, 0.75) << true;
+    QTest::newRow("180 degrees") << 2 << QPointF(0.75, 0.5) << QPointF(0.25, 0.5) << false;
+    QTest::newRow("270 degrees") << 3 << QPointF(0.5, 0.75) << QPointF(0.5, 0.25) << true;
+}
+
+void TestVideoSurface::verifyTurnedPicture(const QImage &image)
+{
+    QFETCH(QPointF, whiteAt);
+    QFETCH(QPointF, greyAt);
+    QFETCH(bool, sideways);
+
+    const auto at = [&image](QPointF place) { return image.pixel(qRound(place.x() * (image.width() - 1)), qRound(place.y() * (image.height() - 1))); };
+    QVERIFY(isNear(at(whiteAt), 255, 255, 255));
+    QVERIFY(isNear(at(greyAt), 128, 128, 128));
+    // twice as wide as it is high, so its bars lie across the way it is turned
+    QVERIFY(isNear(at(sideways ? QPointF(0.1, 0.5) : QPointF(0.5, 0.1)), 0, 0, 0));
+    QVERIFY(isNear(at(sideways ? QPointF(0.9, 0.5) : QPointF(0.5, 0.9)), 0, 0, 0));
+    QVERIFY(!isNear(at(sideways ? QPointF(0.5, 0.1) : QPointF(0.1, 0.5)), 0, 0, 0));
+}
+
+void TestVideoSurface::aTurnedPictureIsDrawnTheRightWayUp()
+{
+    QFETCH(int, quarterTurns);
+
+    VideoSurface surface;
+    surface.resize(320, 320);
+    surface.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+
+    AVFrame *frame = frameOfTwoHalves(640, 320);
+    Acheron::Core::Media::setQuarterTurns(frame, quarterTurns);
+    present(surface, frame);
+    verifyTurnedPicture(shot(surface));
+}
+
+void TestVideoSurface::aTurnedPictureOnTheCardIsDrawnTheRightWayUp()
+{
+    SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
+#ifdef HAVE_D3D11VA
+    QFETCH(int, quarterTurns);
+
+    VideoSurface surface;
+    surface.resize(320, 320);
+    surface.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    drawnOnce(surface);
+    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
+        QSKIP("This surface cannot draw the card's picture where it is");
+
+    AVFrame *frame = frameOfTwoHalvesOnCard(640, 320);
+    if (!frame)
+        QSKIP("No video device whose pictures this surface can draw");
+    Acheron::Core::Media::setQuarterTurns(frame, quarterTurns);
+    present(surface, frame);
+    QTRY_VERIFY(surface.drawsFromCard());
+    verifyTurnedPicture(shot(surface));
+#else
+    QSKIP("Direct3D 11 only");
+#endif
 }
 
 void TestVideoSurface::coloursFollowTheVideoStandard()

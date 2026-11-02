@@ -829,6 +829,28 @@ void startHardwareDiagnostics()
     diagnosticsThread = std::thread(runDiagnostics, false);
 }
 
+ProcessorTime processorTimeSoFar()
+{
+    ProcessorTime used;
+#ifdef Q_OS_WIN
+    FILETIME created;
+    FILETIME exited;
+    FILETIME kernel;
+    FILETIME user;
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        const auto ms = [](const FILETIME &time) {
+            ULARGE_INTEGER ticks;
+            ticks.LowPart = time.dwLowDateTime;
+            ticks.HighPart = time.dwHighDateTime;
+            return static_cast<qint64>(ticks.QuadPart / 10000);
+        };
+        used.userMs = ms(user);
+        used.kernelMs = ms(kernel);
+    }
+#endif
+    return used;
+}
+
 void finishHardwareDiagnostics()
 {
     stopRequested = true;

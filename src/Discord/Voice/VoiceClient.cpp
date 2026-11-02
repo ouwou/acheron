@@ -473,10 +473,10 @@ void VoiceClient::receiveRtcp(PacketPool::Handle packet)
     }
 }
 
-void VoiceClient::noteTransportSequence(std::span<const uint8_t> extensions)
+void VoiceClient::noteRtpExtensions(std::span<const uint8_t> extensions)
 {
     if (receivedVideo)
-        receivedVideo->noteTransportSequence(extensions);
+        receivedVideo->noteRtpExtensions(extensions);
 }
 
 QList<Codec> VoiceClient::offeredCodecs() const
@@ -659,7 +659,7 @@ bool VoiceClient::openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet)
     packet.dropFront(rtp.clearSize);
     if (packet.size() < rtp.extensionSize)
         return false;
-    noteTransportSequence(packet.bytes().first(static_cast<size_t>(rtp.extensionSize)));
+    noteRtpExtensions(packet.bytes().first(static_cast<size_t>(rtp.extensionSize)));
     packet.dropFront(rtp.extensionSize);
 
     if (!rtp.header.padding)

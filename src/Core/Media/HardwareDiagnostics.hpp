@@ -20,6 +20,14 @@ void startHardwareDiagnostics();
 // Waits for that thread, which stops early when asked to here. Before the log is closed.
 void finishHardwareDiagnostics();
 
+// what this whole process has used of the processor so far
+struct ProcessorTime
+{
+    qint64 userMs = 0;
+    qint64 kernelMs = 0;
+};
+[[nodiscard]] ProcessorTime processorTimeSoFar();
+
 // For "acheron.exe --hwdiag-only": the description and trials without logging in, then the
 // process ends at once (a hardware encoder's trial thread can keep it from ending otherwise).
 [[nodiscard]] bool onlyDiagnosticsWereAskedFor(const QStringList &arguments);
