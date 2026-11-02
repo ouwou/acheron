@@ -64,14 +64,14 @@ private:
     void takeFromCard(const AVFrame *frame, quint64 serial);
 #endif
     void placePicture(QSize picture);
-    void drawQuad(QOpenGLShaderProgram &program);
-    void drawTexture(GLuint texture, bool opaque);
+    void drawQuad(QOpenGLShaderProgram &program, int quarterTurns = 0);
+    void drawTexture(GLuint texture, bool opaque, int quarterTurns = 0);
     void drawOverlays(bool hasPicture);
     void drawSpeakingRing();
     void uploadPlane(int unit, GLenum format, int textureWidth, int textureHeight, const uint8_t *data);
     void upload(const AVFrame *frame);
     void setConversion(const AVFrame *frame);
-    void draw(QSize picture);
+    void draw(QSize picture, int quarterTurns);
 
     VideoSurface *owner;
     std::shared_ptr<VideoFrameStore> frames;

@@ -20,6 +20,8 @@ namespace Voice {
 
 namespace {
 
+constexpr uint8_t ORIENTATION_TURNS_MASK = 0x03;
+
 struct AnnouncedVideo
 {
     QList<VideoLayer> layers;
@@ -107,8 +109,11 @@ bool VoiceClient::VideoReceivePath::receive(const ParsedRtp &rtp, PacketPool::Ha
     return false;
 }
 
-void VoiceClient::VideoReceivePath::noteTransportSequence(std::span<const uint8_t> extensions)
+void VoiceClient::VideoReceivePath::noteRtpExtensions(std::span<const uint8_t> extensions)
 {
+    const std::span<const uint8_t> orientation = findRtpExtension(extensions, VIDEO_ORIENTATION_EXTENSION);
+    turnsOfOpenedPacket = orientation.size() == 1 ? std::optional<int>(orientation[0] & ORIENTATION_TURNS_MASK) : std::nullopt;
+
     if (!tick->isActive())
         return;
     const std::span<const uint8_t> sequence = findRtpExtension(extensions, TRANSPORT_SEQUENCE_EXTENSION);
@@ -146,6 +151,11 @@ void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPoo
         return;
 
     RemoteVideo &video = it->second;
+    if (turnsOfOpenedPacket && *turnsOfOpenedPacket != video.quarterTurns) {
+        video.quarterTurns = *turnsOfOpenedPacket;
+        qCInfo(LogVideo) << "Video of SSRC" << ssrc << "is to be turned" << video.quarterTurns * 90 << "degrees clockwise";
+    }
+
     if (!video.receiver || video.receiver->codec() != codec) {
         if (retransmission)
             return;
@@ -183,6 +193,7 @@ void VoiceClient::VideoReceivePath::deliverFrames(quint32 ssrc, RemoteVideo &vid
         }
 
         prepareForDecoder(codec, frame.data);
+        frame.quarterTurns = video.quarterTurns;
         if (frameHandler)
             frameHandler(video.userId, codec, std::move(frame));
     }

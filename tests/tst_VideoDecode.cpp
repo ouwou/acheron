@@ -5,6 +5,7 @@
 #include "Discord/Voice/VideoReceiver.hpp"
 #include "VideoRtpSupport.hpp"
 
+#include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTest>
 #include <QThread>
@@ -131,12 +132,14 @@ public:
     {
         width = frame->width;
         height = frame->height;
+        quarterTurns = Core::Media::quarterTurnsOf(frame);
         frames++;
     }
 
     std::atomic<int> frames{ 0 };
     std::atomic<int> width{ 0 };
     std::atomic<int> height{ 0 };
+    std::atomic<int> quarterTurns{ -1 };
 };
 
 class GatedSink : public Core::Media::VideoFrameSink
@@ -219,6 +222,7 @@ struct Chain
 
         for (EncodedVideoFrame &assembled : receiver.takeFrames()) {
             prepareForDecoder(codec, assembled.data);
+            assembled.quarterTurns = quarterTurns;
             decoder.push(codec, std::move(assembled));
             pushed++;
         }
@@ -243,6 +247,7 @@ struct Chain
     uint16_t sequence = 65500;
     qint64 now = 0;
     int pushed = 0;
+    int quarterTurns = 0;
 };
 
 } // namespace
@@ -254,6 +259,9 @@ class TestVideoDecode : public QObject
     Q_OBJECT
 private slots:
     void decodableCodecsAreOffered();
+    void aCodecTurnedOffIsNoLongerOfferedForDecoding();
+    void aPictureSaysHowItIsToBeTurned_data();
+    void aPictureSaysHowItIsToBeTurned();
 
     void everyFrameDecodes_data() { codecCases(); }
     void everyFrameDecodes();
@@ -303,6 +311,52 @@ void TestVideoDecode::decodableCodecsAreOffered()
             expected.append(codec);
     }
     QVERIFY(decodable == expected);
+}
+
+void TestVideoDecode::aCodecTurnedOffIsNoLongerOfferedForDecoding()
+{
+    QCoreApplication::setOrganizationName(QStringLiteral("AcheronTests"));
+    const QList<Codec> before = Core::Media::offeredVideoCodecs();
+    QVERIFY(!before.isEmpty());
+    const VideoCodec turnedOff = Core::Media::decodableVideoCodecs().first();
+
+    Core::Media::setReceiveCodecAllowed(turnedOff, false);
+    const bool stillAllowed = Core::Media::receiveCodecAllowed(turnedOff);
+    const QList<Codec> after = Core::Media::offeredVideoCodecs({ turnedOff });
+    Core::Media::setReceiveCodecAllowed(turnedOff, true);
+
+    QVERIFY(!stillAllowed);
+    QVERIFY(Core::Media::receiveCodecAllowed(turnedOff));
+    QCOMPARE(after.size(), before.size());
+    // the rest keep the payload types their position gave them
+    for (int i = 0; i < after.size(); i++) {
+        QCOMPARE(after[i].payloadType.get(), before[i].payloadType.get());
+        QCOMPARE(after[i].decode.get(), i != 0);
+    }
+    QCOMPARE(after[0].encode.get(), true);
+}
+
+void TestVideoDecode::aPictureSaysHowItIsToBeTurned_data()
+{
+    QTest::addColumn<int>("quarterTurns");
+    for (int turns = 0; turns < 4; turns++)
+        QTest::addRow("%d quarter turns", turns) << turns;
+}
+
+void TestVideoDecode::aPictureSaysHowItIsToBeTurned()
+{
+    QFETCH(int, quarterTurns);
+    const CodecCase h264{ VideoCodec::H264, AV_CODEC_ID_H264, { "libopenh264", "libx264" } };
+    const std::vector<EncodedFrame> clip = encodeClip(h264);
+    if (clip.empty())
+        QSKIP("this ffmpeg has no encoder for the codec");
+
+    Chain chain(h264.codec);
+    chain.quarterTurns = quarterTurns;
+    for (const EncodedFrame &frame : clip)
+        chain.send(h264, frame);
+    QCOMPARE(chain.waitForDecoded(static_cast<int>(clip.size())), static_cast<int>(clip.size()));
+    QCOMPARE(chain.sink->quarterTurns.load(), quarterTurns);
 }
 
 void TestVideoDecode::everyFrameDecodes()

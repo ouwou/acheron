@@ -9,6 +9,8 @@
 #include "DmabufGlBridge.hpp"
 #endif
 
+#include <QTransform>
+
 extern "C" {
 #include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
@@ -225,10 +227,11 @@ QSize VideoFrameStore::displaySize() const
 {
     if (last->width <= 0 || last->height <= 0)
         return {};
+    QSize size(last->width, last->height);
     const AVRational aspect = last->sample_aspect_ratio;
     if (aspect.num > 0 && aspect.den > 0 && aspect.num != aspect.den)
-        return QSize(static_cast<int>(static_cast<qint64>(last->width) * aspect.num / aspect.den), last->height);
-    return QSize(last->width, last->height);
+        size.setWidth(static_cast<int>(static_cast<qint64>(last->width) * aspect.num / aspect.den));
+    return Core::Media::quarterTurnsOf(last) % 2 ? size.transposed() : size;
 }
 
 void VideoFrameStore::store(const AVFrame *frame)
@@ -252,9 +255,7 @@ void VideoFrameStore::store(const AVFrame *frame)
         return;
     }
     sws_scale(normalizer, frame->data, frame->linesize, 0, frame->height, last->data, last->linesize);
-    last->colorspace = frame->colorspace;
-    last->color_range = frame->color_range;
-    last->sample_aspect_ratio = frame->sample_aspect_ratio;
+    av_frame_copy_props(last, frame);
 }
 
 void VideoFrameStore::convert()
@@ -263,10 +264,17 @@ void VideoFrameStore::convert()
     if (size.isEmpty())
         return;
 
-    if (back.size() != size)
-        back = Core::Media::RgbScaler::allocate(size, QImage::Format_RGB32);
+    const int quarterTurns = Core::Media::quarterTurnsOf(last);
+    const QSize beforeTurning = quarterTurns % 2 ? size.transposed() : size;
+    if (back.size() != beforeTurning)
+        back = Core::Media::RgbScaler::allocate(beforeTurning, QImage::Format_RGB32);
     if (!scaler.scale(last, back))
         return;
+    if (quarterTurns != 0) {
+        front = back.transformed(QTransform().rotate(quarterTurns * 90.0));
+        front.setDevicePixelRatio(pixelRatio);
+        return;
+    }
     back.setDevicePixelRatio(pixelRatio);
     back.swap(front);
 }

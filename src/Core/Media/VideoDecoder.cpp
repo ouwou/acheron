@@ -10,12 +10,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <span>
 #include <utility>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
@@ -234,6 +236,26 @@ QList<Discord::Voice::VideoCodec> decodableVideoCodecs()
         return found;
     }();
     return codecs;
+}
+
+int quarterTurnsOf(const AVFrame *frame)
+{
+    const AVFrameSideData *matrix = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
+    if (!matrix)
+        return 0;
+    const double counterclockwise = av_display_rotation_get(reinterpret_cast<const int32_t *>(matrix->data));
+    if (std::isnan(counterclockwise))
+        return 0;
+    const int turns = static_cast<int>(std::lround(-counterclockwise / 90.0));
+    return (turns % 4 + 4) % 4;
+}
+
+void setQuarterTurns(AVFrame *frame, int quarterTurns)
+{
+    av_frame_remove_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
+    AVFrameSideData *matrix = av_frame_new_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX, 9 * sizeof(int32_t));
+    if (matrix)
+        av_display_rotation_set(reinterpret_cast<int32_t *>(matrix->data), quarterTurns * 90.0);
 }
 
 VideoDecoder::VideoDecoder(bool allowHardware, int softwareThreads)
@@ -535,7 +557,7 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
         if (received < 0)
             return false;
 
-        const AVFrame *output = decoded;
+        AVFrame *output = decoded;
         if (hardwareDevice) {
             // a decoder that turned the hardware format down decodes in software without threads
             hardwareTurnedDown = decoded->format != hardwarePixelFormat;
@@ -553,6 +575,8 @@ bool VideoDecoder::decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame
             }
         }
 
+        if (paddedFrame.quarterTurns != 0)
+            setQuarterTurns(output, paddedFrame.quarterTurns);
         if (sink)
             sink->present(output);
         framesSinceOpen++;

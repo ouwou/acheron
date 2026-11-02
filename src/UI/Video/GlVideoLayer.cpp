@@ -229,6 +229,7 @@ void GlVideoLayer::paintGL()
     glClear(GL_COLOR_BUFFER_BIT);
 
     QSize picture;
+    int quarterTurns = 0;
     bool onCard = false;
     frames->withFrame([&](const AVFrame *frame, quint64 serial, QSize displaySize) {
         if (frame->width <= 0 || !usable) {
@@ -236,6 +237,7 @@ void GlVideoLayer::paintGL()
             return;
         }
         picture = displaySize;
+        quarterTurns = Core::Media::quarterTurnsOf(frame);
 #ifdef ACHERON_HAVE_DMABUF
         if (frame->hw_frames_ctx && (shown != Shown::OnCard || serial != preparedSerial))
             takeFromCard(frame, serial);
@@ -251,13 +253,13 @@ void GlVideoLayer::paintGL()
     updateFromCard(onCard);
 
     if (shown == Shown::Uploaded) {
-        draw(picture);
+        draw(picture, quarterTurns);
     } else if (shown == Shown::OnCard) {
 #ifdef ACHERON_HAVE_DMABUF
-        draw(picture);
+        draw(picture, quarterTurns);
 #else
         placePicture(picture);
-        drawTexture(cardTexture, true);
+        drawTexture(cardTexture, true, quarterTurns);
 #endif
     }
     drawOverlays(shown != Shown::Nothing);
@@ -354,29 +356,34 @@ void GlVideoLayer::placePicture(QSize picture)
     glViewport((area.width() - where.width()) / 2, (area.height() - where.height()) / 2, where.width(), where.height());
 }
 
-void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader)
+void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader, int quarterTurns)
 {
     static const GLfloat POSITIONS[] = { -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f };
-    static const GLfloat TEXCOORDS[] = { 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f };
+    static const GLfloat TEXCOORDS[4][8] = {
+        { 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f },
+        { 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
+        { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f },
+        { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f },
+    };
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     shader.enableAttributeArray(0);
     shader.enableAttributeArray(1);
     shader.setAttributeArray(0, GL_FLOAT, POSITIONS, 2);
-    shader.setAttributeArray(1, GL_FLOAT, TEXCOORDS, 2);
+    shader.setAttributeArray(1, GL_FLOAT, TEXCOORDS[quarterTurns], 2);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     shader.disableAttributeArray(0);
     shader.disableAttributeArray(1);
 }
 
-void GlVideoLayer::drawTexture(GLuint texture, bool opaque)
+void GlVideoLayer::drawTexture(GLuint texture, bool opaque, int quarterTurns)
 {
     plainProgram->bind();
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
     plainProgram->setUniformValue("image", 0);
     plainProgram->setUniformValue("opaque", opaque ? 1.0f : 0.0f);
-    drawQuad(*plainProgram);
+    drawQuad(*plainProgram, quarterTurns);
     glBindTexture(GL_TEXTURE_2D, 0);
     plainProgram->release();
 }
@@ -488,7 +495,7 @@ void GlVideoLayer::setConversion(const AVFrame *frame)
     offset = QVector3D(full ? 0.0f : 16.0f / 255.0f, 128.0f / 255.0f, 128.0f / 255.0f);
 }
 
-void GlVideoLayer::draw(QSize picture)
+void GlVideoLayer::draw(QSize picture, int quarterTurns)
 {
     placePicture(picture);
 
@@ -507,7 +514,7 @@ void GlVideoLayer::draw(QSize picture)
     program->setUniformValue("chromaScale", chromaScale);
     program->setUniformValue("conversion", conversion);
     program->setUniformValue("offset", offset);
-    drawQuad(*program);
+    drawQuad(*program, quarterTurns);
 
     for (int unit = 2; unit >= 0; unit--) {
         glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));

@@ -29,6 +29,10 @@ void setHardwareDecodingEnabled(bool enabled);
 
 [[nodiscard]] QList<Discord::Voice::VideoCodec> decodableVideoCodecs();
 
+// clockwise, to be seen the right way up. carried as the display matrix decoders also read from a stream
+[[nodiscard]] int quarterTurnsOf(const AVFrame *frame);
+void setQuarterTurns(AVFrame *frame, int quarterTurns);
+
 // present() runs on the decoder's thread and must take its own reference to keep the frame
 class VideoFrameSink
 {

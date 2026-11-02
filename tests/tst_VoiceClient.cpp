@@ -29,6 +29,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -189,7 +190,7 @@ public:
         return { static_cast<uint8_t>(first ? 0x10 : 0x00), static_cast<uint8_t>(keyframe ? 0x00 : 0x01), tag, tag };
     }
 
-    void sendPacket(quint32 ssrc, int payloadType, quint16 sequence, quint32 timestamp, bool marker, std::span<const uint8_t> body)
+    void sendPacket(quint32 ssrc, int payloadType, quint16 sequence, quint32 timestamp, bool marker, std::span<const uint8_t> body, std::optional<uint8_t> orientation = {})
     {
         RtpHeader header;
         header.extension = true;
@@ -201,7 +202,9 @@ public:
 
         uint8_t numbered[2];
         qToBigEndian<quint16>(nextTransportSequence++, numbered);
-        const RtpExtension elements[] = { { TRANSPORT_SEQUENCE_EXTENSION, numbered } };
+        std::vector<RtpExtension> elements = { { TRANSPORT_SEQUENCE_EXTENSION, numbered } };
+        if (orientation)
+            elements.push_back({ VIDEO_ORIENTATION_EXTENSION, std::span<const uint8_t>(&*orientation, 1) });
         uint8_t extensions[8];
         const int extensionSize = writeRtpExtensions(elements, extensions);
 
@@ -214,14 +217,15 @@ public:
         media.writeDatagram(reinterpret_cast<const char *>(packet.data()), packet.size(), clientAddress, clientPort);
     }
 
-    void sendFrame(quint32 ssrc, int index, quint16 base, bool keyframe, int skip = -1)
+    void sendFrame(quint32 ssrc, int index, quint16 base, bool keyframe, int skip = -1, std::optional<uint8_t> orientation = {})
     {
         for (int i = 0; i < PACKETS_PER_FRAME; i++) {
             if (i == skip)
                 continue;
             const quint16 sequence = static_cast<quint16>(base + index * PACKETS_PER_FRAME + i);
             const std::vector<uint8_t> body = payload(i == 0, keyframe, static_cast<uint8_t>(sequence));
-            sendPacket(ssrc, VIDEO_PAYLOAD_TYPE, sequence, 3000u * static_cast<quint32>(index), i == PACKETS_PER_FRAME - 1, body);
+            const bool last = i == PACKETS_PER_FRAME - 1;
+            sendPacket(ssrc, VIDEO_PAYLOAD_TYPE, sequence, 3000u * static_cast<quint32>(index), last, body, last ? orientation : std::nullopt);
         }
     }
 
@@ -634,6 +638,7 @@ struct FrameSeen
     quint64 userId = 0;
     quint32 timestamp = 0;
     bool keyframe = false;
+    int quarterTurns = 0;
 };
 
 EncodedVideoFrame videoFrame(size_t size, bool keyframe, quint32 timestamp)
@@ -746,7 +751,7 @@ struct Call
 
         client = std::make_unique<VoiceClient>(params);
         client->setVideoFrameHandler([this](Core::Snowflake userId, VideoCodec, EncodedVideoFrame frame) {
-            frames.append({ static_cast<quint64>(userId), frame.rtpTimestamp, frame.keyframe });
+            frames.append({ static_cast<quint64>(userId), frame.rtpTimestamp, frame.keyframe, frame.quarterTurns });
         });
         QObject::connect(client.get(), &VoiceClient::remoteVideoChanged, client.get(), [this](Core::Snowflake userId, bool active) {
             if (active)
@@ -822,6 +827,7 @@ private slots:
     void aVoiceConnectionMayDeclareASecondCameraLayer();
     void usersTheServerNamesAreAnnounced();
     void framesReachTheHandlerUnderTheirSender();
+    void framesCarryTheTurnTheirSenderLastAskedFor();
     void aLostPacketIsAskedForAndTakenFromTheRetransmission();
     void aKeyframeRequestGoesToThatSenderAlone();
     void aVideoResetRequestStartsThatSendersVideoOver();
@@ -944,6 +950,29 @@ void TestVoiceClient::framesReachTheHandlerUnderTheirSender()
     const QList<QJsonObject> wants = call.server.received(15);
     QVERIFY(!wants.isEmpty());
     QCOMPARE(wants.last()["any"].toInt(), 100);
+}
+
+void TestVoiceClient::framesCarryTheTurnTheirSenderLastAskedFor()
+{
+    Call call;
+    QTRY_VERIFY(call.isUp());
+    call.receiveAliceAndBob();
+
+    constexpr int NO_PACKET_LOST = -1;
+    constexpr uint8_t CAMERA_BIT_AND_90_DEGREES = 0x09;
+    constexpr uint8_t UPRIGHT = 0x00;
+    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
+    call.server.sendFrame(ALICE_SSRC, 1, 100, false, NO_PACKET_LOST, CAMERA_BIT_AND_90_DEGREES);
+    call.server.sendFrame(ALICE_SSRC, 2, 100, false);
+    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
+    call.server.sendFrame(ALICE_SSRC, 3, 100, false, NO_PACKET_LOST, UPRIGHT);
+    QTRY_COMPARE(call.frames.size(), 5);
+
+    QCOMPARE(call.frames[0].quarterTurns, 0);
+    QCOMPARE(call.frames[1].quarterTurns, 1);
+    QCOMPARE(call.frames[2].quarterTurns, 1);
+    QCOMPARE(call.frames[3].quarterTurns, 0);
+    QCOMPARE(call.frames[4].quarterTurns, 0);
 }
 
 void TestVoiceClient::aLostPacketIsAskedForAndTakenFromTheRetransmission()

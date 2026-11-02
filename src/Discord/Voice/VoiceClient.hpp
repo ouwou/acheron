@@ -201,7 +201,7 @@ private:
     void receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet);
     [[nodiscard]] bool openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet);
     [[nodiscard]] bool canSendMedia() const { return currentState == State::Connected && encryption && udpTransport; }
-    void noteTransportSequence(std::span<const uint8_t> extensions);
+    void noteRtpExtensions(std::span<const uint8_t> extensions);
     bool daveDecryptAudio(quint32 ssrc, PacketPool::Handle &packet);
 
     // as the official client, a codec neither encoded nor decoded any more is left out

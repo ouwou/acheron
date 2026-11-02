@@ -40,6 +40,10 @@ private:
 void setSendCodecAllowed(Discord::Voice::VideoCodec codec, bool allowed);
 [[nodiscard]] QList<Discord::Voice::VideoCodec> allowedSendCodecs(const QList<Discord::Voice::VideoCodec> &encodable);
 
+// the server has a sender use the best codec all its viewers decode, so one turned off here stops arriving
+[[nodiscard]] bool receiveCodecAllowed(Discord::Voice::VideoCodec codec);
+void setReceiveCodecAllowed(Discord::Voice::VideoCodec codec, bool allowed);
+
 [[nodiscard]] QList<Discord::Voice::VideoCodec> shareCodecs(const QList<Discord::Voice::VideoCodec> &sendable, const QSize &size, const QString &av1Encoder = videoEncoderFor(Discord::Voice::VideoCodec::AV1));
 [[nodiscard]] QList<Discord::Voice::VideoCodec> cameraCodecs(const QList<Discord::Voice::VideoCodec> &sendable, const QString &av1Encoder = videoEncoderFor(Discord::Voice::VideoCodec::AV1));
 

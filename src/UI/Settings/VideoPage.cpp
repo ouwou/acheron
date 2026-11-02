@@ -41,6 +41,29 @@ QHBoxLayout *labelledRow(QVBoxLayout *layout, const QString &label, QWidget *con
     return row;
 }
 
+// at least one stays ticked
+void addCodecRow(QVBoxLayout *layout, QWidget *page, const QString &label, const QList<VideoCodec> &choices, QList<QCheckBox *> &checks, bool (*isAllowed)(VideoCodec), void (*setAllowed)(VideoCodec, bool))
+{
+    auto *row = new QHBoxLayout();
+    row->addWidget(new QLabel(label, page));
+    row->addStretch(1);
+    for (const VideoCodec codec : choices) {
+        auto *check = new QCheckBox(Discord::Voice::videoCodecName(codec), page);
+        check->setChecked(isAllowed(codec));
+        row->addWidget(check);
+        checks.append(check);
+        QObject::connect(check, &QCheckBox::toggled, page, [&checks, check, codec, setAllowed](bool allowed) {
+            const bool othersLeft = std::any_of(checks.cbegin(), checks.cend(), [](const QCheckBox *each) { return each->isChecked(); });
+            if (!allowed && !othersLeft) {
+                check->setChecked(true);
+                return;
+            }
+            setAllowed(codec, allowed);
+        });
+    }
+    layout->addLayout(row);
+}
+
 } // namespace
 
 VideoPage::VideoPage(QWidget *parent)
@@ -92,26 +115,11 @@ VideoPage::VideoPage(QWidget *parent)
         connect(secondLayer, &QCheckBox::toggled, this, [](bool enabled) { Core::Video::setCameraSecondLayerEnabled(enabled); });
     }
 
-    auto *codecs = new QHBoxLayout();
-    codecs->addWidget(new QLabel(tr("Send with"), this));
-    codecs->addStretch(1);
-    for (const VideoCodec codec : Discord::Voice::VIDEO_CODECS_BEST_FIRST) {
-        auto *check = new QCheckBox(Discord::Voice::videoCodecName(codec), this);
-        check->setChecked(Core::Media::sendCodecAllowed(codec));
-        codecs->addWidget(check);
-        sendCodecChecks.append(check);
-        connect(check, &QCheckBox::toggled, this, [this, check, codec](bool allowed) {
-            const bool othersLeft = std::any_of(sendCodecChecks.cbegin(), sendCodecChecks.cend(), [](const QCheckBox *each) { return each->isChecked(); });
-            if (!allowed && !othersLeft) {
-                check->setChecked(true);
-                return;
-            }
-            Core::Media::setSendCodecAllowed(codec, allowed);
-        });
-    }
-    layout->addLayout(codecs);
+    const QList<VideoCodec> everyCodec(Discord::Voice::VIDEO_CODECS_BEST_FIRST.begin(), Discord::Voice::VIDEO_CODECS_BEST_FIRST.end());
+    addCodecRow(layout, this, tr("Send with"), everyCodec, sendCodecChecks, Core::Media::sendCodecAllowed, Core::Media::setSendCodecAllowed);
+    addCodecRow(layout, this, tr("Receive with"), Core::Media::decodableVideoCodecs(), receiveCodecChecks, Core::Media::receiveCodecAllowed, Core::Media::setReceiveCodecAllowed);
 
-    auto *note = new QLabel(tr("Video settings apply to streams and cameras opened afterwards."), this);
+    auto *note = new QLabel(tr("Video settings apply to streams, cameras and calls opened afterwards."), this);
     QFont noteFont = note->font();
     noteFont.setItalic(true);
     if (noteFont.pointSize() > 1)
