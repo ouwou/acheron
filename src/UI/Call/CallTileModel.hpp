@@ -57,7 +57,12 @@ struct TilePlan
 constexpr int TILE_GAP = 2;
 constexpr int MAX_STRIP_TILES = 12;
 
-[[nodiscard]] QList<QRect> arrangeTiles(int count, std::optional<int> focused, const QRect &area);
+enum class OtherTiles {
+    Shown,
+    Hidden,
+};
+
+[[nodiscard]] QList<QRect> arrangeTiles(int count, std::optional<int> focused, const QRect &area, OtherTiles others = OtherTiles::Shown);
 
 } // namespace UI
 } // namespace Acheron

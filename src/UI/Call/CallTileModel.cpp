@@ -36,7 +36,7 @@ TilePlan planTiles(const CallFacts &facts)
     return plan;
 }
 
-QList<QRect> arrangeTiles(int count, std::optional<int> focused, const QRect &area)
+QList<QRect> arrangeTiles(int count, std::optional<int> focused, const QRect &area, OtherTiles others)
 {
     QList<QRect> places;
     if (count <= 0)
@@ -44,7 +44,7 @@ QList<QRect> arrangeTiles(int count, std::optional<int> focused, const QRect &ar
     places.reserve(count);
 
     if (focused && *focused >= 0 && *focused < count) {
-        const int stripCount = qMin(count - 1, MAX_STRIP_TILES);
+        const int stripCount = others == OtherTiles::Shown ? qMin(count - 1, MAX_STRIP_TILES) : 0;
         const int stripHeight = stripCount == 0 ? 0 : qBound(54, area.height() / 5, 144);
         const int largeHeight = area.height() - (stripCount == 0 ? 0 : stripHeight + TILE_GAP);
         const int widest = stripCount == 0 ? 0 : (area.width() - TILE_GAP * (stripCount - 1)) / stripCount;

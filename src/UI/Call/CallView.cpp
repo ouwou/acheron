@@ -37,6 +37,7 @@ constexpr QSize POPPED_OUT_SIZE(960, 600);
 
 const char *const COLLAPSED_WITHOUT_VIDEO_KEY = "video/call_view_collapsed_without_video";
 const char *const GEOMETRY_KEY = "video/call_view_geometry";
+const char *const OTHERS_HIDDEN_KEY = "video/call_view_others_hidden";
 
 // the official client mirrors the camera for its owner alone
 QImage mirrored(const QImage &picture)
@@ -60,12 +61,14 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
 {
     setWindowTitle(title);
     collapsed = QSettings().value(COLLAPSED_WITHOUT_VIDEO_KEY, false).toBool();
+    othersHidden = QSettings().value(OTHERS_HIDDEN_KEY, false).toBool();
 
     controls = new CallControlsBar(voice, broadcaster, camera, QSettings().value(nonVideoSettingsKey(), true).toBool(), this);
     connect(controls, &CallControlsBar::leaveClicked, this, &CallView::leaveRequested);
     connect(controls, &CallControlsBar::voiceSettingsRequested, this, &CallView::voiceSettingsRequested);
     connect(controls, &CallControlsBar::collapseClicked, this, &CallView::toggleCollapsedByHand);
     connect(controls, &CallControlsBar::nonVideoShownChanged, this, &CallView::onNonVideoShownChanged);
+    connect(controls, &CallControlsBar::othersHiddenChanged, this, &CallView::setOthersHidden);
     connect(controls, &CallControlsBar::statsShownChanged, this, &CallView::onStatsShownChanged);
     connect(controls, &CallControlsBar::popOutClicked, this, [this] { setPoppedOut(!poppedOut); });
     connect(controls, &CallControlsBar::fullScreenClicked, this, &CallView::toggleFullScreen);
@@ -442,7 +445,8 @@ void CallView::layoutTiles()
         if (focused == order[i]->key())
             focusedIndex = i;
     }
-    const QList<QRect> places = arrangeTiles(static_cast<int>(order.size()), focusedIndex, stage->rect());
+    controls->setOthersToggle(focusedIndex && order.size() > 1, othersHidden);
+    const QList<QRect> places = arrangeTiles(static_cast<int>(order.size()), focusedIndex, stage->rect(), othersHidden ? OtherTiles::Hidden : OtherTiles::Shown);
     for (int i = 0; i < order.size(); i++) {
         VideoSurface *surface = order[i]->surface();
         if (places[i].isEmpty()) {
@@ -571,6 +575,12 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
         focus->setCheckable(true);
         focus->setChecked(focused == key);
         connect(focus, &QAction::triggered, this, [this, key](bool checked) { setFocusedTile(checked ? std::optional<TileKey>(key) : std::nullopt); });
+        if (focused == key && tiles.size() > 1) {
+            QAction *hideOthers = menu->addAction(tr("Hide Others"));
+            hideOthers->setCheckable(true);
+            hideOthers->setChecked(othersHidden);
+            connect(hideOthers, &QAction::triggered, this, &CallView::setOthersHidden);
+        }
     }
     QAction *popOutAction = menu->addAction(tr("Pop Out"));
     popOutAction->setCheckable(true);
@@ -701,6 +711,13 @@ void CallView::toggleCollapsedByHand()
     if (!videoPresent)
         QSettings().setValue(COLLAPSED_WITHOUT_VIDEO_KEY, collapsedByHand);
     setCollapsed(collapsedByHand);
+}
+
+void CallView::setOthersHidden(bool hidden)
+{
+    othersHidden = hidden;
+    QSettings().setValue(OTHERS_HIDDEN_KEY, hidden);
+    layoutTiles();
 }
 
 void CallView::onNonVideoShownChanged(bool shown)

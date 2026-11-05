@@ -99,6 +99,7 @@ private:
     void toggleFullScreen();
     void applyChrome();
     void toggleCollapsedByHand();
+    void setOthersHidden(bool hidden);
     void onNonVideoShownChanged(bool shown);
     void updatePresence();
     void requestAvatar(CallTile &tile);
@@ -138,6 +139,7 @@ private:
     bool poppedOut = false;
     bool collapsed = false;
     bool collapsedByHand = false;
+    bool othersHidden = false;
     bool dockAfterFullScreen = false;
 
     CallControlsBar *controls;

@@ -142,6 +142,13 @@ CallControlsBar::CallControlsBar(Core::Audio::VoiceManager *voice, StreamBroadca
     bar->addWidget(nonVideoCheck);
     connect(nonVideoCheck, &QCheckBox::toggled, this, &CallControlsBar::nonVideoShownChanged);
 
+    othersButton = new QPushButton(tr("Hide Others"), this);
+    othersButton->setCheckable(true);
+    othersButton->setToolTip(tr("Give the focused video the whole view"));
+    othersButton->hide();
+    bar->addWidget(othersButton);
+    connect(othersButton, &QPushButton::clicked, this, &CallControlsBar::othersHiddenChanged);
+
     statsButton = new QPushButton(tr("Stats"), this);
     statsButton->setCheckable(true);
     bar->addWidget(statsButton);
@@ -161,6 +168,14 @@ void CallControlsBar::setSummary(const QString &text)
     summaryLabel->setText(text);
 }
 
+void CallControlsBar::setOthersToggle(bool available, bool othersHidden)
+{
+    othersToggleAvailable = available;
+    othersButton->setVisible(available && !barOnly);
+    othersButton->setChecked(othersHidden);
+    othersButton->setText(othersHidden ? tr("Show Others") : tr("Hide Others"));
+}
+
 bool CallControlsBar::nonVideoShown() const
 {
     return nonVideoCheck->isChecked();
@@ -173,7 +188,7 @@ bool CallControlsBar::statsShown() const
 
 void CallControlsBar::apply(const Chrome &chrome)
 {
-    const bool barOnly = !chrome.poppedOut && chrome.collapsed;
+    barOnly = !chrome.poppedOut && chrome.collapsed;
     setVisible(!chrome.fullScreen);
     collapseButton->setVisible(!chrome.poppedOut);
     collapseButton->setArrowType(chrome.collapsed ? Qt::RightArrow : Qt::DownArrow);
@@ -195,6 +210,7 @@ void CallControlsBar::apply(const Chrome &chrome)
     cameraButton->setIcon(Icons::icon(cameraOn ? Icons::Name::VideoOff : Icons::Name::Video, Token::ButtonText));
 
     nonVideoCheck->setVisible(chrome.videoPresent && !barOnly);
+    othersButton->setVisible(othersToggleAvailable && !barOnly);
     statsButton->setVisible(chrome.videoPresent && !barOnly);
     popOutButton->setVisible(chrome.videoPresent || chrome.poppedOut);
     fullScreenButton->setVisible(chrome.videoPresent || chrome.poppedOut);

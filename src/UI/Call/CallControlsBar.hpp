@@ -38,6 +38,7 @@ public:
     };
     void apply(const Chrome &chrome);
     void setSummary(const QString &text);
+    void setOthersToggle(bool available, bool othersHidden);
 
     [[nodiscard]] bool nonVideoShown() const;
     [[nodiscard]] bool statsShown() const;
@@ -45,6 +46,7 @@ public:
 signals:
     void collapseClicked();
     void nonVideoShownChanged(bool shown);
+    void othersHiddenChanged(bool hidden);
     void statsShownChanged(bool shown);
     void popOutClicked();
     void fullScreenClicked();
@@ -75,6 +77,9 @@ private:
     QToolButton *cameraButton;
     QMenu *cameraMenu;
     QCheckBox *nonVideoCheck;
+    QPushButton *othersButton;
+    bool othersToggleAvailable = false;
+    bool barOnly = false;
     QPushButton *statsButton;
     QPushButton *popOutButton;
     QPushButton *fullScreenButton;

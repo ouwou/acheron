@@ -113,6 +113,21 @@ private slots:
         QCOMPARE(hidden, 2);
     }
 
+    void hiddenOthersLeaveTheFocusedTileTheWholeArea()
+    {
+        const QRect area(0, 0, 1000, 600);
+        const QList<QRect> places = arrangeTiles(3, 1, area, Acheron::UI::OtherTiles::Hidden);
+        QCOMPARE(places[1], area);
+        QVERIFY(places[0].isEmpty());
+        QVERIFY(places[2].isEmpty());
+    }
+
+    void hiddenOthersDoNotChangeAGrid()
+    {
+        const QRect area(0, 0, 1000, 600);
+        QCOMPARE(arrangeTiles(4, std::nullopt, area, Acheron::UI::OtherTiles::Hidden), arrangeTiles(4, std::nullopt, area));
+    }
+
     void noTilesHaveNoPlaces()
     {
         QVERIFY(arrangeTiles(0, std::nullopt, QRect(0, 0, 100, 100)).isEmpty());
