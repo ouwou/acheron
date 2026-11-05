@@ -15,6 +15,7 @@
 #include <QPainter>
 #include <QPlatformSurfaceEvent>
 #include <QSettings>
+#include <QWheelEvent>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -94,6 +95,16 @@ void GlVideoLayer::mousePressEvent(QMouseEvent *event)
 }
 
 void GlVideoLayer::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    QCoreApplication::sendEvent(owner, event);
+}
+
+void GlVideoLayer::mouseMoveEvent(QMouseEvent *event)
+{
+    QCoreApplication::sendEvent(owner, event);
+}
+
+void GlVideoLayer::wheelEvent(QWheelEvent *event)
 {
     QCoreApplication::sendEvent(owner, event);
 }
@@ -255,7 +266,7 @@ void GlVideoLayer::paintGL()
         draw(picture, quarterTurns);
 #else
         placePicture(picture);
-        drawTexture(cardTexture, true, quarterTurns);
+        drawTexture(cardTexture, true, picturePositions, quarterTurns);
 #endif
     }
     drawOverlays(shown != Shown::Nothing);
@@ -347,14 +358,25 @@ void GlVideoLayer::closeCard()
 
 void GlVideoLayer::placePicture(QSize picture)
 {
-    const QSize area = size() * devicePixelRatio();
+    const qreal ratio = devicePixelRatio();
+    const QSize area = size() * ratio;
     const QSize where = fitted(picture, area);
-    glViewport((area.width() - where.width()) / 2, (area.height() - where.height()) / 2, where.width(), where.height());
+    if (!owner->isZoomed()) {
+        // on whole device pixels, so a picture of the right size is not resampled
+        glViewport((area.width() - where.width()) / 2, (area.height() - where.height()) / 2, where.width(), where.height());
+        picturePositions = WHOLE_VIEWPORT;
+        return;
+    }
+    // past the window's edges, which OpenGL clips, where a viewport that large could exceed the driver's limit
+    glViewport(0, 0, area.width(), area.height());
+    const QRectF placed = owner->placedPicture(QSizeF(where) / ratio);
+    const auto x = [this](qreal at) { return static_cast<GLfloat>(2.0 * at / owner->width() - 1.0); };
+    const auto y = [this](qreal at) { return static_cast<GLfloat>(1.0 - 2.0 * at / owner->height()); };
+    picturePositions = { x(placed.left()), y(placed.bottom()), x(placed.right()), y(placed.bottom()), x(placed.left()), y(placed.top()), x(placed.right()), y(placed.top()) };
 }
 
-void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader, int quarterTurns)
+void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader, const QuadPositions &positions, int quarterTurns)
 {
-    static const GLfloat POSITIONS[] = { -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f };
     static const GLfloat TEXCOORDS[4][8] = {
         { 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f },
         { 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
@@ -365,21 +387,21 @@ void GlVideoLayer::drawQuad(QOpenGLShaderProgram &shader, int quarterTurns)
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     shader.enableAttributeArray(0);
     shader.enableAttributeArray(1);
-    shader.setAttributeArray(0, GL_FLOAT, POSITIONS, 2);
+    shader.setAttributeArray(0, GL_FLOAT, positions.data(), 2);
     shader.setAttributeArray(1, GL_FLOAT, TEXCOORDS[quarterTurns], 2);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     shader.disableAttributeArray(0);
     shader.disableAttributeArray(1);
 }
 
-void GlVideoLayer::drawTexture(GLuint texture, bool opaque, int quarterTurns)
+void GlVideoLayer::drawTexture(GLuint texture, bool opaque, const QuadPositions &positions, int quarterTurns)
 {
     plainProgram->bind();
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, texture);
     plainProgram->setUniformValue("image", 0);
     plainProgram->setUniformValue("opaque", opaque ? 1.0f : 0.0f);
-    drawQuad(*plainProgram, quarterTurns);
+    drawQuad(*plainProgram, positions, quarterTurns);
     glBindTexture(GL_TEXTURE_2D, 0);
     plainProgram->release();
 }
@@ -417,7 +439,7 @@ void GlVideoLayer::drawOverlays(bool hasPicture)
     glViewport(0, 0, area.width(), area.height());
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    drawTexture(overlayTexture, false);
+    drawTexture(overlayTexture, false, WHOLE_VIEWPORT);
     glDisable(GL_BLEND);
 }
 
@@ -510,7 +532,7 @@ void GlVideoLayer::draw(QSize picture, int quarterTurns)
     program->setUniformValue("chromaScale", chromaScale);
     program->setUniformValue("conversion", conversion);
     program->setUniformValue("offset", offset);
-    drawQuad(*program, quarterTurns);
+    drawQuad(*program, picturePositions, quarterTurns);
 
     for (int unit = 2; unit >= 0; unit--) {
         glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));

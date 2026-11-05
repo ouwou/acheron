@@ -582,6 +582,8 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
             connect(hideOthers, &QAction::triggered, this, &CallView::setOthersHidden);
         }
     }
+    if (tile->surface()->isZoomed())
+        connect(menu->addAction(tr("Reset Zoom")), &QAction::triggered, tile->surface(), &VideoSurface::resetZoom);
     QAction *popOutAction = menu->addAction(tr("Pop Out"));
     popOutAction->setCheckable(true);
     popOutAction->setChecked(tile->isPoppedOut());

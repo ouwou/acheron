@@ -47,6 +47,7 @@ public:
     [[nodiscard]] bool hasPicture();
     void keepInMemory();
     void setTarget(QSize devicePixels, qreal devicePixelRatio);
+    void setZoom(qreal value);
     void rescale();
     void forget();
     [[nodiscard]] QSize pictureSize();
@@ -71,6 +72,7 @@ private:
     // with the lock held, all of them
     void announce();
     [[nodiscard]] QSize displaySize() const;
+    [[nodiscard]] QSize convertedSize() const;
     void store(const AVFrame *frame);
     void convert();
     bool storeDownloaded();
@@ -98,6 +100,7 @@ private:
     SwsContext *normalizer = nullptr;
     QSize target;
     qreal pixelRatio = 1.0;
+    qreal zoom = 1.0;
     QImage front;
     QImage back;
     QImage turned;

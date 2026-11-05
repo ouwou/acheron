@@ -37,7 +37,9 @@ protected:
     bool event(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void focusInEvent(QFocusEvent *event) override;
     void initializeGL() override;
@@ -64,9 +66,12 @@ private:
 #ifdef ACHERON_HAVE_DMABUF
     void takeFromCard(const AVFrame *frame, quint64 serial);
 #endif
+    using QuadPositions = std::array<GLfloat, 8>;
+    static constexpr QuadPositions WHOLE_VIEWPORT = { -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f };
+
     void placePicture(QSize picture);
-    void drawQuad(QOpenGLShaderProgram &program, int quarterTurns = 0);
-    void drawTexture(GLuint texture, bool opaque, int quarterTurns = 0);
+    void drawQuad(QOpenGLShaderProgram &program, const QuadPositions &positions, int quarterTurns = 0);
+    void drawTexture(GLuint texture, bool opaque, const QuadPositions &positions, int quarterTurns = 0);
     void drawOverlays(bool hasPicture);
     void drawSpeakingRing();
     void uploadPlane(int unit, GLenum format, int textureWidth, int textureHeight, const uint8_t *data);
@@ -82,6 +87,7 @@ private:
     QSize overlaySize;
     bool overlaysStale = true;
     bool overlaysHadPicture = false;
+    QuadPositions picturePositions = WHOLE_VIEWPORT;
     static constexpr int PICTURE_PLANES = 3;
     static constexpr size_t FIRST_CARD_TEXTURE = PICTURE_PLANES;
     std::array<GLuint, 2 * PICTURE_PLANES> textures = {};

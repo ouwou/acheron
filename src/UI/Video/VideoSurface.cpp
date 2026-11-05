@@ -3,13 +3,17 @@
 #include "GlVideoLayer.hpp"
 #include "VideoFrameStore.hpp"
 
+#include <QApplication>
 #include <QFontDatabase>
-#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QOpenGLContext>
 #include <QPainter>
 #include <QPen>
 #include <QSettings>
+#include <QWheelEvent>
+
+#include <cmath>
+#include <utility>
 
 namespace Acheron {
 namespace UI {
@@ -73,6 +77,7 @@ void VideoSurface::makeLayerForAPicture()
     glContainer->setAttribute(Qt::WA_TransparentForMouseEvents);
     glContainer->setGeometry(rect());
     glContainer->show();
+    refreshCursor();
 }
 
 void VideoSurface::dropLayer()
@@ -179,7 +184,75 @@ void VideoSurface::clear()
 {
     frameSink->forget();
     dropLayer();
+    resetZoom();
     refresh();
+}
+
+void VideoSurface::resetZoom()
+{
+    zoom = 1.0;
+    pan = {};
+    dragStart.reset();
+    applyZoom();
+}
+
+QSizeF VideoSurface::fittedPictureSize() const
+{
+    return QSizeF(frameSink->pictureSize()) / devicePixelRatioF();
+}
+
+QRectF VideoSurface::placedPicture(QSizeF fittedSize) const
+{
+    const QSizeF zoomed = fittedSize * zoom;
+    const QPointF centred((width() - zoomed.width()) / 2.0, (height() - zoomed.height()) / 2.0);
+    return QRectF(centred + pan, zoomed);
+}
+
+void VideoSurface::zoomTo(qreal wanted, QPointF keptStill)
+{
+    wanted = qBound(1.0, wanted, MAX_ZOOM);
+    if (qFuzzyCompare(wanted, zoom))
+        return;
+    const QPointF middle(width() / 2.0, height() / 2.0);
+    const QPointF pictureCentre = middle + pan;
+    pan = keptStill - (keptStill - pictureCentre) * (wanted / zoom) - middle;
+    zoom = wanted;
+    applyZoom();
+}
+
+void VideoSurface::keepPanInside()
+{
+    const QSizeF zoomed = fittedPictureSize() * zoom;
+    const qreal spareX = qMax(0.0, (zoomed.width() - width()) / 2.0);
+    const qreal spareY = qMax(0.0, (zoomed.height() - height()) / 2.0);
+    pan = QPointF(qBound(-spareX, pan.x(), spareX), qBound(-spareY, pan.y(), spareY));
+}
+
+void VideoSurface::applyZoom()
+{
+    if (zoom <= 1.0) {
+        zoom = 1.0;
+        pan = {};
+    }
+    keepPanInside();
+    frameSink->setZoom(zoom);
+    rescaleTimer.start();
+    refreshCursor();
+    refresh();
+}
+
+void VideoSurface::refreshCursor()
+{
+    const Qt::CursorShape shape = dragged ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
+    if (!isZoomed()) {
+        unsetCursor();
+        if (glLayer)
+            glLayer->unsetCursor();
+        return;
+    }
+    setCursor(shape);
+    if (glLayer)
+        glLayer->setCursor(shape);
 }
 
 void VideoSurface::onFrameArrived()
@@ -210,6 +283,7 @@ void VideoSurface::resizeEvent(QResizeEvent *event)
     if (glContainer)
         glContainer->setGeometry(rect());
     frameSink->setTarget(size() * devicePixelRatioF(), devicePixelRatioF());
+    keepPanInside();
     rescaleTimer.start();
     reportGeometry();
 }
@@ -240,11 +314,55 @@ void VideoSurface::mouseDoubleClickEvent(QMouseEvent *event)
     emit doubleClicked();
 }
 
+void VideoSurface::mousePressEvent(QMouseEvent *event)
+{
+    QWidget::mousePressEvent(event);
+    if (event->button() != Qt::LeftButton || !isZoomed())
+        return;
+    dragStart = event->pos();
+    panAtDragStart = pan;
+    dragged = false;
+}
+
+void VideoSurface::mouseMoveEvent(QMouseEvent *event)
+{
+    QWidget::mouseMoveEvent(event);
+    if (!dragStart)
+        return;
+    const QPoint moved = event->pos() - *dragStart;
+    if (!dragged && moved.manhattanLength() < QApplication::startDragDistance())
+        return;
+    if (!dragged) {
+        dragged = true;
+        refreshCursor();
+    }
+    pan = panAtDragStart + moved;
+    keepPanInside();
+    refresh();
+}
+
 void VideoSurface::mouseReleaseEvent(QMouseEvent *event)
 {
     QWidget::mouseReleaseEvent(event);
-    if (event->button() == Qt::LeftButton && rect().contains(event->pos()))
+    if (event->button() != Qt::LeftButton)
+        return;
+    const bool wasDrag = std::exchange(dragged, false);
+    dragStart.reset();
+    refreshCursor();
+    if (!wasDrag && rect().contains(event->pos()))
         emit clicked();
+}
+
+void VideoSurface::wheelEvent(QWheelEvent *event)
+{
+    const int eighthsOfADegree = event->angleDelta().y();
+    if (eighthsOfADegree == 0 || !frameSink->hasPicture()) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+    constexpr qreal EIGHTHS_PER_STEP = 120.0;
+    zoomTo(zoom * std::pow(ZOOM_PER_WHEEL_STEP, eighthsOfADegree / EIGHTHS_PER_STEP), event->position());
+    event->accept();
 }
 
 void VideoSurface::paintEvent(QPaintEvent *)
@@ -260,6 +378,11 @@ void VideoSurface::paintEvent(QPaintEvent *)
         if (image.isNull())
             return;
         hasPicture = true;
+        const QRectF source(QPointF(0, 0), QSizeF(image.size()));
+        if (isZoomed()) {
+            painter.drawImage(placedPicture(fittedPictureSize()), image, source);
+            return;
+        }
         const qreal ratio = devicePixelRatioF();
         const QSize widgetPixels = size() * ratio;
         if (image.size() == fitted(image.size(), widgetPixels)) {
@@ -270,7 +393,7 @@ void VideoSurface::paintEvent(QPaintEvent *)
         }
         const QSizeF shown = QSizeF(image.size()).scaled(QSizeF(size()), Qt::KeepAspectRatio);
         const QRectF where(QPointF((width() - shown.width()) / 2.0, (height() - shown.height()) / 2.0), shown);
-        painter.drawImage(where, image, QRectF(QPointF(0, 0), QSizeF(image.size())));
+        painter.drawImage(where, image, source);
     });
 
     paintOverlays(painter, hasPicture, true);

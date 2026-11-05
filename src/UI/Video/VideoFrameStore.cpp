@@ -157,6 +157,12 @@ void VideoFrameStore::setTarget(QSize devicePixels, qreal devicePixelRatio)
     pixelRatio = devicePixelRatio;
 }
 
+void VideoFrameStore::setZoom(qreal value)
+{
+    std::lock_guard lock(mutex);
+    zoom = value;
+}
+
 void VideoFrameStore::rescale()
 {
     std::lock_guard lock(mutex);
@@ -254,9 +260,18 @@ void VideoFrameStore::store(const AVFrame *frame)
     av_frame_copy_props(last.get(), frame);
 }
 
+QSize VideoFrameStore::convertedSize() const
+{
+    const QSize whole = displaySize();
+    if (zoom <= 1.0)
+        return fitted(whole, target);
+    const QSize zoomed = fitted(whole, (QSizeF(target) * zoom).toSize());
+    return zoomed.width() > whole.width() ? whole : zoomed;
+}
+
 void VideoFrameStore::convert()
 {
-    const QSize size = fitted(displaySize(), target);
+    const QSize size = convertedSize();
     if (size.isEmpty())
         return;
 

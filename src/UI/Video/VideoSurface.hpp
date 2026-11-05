@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include <memory>
+#include <optional>
 
 #include "Core/Media/VideoDecoder.hpp"
 
@@ -45,11 +46,16 @@ public:
 
     void clear();
 
+    [[nodiscard]] bool isZoomed() const { return zoom > 1.0; }
+    void resetZoom();
+
     // through the card the picture is in a window of its own, which grab() doesnt see
     [[nodiscard]] QImage snapshot();
 
     // any shorter and every switch away and back would cost a moment without a picture
     static constexpr int NOT_SHOWN_BEFORE_RELEASED_MS = 10'000;
+    static constexpr qreal MAX_ZOOM = 8.0;
+    static constexpr qreal ZOOM_PER_WHEEL_STEP = 1.25;
 
 signals:
     void geometryChanged(int pixelCount, bool visible);
@@ -62,7 +68,10 @@ protected:
     void showEvent(QShowEvent *event) override;
     void hideEvent(QHideEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     friend class GlVideoLayer;
@@ -77,6 +86,13 @@ private:
     void releaseWhatIsNotShown();
     void paintOverlays(QPainter &painter, bool hasPicture, bool withSpeakingRing);
     [[nodiscard]] bool hasOverlaysBesideTheRing(bool hasPicture) const;
+    [[nodiscard]] QSizeF fittedPictureSize() const;
+    // in this widget's coordinates, past its edges when zoomed in
+    [[nodiscard]] QRectF placedPicture(QSizeF fittedSize) const;
+    void zoomTo(qreal wanted, QPointF keptStill);
+    void keepPanInside();
+    void applyZoom();
+    void refreshCursor();
 
     std::shared_ptr<VideoFrameStore> frameSink;
     bool usesGpu = false;
@@ -92,6 +108,12 @@ private:
     bool speaking = false;
     int reportedPixels = -1;
     bool reportedVisible = false;
+    qreal zoom = 1.0;
+    // of the picture's centre from this widget's
+    QPointF pan;
+    std::optional<QPoint> dragStart;
+    QPointF panAtDragStart;
+    bool dragged = false;
 };
 
 } // namespace UI
