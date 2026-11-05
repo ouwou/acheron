@@ -1,5 +1,6 @@
 #include "UI/Call/CallControlsBar.hpp"
 
+#include "Core/Audio/VoiceManager.hpp"
 #include "Core/Streams/StreamBroadcaster.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "Core/Video/CameraPipeline.hpp"
@@ -7,6 +8,7 @@
 #include "Core/Video/CaptureSources.hpp"
 #include "UI/ElidedLabel.hpp"
 #include "UI/ScreenSharePicker.hpp"
+#include "UI/VoiceActions.hpp"
 
 #include <QActionGroup>
 #include <QCheckBox>
@@ -21,8 +23,18 @@ namespace UI {
 using Core::CameraSender;
 using Core::StreamBroadcaster;
 using Core::Video::SendQuality;
+namespace Icons = Core::Theme::Icons;
+using Core::Theme::Token;
 
 namespace {
+
+QToolButton *callButton(QWidget *parent)
+{
+    auto *button = new QToolButton(parent);
+    button->setAutoRaise(true);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    return button;
+}
 
 void changeShareQuality(StreamBroadcaster *broadcaster, const SendQuality &quality)
 {
@@ -65,8 +77,8 @@ void fillShareQualityMenu(QMenu *menu, StreamBroadcaster *broadcaster)
     }
 }
 
-CallControlsBar::CallControlsBar(StreamBroadcaster *broadcaster, CameraSender *camera, bool nonVideoShown, QWidget *parent)
-    : QWidget(parent), broadcaster(broadcaster), camera(camera)
+CallControlsBar::CallControlsBar(Core::Audio::VoiceManager *voice, StreamBroadcaster *broadcaster, CameraSender *camera, bool nonVideoShown, QWidget *parent)
+    : QWidget(parent), voice(voice), broadcaster(broadcaster), camera(camera)
 {
     auto *bar = new QHBoxLayout(this);
     bar->setContentsMargins(4, 2, 4, 2);
@@ -80,23 +92,50 @@ CallControlsBar::CallControlsBar(StreamBroadcaster *broadcaster, CameraSender *c
     summaryLabel = new ElidedLabel(QString(), this);
     bar->addWidget(summaryLabel, 1);
 
-    captureAvailable = broadcaster && (Core::Video::screenCaptureAvailable() || Core::Video::windowCaptureAvailable());
-    shareButton = new QToolButton(this);
-    shareButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    bar->addWidget(shareButton);
-    connect(shareButton, &QToolButton::clicked, this, &CallControlsBar::onShareClicked);
-    shareQualityMenu = new QMenu(shareButton);
-    connect(shareQualityMenu, &QMenu::aboutToShow, this, [this] { fillShareQualityMenu(shareQualityMenu, this->broadcaster); });
+    micButton = callButton(this);
+    micButton->setPopupMode(QToolButton::MenuButtonPopup);
+    deviceMenu = new QMenu(micButton);
+    micButton->setMenu(deviceMenu);
+    bar->addWidget(micButton);
+    connect(micButton, &QToolButton::clicked, this, [this] {
+        if (this->voice)
+            this->voice->toggleSelfMute();
+    });
+    connect(deviceMenu, &QMenu::aboutToShow, this, [this] {
+        if (this->voice)
+            VoiceActions::fillDeviceMenu(deviceMenu, this->voice, [this] { emit voiceSettingsRequested(); });
+    });
+
+    deafenButton = callButton(this);
+    bar->addWidget(deafenButton);
+    connect(deafenButton, &QToolButton::clicked, this, [this] {
+        if (this->voice)
+            this->voice->toggleSelfDeafen();
+    });
+    if (voice)
+        connect(voice, &Core::Audio::VoiceManager::selfAudioChanged, this, &CallControlsBar::refreshVoiceButtons);
 
     cameraAvailable = camera && Core::Video::cameraCaptureAvailable();
-    cameraButton = new QToolButton(this);
-    cameraButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    cameraButton = callButton(this);
     cameraButton->setPopupMode(QToolButton::MenuButtonPopup);
     bar->addWidget(cameraButton);
     connect(cameraButton, &QToolButton::clicked, this, &CallControlsBar::onCameraClicked);
     cameraMenu = new QMenu(cameraButton);
     cameraButton->setMenu(cameraMenu);
     connect(cameraMenu, &QMenu::aboutToShow, this, &CallControlsBar::fillCameraMenu);
+
+    captureAvailable = broadcaster && (Core::Video::screenCaptureAvailable() || Core::Video::windowCaptureAvailable());
+    shareButton = callButton(this);
+    bar->addWidget(shareButton);
+    connect(shareButton, &QToolButton::clicked, this, &CallControlsBar::onShareClicked);
+    shareQualityMenu = new QMenu(shareButton);
+    connect(shareQualityMenu, &QMenu::aboutToShow, this, [this] { fillShareQualityMenu(shareQualityMenu, this->broadcaster); });
+
+    leaveButton = callButton(this);
+    leaveButton->setIcon(Icons::icon(Icons::Name::PhoneOff, Token::ChatError));
+    leaveButton->setToolTip(tr("Disconnect"));
+    bar->addWidget(leaveButton);
+    connect(leaveButton, &QToolButton::clicked, this, &CallControlsBar::leaveClicked);
 
     nonVideoCheck = new QCheckBox(tr("Show Non-Video Participants"), this);
     nonVideoCheck->setChecked(nonVideoShown);
@@ -139,20 +178,21 @@ void CallControlsBar::apply(const Chrome &chrome)
     collapseButton->setVisible(!chrome.poppedOut);
     collapseButton->setArrowType(chrome.collapsed ? Qt::RightArrow : Qt::DownArrow);
 
+    refreshVoiceButtons();
+
     const bool sharing = broadcaster && broadcaster->isSharing();
     shareButton->setVisible(captureAvailable && broadcaster);
     shareButton->setEnabled(sharing || (broadcaster && broadcaster->canShare()));
-    shareButton->setText(sharing ? tr("Stop Sharing") : tr("Share Screen"));
-    shareButton->setIcon(Core::Theme::Icons::icon(sharing ? Core::Theme::Icons::Name::ScreenShareOff : Core::Theme::Icons::Name::ScreenShare, Core::Theme::Token::ButtonText));
+    shareButton->setToolTip(sharing ? tr("Stop Sharing") : tr("Share Your Screen"));
+    shareButton->setIcon(Icons::icon(sharing ? Icons::Name::ScreenShareOff : Icons::Name::ScreenShare, Token::ButtonText));
     shareButton->setPopupMode(sharing ? QToolButton::MenuButtonPopup : QToolButton::DelayedPopup);
     shareButton->setMenu(sharing ? shareQualityMenu : nullptr);
 
     const bool cameraOn = camera && camera->isOn();
     cameraButton->setVisible(cameraAvailable && camera);
     cameraButton->setEnabled(cameraOn || (camera && camera->canTurnOn()));
-    cameraButton->setText(cameraOn ? tr("Stop Camera") : tr("Camera"));
     cameraButton->setToolTip(cameraOn ? tr("Turn Off Camera") : tr("Turn On Camera"));
-    cameraButton->setIcon(Core::Theme::Icons::icon(cameraOn ? Core::Theme::Icons::Name::VideoOff : Core::Theme::Icons::Name::Video, Core::Theme::Token::ButtonText));
+    cameraButton->setIcon(Icons::icon(cameraOn ? Icons::Name::VideoOff : Icons::Name::Video, Token::ButtonText));
 
     nonVideoCheck->setVisible(chrome.videoPresent && !barOnly);
     statsButton->setVisible(chrome.videoPresent && !barOnly);
@@ -160,6 +200,16 @@ void CallControlsBar::apply(const Chrome &chrome)
     fullScreenButton->setVisible(chrome.videoPresent || chrome.poppedOut);
     popOutButton->setText(chrome.poppedOut ? tr("Dock") : tr("Pop Out"));
     fullScreenButton->setText(chrome.fullScreen ? tr("Exit Full Screen") : tr("Full Screen"));
+}
+
+void CallControlsBar::refreshVoiceButtons()
+{
+    const bool muted = voice && voice->isSelfMuted();
+    const bool deafened = voice && voice->isSelfDeafened();
+    micButton->setIcon(Icons::icon(muted ? Icons::Name::MicOff : Icons::Name::Mic, muted ? Token::ChatError : Token::ButtonText));
+    micButton->setToolTip(muted ? tr("Unmute") : tr("Mute"));
+    deafenButton->setIcon(Icons::icon(deafened ? Icons::Name::HeadphoneOff : Icons::Name::Headphones, deafened ? Token::ChatError : Token::ButtonText));
+    deafenButton->setToolTip(deafened ? tr("Undeafen") : tr("Deafen"));
 }
 
 void CallControlsBar::onShareClicked()

@@ -33,25 +33,16 @@ class TestCallTiles : public QObject
 {
     Q_OBJECT
 private slots:
-    void aCallWithoutVideoShowsEveryoneElse()
+    void aCallWithoutVideoHasNoTiles()
     {
         const TilePlan plan = planTiles(callWith({ { ALICE }, { BOB } }));
         QCOMPARE(plan.videoCount, 0);
-        QCOMPARE(plan.tiles, (QList<TileKey>{ TileKey::personOf(ALICE), TileKey::personOf(BOB) }));
+        QVERIFY(plan.tiles.isEmpty());
     }
 
-    void aCollapsedCallWithoutVideoHasNoTiles()
+    void aStreamHasATile()
     {
-        CallFacts facts = callWith({ { ALICE } });
-        facts.collapsedToBar = true;
-        QVERIFY(planTiles(facts).tiles.isEmpty());
-    }
-
-    void videoOpensACollapsedCall()
-    {
-        CallFacts facts = callWith({ { .userId = ALICE, .streaming = true } });
-        facts.collapsedToBar = true;
-        const TilePlan plan = planTiles(facts);
+        const TilePlan plan = planTiles(callWith({ { .userId = ALICE, .streaming = true } }));
         QCOMPARE(plan.videoCount, 1);
         QVERIFY(plan.tiles.contains(TileKey::streamOf(ALICE)));
     }
@@ -66,12 +57,11 @@ private slots:
         QCOMPARE(plan.tiles, QList<TileKey>{ TileKey::personOf(ALICE) });
     }
 
-    void aDisabledCameraHasNoTileAndNoVideo()
+    void aDisabledCameraLeavesTheCallWithoutVideo()
     {
         const TilePlan plan = planTiles(callWith({ { .userId = ALICE, .cameraSending = true, .cameraDisabled = true }, { BOB } }));
         QCOMPARE(plan.videoCount, 0);
-        QVERIFY(!plan.tiles.contains(TileKey::personOf(ALICE)));
-        QVERIFY(plan.tiles.contains(TileKey::personOf(BOB)));
+        QVERIFY(plan.tiles.isEmpty());
     }
 
     void theAccountsOwnVideoComesFromItsSenders()

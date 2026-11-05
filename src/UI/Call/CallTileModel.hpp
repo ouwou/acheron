@@ -44,7 +44,6 @@ struct CallFacts
     bool ownShareShown = false;
     bool ownCameraShown = false;
     bool nonVideoShown = true;
-    bool collapsedToBar = false;
 };
 
 struct TilePlan

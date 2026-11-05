@@ -180,6 +180,8 @@ private slots:
     void handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs);
     void onVoiceConnected();
     void onVoiceDisconnected();
+    void onSelfAudioToggled();
+    void sendOwnVoiceState(Snowflake guildId, Snowflake channelId);
     void onVoiceStateUpdated(const Discord::VoiceState &event);
     void onCallCreated(const Discord::CallCreate &event);
     void onCallDeleted(const Discord::CallDelete &event);

@@ -6,21 +6,19 @@
 #include "Core/Video/CallVideo.hpp"
 #include "Core/Video/CameraSender.hpp"
 #include "UI/Call/CallControlsBar.hpp"
+#include "UI/Call/CallPeopleList.hpp"
 #include "UI/Call/CallStats.hpp"
 #include "UI/Call/CallTile.hpp"
 #include "UI/Call/CallVideoMenu.hpp"
 #include "UI/Video/VideoSurface.hpp"
+#include "UI/VoiceActions.hpp"
 
 #include <QApplication>
 #include <QCloseEvent>
-#include <QHBoxLayout>
 #include <QKeyEvent>
-#include <QLabel>
 #include <QMenu>
 #include <QSettings>
-#include <QSlider>
 #include <QVBoxLayout>
-#include <QWidgetAction>
 
 #include <algorithm>
 
@@ -34,7 +32,6 @@ using Core::StreamSession;
 
 namespace {
 
-constexpr int MAX_VOLUME_PERCENT = 200;
 constexpr int MIN_STAGE_HEIGHT = 60;
 constexpr QSize POPPED_OUT_SIZE(960, 600);
 
@@ -62,9 +59,11 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     : QWidget(dock), voice(voice), watcher(watcher), broadcaster(broadcaster), camera(camera), video(voice->video()), images(images), accountId(accountId), channel(voice->currentChannelId()), title(title), names(std::move(names)), avatars(std::move(avatars)), dock(dock)
 {
     setWindowTitle(title);
-    collapsed = QSettings().value(COLLAPSED_WITHOUT_VIDEO_KEY, true).toBool();
+    collapsed = QSettings().value(COLLAPSED_WITHOUT_VIDEO_KEY, false).toBool();
 
-    controls = new CallControlsBar(broadcaster, camera, QSettings().value(nonVideoSettingsKey(), true).toBool(), this);
+    controls = new CallControlsBar(voice, broadcaster, camera, QSettings().value(nonVideoSettingsKey(), true).toBool(), this);
+    connect(controls, &CallControlsBar::leaveClicked, this, &CallView::leaveRequested);
+    connect(controls, &CallControlsBar::voiceSettingsRequested, this, &CallView::voiceSettingsRequested);
     connect(controls, &CallControlsBar::collapseClicked, this, &CallView::toggleCollapsedByHand);
     connect(controls, &CallControlsBar::nonVideoShownChanged, this, &CallView::onNonVideoShownChanged);
     connect(controls, &CallControlsBar::statsShownChanged, this, &CallView::onStatsShownChanged);
@@ -76,11 +75,15 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     stage->setMinimumHeight(MIN_STAGE_HEIGHT);
     stage->installEventFilter(this);
 
+    people = new CallPeopleList(voice, images, accountId, this->names, this->avatars, this);
+    connect(people, &CallPeopleList::menuRequested, this, &CallView::showPersonMenu);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(controls);
     layout->addWidget(stage, 1);
+    layout->addWidget(people, 1);
 
     if (dock && dock->layout())
         dock->layout()->addWidget(this);
@@ -184,7 +187,6 @@ void CallView::rebuild()
     facts.ownShareShown = ownShareShown();
     facts.ownCameraShown = ownCameraShown();
     facts.nonVideoShown = controls->nonVideoShown();
-    facts.collapsedToBar = !poppedOut && collapsed;
     QStringList participantNames;
     for (const Core::Audio::VoiceParticipant &participant : voice->currentParticipants()) {
         const bool sending = cameras.contains(participant.userId);
@@ -200,6 +202,7 @@ void CallView::rebuild()
     videoPresent = anyVideo;
     if (videoStarted && !collapsedByHand)
         collapsed = false;
+    people->refresh();
     applyChrome();
 
     for (auto it = tiles.begin(); it != tiles.end();) {
@@ -552,19 +555,15 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
     }
 
     if (key.isStream() && session && !session->isOver()) {
-        auto *volumeRow = new QWidget(menu);
-        auto *rowLayout = new QHBoxLayout(volumeRow);
-        rowLayout->setContentsMargins(8, 2, 8, 2);
-        rowLayout->addWidget(new QLabel(tr("Stream Volume"), volumeRow));
-        auto *slider = new QSlider(Qt::Horizontal, volumeRow);
-        slider->setRange(0, MAX_VOLUME_PERCENT);
-        slider->setValue(qRound(session->volume() * 100));
-        slider->setFixedWidth(120);
-        rowLayout->addWidget(slider);
-        connect(slider, &QSlider::valueChanged, session, [session](int percent) { session->setVolume(static_cast<float>(percent) / 100.0f); });
-        auto *volumeAction = new QWidgetAction(menu);
-        volumeAction->setDefaultWidget(volumeRow);
-        menu->addAction(volumeAction);
+        const QPointer<StreamSession> watched(session);
+        VoiceActions::addVolumeSlider(menu, tr("Stream Volume"), qRound(session->volume() * 100), [watched](int percent) {
+            if (watched)
+                watched->setVolume(static_cast<float>(percent) / 100.0f);
+        });
+    }
+    if (!key.isStream() && !isOwnCamera(key)) {
+        menu->addSeparator();
+        addPersonActions(menu, key.userId);
     }
 
     if (!tile->isPoppedOut()) {
@@ -579,6 +578,21 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
     connect(popOutAction, &QAction::triggered, this, [this, key](bool checked) { setTilePoppedOut(key, checked); });
 
     menu->popup(globalPos);
+}
+
+void CallView::showPersonMenu(Snowflake userId, const QPoint &globalPos)
+{
+    auto *menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    addPersonActions(menu, userId);
+    menu->popup(globalPos);
+}
+
+void CallView::addPersonActions(QMenu *menu, Snowflake userId)
+{
+    if (voice && userId != accountId)
+        VoiceActions::addUserActions(menu, voice, userId, nameOf(userId));
+    connect(menu->addAction(tr("Profile")), &QAction::triggered, this, [this, userId] { emit profileRequested(userId); });
 }
 
 void CallView::onStatsShownChanged(bool shown)
@@ -711,9 +725,11 @@ void CallView::reveal()
 void CallView::applyChrome()
 {
     const bool barOnly = !poppedOut && collapsed;
+    const bool listed = !videoPresent && !barOnly;
     controls->apply({ .poppedOut = poppedOut, .fullScreen = poppedOut && isFullScreen(), .collapsed = collapsed, .videoPresent = videoPresent });
-    stage->setVisible(!barOnly);
-    setMaximumHeight(barOnly ? controls->sizeHint().height() : QWIDGETSIZE_MAX);
+    stage->setVisible(videoPresent && !barOnly);
+    people->setVisible(listed);
+    setMaximumHeight(isCompact() ? controls->sizeHint().height() + (listed ? people->wantedHeight() : 0) : QWIDGETSIZE_MAX);
 }
 
 void CallView::toggleFullScreen()

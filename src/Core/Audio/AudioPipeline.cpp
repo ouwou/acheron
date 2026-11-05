@@ -184,7 +184,6 @@ void AudioPipeline::removeUser(Snowflake userId)
             ++it;
         }
     }
-    userVolumes.remove(userId);
     pendingUserRms.remove(userId);
 }
 
@@ -407,7 +406,7 @@ void AudioPipeline::onMixTick()
             const auto *samples = reinterpret_cast<const int16_t *>(pcm.constData());
             int count = pcm.size() / static_cast<int>(sizeof(int16_t));
             if (count > 0) {
-                float rms = computeRms(samples, count);
+                float rms = rmsOf(samples, count);
 
                 auto rmsIt = pendingUserRms.find(userId);
                 if (rmsIt == pendingUserRms.end())
@@ -453,16 +452,8 @@ bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRm
         return false;
     }
 
-    outRms = computeRms(samples, count);
+    outRms = rmsOf(samples, count);
     return outRms > vadThreshold;
-}
-
-float AudioPipeline::computeRms(const int16_t *samples, int count)
-{
-    double sum = 0;
-    for (int i = 0; i < count; i++)
-        sum += static_cast<double>(samples[i]) * samples[i];
-    return static_cast<float>(std::sqrt(sum / count));
 }
 
 void AudioPipeline::sendTrailingSilence()

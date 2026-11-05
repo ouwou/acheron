@@ -3,7 +3,9 @@
 #include "AppearancePage.hpp"
 #include "GeneralPage.hpp"
 
-#ifdef ACHERON_HAVE_MINIAUDIO
+#ifndef ACHERON_NO_VOICE
+#include "VoicePage.hpp"
+#elif defined(ACHERON_HAVE_MINIAUDIO)
 #include "AudioPage.hpp"
 #endif
 #ifdef ACHERON_HAVE_VIDEO
@@ -50,7 +52,10 @@ void SettingsWindow::setupUi()
     connect(appearance, &AppearancePage::channelListModeChanged, this, &SettingsWindow::channelListModeChanged);
     connect(appearance, &AppearancePage::channelListIndentChanged, this, &SettingsWindow::channelListIndentChanged);
 
-#ifdef ACHERON_HAVE_MINIAUDIO
+#ifndef ACHERON_NO_VOICE
+    voicePage = pages->count();
+    addPage(tr("Voice"), new VoicePage(this));
+#elif defined(ACHERON_HAVE_MINIAUDIO)
     addPage(tr("Audio"), new AudioPage(this));
 #endif
 #ifdef ACHERON_HAVE_VIDEO
@@ -64,6 +69,13 @@ void SettingsWindow::setupUi()
     mainLayout->addWidget(categoryList);
     mainLayout->addWidget(pages, 1);
 }
+
+#ifndef ACHERON_NO_VOICE
+void SettingsWindow::showVoicePage()
+{
+    categoryList->setCurrentRow(voicePage);
+}
+#endif
 
 } // namespace UI
 } // namespace Acheron

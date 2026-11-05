@@ -372,7 +372,10 @@ set(PROJECT_SOURCES
 if(ENABLE_VOICE)
     list(APPEND PROJECT_SOURCES
         src/UI/VoiceStatusBar.cpp
-        src/UI/VoiceWindow.cpp
+        src/UI/VoiceActions.cpp
+        src/UI/VolumeMeter.cpp
+        src/UI/Settings/VoicePage.cpp
+        src/Core/Audio/VoiceSettings.cpp
         src/Core/Audio/VoiceManager.cpp
         src/Core/Audio/AudioPipeline.cpp
         src/Core/Audio/IAudioBackend.cpp
@@ -397,6 +400,7 @@ if(ACHERON_HAVE_VIDEO)
         src/UI/Call/CallStats.cpp
         src/UI/Call/CallTile.cpp
         src/UI/Call/CallTileModel.cpp
+        src/UI/Call/CallPeopleList.cpp
         src/UI/Settings/VideoPage.cpp
         src/UI/ScreenSharePicker.cpp
     )

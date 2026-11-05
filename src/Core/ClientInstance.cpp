@@ -102,6 +102,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
     connect(voiceManager, &Audio::VoiceManager::voiceConnected, this, &ClientInstance::onVoiceConnected);
     connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
+    connect(voiceManager, &Audio::VoiceManager::selfAudioToggled, this, &ClientInstance::onSelfAudioToggled);
 #endif
 #ifdef ACHERON_HAVE_VIDEO
     streamWatch = new StreamWatcher(client, streamManager, voiceManager, this);
@@ -431,6 +432,12 @@ void ClientInstance::onVoiceConnected()
 void ClientInstance::onVoiceDisconnected()
 {
     client->setVoiceConnected(false);
+}
+
+void ClientInstance::onSelfAudioToggled()
+{
+    if (isInVoice())
+        sendOwnVoiceState(currentVoiceGuildId, currentVoiceChannelId);
 }
 
 void ClientInstance::onHeartbeatSessionChanged(const Discord::HeartbeatSession &session)
@@ -1610,17 +1617,31 @@ ShareTerms ClientInstance::screenShareTerms()
 
 void ClientInstance::joinVoice(Snowflake guildId, Snowflake channelId)
 {
+#ifndef ACHERON_NO_VOICE
+    // as the official client, a private call is joined unmuted and undeafened
+    if (!guildId.isValid())
+        voiceManager->resetSelfAudio();
+#endif
+    sendOwnVoiceState(guildId, channelId);
+}
+
+void ClientInstance::leaveVoice()
+{
+    sendOwnVoiceState(currentVoiceGuildId, Snowflake::Invalid);
+}
+
+void ClientInstance::sendOwnVoiceState(Snowflake guildId, Snowflake channelId)
+{
 #ifdef ACHERON_HAVE_VIDEO
     const bool cameraOn = cameraSend && cameraSend->isOnIn(channelId);
 #else
     const bool cameraOn = false;
 #endif
+#ifndef ACHERON_NO_VOICE
+    discord()->sendVoiceStateUpdate(guildId, channelId, voiceManager->isSelfMuted(), voiceManager->isSelfDeafened(), cameraOn);
+#else
     discord()->sendVoiceStateUpdate(guildId, channelId, false, false, cameraOn);
-}
-
-void ClientInstance::leaveVoice()
-{
-    discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false, false);
+#endif
 }
 
 #ifndef ACHERON_NO_VOICE

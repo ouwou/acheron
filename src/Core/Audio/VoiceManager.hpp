@@ -17,6 +17,7 @@
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
+#include "Core/Audio/VoiceSettings.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/StreamKey.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
@@ -83,36 +84,18 @@ public:
 
     void setEncodableVideoCodecs(const QList<Discord::Voice::VideoCodec> &codecs);
 
-    void setInputGain(float gain);
-    void setOutputVolume(float volume);
-    void setUserVolume(Snowflake userId, float volume);
-    void setVadThreshold(float threshold);
+    // as the official client: deafening also mutes, and unmuting a deafened account undeafens it
+    void toggleSelfMute();
+    void toggleSelfDeafen();
+    // without telling the gateway, which the caller is about to
+    void resetSelfAudio();
 
-    void setOpusApplication(int application);
-    void setOpusBitrate(int bitrate);
-    void setOpusComplexity(int complexity);
-    void setOpusSignalType(int signalType);
-    void setOpusFec(bool enabled);
-    void setOpusPacketLossPercent(int percent);
-
-    void setNoiseSuppressionEnabled(bool enabled);
-    void setUseRnnoiseVad(bool enabled);
-
-    [[nodiscard]] int opusApplication() const { return cachedOpusApplication; }
-    [[nodiscard]] int opusBitrate() const { return cachedOpusBitrate; }
-    [[nodiscard]] int opusComplexity() const { return cachedOpusComplexity; }
-    [[nodiscard]] int opusSignalType() const { return cachedOpusSignalType; }
-    [[nodiscard]] bool opusFec() const { return cachedOpusFec; }
-    [[nodiscard]] int opusPacketLossPercent() const { return cachedOpusPacketLossPercent; }
-    [[nodiscard]] bool noiseSuppression() const { return cachedNoiseSuppression; }
-    [[nodiscard]] bool rnnoiseVad() const { return cachedUseRnnoiseVad; }
+    [[nodiscard]] int opusBitrate() const { return settings.opusBitrateKbps * 1000; }
 
     [[nodiscard]] QList<AudioDeviceInfo> availableInputDevices() const;
     [[nodiscard]] QList<AudioDeviceInfo> availableOutputDevices() const;
-    [[nodiscard]] QByteArray currentInputDevice() const { return currentInputDeviceId; }
-    [[nodiscard]] QByteArray currentOutputDevice() const { return currentOutputDeviceId; }
-    void setInputDevice(const QByteArray &deviceId);
-    void setOutputDevice(const QByteArray &deviceId);
+    [[nodiscard]] QByteArray currentInputDevice() const { return settings.inputDevice; }
+    [[nodiscard]] QByteArray currentOutputDevice() const { return settings.outputDevice; }
 
     [[nodiscard]] QList<VoiceParticipant> currentParticipants() const;
     [[nodiscard]] const VoiceParticipant *participant(Snowflake userId) const;
@@ -129,6 +112,8 @@ public:
     [[nodiscard]] CallVideo *video() const { return callVideo; }
 #endif
 
+    void setUserVolume(Snowflake userId, int percent);
+    [[nodiscard]] int userVolume(Snowflake userId) const;
     void setUserMuted(Snowflake userId, bool muted);
     [[nodiscard]] bool isUserMuted(Snowflake userId) const;
 
@@ -156,6 +141,8 @@ signals:
     void participantsCleared();
     void userAudioLevelChanged(Snowflake userId, float rms);
     void privacyCodeChanged(const QString &code);
+    void selfAudioChanged();
+    void selfAudioToggled();
 
 private slots:
     void onVoiceClientConnected();
@@ -165,6 +152,10 @@ private slots:
 
 private:
     void forgetOwnVoiceState();
+    void adopt(const VoiceSettings &chosen);
+    void setSelfAudio(bool muted, bool deafened);
+    void applyUserVolume(Snowflake userId);
+    [[nodiscard]] float effectiveVolumeOf(Snowflake userId) const;
     void connectToVoiceServer(const QString &endpoint, const QString &token);
     void closeVoiceConnection();
     void feedAudioSourceToPipeline(quint32 source);
@@ -199,25 +190,13 @@ private:
     };
     PendingConnection pending;
 
-    QByteArray currentInputDeviceId;
-    QByteArray currentOutputDeviceId;
-
-    int cachedOpusApplication = OPUS_APPLICATION_VOIP;
-    int cachedOpusBitrate = 64000;
-    int cachedOpusComplexity = 5;
-    int cachedOpusSignalType = OPUS_SIGNAL_VOICE;
-    bool cachedOpusFec = true;
-    int cachedOpusPacketLossPercent = 0;
-    bool cachedNoiseSuppression = true;
-#ifdef ACHERON_HAVE_RNNOISE
-    bool cachedUseRnnoiseVad = true;
-#else
-    bool cachedUseRnnoiseVad = false;
-#endif
+    VoiceSettings settings;
+    bool mutedBeforeDeafening = false;
     QList<AudioDeviceInfo> cachedInputDevices;
     QList<AudioDeviceInfo> cachedOutputDevices;
 
     QHash<Snowflake, VoiceParticipant> participants;
+    QHash<Snowflake, int> userVolumes;
     QSet<Snowflake> mutedUsers;
     QHash<Snowflake, Discord::VoiceState> knownVoiceStates;
     QString cachedPrivacyCode;

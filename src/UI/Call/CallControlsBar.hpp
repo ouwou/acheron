@@ -12,6 +12,9 @@ namespace Acheron {
 namespace Core {
 class CameraSender;
 class StreamBroadcaster;
+namespace Audio {
+class VoiceManager;
+}
 } // namespace Core
 
 namespace UI {
@@ -24,7 +27,7 @@ class CallControlsBar : public QWidget
 {
     Q_OBJECT
 public:
-    CallControlsBar(Core::StreamBroadcaster *broadcaster, Core::CameraSender *camera, bool nonVideoShown, QWidget *parent);
+    CallControlsBar(Core::Audio::VoiceManager *voice, Core::StreamBroadcaster *broadcaster, Core::CameraSender *camera, bool nonVideoShown, QWidget *parent);
 
     struct Chrome
     {
@@ -45,13 +48,17 @@ signals:
     void statsShownChanged(bool shown);
     void popOutClicked();
     void fullScreenClicked();
+    void leaveClicked();
+    void voiceSettingsRequested();
 
 private:
+    void refreshVoiceButtons();
     void onShareClicked();
     void onCameraClicked();
     void fillCameraMenu();
     void chooseCamera(const QString &deviceId);
 
+    QPointer<Core::Audio::VoiceManager> voice;
     QPointer<Core::StreamBroadcaster> broadcaster;
     QPointer<Core::CameraSender> camera;
     bool captureAvailable = false;
@@ -59,6 +66,10 @@ private:
 
     QToolButton *collapseButton;
     ElidedLabel *summaryLabel;
+    QToolButton *micButton;
+    QMenu *deviceMenu;
+    QToolButton *deafenButton;
+    QToolButton *leaveButton;
     QToolButton *shareButton;
     QMenu *shareQualityMenu;
     QToolButton *cameraButton;

@@ -17,12 +17,43 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
+namespace {
+
+float levelOf(int percent)
+{
+    return static_cast<float>(percent) / VoiceSettings::UNCHANGED_PERCENT;
+}
+
+// the pipeline's thread
+void applySettings(AudioPipeline *pipeline, const VoiceSettings &chosen)
+{
+    pipeline->setVadThreshold(static_cast<float>(chosen.vadThreshold));
+    pipeline->setNoiseSuppressionEnabled(chosen.noiseSuppression);
+    pipeline->setUseRnnoiseVad(chosen.rnnoiseVad);
+    pipeline->setOpusApplication(chosen.opusApplication);
+    pipeline->setOpusBitrate(chosen.opusBitrateKbps * 1000);
+    pipeline->setOpusComplexity(chosen.opusComplexity);
+    pipeline->setOpusSignalType(chosen.opusSignalType);
+    pipeline->setOpusFec(chosen.opusFec);
+    pipeline->setOpusPacketLossPercent(chosen.opusPacketLossPercent);
+    pipeline->setInputGain(levelOf(chosen.inputGainPercent));
+    pipeline->setOutputVolume(levelOf(chosen.outputVolumePercent));
+    pipeline->setInputDevice(chosen.inputDevice);
+    pipeline->setOutputDevice(chosen.outputDevice);
+}
+
+} // namespace
+
 VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObject *parent)
     : QObject(parent), accountId(accountId), proxy(proxy)
 {
 #ifdef ACHERON_HAVE_VIDEO
     callVideo = new CallVideo(this);
 #endif
+    settings = VoiceSettings::load();
+    userVolumes = savedUserVolumes();
+    mutedUsers = savedUserMutes();
+    connect(VoiceSettingsNotifier::instance(), &VoiceSettingsNotifier::changed, this, [this] { adopt(VoiceSettings::load()); });
 }
 
 VoiceManager::~VoiceManager()
@@ -126,12 +157,9 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         channelId = newChannel;
         guildId = state.guildId.hasValue() ? state.guildId.get() : Snowflake::Invalid;
 
-        bool wasMuted = selfMute;
-        bool wasDeaf = selfDeaf;
+        // self_mute and self_deaf stay as this client last chose them, which an echo can trail
         bool wasStreaming = selfStream;
         bool hadVideo = selfVideo;
-        selfMute = state.selfMute.get();
-        selfDeaf = state.selfDeaf.get();
         selfStream = state.selfStream.valueOr(false);
         selfVideo = state.selfVideo.get();
 
@@ -150,18 +178,8 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         qCInfo(LogVoice) << "Voice state: session =" << voiceSessionId
                          << "channel =" << channelId << "guild =" << guildId;
 
-        if (!channelChanged && channelId.isValid() && (selfMute != wasMuted || selfDeaf != wasDeaf || selfStream != wasStreaming || selfVideo != hadVideo))
+        if (!channelChanged && channelId.isValid() && (selfStream != wasStreaming || selfVideo != hadVideo))
             emit participantVoiceStateChanged(channelId, accountId);
-
-        if (audioPipeline && (selfMute != wasMuted || selfDeaf != wasDeaf)) {
-            if (selfMute || selfDeaf)
-                QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::stopCapture);
-            else
-                QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::startCapture);
-
-            if (selfDeaf != wasDeaf)
-                QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deaf = selfDeaf]() { p->setDeafened(deaf); });
-        }
 
         pending.hasStateUpdate = true;
 
@@ -244,6 +262,51 @@ void VoiceManager::forgetOwnVoiceState()
     pending = {};
 }
 
+void VoiceManager::toggleSelfMute()
+{
+    if (selfDeaf)
+        setSelfAudio(false, false);
+    else
+        setSelfAudio(!selfMute, false);
+    emit selfAudioToggled();
+}
+
+void VoiceManager::toggleSelfDeafen()
+{
+    if (selfDeaf) {
+        setSelfAudio(mutedBeforeDeafening, false);
+    } else {
+        mutedBeforeDeafening = selfMute;
+        setSelfAudio(true, true);
+    }
+    emit selfAudioToggled();
+}
+
+void VoiceManager::resetSelfAudio()
+{
+    setSelfAudio(false, false);
+}
+
+void VoiceManager::setSelfAudio(bool muted, bool deafened)
+{
+    const bool wasMuted = std::exchange(selfMute, muted);
+    const bool wasDeaf = std::exchange(selfDeaf, deafened);
+    if (selfMute == wasMuted && selfDeaf == wasDeaf)
+        return;
+
+    if (audioPipeline) {
+        if (selfMute || selfDeaf)
+            QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::stopCapture);
+        else
+            QMetaObject::invokeMethod(audioPipeline, &AudioPipeline::startCapture);
+        if (selfDeaf != wasDeaf)
+            QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deaf = selfDeaf]() { p->setDeafened(deaf); });
+    }
+    if (channelId.isValid())
+        emit participantVoiceStateChanged(channelId, accountId);
+    emit selfAudioChanged();
+}
+
 void VoiceManager::setGatewaySessionId(const QString &sessionId)
 {
     gatewaySessionId = sessionId;
@@ -289,92 +352,38 @@ Discord::Voice::VoiceClient::State VoiceManager::clientState() const
     return voiceClient->state();
 }
 
-void VoiceManager::setInputGain(float gain)
+void VoiceManager::adopt(const VoiceSettings &chosen)
 {
+    settings = chosen;
     if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, gain]() { p->setInputGain(gain); });
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, chosen]() { applySettings(p, chosen); });
 }
 
-void VoiceManager::setOutputVolume(float volume)
+void VoiceManager::setUserVolume(Snowflake userId, int percent)
 {
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, volume]() { p->setOutputVolume(volume); });
+    if (percent == VoiceSettings::UNCHANGED_PERCENT)
+        userVolumes.remove(userId);
+    else
+        userVolumes.insert(userId, percent);
+    saveUserVolume(userId, percent);
+    applyUserVolume(userId);
 }
 
-void VoiceManager::setUserVolume(Snowflake userId, float volume)
+int VoiceManager::userVolume(Snowflake userId) const
 {
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, userId, volume]() { p->setUserVolume(userId, volume); });
+    const auto found = userVolumes.constFind(userId);
+    return found == userVolumes.constEnd() ? VoiceSettings::UNCHANGED_PERCENT : found.value();
 }
 
-void VoiceManager::setVadThreshold(float threshold)
+float VoiceManager::effectiveVolumeOf(Snowflake userId) const
 {
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, threshold]() { p->setVadThreshold(threshold); });
+    return mutedUsers.contains(userId) ? 0.0f : levelOf(userVolume(userId));
 }
 
-void VoiceManager::setOpusApplication(int application)
+void VoiceManager::applyUserVolume(Snowflake userId)
 {
-    cachedOpusApplication = application;
-
     if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, application]() { p->setOpusApplication(application); });
-}
-
-void VoiceManager::setOpusBitrate(int bitrate)
-{
-    cachedOpusBitrate = bitrate;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, bitrate]() { p->setOpusBitrate(bitrate); });
-}
-
-void VoiceManager::setOpusComplexity(int complexity)
-{
-    cachedOpusComplexity = complexity;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, complexity]() { p->setOpusComplexity(complexity); });
-}
-
-void VoiceManager::setOpusSignalType(int signalType)
-{
-    cachedOpusSignalType = signalType;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, signalType]() { p->setOpusSignalType(signalType); });
-}
-
-void VoiceManager::setOpusFec(bool enabled)
-{
-    cachedOpusFec = enabled;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, enabled]() { p->setOpusFec(enabled); });
-}
-
-void VoiceManager::setOpusPacketLossPercent(int percent)
-{
-    cachedOpusPacketLossPercent = percent;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, percent]() { p->setOpusPacketLossPercent(percent); });
-}
-
-void VoiceManager::setNoiseSuppressionEnabled(bool enabled)
-{
-    cachedNoiseSuppression = enabled;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, enabled]() { p->setNoiseSuppressionEnabled(enabled); });
-}
-
-void VoiceManager::setUseRnnoiseVad(bool enabled)
-{
-    cachedUseRnnoiseVad = enabled;
-
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, enabled]() { p->setUseRnnoiseVad(enabled); });
+        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, userId, volume = effectiveVolumeOf(userId)]() { p->setUserVolume(userId, volume); });
 }
 
 QList<AudioDeviceInfo> VoiceManager::availableInputDevices() const
@@ -389,20 +398,6 @@ QList<AudioDeviceInfo> VoiceManager::availableOutputDevices() const
     if (voiceConnection)
         return cachedOutputDevices;
     return backend()->availableOutputDevices();
-}
-
-void VoiceManager::setInputDevice(const QByteArray &deviceId)
-{
-    currentInputDeviceId = deviceId;
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deviceId]() { p->setInputDevice(deviceId); });
-}
-
-void VoiceManager::setOutputDevice(const QByteArray &deviceId)
-{
-    currentOutputDeviceId = deviceId;
-    if (audioPipeline)
-        QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, deviceId]() { p->setOutputDevice(deviceId); });
 }
 
 QList<VoiceParticipant> VoiceManager::currentParticipants() const
@@ -424,8 +419,8 @@ void VoiceManager::setUserMuted(Snowflake userId, bool muted)
         mutedUsers.insert(userId);
     else
         mutedUsers.remove(userId);
-
-    setUserVolume(userId, muted ? 0.0f : 1.0f);
+    saveUserMuted(userId, muted);
+    applyUserVolume(userId);
 }
 
 bool VoiceManager::isUserMuted(Snowflake userId) const
@@ -754,33 +749,17 @@ void VoiceManager::onVoiceClientConnected()
 
     qCInfo(LogVoice) << "Voice connection established for channel" << channelId;
 
-    bool capturing = !selfMute && !selfDeaf;
-    QByteArray inputId = currentInputDeviceId;
-    QByteArray outputId = currentOutputDeviceId;
-    IAudioBackend *audio = backend();
-    int application = cachedOpusApplication;
-    int bitrate = cachedOpusBitrate;
-    int complexity = cachedOpusComplexity;
-    int signalType = cachedOpusSignalType;
-    bool fec = cachedOpusFec;
-    int plp = cachedOpusPacketLossPercent;
-    bool ns = cachedNoiseSuppression;
-    bool nsVad = cachedUseRnnoiseVad;
-    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, audio, capturing, inputId, outputId,
-                                              application, bitrate, complexity, signalType, fec, plp, ns, nsVad]() {
-        p->setOpusApplication(application);
-        p->setOpusBitrate(bitrate);
-        p->setOpusComplexity(complexity);
-        p->setOpusSignalType(signalType);
-        p->setOpusFec(fec);
-        p->setOpusPacketLossPercent(plp);
-        p->setNoiseSuppressionEnabled(ns);
-        p->setUseRnnoiseVad(nsVad);
+    QHash<Snowflake, float> volumes;
+    for (auto it = userVolumes.constBegin(); it != userVolumes.constEnd(); ++it)
+        volumes.insert(it.key(), effectiveVolumeOf(it.key()));
+    for (const Snowflake muted : std::as_const(mutedUsers))
+        volumes.insert(muted, 0.0f);
+    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, audio = backend(), capturing = !selfMute && !selfDeaf, deafened = selfDeaf, chosen = settings, volumes]() {
         p->start(audio, capturing);
-        if (!inputId.isEmpty())
-            p->setInputDevice(inputId);
-        if (!outputId.isEmpty())
-            p->setOutputDevice(outputId);
+        applySettings(p, chosen);
+        p->setDeafened(deafened);
+        for (auto it = volumes.constBegin(); it != volumes.constEnd(); ++it)
+            p->setUserVolume(it.key(), it.value());
     });
 
     populateParticipantsFromCache();

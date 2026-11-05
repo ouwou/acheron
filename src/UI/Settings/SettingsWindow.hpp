@@ -11,6 +11,10 @@ class SettingsWindow : public QWidget
 public:
     explicit SettingsWindow(QWidget *parent = nullptr);
 
+#ifndef ACHERON_NO_VOICE
+    void showVoicePage();
+#endif
+
 signals:
     void channelListModeChanged(bool classic);
     void channelListIndentChanged();
@@ -26,6 +30,9 @@ private:
 
     QListWidget *categoryList;
     QStackedWidget *pages;
+#ifndef ACHERON_NO_VOICE
+    int voicePage = 0;
+#endif
 };
 
 } // namespace UI

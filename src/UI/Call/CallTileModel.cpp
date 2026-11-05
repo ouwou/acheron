@@ -16,8 +16,7 @@ TilePlan planTiles(const CallFacts &facts)
             plan.videoCount += (participant.streaming ? 1 : 0) + (participant.cameraSending && !participant.cameraDisabled ? 1 : 0);
     }
 
-    const bool anyVideo = plan.videoCount > 0;
-    if (!anyVideo && facts.collapsedToBar)
+    if (plan.videoCount == 0)
         return plan;
 
     if (facts.ownShareShown)
@@ -31,7 +30,7 @@ TilePlan planTiles(const CallFacts &facts)
             plan.tiles.append(TileKey::streamOf(participant.userId));
         if (participant.cameraSending && participant.cameraDisabled)
             continue;
-        if (participant.cameraSending || facts.nonVideoShown || !anyVideo)
+        if (participant.cameraSending || facts.nonVideoShown)
             plan.tiles.append(TileKey::personOf(participant.userId));
     }
     return plan;

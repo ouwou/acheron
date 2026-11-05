@@ -31,6 +31,7 @@ class VoiceManager;
 namespace UI {
 
 class CallControlsBar;
+class CallPeopleList;
 class CallTile;
 
 class CallView : public QWidget
@@ -49,6 +50,7 @@ public:
     void setPoppedOut(bool out);
 
     [[nodiscard]] bool isCollapsed() const { return collapsed; }
+    [[nodiscard]] bool isCompact() const { return !poppedOut && (collapsed || !videoPresent); }
     void setCollapsed(bool value);
     void reveal();
 
@@ -56,6 +58,9 @@ public:
 
 signals:
     void presenceChanged();
+    void leaveRequested();
+    void voiceSettingsRequested();
+    void profileRequested(Core::Snowflake userId);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -84,6 +89,8 @@ private:
     void refreshStats();
     [[nodiscard]] QStringList statsOf(const CallTile &tile) const;
     void showTileMenu(const TileKey &key, const QPoint &globalPos);
+    void showPersonMenu(Core::Snowflake userId, const QPoint &globalPos);
+    void addPersonActions(QMenu *menu, Core::Snowflake userId);
     void onTileClicked(const TileKey &key);
     void onTileDoubleClicked(const TileKey &key);
     void setTilePoppedOut(const TileKey &key, bool out);
@@ -135,6 +142,7 @@ private:
 
     CallControlsBar *controls;
     QWidget *stage;
+    CallPeopleList *people;
     QTimer statsTimer;
 };
 

@@ -133,6 +133,9 @@ private:
     void recordLastViewedChannel(Core::Snowflake accountId, Core::Snowflake guildId, Core::Snowflake channelId);
 #ifndef ACHERON_NO_VOICE
     void updateVoiceStatusLabel();
+    [[nodiscard]] Core::ClientInstance *instanceInVoice() const;
+    void revealCall();
+    void openVoiceSettings();
 #endif
     void onLiveParticipantHoverChanged(const QModelIndex &proxyIndex);
     void onWatchStreamRequested(const QModelIndex &proxyIndex);

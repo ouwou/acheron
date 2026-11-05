@@ -5,6 +5,7 @@
 #include <QString>
 #include <QList>
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 
@@ -20,6 +21,14 @@ inline constexpr int AUDIO_SAMPLE_BYTES = 2;
 inline constexpr int AUDIO_FRAME_DURATION_MS = 20;
 inline constexpr int AUDIO_FRAME_SAMPLES = AUDIO_SAMPLE_RATE * AUDIO_FRAME_DURATION_MS / 1000; // 960
 inline constexpr int AUDIO_FRAME_SIZE = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * AUDIO_SAMPLE_BYTES; // 3840 bytes
+
+[[nodiscard]] inline float rmsOf(const int16_t *samples, int count)
+{
+    double sum = 0;
+    for (int i = 0; i < count; i++)
+        sum += static_cast<double>(samples[i]) * samples[i];
+    return count > 0 ? static_cast<float>(std::sqrt(sum / count)) : 0.0f;
+}
 
 struct AudioDeviceInfo
 {

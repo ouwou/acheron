@@ -10,6 +10,21 @@
 namespace Acheron {
 namespace UI {
 
+QComboBox *makeAudioBackendCombo(QWidget *parent)
+{
+    auto *combo = new QComboBox(parent);
+    combo->addItem(AudioPage::tr("Automatic"), QString());
+    for (const QString &name : Core::Audio::supportedAudioBackends())
+        combo->addItem(name, name);
+
+    const int current = combo->findData(Core::Audio::configuredAudioBackend());
+    combo->setCurrentIndex(current >= 0 ? current : 0);
+    QObject::connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), combo, [combo](int index) {
+        Core::Audio::setConfiguredAudioBackend(combo->itemData(index).toString());
+    });
+    return combo;
+}
+
 AudioPage::AudioPage(QWidget *parent)
     : QWidget(parent)
 {
@@ -18,16 +33,7 @@ AudioPage::AudioPage(QWidget *parent)
     auto *row = new QHBoxLayout();
     row->addWidget(new QLabel(tr("Backend *"), this));
     row->addStretch(1);
-
-    backendCombo = new QComboBox(this);
-    backendCombo->addItem(tr("Automatic"), QString());
-    for (const QString &name : Core::Audio::supportedAudioBackends())
-        backendCombo->addItem(name, name);
-
-    const int current = backendCombo->findData(Core::Audio::configuredAudioBackend());
-    backendCombo->setCurrentIndex(current >= 0 ? current : 0);
-
-    row->addWidget(backendCombo);
+    row->addWidget(makeAudioBackendCombo(this));
     layout->addLayout(row);
 
     auto *note = new QLabel(tr("* Takes effect after a restart."), this);
@@ -39,10 +45,6 @@ AudioPage::AudioPage(QWidget *parent)
     layout->addWidget(note);
 
     layout->addStretch(1);
-
-    connect(backendCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
-        Core::Audio::setConfiguredAudioBackend(backendCombo->itemData(index).toString());
-    });
 }
 
 } // namespace UI

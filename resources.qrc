@@ -27,6 +27,8 @@
         <file>resources/icons/lucide/hand.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
         <file>resources/icons/lucide/hash.svg</file>
+        <file>resources/icons/lucide/headphone-off.svg</file>
+        <file>resources/icons/lucide/headphones.svg</file>
         <file>resources/icons/lucide/heart.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
@@ -40,12 +42,14 @@
         <file>resources/icons/lucide/message-circle.svg</file>
         <file>resources/icons/lucide/messages-square.svg</file>
         <file>resources/icons/lucide/mic.svg</file>
+        <file>resources/icons/lucide/mic-off.svg</file>
         <file>resources/icons/lucide/minimize.svg</file>
         <file>resources/icons/lucide/monitor.svg</file>
         <file>resources/icons/lucide/music.svg</file>
         <file>resources/icons/lucide/pause.svg</file>
         <file>resources/icons/lucide/pencil.svg</file>
         <file>resources/icons/lucide/phone.svg</file>
+        <file>resources/icons/lucide/phone-off.svg</file>
         <file>resources/icons/lucide/pin.svg</file>
         <file>resources/icons/lucide/play.svg</file>
         <file>resources/icons/lucide/radio.svg</file>

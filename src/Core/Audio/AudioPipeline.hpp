@@ -88,7 +88,6 @@ private:
     void sendTrailingSilence();
     void initializeEncoder();
     void reconfigureNoiseSuppressorChannels();
-    static float computeRms(const int16_t *samples, int count);
 
     IAudioBackend *audioBackend = nullptr;
     QTimer *mixTimer = nullptr;
