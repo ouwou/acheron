@@ -21,6 +21,8 @@ namespace Voice {
 
 namespace {
 
+constexpr uint16_t FIRST_TRANSPORT_SEQUENCE = 1;
+
 uint64_t ntpTimeNow()
 {
     constexpr quint64 SECONDS_FROM_1900_TO_1970 = 2208988800ULL;
@@ -134,8 +136,7 @@ VoiceClient::VideoSendPath::Layer *VoiceClient::VideoSendPath::layerOf(quint32 s
     return found == layers.end() ? nullptr : &*found;
 }
 
-// the official client's capture limits apply to the full-quality layer, whose SSRC an announcement
-// names at the top
+// op 12 names this layer's SSRC at its top, as the official client does
 const VoiceClient::VideoSendPath::Layer *VoiceClient::VideoSendPath::fullLayer() const
 {
     const auto full = std::find_if(layers.cbegin(), layers.cend(), [](const Layer &layer) { return layer.quality == FULL_QUALITY; });
@@ -204,11 +205,9 @@ bool VoiceClient::VideoSendPath::prepareSenders()
             first.sequence = static_cast<uint16_t>(random->bounded(1, 0x8000));
             first.rtxSequence = static_cast<uint16_t>(random->bounded(1, 0x8000));
             first.pictureId = static_cast<uint16_t>(random->bounded(0x8000));
-            first.transportSequence = 1;
             if (std::none_of(layers.cbegin(), layers.cend(), [](const Layer &each) { return each.sender != nullptr; }))
-                estimator.restart(first.transportSequence);
-            layer.sender = std::make_unique<VideoSendStream>(layer.ssrc, layer.rtxSsrc, first);
-            layer.sender->numberWith(&estimator);
+                estimator.restart(FIRST_TRANSPORT_SEQUENCE);
+            layer.sender = std::make_unique<VideoSendStream>(layer.ssrc, layer.rtxSsrc, first, estimator);
             layer.sender->setPacingFactor(client.params.streamContext ? VideoSendStream::SCREEN_PACING_FACTOR : VideoSendStream::CAMERA_PACING_FACTOR);
         }
         layer.sender->setCodec(sendCodec, static_cast<uint8_t>(offered->payloadType.get()), rtxPayloadType);
@@ -314,8 +313,7 @@ void VoiceClient::VideoSendPath::announce()
     resolution.width = started->maxSize ? started->maxSize->width() : 0;
     resolution.height = started->maxSize ? started->maxSize->height() : 0;
 
-    // as the official client: every layer is announced active, at the same size and rate, while video is
-    // on
+    // as the official client, every layer is announced active at the same size and rate while video is on
     announcedStreams = streams;
     for (StreamDescription &stream : announcedStreams) {
         const Layer *layer = layerOf(stream.ssrc.valueOr(0));
@@ -359,45 +357,43 @@ void VoiceClient::VideoSendPath::sendFrame(const EncodedVideoFrame &frame, int q
         return;
 
     DaveSession *dave = client.daveSession.get();
-    if (dave && !dave->isDaveEnabled() && !dave->isDowngraded()) {
-        // the official client sends placeholder frames until DAVE keys are agreed; sending nothing works as
-        // well
+    if (dave && dave->awaitsKeys()) {
+        // the official client sends placeholder frames until the keys are agreed; sending nothing works as well
         layer->awaitsKeyframe = true;
         return;
     }
     if (layer->awaitsKeyframe && !frame.keyframe)
         return;
 
-    const qint64 now = nowUs();
-    bool queued = false;
+    std::span<const uint8_t> outgoing = frame.data;
     if (dave && dave->isDaveEnabled()) {
-        if (!daveEncrypt(frame.data, layer->ssrc, encryptedFrame)) {
+        const std::optional<std::span<const uint8_t>> encrypted = daveEncrypt(frame.data, layer->ssrc);
+        if (!encrypted) {
             layer->awaitsKeyframe = true;
             askForKeyframe(*layer);
             return;
         }
-        queued = layer->sender->queueFrame(encryptedFrame, frame.rtpTimestamp, frame.keyframe, now);
-    } else {
-        queued = layer->sender->queueFrame(frame.data, frame.rtpTimestamp, frame.keyframe, now);
+        outgoing = *encrypted;
     }
-    if (!queued)
+    if (!layer->sender->queueFrame(outgoing, frame.rtpTimestamp, frame.keyframe, nowUs()))
         return;
 
     layer->awaitsKeyframe = false;
     startPacing();
 }
 
-bool VoiceClient::VideoSendPath::daveEncrypt(std::span<const uint8_t> frame, quint32 ssrc, std::vector<uint8_t> &encrypted)
+std::optional<std::span<const uint8_t>> VoiceClient::VideoSendPath::daveEncrypt(std::span<const uint8_t> frame, quint32 ssrc)
 {
     // the encryptor writes its trailer without checking the room it was given, and its size estimate
     // allows only 64 bytes over the frame, while each NAL or OBU can grow by up to nine bytes
-    encrypted.resize(client.daveSession->maxCiphertextSize(discord::dave::MediaType::Video, frame.size()) + frame.size() * 5);
+    const size_t room = client.daveSession->maxCiphertextSize(discord::dave::MediaType::Video, frame.size()) + frame.size() * 5;
+    if (encryptedFrame.size() < room)
+        encryptedFrame.resize(room);
 
-    const std::optional<size_t> written = client.daveSession->encrypt(discord::dave::MediaType::Video, ssrc, frame, encrypted);
+    const std::optional<size_t> written = client.daveSession->encrypt(discord::dave::MediaType::Video, ssrc, frame, encryptedFrame);
     if (!written)
-        return false;
-    encrypted.resize(*written);
-    return true;
+        return std::nullopt;
+    return std::span<const uint8_t>(encryptedFrame).first(*written);
 }
 
 void VoiceClient::VideoSendPath::startPacing()
@@ -419,10 +415,8 @@ void VoiceClient::VideoSendPath::onPaceTick()
         if (!layer.sender || !layer.sender->hasWaiting())
             continue;
         layer.sender->startInterval(nowUs());
-        while (layer.sender->writeNext(nowUs(), *packet)) {
-            if (client.encryption->seal(*packet, VideoSendStream::CLEAR_SIZE))
-                client.udpTransport->send(*packet);
-        }
+        while (layer.sender->writeNext(nowUs(), *packet))
+            client.sealAndSend(*packet, VideoSendStream::CLEAR_SIZE);
     }
 }
 
@@ -445,8 +439,8 @@ void VoiceClient::VideoSendPath::sendSenderReports(qint64 now)
         PacketPool::Handle packet = client.udpTransport->acquirePacket();
         packet->resize(packet->tailroom() - VoiceEncryption::TRAILER_SIZE);
         const int size = layer.sender->writeSenderReport(packet->bytes(), now, ntpTimeNow());
-        if (size > 0 && packet->resize(size) && client.encryption->seal(*packet, RTCP_CLEAR_SIZE))
-            client.udpTransport->send(*packet);
+        if (size > 0 && packet->resize(size))
+            client.sealAndSend(*packet, RTCP_CLEAR_SIZE);
     }
 }
 
@@ -602,7 +596,7 @@ void VoiceClient::VideoSendPath::onMediaSinkWants(const MediaSinkWants &wants)
             want = *wants.any;
 
         const auto pixelCount = wants.pixelCounts.constFind(layer.ssrc);
-        emit client.videoWantsReceived(want, pixelCount != wants.pixelCounts.constEnd() ? pixelCount.value() : 0, layer.quality);
+        emit client.videoWantsReceived(want, pixelCount != wants.pixelCounts.constEnd() ? std::optional<int>(pixelCount.value()) : std::nullopt, layer.quality);
     }
 }
 

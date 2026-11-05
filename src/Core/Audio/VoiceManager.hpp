@@ -60,7 +60,6 @@ public:
     void handleVoiceStateUpdate(const Discord::VoiceState &state);
     void handleVoiceServerUpdate(const Discord::VoiceServerUpdate &event);
 
-    // from READY. a voice state for this account with any other session id is another device's
     void setGatewaySessionId(const QString &sessionId);
 
     void forgetChannelVoiceStates(Snowflake channelId);
@@ -121,6 +120,7 @@ public:
     [[nodiscard]] QList<Snowflake> channelVoiceUsers(Snowflake channelId) const;
     [[nodiscard]] std::optional<Discord::VoiceState> voiceStateForUser(Snowflake userId) const;
 
+    [[nodiscard]] quint32 newAudioSource();
     void attachAudioSource(quint32 source, Discord::Voice::VoiceClient *client);
     void detachAudioSource(quint32 source);
     void setAudioSourceVolume(quint32 source, float volume);
@@ -164,8 +164,10 @@ private slots:
     void onDevicesChanged(const QList<AudioDeviceInfo> &inputs, const QList<AudioDeviceInfo> &outputs);
 
 private:
+    void forgetOwnVoiceState();
     void connectToVoiceServer(const QString &endpoint, const QString &token);
     void closeVoiceConnection();
+    void feedAudioSourceToPipeline(quint32 source);
     void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
     IAudioBackend *backend() const;
@@ -230,7 +232,7 @@ private:
         float volume = 1.0f;
     };
     QHash<quint32, AudioSource> audioSources;
-    void feedAudioSourceToPipeline(quint32 source);
+    quint32 addedAudioSources = 0;
     CallVideo *callVideo = nullptr;
 
     mutable std::unique_ptr<IAudioBackend> audioBackend;

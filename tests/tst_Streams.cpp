@@ -56,14 +56,8 @@ struct FakeLookups
         };
     }
 
-    void answer(const QString &url, int status = 200, qint64 retryAfterMs = 0)
-    {
-        Discord::StreamPreviewLookup lookup;
-        lookup.url = QUrl(url);
-        lookup.statusCode = status;
-        lookup.retryAfterMs = retryAfterMs;
-        pending.takeFirst()(lookup);
-    }
+    void answer(const QString &url) { pending.takeFirst()({ QUrl(url), std::nullopt }); }
+    void fail(std::optional<qint64> retryAfterMs = std::nullopt) { pending.takeFirst()({ QUrl(), retryAfterMs }); }
 };
 
 struct FakeUploads
@@ -97,6 +91,14 @@ QImage decodedThumbnail(const QString &thumbnail)
     if (!thumbnail.startsWith(prefix))
         return {};
     return QImage::fromData(QByteArray::fromBase64(thumbnail.mid(prefix.size()).toLatin1()), "JPEG");
+}
+
+[[nodiscard]] bool offerWhenDue(StreamPreviewUploader &uploader)
+{
+    if (!QTest::qWaitFor([&uploader] { return !uploader.waitMs(); }))
+        return false;
+    uploader.offer(screen(640, 360));
+    return true;
 }
 
 } // namespace
@@ -281,8 +283,7 @@ void TestStreams::recordFollowsCreateThenServerUpdate()
 
 void TestStreams::serverUpdateBeforeCreateIsIgnored()
 {
-    // the official client drops a server update for a stream it has no connection object for, so an
-    // endpoint never makes a record by itself
+    // as the official client, which drops a server update for a stream it has no connection for
     StreamManager manager;
     QSignalSpy changed(&manager, &StreamManager::streamChanged);
 
@@ -462,7 +463,7 @@ void TestStreams::failedLookupBacksOffLongerEachTime()
     for (int attempt = 1; attempt <= 3; ++attempt) {
         QVERIFY(previews.request(GUILD_KEY).isEmpty());
         QCOMPARE(lookups.requested.size(), attempt);
-        lookups.answer(QString(), 404);
+        lookups.fail();
         QCOMPARE(changed.last().at(1).toUrl(), QUrl());
 
         now += StreamPreviews::BACKOFF_STEP_MS * attempt - 1;
@@ -483,7 +484,7 @@ void TestStreams::rateLimitWaitsAsLongAsAsked()
     StreamPreviews previews(lookups.fetcher(), nullptr, [&] { return now; });
 
     previews.request(GUILD_KEY);
-    lookups.answer(QString(), 429, 45'000);
+    lookups.fail(45'000);
 
     now += 44'999;
     previews.request(GUILD_KEY);
@@ -501,14 +502,14 @@ void TestStreams::successClearsTheBackoff()
     StreamPreviews previews(lookups.fetcher(), nullptr, [&] { return now; });
 
     previews.request(GUILD_KEY);
-    lookups.answer(QString(), 500);
+    lookups.fail();
     now += StreamPreviews::BACKOFF_STEP_MS;
     previews.request(GUILD_KEY);
     lookups.answer("https://media.example/preview.jpg");
 
     now += StreamPreviews::FRESH_FOR_MS;
     previews.request(GUILD_KEY);
-    lookups.answer(QString(), 500);
+    lookups.fail();
     now += StreamPreviews::BACKOFF_STEP_MS;
     previews.request(GUILD_KEY);
     QCOMPARE(lookups.requested.size(), 4);
@@ -586,8 +587,7 @@ void TestStreams::firstThumbnailIsUploadedHalfASecondAfterTheVideoStarts()
     uploader.offer(screen(640, 360));
     QVERIFY(uploads.keys.isEmpty());
 
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
     QCOMPARE(uploads.keys, QStringList{ GUILD_KEY });
     QCOMPARE(decodedThumbnail(uploads.thumbnails.first()).size(), QSize(512, 288));
 
@@ -600,8 +600,7 @@ void TestStreams::nextThumbnailIsFiveMinutesAfterAnUpload()
     FakeUploads uploads;
     StreamPreviewUploader uploader(uploads.uploader());
     uploader.start(GUILD_KEY);
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
 
     uploads.answer(true);
     QCOMPARE(uploader.waitMs(), std::optional<int>(5 * 60 * 1000));
@@ -614,8 +613,7 @@ void TestStreams::failedUploadIsTriedAgainInAMinute()
     FakeUploads uploads;
     StreamPreviewUploader uploader(uploads.uploader());
     uploader.start(GUILD_KEY);
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
 
     uploads.answer(false);
     QCOMPARE(uploader.waitMs(), std::optional<int>(60 * 1000));
@@ -638,8 +636,7 @@ void TestStreams::uploadFinishingAfterTheStreamStoppedIsIgnored()
     FakeUploads uploads;
     StreamPreviewUploader uploader(uploads.uploader());
     uploader.start(GUILD_KEY);
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
 
     uploader.stop();
     uploads.answer(true);
@@ -653,15 +650,13 @@ void TestStreams::startingAgainStartsTheWaitAgain()
     FakeUploads uploads;
     StreamPreviewUploader uploader(uploads.uploader());
     uploader.start(GUILD_KEY);
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
     uploads.answer(true);
     QCOMPARE(uploader.waitMs(), std::optional<int>(5 * 60 * 1000));
 
     uploader.start(CALL_KEY);
     QCOMPARE(uploader.waitMs(), std::optional<int>(500));
-    QTRY_COMPARE(uploader.waitMs(), std::optional<int>());
-    uploader.offer(screen(640, 360));
+    QVERIFY(offerWhenDue(uploader));
     QCOMPARE(uploads.keys, (QStringList{ GUILD_KEY, CALL_KEY }));
 }
 

@@ -56,7 +56,7 @@ public:
 
     bool isDaveEnabled() const { return daveEnabled; }
 
-    bool isDowngraded() const { return daveDowngraded; }
+    [[nodiscard]] bool awaitsKeys() const { return !daveEnabled && !daveDowngraded; }
 
     using FingerprintCallback = std::function<void(const std::vector<uint8_t> &)>;
     void getPairwiseFingerprint(const std::string &userId, FingerprintCallback callback) const;
@@ -64,7 +64,6 @@ public:
     std::vector<uint8_t> lastEpochAuthenticator() const;
 
     void setLocalSsrc(quint32 ssrc);
-    // RTX SSRCs arent named: they repeat packets of frames encrypted already
     void setLocalVideoCodec(quint32 ssrc, discord::dave::Codec codec);
     void addConnectedUser(const std::string &userId);
     void removeConnectedUser(const std::string &userId);

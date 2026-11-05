@@ -29,11 +29,11 @@ public:
     void setFrameHandler(VideoFrameHandler handler) { frameHandler = std::move(handler); }
 
     bool receive(const ParsedRtp &rtp, PacketPool::Handle &packet);
-    void noteRtpExtensions(std::span<const uint8_t> extensions);
+    void noteTransportSequence(std::span<const uint8_t> extensions);
     void receiveRtcp(const ReceivedRtcp &received);
 
     void onConnected();
-    void onClientConnect(const ClientConnectData &data);
+    void onVideoState(const RemoteVideoState &remote);
     void onClientDisconnect(Core::Snowflake userId);
     void onDaveStateChanged();
     void reset();
@@ -80,7 +80,6 @@ private:
         quint64 decryptFailures = 0;
         qint64 reportedMs = 0;
 
-        // without it the server holds every stream at a low bitrate
         TransportFeedback transportFeedback;
         qint64 transportReportedMs = 0;
         quint32 transportMediaSsrc = 0;
@@ -109,7 +108,6 @@ private:
 
     Session state;
     std::vector<uint8_t> decrypted;
-    std::optional<int> turnsOfOpenedPacket;
 };
 
 } // namespace Voice

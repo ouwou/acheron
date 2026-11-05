@@ -92,7 +92,6 @@ public:
     void setAccountVoiceChannel(Snowflake accountId, Snowflake channelId);
     void updateVoiceParticipant(Snowflake channelId, Snowflake userId, bool joined, Snowflake accountId);
     void updateVoiceParticipantState(Snowflake channelId, Snowflake userId, Snowflake accountId);
-    // for a channel row made after its call was known, such as a DM that reappears
     void addKnownVoiceParticipants(Snowflake channelId, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
     void setCollapsed(const QModelIndex &index, bool collapsed);

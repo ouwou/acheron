@@ -10,7 +10,6 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// as WebRTC writes them
 class VideoPacketizer
 {
 public:
@@ -20,8 +19,7 @@ public:
 
     [[nodiscard]] VideoCodec codec() const { return videoCodec; }
 
-    // an AV1 frame's last OBU may lack its size, as the DAVE encryptor leaves it. `keyframe` only matters to
-    // AV1, whose first packet says whether a new coded video sequence begins
+    // `keyframe` matters only to AV1, whose first packet says whether a new coded video sequence begins
     [[nodiscard]] std::vector<std::vector<uint8_t>> packetize(std::span<const uint8_t> frame, bool keyframe, int maxPayloadSize);
 
     static constexpr int MIN_PAYLOAD_SIZE = 16;

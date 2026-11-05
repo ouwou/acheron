@@ -46,11 +46,10 @@ private:
     void *bits = nullptr;
 };
 
-// draws the pointer where it shows over `area` onto `onto`, which pictures `area` at `size`
 class PointerPainter
 {
 public:
-    void paint(HDC onto, const QSize &size, const QRect &area, HWND onlyOver = nullptr);
+    void paint(HDC picture, const QSize &pictureSize, const QRect &screenArea, HWND onlyOver = nullptr);
 
 private:
     HCURSOR hotspotOf = nullptr;

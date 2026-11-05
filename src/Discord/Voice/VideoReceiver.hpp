@@ -64,8 +64,7 @@ public:
     static constexpr int NACK_MAX_REQUESTS = 10;
     static constexpr int NACK_GIVE_UP_MS = 1000;
     static constexpr int MAX_NACKS_PER_POLL = 250;
-    // as the official client's WebRTC: asked again every 200 ms while needed, but not of a stream silent
-    // for five seconds
+    // as the official client's WebRTC: asked again every 200 ms while needed, not of a stream silent for 5 s
     static constexpr int KEYFRAME_REQUEST_INTERVAL_MS = 200;
     static constexpr int SILENT_AFTER_MS = 5000;
     static constexpr int MAX_SEQUENCE_JUMP = 3000;
@@ -97,6 +96,7 @@ private:
     std::map<qint64, Held> held;
     std::map<qint64, Missing> missing;
     std::vector<EncodedVideoFrame> ready;
+    std::vector<std::span<const uint8_t>> framePayloads;
 
     std::optional<qint64> nextSequence;
     SequenceUnwrapper sequences;
@@ -107,7 +107,6 @@ private:
 
     Stats counters;
 
-    // RFC 3550, A.3
     struct Reception
     {
         std::optional<qint64> baseSequence;
@@ -117,7 +116,6 @@ private:
     };
     Reception reception;
 
-    // RFC 3550, A.8
     double jitter = 0;
     std::optional<qint64> lastTransit;
 };

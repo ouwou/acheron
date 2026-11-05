@@ -73,10 +73,7 @@ struct D3D11GlBridge::Wgl
 
 D3D11GlBridge::D3D11GlBridge() = default;
 
-D3D11GlBridge::~D3D11GlBridge()
-{
-    av_buffer_unref(&hardwareDevice);
-}
+D3D11GlBridge::~D3D11GlBridge() = default;
 
 #ifndef ACHERON_HAVE_D3D11VA
 
@@ -95,9 +92,9 @@ bool D3D11GlBridge::lock()
     return false;
 }
 
-void D3D11GlBridge::unlock() { }
+void D3D11GlBridge::unlock() {}
 
-void D3D11GlBridge::release() { }
+void D3D11GlBridge::release() {}
 
 #else
 
@@ -127,7 +124,7 @@ bool D3D11GlBridge::openDevice(const AVFrame *frame)
     interopDevice = wgl->openDevice(device->device);
     if (!interopDevice)
         return false;
-    hardwareDevice = av_buffer_ref(frames->device_ref);
+    hardwareDevice.reset(av_buffer_ref(frames->device_ref));
     if (!hardwareDevice)
         return false;
 
@@ -144,7 +141,7 @@ bool D3D11GlBridge::openDevice(const AVFrame *frame)
 bool D3D11GlBridge::createTarget(int inputFormat, QSize input, QSize output)
 {
     releaseTarget();
-    AVD3D11VADeviceContext *device = direct3d(hardwareDevice);
+    AVD3D11VADeviceContext *device = direct3d(hardwareDevice.get());
 
     D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = processorContent(input, output);
     if (FAILED(device->video_device->CreateVideoProcessorEnumerator(&content, &enumerator)))
@@ -181,7 +178,7 @@ bool D3D11GlBridge::createTarget(int inputFormat, QSize input, QSize output)
     if (!interopObject || !lock())
         return false;
     gl->glBindTexture(GL_TEXTURE_2D, glTexture);
-    setSampling(gl, GL_LINEAR);
+    setBoundTextureSampling(gl, GL_LINEAR);
     gl->glBindTexture(GL_TEXTURE_2D, 0);
     unlock();
 
@@ -215,7 +212,7 @@ ID3D11VideoProcessorInputView *D3D11GlBridge::inputView(ID3D11Texture2D *texture
     description.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
     description.Texture2D.ArraySlice = slice;
     ID3D11VideoProcessorInputView *view = nullptr;
-    if (FAILED(direct3d(hardwareDevice)->video_device->CreateVideoProcessorInputView(texture, enumerator, &description, &view)))
+    if (FAILED(direct3d(hardwareDevice.get())->video_device->CreateVideoProcessorInputView(texture, enumerator, &description, &view)))
         return nullptr;
     inputViews.emplace(key, view);
     return view;
@@ -253,7 +250,7 @@ bool D3D11GlBridge::update(const AVFrame *frame, QSize size)
     // OpenGL must release the target while Direct3D draws into it
     unlock();
 
-    AVD3D11VADeviceContext *device = direct3d(hardwareDevice);
+    AVD3D11VADeviceContext *device = direct3d(hardwareDevice.get());
     D3D11_VIDEO_PROCESSOR_STREAM stream = {};
     stream.Enable = TRUE;
     stream.pInputSurface = view;
@@ -338,7 +335,7 @@ void D3D11GlBridge::release()
     if (fenceEvent)
         CloseHandle(fenceEvent);
     fenceEvent = nullptr;
-    av_buffer_unref(&hardwareDevice);
+    hardwareDevice.reset();
 }
 
 #endif // ACHERON_HAVE_D3D11VA

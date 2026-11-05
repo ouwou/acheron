@@ -1,5 +1,4 @@
-// expected bytes are what the official desktop client's JSON.stringify produces (key order included),
-// taken from the canary client's RTC control socket; see docs/video-re/re-voice-gateway-video.md
+// expected bytes are what the official client's JSON.stringify sends, key order included (docs/video-re)
 
 #include "Discord/Enums.hpp"
 #include "Discord/Outbound.hpp"
@@ -39,7 +38,7 @@ VoiceIdentifyData identifyFor(quint64 serverId, quint64 channelId)
     return identify;
 }
 
-Codec videoCodec(const QString &name, int index, bool encode, bool decode)
+Codec decodeOnlyCodec(const QString &name, int index)
 {
     Codec codec;
     codec.name = name;
@@ -47,8 +46,8 @@ Codec videoCodec(const QString &name, int index, bool encode, bool decode)
     codec.priority = (index + 1) * 1000;
     codec.payloadType = 101 + 2 * index;
     codec.rtxPayloadType = 102 + 2 * index;
-    codec.encode = encode;
-    codec.decode = decode;
+    codec.encode = false;
+    codec.decode = true;
     return codec;
 }
 
@@ -81,19 +80,16 @@ private slots:
 
 void TestVoicePayloads::identifyWithoutVideoOmitsVideoKeys()
 {
-    QCOMPARE(identifyFor(100, 200).toJson().toBytes(),
-             QByteArray(R"({"server_id":"100","channel_id":"200","user_id":"300","session_id":"session","token":"token","max_dave_protocol_version":1})"));
+    QCOMPARE(identifyFor(100, 200).toJson().toBytes(), QByteArray(R"({"server_id":"100","channel_id":"200","user_id":"300","session_id":"session","token":"token","max_dave_protocol_version":1})"));
 }
 
-// the official client with simulcast off. with it on, rid "50" at quality 50 follows
 void TestVoicePayloads::identifyVoiceConnectionOffersOneCameraLayer()
 {
     VoiceIdentifyData identify = identifyFor(100, 200);
     identify.video = true;
     identify.streams = QList<StreamDescription>{ offeredStream("video", "100", 100) };
 
-    QCOMPARE(identify.toJson().toBytes(),
-             QByteArray(R"({"server_id":"100","channel_id":"200","user_id":"300","session_id":"session","token":"token","max_dave_protocol_version":1,"video":true,"streams":[{"type":"video","rid":"100","quality":100}]})"));
+    QCOMPARE(identify.toJson().toBytes(), QByteArray(R"({"server_id":"100","channel_id":"200","user_id":"300","session_id":"session","token":"token","max_dave_protocol_version":1,"video":true,"streams":[{"type":"video","rid":"100","quality":100}]})"));
 }
 
 void TestVoicePayloads::selectProtocolAudioOnly()
@@ -104,8 +100,7 @@ void TestVoicePayloads::selectProtocolAudioOnly()
     protocol.mode = QStringLiteral("aead_aes256_gcm_rtpsize");
     protocol.codecs = QList<Codec>{ Codec::opus() };
 
-    QCOMPARE(protocol.toJson().toBytes(),
-             QByteArray(R"({"protocol":"udp","data":{"address":"203.0.113.7","port":50123,"mode":"aead_aes256_gcm_rtpsize"},"address":"203.0.113.7","port":50123,"mode":"aead_aes256_gcm_rtpsize","codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120}]})"));
+    QCOMPARE(protocol.toJson().toBytes(), QByteArray(R"({"protocol":"udp","data":{"address":"203.0.113.7","port":50123,"mode":"aead_aes256_gcm_rtpsize"},"address":"203.0.113.7","port":50123,"mode":"aead_aes256_gcm_rtpsize","codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120}]})"));
 }
 
 void TestVoicePayloads::selectProtocolWithVideoCodecs()
@@ -114,12 +109,11 @@ void TestVoicePayloads::selectProtocolWithVideoCodecs()
     protocol.address = QStringLiteral("203.0.113.7");
     protocol.port = 50123;
     protocol.mode = QStringLiteral("aead_xchacha20_poly1305_rtpsize");
-    protocol.codecs = QList<Codec>{ Codec::opus(), videoCodec("H264", 0, false, true), videoCodec("VP8", 1, false, true) };
+    protocol.codecs = QList<Codec>{ Codec::opus(), decodeOnlyCodec("H264", 0), decodeOnlyCodec("VP8", 1) };
     protocol.rtcConnectionId = QStringLiteral("0b0f3c2e-8f5c-4d5e-9a57-3c1f6a2d9e10");
     protocol.experiments = QStringList{ QStringLiteral("fixed_keyframe_interval") };
 
-    QCOMPARE(protocol.toJson().toBytes(),
-             QByteArray(R"({"protocol":"udp","data":{"address":"203.0.113.7","port":50123,"mode":"aead_xchacha20_poly1305_rtpsize"},"address":"203.0.113.7","port":50123,"mode":"aead_xchacha20_poly1305_rtpsize","codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120},{"name":"H264","type":"video","priority":1000,"payload_type":101,"rtx_payload_type":102,"encode":false,"decode":true},{"name":"VP8","type":"video","priority":2000,"payload_type":103,"rtx_payload_type":104,"encode":false,"decode":true}],"rtc_connection_id":"0b0f3c2e-8f5c-4d5e-9a57-3c1f6a2d9e10","experiments":["fixed_keyframe_interval"]})"));
+    QCOMPARE(protocol.toJson().toBytes(), QByteArray(R"({"protocol":"udp","data":{"address":"203.0.113.7","port":50123,"mode":"aead_xchacha20_poly1305_rtpsize"},"address":"203.0.113.7","port":50123,"mode":"aead_xchacha20_poly1305_rtpsize","codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120},{"name":"H264","type":"video","priority":1000,"payload_type":101,"rtx_payload_type":102,"encode":false,"decode":true},{"name":"VP8","type":"video","priority":2000,"payload_type":103,"rtx_payload_type":104,"encode":false,"decode":true}],"rtc_connection_id":"0b0f3c2e-8f5c-4d5e-9a57-3c1f6a2d9e10","experiments":["fixed_keyframe_interval"]})"));
 }
 
 void TestVoicePayloads::localVideoStateKeyOrder()
@@ -146,8 +140,7 @@ void TestVoicePayloads::localVideoStateKeyOrder()
     state.rtxSsrc = 4002u;
     state.streams = QList<StreamDescription>{ stream };
 
-    QCOMPARE(state.toJson().toBytes(),
-             QByteArray(R"({"audio_ssrc":4000,"video_ssrc":4001,"rtx_ssrc":4002,"streams":[{"type":"video","rid":"100","ssrc":4001,"active":true,"quality":100,"rtx_ssrc":4002,"max_bitrate":2500000,"max_framerate":30,"max_resolution":{"type":"fixed","width":1280,"height":720}}]})"));
+    QCOMPARE(state.toJson().toBytes(), QByteArray(R"({"audio_ssrc":4000,"video_ssrc":4001,"rtx_ssrc":4002,"streams":[{"type":"video","rid":"100","ssrc":4001,"active":true,"quality":100,"rtx_ssrc":4002,"max_bitrate":2500000,"max_framerate":30,"max_resolution":{"type":"fixed","width":1280,"height":720}}]})"));
 }
 
 void TestVoicePayloads::localVideoStateCameraOff()
@@ -200,7 +193,7 @@ void TestVoicePayloads::sinkWantsParse()
 
 void TestVoicePayloads::videoFromServerParsesUserSsrcs()
 {
-    const ClientConnectData video = ClientConnectData::fromJson(parse(R"({"user_id":"123456789012345678","audio_ssrc":5000,"video_ssrc":5001,"streams":[{"type":"video","rid":"100","ssrc":5001,"rtx_ssrc":5002,"active":true,"quality":100,"max_bitrate":2500000,"max_framerate":30,"max_resolution":{"type":"fixed","width":1280,"height":720}}]})"));
+    const RemoteVideoState video = RemoteVideoState::fromJson(parse(R"({"user_id":"123456789012345678","audio_ssrc":5000,"video_ssrc":5001,"streams":[{"type":"video","rid":"100","ssrc":5001,"rtx_ssrc":5002,"active":true,"quality":100,"max_bitrate":2500000,"max_framerate":30,"max_resolution":{"type":"fixed","width":1280,"height":720}}]})"));
 
     QCOMPARE(quint64(video.userId.get()), quint64(123456789012345678));
     QCOMPARE(video.audioSsrc.get(), quint32(5000));
@@ -217,7 +210,7 @@ void TestVoicePayloads::videoFromServerParsesUserSsrcs()
     QCOMPARE(stream.maxResolution->width.get(), 1280);
     QCOMPARE(stream.maxResolution->height.get(), 720);
 
-    const ClientConnectData off = ClientConnectData::fromJson(parse(R"({"user_id":"123456789012345678","audio_ssrc":5000,"video_ssrc":0})"));
+    const RemoteVideoState off = RemoteVideoState::fromJson(parse(R"({"user_id":"123456789012345678","audio_ssrc":5000,"video_ssrc":0})"));
     QCOMPARE(off.videoSsrc.get(), quint32(0));
     QVERIFY(!off.streams.hasValue());
 }
@@ -235,27 +228,22 @@ void TestVoicePayloads::sessionUpdateParsesOnlyWhatIsPresent()
     QVERIFY(!interval.videoCodec.hasValue());
 }
 
-// the official client's key order (docs/video-re/re-main-gateway.md)
 void TestVoicePayloads::voiceStateUpdateSaysWhetherTheCameraIsOn()
 {
     using Discord::voiceStateUpdate;
     const Core::Snowflake guild(100);
     const Core::Snowflake channel(200);
 
-    QCOMPARE(voiceStateUpdate(guild, channel, false, false, true).toJson().toBytes(),
-             QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true}})"));
-    QCOMPARE(voiceStateUpdate(guild, channel, true, true, false).toJson().toBytes(),
-             QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":true,"self_deaf":true,"self_video":false}})"));
+    QCOMPARE(voiceStateUpdate(guild, channel, false, false, true).toJson().toBytes(), QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true}})"));
+    QCOMPARE(voiceStateUpdate(guild, channel, true, true, false).toJson().toBytes(), QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":true,"self_deaf":true,"self_video":false}})"));
 }
 
 void TestVoicePayloads::voiceStateUpdateForAPrivateCallAndForLeaving()
 {
     using Discord::voiceStateUpdate;
 
-    QCOMPARE(voiceStateUpdate(Core::Snowflake::Invalid, Core::Snowflake(200), false, false, true).toJson().toBytes(),
-             QByteArray(R"({"op":4,"d":{"guild_id":null,"channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true}})"));
-    QCOMPARE(voiceStateUpdate(Core::Snowflake(100), Core::Snowflake::Invalid, false, false, false).toJson().toBytes(),
-             QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":null,"self_mute":false,"self_deaf":false,"self_video":false}})"));
+    QCOMPARE(voiceStateUpdate(Core::Snowflake::Invalid, Core::Snowflake(200), false, false, true).toJson().toBytes(), QByteArray(R"({"op":4,"d":{"guild_id":null,"channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true}})"));
+    QCOMPARE(voiceStateUpdate(Core::Snowflake(100), Core::Snowflake::Invalid, false, false, false).toJson().toBytes(), QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":null,"self_mute":false,"self_deaf":false,"self_video":false}})"));
 }
 
 void TestVoicePayloads::voiceStateUpdateKeyOrderWithFlags()
@@ -263,8 +251,7 @@ void TestVoicePayloads::voiceStateUpdateKeyOrderWithFlags()
     Discord::UpdateVoiceState update = Discord::voiceStateUpdate(Core::Snowflake(100), Core::Snowflake(200), false, false, true);
     update.flags = Discord::VoiceFlags(Discord::VoiceFlag::ALLOW_VOICE_RECORDINGS);
 
-    QCOMPARE(update.toJson().toBytes(),
-             QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true,"flags":2}})"));
+    QCOMPARE(update.toJson().toBytes(), QByteArray(R"({"op":4,"d":{"guild_id":"100","channel_id":"200","self_mute":false,"self_deaf":false,"self_video":true,"flags":2}})"));
 }
 
 QTEST_GUILESS_MAIN(TestVoicePayloads)

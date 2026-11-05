@@ -8,9 +8,6 @@
 #include "CardWorker.hpp"
 #include "D3D11GlBridge.hpp"
 #endif
-#ifdef ACHERON_HAVE_DMABUF
-#include "DmabufGlBridge.hpp"
-#endif
 
 #include <QGuiApplication>
 #include <QMouseEvent>
@@ -75,7 +72,6 @@ QImage GlVideoLayer::snapshot()
     QImage image(area, QImage::Format_RGBA8888);
     glPixelStorei(GL_PACK_ALIGNMENT, 4);
     glReadPixels(0, 0, area.width(), area.height(), GL_RGBA, GL_UNSIGNED_BYTE, image.bits());
-    // OpenGL counts rows from the bottom
     image = image.mirrored();
     image.setDevicePixelRatio(devicePixelRatio());
     return image;
@@ -195,12 +191,12 @@ void GlVideoLayer::setupGl()
 
     glGenTextures(1, &overlayTexture);
     glBindTexture(GL_TEXTURE_2D, overlayTexture);
-    setSampling(this, GL_NEAREST);
+    setBoundTextureSampling(this, GL_NEAREST);
 
     glGenTextures(static_cast<GLsizei>(textures.size()), textures.data());
     for (const GLuint texture : textures) {
         glBindTexture(GL_TEXTURE_2D, texture);
-        setSampling(this, GL_LINEAR);
+        setBoundTextureSampling(this, GL_LINEAR);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -276,7 +272,7 @@ void GlVideoLayer::updateFromCard(bool onCard)
             shown = Shown::OnCard;
         else if (shown == Shown::OnCard)
             shown = Shown::Nothing;
-    } else if (card && shown == Shown::Nothing) {
+    } else if (card) {
         card->discard();
     }
 #else

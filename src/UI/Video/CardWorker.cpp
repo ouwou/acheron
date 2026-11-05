@@ -33,24 +33,15 @@ std::shared_ptr<CardWorker> CardWorker::sharingWith(QOpenGLContext *layerContext
         group = workers.empty() ? groups.erase(group) : std::next(group);
     }
 
-    // every surface holds one reference to its worker, and `candidate` one more
     std::vector<std::weak_ptr<CardWorker>> &workers = groups[layerContext->shareGroup()];
-    std::shared_ptr<CardWorker> least;
-    long leastServed = 0;
-    for (const std::weak_ptr<CardWorker> &entry : workers) {
-        const std::shared_ptr<CardWorker> candidate = entry.lock();
-        const long served = candidate.use_count() - 1;
-        if (!least || served < leastServed) {
-            least = candidate;
-            leastServed = served;
-        }
-    }
-    if (least && (leastServed < SURFACES_PER_WORKER || static_cast<int>(workers.size()) >= MAX_WORKERS))
-        return least;
+    const auto leastBusy = std::min_element(workers.begin(), workers.end(), [](const std::weak_ptr<CardWorker> &one, const std::weak_ptr<CardWorker> &other) { return one.use_count() < other.use_count(); });
+    const bool anyWorker = leastBusy != workers.end();
+    if (anyWorker && (leastBusy->use_count() < SURFACES_PER_WORKER || static_cast<int>(workers.size()) >= MAX_WORKERS))
+        return leastBusy->lock();
 
     std::shared_ptr<CardWorker> worker(new CardWorker(layerContext));
     if (!worker->thread.isRunning())
-        return least;
+        return anyWorker ? leastBusy->lock() : nullptr;
     workers.push_back(worker);
     return worker;
 }
@@ -73,7 +64,7 @@ CardWorker::~CardWorker()
     if (!thread.isRunning())
         return;
     // the context goes back to the thread that is about to destroy it
-    run([this, home = QThread::currentThread()] {
+    runAndWait([this, home = QThread::currentThread()] {
         context.doneCurrent();
         context.moveToThread(home);
     });
@@ -113,7 +104,7 @@ bool CardPicture::render(const AVFrame *frame)
     if (!back.name) {
         gl->glGenTextures(1, &back.name);
         gl->glBindTexture(GL_TEXTURE_2D, back.name);
-        setSampling(gl, GL_LINEAR);
+        setBoundTextureSampling(gl, GL_LINEAR);
     }
     gl->glBindTexture(GL_TEXTURE_2D, back.name);
     if (back.size != size) {
@@ -154,7 +145,7 @@ void CardPicture::discard()
 
 void CardPicture::close()
 {
-    worker->run([this] {
+    worker->runAndWait([this] {
         closed = true;
         bridge.release();
         QOpenGLFunctions *gl = worker->gl();

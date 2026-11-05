@@ -2,8 +2,7 @@
 
 #include <QTest>
 
-// tests needing this machine's graphics card, screens, camera or sound run only with
-// ACHERON_HARDWARE_TESTS=1: they take minutes, open windows and play a tone
+// the tests that need this machine's graphics card, screens, camera or sound take minutes, open windows and play a tone
 inline bool hardwareTestsAreAskedFor()
 {
     return qEnvironmentVariableIntValue("ACHERON_HARDWARE_TESTS") > 0;

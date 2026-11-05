@@ -36,8 +36,6 @@ namespace Video {
 class CameraPipeline;
 }
 
-// goes off by itself on leaving or moving channel, when another session takes the call over, and when
-// the camera fails
 class CameraSender : public QObject
 {
     Q_OBJECT
@@ -96,7 +94,7 @@ private slots:
     void onRtcConnectionClosing();
     void onVoiceDisconnected();
     void onVoiceMembershipChanged();
-    void onOwnVoiceStateChanged();
+    void onParticipantVoiceStateChanged(Acheron::Core::Snowflake channelId, Acheron::Core::Snowflake userId);
     void onSpeakingChanged(bool nowSpeaking);
     void onScreenShareChanged();
     void onCodecTimedOut();
@@ -107,9 +105,9 @@ private slots:
     void onSendLayersKnown(const QList<int> &qualities);
     void onKeyframeRequested(int quality);
     void onReceiversChanged(int count, int quality);
+    void onWantsReceived(int want, std::optional<int> pixelCount, int quality);
 
 private:
-    void onWantsReceived(int want, int quality);
     void onEncodersKnown(const QList<Discord::Voice::VideoCodec> &codecs);
     void onPipelineStarted(const QSize &encodedSize);
     void onPreviewReady(const QImage &preview);
@@ -122,7 +120,7 @@ private:
     void sendVoiceState();
 
     void sendOnceReady();
-    void startPipeline();
+    void startPipeline(Discord::Voice::VideoCodec codec);
     void stopPipeline();
     void sendFramesToRtc();
     void announceVideo();
@@ -142,7 +140,7 @@ private:
 
     Audio::VoiceConnection *rtc = nullptr;
     bool rtcConnected = false;
-    Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
+    Discord::Voice::VideoCodec serverCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;
 
     struct Layer

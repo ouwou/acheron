@@ -1,5 +1,3 @@
-// the store's rules are the official client's CallStore (docs/video-re/re-dm-calls.md)
-
 #include "Core/Calls/CallStore.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/Outbound.hpp"
@@ -92,10 +90,7 @@ void TestCalls::ringsMapRungUserToRinger()
 {
     const auto update = parseEvent<Discord::CallUpdate>(R"({"channel_id":"5000","message_id":"6000","region":"rotterdam","ongoing_rings":{"222":"111","333":null}})");
 
-    QCOMPARE(update.ongoingRings.size(), 2);
-    QCOMPARE(quint64(update.ongoingRings.value(Snowflake(222))), quint64(111));
-    QVERIFY(update.ongoingRings.contains(Snowflake(333)));
-    QVERIFY(!update.ongoingRings.value(Snowflake(333)).isValid());
+    QCOMPARE(update.ongoingRings, (QHash<Snowflake, Snowflake>{ { Snowflake(222), Snowflake(111) }, { Snowflake(333), Snowflake::Invalid } }));
 }
 
 void TestCalls::nullRegionIsNoRegion()

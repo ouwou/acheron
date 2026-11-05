@@ -74,8 +74,10 @@ constexpr uint PERSIST_UNTIL_REVOKED = 2;
 constexpr uint VERSION_WITH_RESTORING = 4;
 constexpr uint CALLED_OFF_BY_THE_USER = 1;
 
+constexpr uint64_t MODIFIER_LINEAR = 0;
+constexpr uint64_t MODIFIER_INVALID = 0x00ffffffffffffffULL;
 // KWin drops DRM_FORMAT_MOD_INVALID when offered more than one modifier
-constexpr uint64_t MODIFIERS[] = { 0, 0x00ffffffffffffffULL };
+constexpr uint64_t MODIFIERS[] = { MODIFIER_LINEAR, MODIFIER_INVALID };
 
 struct PixelLayout
 {
@@ -549,9 +551,8 @@ FramePointer pictureIn(const spa_buffer *sent, Pictures *pictures)
         return nullptr;
 
     const auto *crop = static_cast<const spa_meta_region *>(spa_buffer_find_meta_data(sent, SPA_META_VideoCrop, sizeof(spa_meta_region)));
-    if (crop && spa_meta_region_is_valid(crop) && crop->region.position.x >= 0 && crop->region.position.y >= 0 && crop->region.position.x + crop->region.size.width <= format.size.width && crop->region.position.y + crop->region.size.height <= format.size.height) {
+    if (crop && spa_meta_region_is_valid(crop) && crop->region.position.x >= 0 && crop->region.position.y >= 0 && crop->region.position.x + crop->region.size.width <= format.size.width && crop->region.position.y + crop->region.size.height <= format.size.height)
         cropTo(picture.get(), QRect(crop->region.position.x, crop->region.position.y, static_cast<int>(crop->region.size.width), static_cast<int>(crop->region.size.height)));
-    }
     return picture;
 }
 
@@ -584,7 +585,7 @@ void streamFormatChanged(void *shared, uint32_t id, const spa_pod *param)
     spa_pod_builder_init(&builder, space, sizeof(space));
     const bool onCard = spa_pod_find_prop(param, nullptr, SPA_FORMAT_VIDEO_modifier) != nullptr;
     const int memory = onCard ? 1 << SPA_DATA_DmaBuf : (1 << SPA_DATA_MemFd) | (1 << SPA_DATA_MemPtr);
-    // four is KWin's most, and the fewest that let the caller keep a picture with a newer one behind it.
+    // four is KWin's most, and the fewest that let the caller keep a picture with a newer one behind it;
     // asked for alone first, since KWin's own choice is three
     const spa_pod *params[] = {
         static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(4, 4, 16), SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(memory))),
@@ -883,12 +884,18 @@ QSize sizeOf(const CaptureSource &source)
     return known ? known->size : QSize();
 }
 
-std::unique_ptr<LinuxGrabber> open(const QString &sourceId, int framerate, bool onCard)
+std::unique_ptr<LinuxGrabber> open(const QString &sourceId, int framerate, PictureMemory memory)
 {
     std::shared_ptr<Source> source = sourceOf(sourceId);
     if (!source || !pipeWireStarts())
         return nullptr;
-    return std::make_unique<Grabber>(std::move(source), framerate, onCard);
+    return std::make_unique<Grabber>(std::move(source), framerate, memory == PictureMemory::CardOrMemory);
+}
+
+AVPixelFormat formatOfFourcc(uint32_t fourcc)
+{
+    const auto found = std::find_if(std::begin(LAYOUTS), std::end(LAYOUTS), [fourcc](const PixelLayout &layout) { return layout.fourcc == fourcc; });
+    return found == std::end(LAYOUTS) ? AV_PIX_FMT_NONE : found->av;
 }
 
 void release(const QString &sourceId)
@@ -930,9 +937,14 @@ QSize sizeOf(const CaptureSource &)
     return {};
 }
 
-std::unique_ptr<LinuxGrabber> open(const QString &, int, bool)
+std::unique_ptr<LinuxGrabber> open(const QString &, int, PictureMemory)
 {
     return nullptr;
+}
+
+AVPixelFormat formatOfFourcc(uint32_t)
+{
+    return AV_PIX_FMT_NONE;
 }
 
 void release(const QString &)

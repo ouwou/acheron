@@ -30,11 +30,11 @@ constexpr int RECEIVER_REPORT_HEADER_SIZE = 8;
 constexpr int SENDER_REPORT_READ_SIZE = 16;
 constexpr int SENDER_REPORT_SIZE = 28;
 constexpr int FEEDBACK_HEADER_SIZE = 12;
-// Discord's "DIS1" as its bytes come off the wire: the native module writes it as one 32-bit number
+// "DIS1" as its bytes come off the wire: the native module writes the name as one 32-bit number
 constexpr uint8_t INBOUND_ESTIMATE_NAME[4] = { 0x31, 0x53, 0x49, 0x44 };
 constexpr int INBOUND_ESTIMATE_SIZE = 24;
-// "DIS0": the stream's SSRC sits where a sender's would, the count in the header's count bits, then per
-// receiver a user id (8), a rate (3) and a byte
+// "DIS0": the stream's SSRC where a sender's would be, the count in the count bits, then per receiver a
+// user id (8), a rate (3) and a byte
 constexpr uint8_t RECEIVER_COUNT_NAME[4] = { 0x30, 0x53, 0x49, 0x44 };
 // "DISX": the SSRC is one of the remote sender's
 constexpr uint8_t VIDEO_RESET_NAME[4] = { 0x58, 0x53, 0x49, 0x44 };
@@ -57,7 +57,6 @@ void readNack(const uint8_t *packet, size_t size, std::vector<ReceivedRtcp::Nack
         nacks.push_back(std::move(nack));
 }
 
-// RFC 5104, 4.3.1
 void readFullIntraRequest(const uint8_t *packet, size_t size, std::vector<uint32_t> &ssrcs)
 {
     constexpr size_t ENTRY_SIZE = 8;
@@ -65,7 +64,6 @@ void readFullIntraRequest(const uint8_t *packet, size_t size, std::vector<uint32
         ssrcs.push_back(qFromBigEndian<uint32_t>(packet + at));
 }
 
-// draft-holmer-rmcat-transport-wide-cc-extensions-01, 3.1
 void readTransportReport(const uint8_t *packet, size_t size, std::vector<ReceivedRtcp::TransportReport> &reports)
 {
     if (size < TRANSPORT_REPORT_HEADER_SIZE)

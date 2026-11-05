@@ -51,7 +51,7 @@ signals:
     void speakingReceived(const Acheron::Discord::Voice::SpeakingData &data);
     void privacyCodeChanged(const QString &code);
 
-    void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate);
+    void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, std::optional<QSize> maxSize, std::optional<int> maxFramerate);
     void remoteVideoLayersChanged(Acheron::Core::Snowflake userId, const QList<Acheron::Discord::Voice::VideoLayer> &layers);
     void videoStatsUpdated(const Acheron::Discord::Voice::VideoReceiveStats &stats);
 
@@ -59,7 +59,7 @@ signals:
     void videoSendLayersKnown(const QList<int> &qualities);
     void videoKeyframeRequested(int quality);
     void videoReceiversChanged(int receivers, int quality);
-    void videoWantsReceived(int want, int pixelCount, int quality);
+    void videoWantsReceived(int want, std::optional<int> pixelCount, int quality);
     void videoSendStatsUpdated(const Acheron::Discord::Voice::VideoSendStats &stats);
 
 private:

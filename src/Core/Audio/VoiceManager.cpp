@@ -46,21 +46,14 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
     const Snowflake newChannel = state.channel();
     const bool leftVoice = !newChannel.isValid();
 
-    // as the official client: the account's state is this connection only while this gateway session
-    // holds it
+    // as the official client: the account's state is this connection only while this gateway session holds it
     bool isOwnConnection = isMe && state.isHeldBy(gatewaySessionId);
 
     bool takenByAnotherSession = isMe && !isOwnConnection && !leftVoice && channelId.isValid();
     Snowflake takenChannel = channelId;
     Snowflake takenGuild = guildId;
-    if (takenByAnotherSession) {
-        voiceSessionId.clear();
-        channelId = Snowflake::Invalid;
-        guildId = Snowflake::Invalid;
-        selfStream = false;
-        selfVideo = false;
-        pending = {};
-    }
+    if (takenByAnotherSession)
+        forgetOwnVoiceState();
 
     if (!isOwnConnection) {
         Snowflake oldChannel;
@@ -116,12 +109,7 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
         if (leftVoice) {
             qCInfo(LogVoice) << "Voice state: disconnected from channel";
             Snowflake oldChannel = channelId;
-            voiceSessionId.clear();
-            channelId = Snowflake::Invalid;
-            guildId = Snowflake::Invalid;
-            selfStream = false;
-            selfVideo = false;
-            pending = {};
+            forgetOwnVoiceState();
 
             if (oldChannel.isValid())
                 emit channelVoiceMemberChanged(oldChannel, accountId, false);
@@ -244,6 +232,16 @@ void VoiceManager::handleVoiceServerUpdate(const Discord::VoiceServerUpdate &eve
         connectToVoiceServer(eventEndpoint, eventToken);
         pending = {};
     }
+}
+
+void VoiceManager::forgetOwnVoiceState()
+{
+    voiceSessionId.clear();
+    channelId = Snowflake::Invalid;
+    guildId = Snowflake::Invalid;
+    selfStream = false;
+    selfVideo = false;
+    pending = {};
 }
 
 void VoiceManager::setGatewaySessionId(const QString &sessionId)
@@ -579,14 +577,13 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                     ap->setSsrcUserId(data.ssrc, data.userId.get());
             });
 
-    connect(voiceClient, &Discord::Voice::VoiceClient::clientConnected, audioPipeline,
-            [ap = audioPipeline](const Discord::Voice::ClientConnectData &data) {
+    connect(voiceClient, &Discord::Voice::VoiceClient::videoStateReceived, audioPipeline,
+            [ap = audioPipeline](const Discord::Voice::RemoteVideoState &data) {
                 if (data.userId.hasValue() && data.userId->isValid() && data.audioSsrc.get() != 0)
                     ap->setSsrcUserId(data.audioSsrc, data.userId.get());
             });
 
-    // as the official client's RTCConnectionDesyncStore: also anyone the voice server has connected whose
-    // voice state hasnt arrived
+    // as the official client's RTCConnectionDesyncStore: also anyone the voice server connected whose voice state hasnt arrived
     connect(voiceConnection, &VoiceConnection::clientReachedServer,
             this, [this](Snowflake userId) {
                 if (!userId.isValid() || userId == accountId)
@@ -604,8 +601,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
             this, [this](Snowflake userId) {
                 dropUserAudio(userId);
 
-                // someone moving to another device drops off the voice server and returns while their voice state
-                // stays
+                // someone moving to another device drops off the voice server and comes back while their voice state stays
                 const auto voiceState = knownVoiceStates.constFind(userId);
                 const bool stillInChannel = voiceState != knownVoiceStates.constEnd() && voiceState->channel() == channelId;
                 auto participant = participants.find(userId);
@@ -651,6 +647,11 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
 
     if (!voiceConnection->start())
         closeVoiceConnection();
+}
+
+quint32 VoiceManager::newAudioSource()
+{
+    return AudioPipeline::VOICE_CONNECTION_SOURCE + ++addedAudioSources;
 }
 
 void VoiceManager::attachAudioSource(quint32 source, Discord::Voice::VoiceClient *client)

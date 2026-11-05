@@ -1,10 +1,29 @@
 #include "Core/Audio/LoopbackCapture.hpp"
 
+#include "Core/Audio/IAudioBackend.hpp"
+
 #include <optional>
 
 namespace Acheron {
 namespace Core {
 namespace Audio {
+
+bool LoopbackCapture::sendFrame(QByteArray &unsent)
+{
+    if (unsent.size() < AUDIO_FRAME_SIZE)
+        return false;
+    emit frameCaptured(unsent.left(AUDIO_FRAME_SIZE));
+    unsent.remove(0, AUDIO_FRAME_SIZE);
+    return true;
+}
+
+void LoopbackCapture::sendRest(QByteArray &unsent)
+{
+    if (unsent.isEmpty())
+        return;
+    unsent.append(AUDIO_FRAME_SIZE - unsent.size(), '\0');
+    sendFrame(unsent);
+}
 
 #if !defined(Q_OS_WIN) && !defined(ACHERON_HAVE_PIPEWIRE)
 

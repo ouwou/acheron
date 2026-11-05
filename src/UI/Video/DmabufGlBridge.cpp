@@ -81,32 +81,28 @@ struct DmabufGlBridge::Egl
     }
 };
 
-DmabufGlBridge::DmabufGlBridge()
-    : held(av_frame_alloc()) {}
+DmabufGlBridge::DmabufGlBridge() = default;
 
-DmabufGlBridge::~DmabufGlBridge()
-{
-    av_frame_free(&held);
-}
+DmabufGlBridge::~DmabufGlBridge() = default;
 
 bool DmabufGlBridge::contextSupportsIt()
 {
     return !importRefused.load(std::memory_order_relaxed) && Egl::resolve() != nullptr;
 }
 
-AVFrame *DmabufGlBridge::exported(const AVFrame *frame)
+Core::Media::FramePointer DmabufGlBridge::exported(const AVFrame *frame)
 {
-    AVFrame *exported = av_frame_alloc();
-    exported->format = AV_PIX_FMT_DRM_PRIME;
-    if (av_hwframe_map(exported, frame, AV_HWFRAME_MAP_READ) < 0) {
-        av_frame_free(&exported);
+    Core::Media::FramePointer mapped(av_frame_alloc());
+    if (!mapped)
         return nullptr;
-    }
+    mapped->format = AV_PIX_FMT_DRM_PRIME;
+    if (av_hwframe_map(mapped.get(), frame, AV_HWFRAME_MAP_READ) < 0)
+        return nullptr;
     // a driver takes a plane at its allocated size and may refuse it at the picture's
     const auto *pool = reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data);
-    exported->width = pool->width;
-    exported->height = pool->height;
-    return exported;
+    mapped->width = pool->width;
+    mapped->height = pool->height;
+    return mapped;
 }
 
 bool DmabufGlBridge::update(const AVFrame *exported, unsigned int lumaTexture, unsigned int chromaTexture)
@@ -160,12 +156,12 @@ bool DmabufGlBridge::update(const AVFrame *exported, unsigned int lumaTexture, u
 
     if (!made)
         importRefused.store(true, std::memory_order_relaxed);
-    return made && av_frame_ref(held, exported) >= 0;
+    return made && av_frame_ref(held.get(), exported) >= 0;
 }
 
 void DmabufGlBridge::release()
 {
-    av_frame_unref(held);
+    av_frame_unref(held.get());
 }
 
 } // namespace UI

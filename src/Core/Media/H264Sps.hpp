@@ -10,10 +10,13 @@ namespace Core {
 namespace Media {
 namespace H264 {
 
-// the official client rewrites, before decrypting, the SPS of any H264 whose VUI bitstream restriction
-// doesnt say there is no reordering and no more pictures held than referenced. the rewritten frame
-// no longer matches what was encrypted and is never shown, so the same change is made here first
+// profile_idc, which is also ffmpeg's profile value; ffmpeg renamed its own constants between versions
+inline constexpr int PROFILE_BASELINE = 66;
+inline constexpr int PROFILE_MAIN = 77;
+inline constexpr int PROFILE_HIGH = 100;
 
+// the official client rewrites, before decrypting, an H264 SPS whose VUI doesnt rule out reordering and holding
+// more pictures than referenced; the frame then fails decryption and is never shown, so it is rewritten here first
 struct SpsReordering
 {
     bool hasVui = false;

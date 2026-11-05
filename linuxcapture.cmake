@@ -1,14 +1,13 @@
 # What sharing a screen and its sound needs on Linux beyond ffmpeg, normalized into a single
-# INTERFACE target named `linuxcapture`. Each part is optional: a build without one compiles
-# and offers that much less. None is looked for in a build without cameras and screen shares.
+# INTERFACE target named `linuxcapture`. Each part is optional: without one the build offers
+# that much less.
 #   libpipewire-0.3  the portal's pictures, and what programs are playing
 #   Qt DBus          asking the desktop portal for a screen or a window
 #   xcb              listing an X11 display's screens and windows
 #
-# libpipewire has to be the machine's own, so a build that is carried to other machines cannot
-# bring one along, and linked in the ordinary way it would not start on a machine without.
-# Given Implib.so's implib-gen.py as IMPLIB_GEN, the library is loaded when it is first called
-# instead, which Core/Media/PipeWireLibrary.hpp finds out beforehand that it can be.
+# libpipewire has to be the machine's own, so a portable build cant bring one, and linked the
+# ordinary way it wouldnt start without it. With Implib.so's implib-gen.py as IMPLIB_GEN it is
+# loaded on first call instead, which Core/Media/PipeWireLibrary.hpp checks beforehand.
 
 set(IMPLIB_GEN "" CACHE FILEPATH "Implib.so's implib-gen.py, to load libpipewire when it is first called and not at start")
 

@@ -15,11 +15,11 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-// too slow for the UI thread: `then` runs later on the main thread, unless `context` is gone
+// the probe is too slow for the UI thread. `then` runs on the main thread once it is done (at once if it
+// already is), unless `context` is gone
 void whenSendCodecsKnown(QObject *context, std::function<void(const QList<Discord::Voice::VideoCodec> &)> then);
 void startSendCodecProbe();
 
-// answers only the latest ask
 class SendCodecRequest
 {
 public:

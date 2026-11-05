@@ -23,6 +23,13 @@ inline std::vector<uint8_t> filler(size_t size, uint32_t seed)
     return bytes;
 }
 
+inline std::vector<uint8_t> vp8Frame(bool keyframe, size_t size, uint32_t seed)
+{
+    std::vector<uint8_t> frame = filler(size, seed);
+    frame[0] = static_cast<uint8_t>(keyframe ? (frame[0] & ~1) : (frame[0] | 1));
+    return frame;
+}
+
 inline bool reassemble(Acheron::Discord::Voice::VideoCodec codec, const std::vector<std::vector<uint8_t>> &payloads, std::vector<uint8_t> &frame)
 {
     std::vector<std::span<const uint8_t>> spans;

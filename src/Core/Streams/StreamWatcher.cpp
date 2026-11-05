@@ -28,8 +28,7 @@ void StreamWatcher::watchWhenConnected(const Discord::StreamKey &key)
         pendingWatch = key;
 }
 
-// in a private call the official client watches unasked: the first live stream on joining, then
-// whoever's voice state last arrived saying they are live (130553.js)
+// in a private call the official client watches unasked: the first live stream on joining, then whoever's voice state last said they are live
 void StreamWatcher::onVoiceConnected()
 {
     lastAutoWatched.clear();
@@ -96,13 +95,14 @@ void StreamWatcher::watch(const Discord::StreamKey &key)
     }
 
     // as the official client
-    if (sessions.size() < 2) {
+    const bool allowMultiple = sessions.size() >= 2;
+    if (!allowMultiple) {
         const QStringList others = sessions.keys();
         for (const QString &other : others)
             remove(other, GatewayNotice::Send);
     }
 
-    auto *session = new StreamSession(key, voice, nextAudioSource++, this);
+    auto *session = new StreamSession(key, voice, this);
     connect(session, &StreamSession::pingRequested, this, [this, streamKey] { client->sendStreamPing(streamKey); });
     sessions.insert(streamKey, session);
 

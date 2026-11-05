@@ -16,22 +16,23 @@ namespace Audio {
 
 namespace {
 
-constexpr qint64 TICKS_PER_MS = 10'000;
+constexpr qint64 TICKS_PER_MS = PlayedSound::TICKS_PER_SECOND / 1000;
+constexpr int WINDOW_FRAMES = 9600;
+constexpr qint64 LONGEST_DELAY_MS = 500;
 constexpr qint64 LATE_MARGIN_MS = 50;
-constexpr int SEARCHED_DELAYS = static_cast<int>((PlayedSoundRemover::LONGEST_DELAY_MS + LATE_MARGIN_MS) * AUDIO_SAMPLE_RATE / 1000);
+constexpr int SEARCHED_DELAYS = static_cast<int>((LONGEST_DELAY_MS + LATE_MARGIN_MS) * AUDIO_SAMPLE_RATE / 1000);
 constexpr int TRANSFORM_SIZE = 1 << 16;
-static_assert(PlayedSoundRemover::WINDOW_FRAMES + SEARCHED_DELAYS <= TRANSFORM_SIZE, "the correlation would wrap around");
+static_assert(WINDOW_FRAMES + SEARCHED_DELAYS <= TRANSFORM_SIZE, "the correlation would wrap around");
 constexpr int CAPTURE_KEPT_FRAMES = 1 << 15;
-static_assert(PlayedSoundRemover::WINDOW_FRAMES <= CAPTURE_KEPT_FRAMES);
+static_assert(WINDOW_FRAMES <= CAPTURE_KEPT_FRAMES);
 
 constexpr qint64 SEARCH_EVERY_FRAMES = AUDIO_SAMPLE_RATE / 4;
 constexpr qint64 CHECK_EVERY_FRAMES = AUDIO_SAMPLE_RATE;
-// chance peaks over every delay searched stay under 0.05 for a window this long, and a delay counts only
-// once two searches in a row find it
+// chance peaks over every delay searched stay under 0.05 for a window this long; a delay also counts
+// only once two searches in a row find it
 constexpr float LEAST_CORRELATION = 0.08f;
 constexpr float QUIET_MEAN_SQUARE = 1e-7f;
-// devices that level their sound change its gain from one moment to the next, so it is fitted again for
-// every block, moving this far towards the block's own fit
+// devices that level their sound drift its gain, so every block refits it, this far towards its own fit
 constexpr double GAIN_ADAPTATION = 0.5;
 constexpr double LARGEST_GAIN = 2.0;
 
@@ -64,24 +65,24 @@ void PlayedSoundRemover::remove(float *stereo, int frames, qint64 capturedAt)
         captured[slot + 1] = stereo[i * 2 + 1];
     }
     capturedEnd += frames;
-    capturedEndTime = capturedAt + frames * 1000 * TICKS_PER_MS / AUDIO_SAMPLE_RATE;
+    capturedEndTime = capturedAt + frames * PlayedSound::TICKS_PER_SECOND / AUDIO_SAMPLE_RATE;
 
     follow();
-    std::vector<float> played(static_cast<size_t>(frames) * 2);
+    playedBlock.resize(static_cast<size_t>(frames) * 2);
     for (Tracked &each : tracked) {
         const auto sound = each.sound.lock();
-        if (!sound || !each.offset || !sound->read(first + *each.offset, frames, played.data()))
+        if (!sound || !each.offset || !sound->read(first + *each.offset, frames, playedBlock.data()))
             continue;
         double together = 0.0;
         double alone = 0.0;
         for (int i = 0; i < frames * 2; i++) {
-            together += static_cast<double>(stereo[i]) * played[i];
-            alone += static_cast<double>(played[i]) * played[i];
+            together += static_cast<double>(stereo[i]) * playedBlock[i];
+            alone += static_cast<double>(playedBlock[i]) * playedBlock[i];
         }
         if (alone > QUIET_MEAN_SQUARE * frames * 2)
             each.gain = static_cast<float>(std::clamp(each.gain + GAIN_ADAPTATION * (together / alone - each.gain), 0.0, LARGEST_GAIN));
         for (int i = 0; i < frames * 2; i++)
-            stereo[i] -= each.gain * played[i];
+            stereo[i] -= each.gain * playedBlock[i];
     }
 
     framesSinceAlignment += frames;
@@ -93,7 +94,7 @@ void PlayedSoundRemover::remove(float *stereo, int frames, qint64 capturedAt)
         align(each);
 }
 
-void PlayedSoundRemover::startOver()
+void PlayedSoundRemover::forgetDelays()
 {
     for (Tracked &each : tracked) {
         each.offset.reset();
@@ -101,7 +102,7 @@ void PlayedSoundRemover::startOver()
     }
 }
 
-std::optional<qint64> PlayedSoundRemover::delayOf(const std::shared_ptr<PlayedSound> &sound) const
+std::optional<qint64> PlayedSoundRemover::framesLateOf(const std::shared_ptr<PlayedSound> &sound) const
 {
     for (const Tracked &each : tracked) {
         if (each.sound.lock() == sound && each.offset)
@@ -125,9 +126,9 @@ float PlayedSoundRemover::capturedAt(qint64 frame, int channel) const
     return captured[static_cast<size_t>(frame % CAPTURE_KEPT_FRAMES) * 2 + channel];
 }
 
-void PlayedSoundRemover::align(Tracked &tracked)
+void PlayedSoundRemover::align(Tracked &stream)
 {
-    const auto sound = tracked.sound.lock();
+    const auto sound = stream.sound.lock();
     if (!sound || !forward || !inverse || capturedEnd < WINDOW_FRAMES)
         return;
 
@@ -183,7 +184,7 @@ void PlayedSoundRemover::align(Tracked &tracked)
         }
     }
     if (best < 0 || bestCorrelation < LEAST_CORRELATION) {
-        tracked.candidate.reset();
+        stream.candidate.reset();
         return;
     }
 
@@ -199,18 +200,18 @@ void PlayedSoundRemover::align(Tracked &tracked)
     const auto gain = static_cast<float>(std::clamp(together / alone, 0.0, LARGEST_GAIN));
     const qint64 found = lowest + best;
 
-    if (tracked.offset && near(found, *tracked.offset)) {
-        tracked.candidate.reset();
+    if (stream.offset && near(found, *stream.offset)) {
+        stream.candidate.reset();
         return;
     }
-    if (tracked.candidate && near(found, *tracked.candidate)) {
-        tracked.offset = found;
-        tracked.gain = gain;
-        tracked.candidate.reset();
+    if (stream.candidate && near(found, *stream.candidate)) {
+        stream.offset = found;
+        stream.gain = gain;
+        stream.candidate.reset();
         qCInfo(LogVoice) << "This program's own sound is" << -found << "frames late in the device capture, at a gain of" << gain << "( correlation" << bestCorrelation << ")";
         return;
     }
-    tracked.candidate = found;
+    stream.candidate = found;
 }
 
 } // namespace Audio

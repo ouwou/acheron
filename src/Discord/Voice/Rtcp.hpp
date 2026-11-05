@@ -9,7 +9,6 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// RFC 3550, 6.4.1
 struct ReceptionReport
 {
     uint32_t ssrc = 0;
@@ -23,13 +22,11 @@ struct ReceptionReport
 
 int writeReceiverReport(std::span<uint8_t> out, uint32_t senderSsrc, std::span<const ReceptionReport> reports);
 
-// RFC 4585, 6.2.1. `sequences` ascending, modulo wrap-around
+// `sequences` ascending, modulo wrap-around
 int writeNack(std::span<uint8_t> out, uint32_t senderSsrc, uint32_t mediaSsrc, std::span<const uint16_t> sequences);
 
-// RFC 4585, 6.3.1
 int writePli(std::span<uint8_t> out, uint32_t senderSsrc, uint32_t mediaSsrc);
 
-// RFC 3550, 6.4.1
 struct SenderInfo
 {
     uint32_t ssrc = 0;
@@ -119,7 +116,6 @@ struct ReceivedRtcp
 
     std::vector<uint32_t> keyframeRequests;
 
-    // Discord's own application-defined packet
     struct ReceiverCount
     {
         uint32_t ssrc = 0;
@@ -127,7 +123,7 @@ struct ReceivedRtcp
     };
     std::vector<ReceiverCount> receiverCounts;
 
-    // REMB. of several in one compound packet the largest counts, as in the official client
+    // remb; of several in one compound packet the largest wins, as in the official client
     std::optional<uint64_t> receiverEstimateBps;
 
     struct TransportReport
@@ -144,10 +140,10 @@ struct ReceivedRtcp
     };
     std::vector<TransportReport> transportReports;
 
-    // Discord's request to receive a sender's video afresh, by one of its SSRCs
+    // the server asks for a sender's video to be received afresh, naming any one of its ssrcs
     std::vector<uint32_t> videoResets;
 
-    // Discord's estimate; the official client only shows it in its statistics
+    // the server's estimate of the way to this client, which the official client only shows in its statistics
     std::optional<InboundEstimate> inboundEstimate;
 };
 

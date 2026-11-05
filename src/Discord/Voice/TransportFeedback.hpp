@@ -3,18 +3,18 @@
 #include <QtGlobal>
 
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <span>
+#include <vector>
 
+#include "Rtcp.hpp"
 #include "RtpPacket.hpp"
 
 namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// draft-holmer-rmcat-transport-wide-cc-extensions-01. the server holds video at a low bitrate until it
-// gets these
+// the server holds video at a low bitrate until it gets these
 class TransportFeedback
 {
 public:
@@ -28,11 +28,23 @@ public:
     static constexpr int MAX_SEQUENCE_JUMP = 10000;
 
 private:
-    std::map<qint64, qint64> arrivals;
+    struct Arrival
+    {
+        qint64 sequence = 0;
+        qint64 atUs = 0;
+    };
+
+    void hold(qint64 sequence, qint64 arrivalUs);
+
+    std::vector<Arrival> arrivals;
     SequenceUnwrapper sequences;
     // a packet arriving after the report that covered it isnt reported again, as in libwebrtc
     std::optional<qint64> reportedUpTo;
     uint8_t feedbackCount = 0;
+
+    std::vector<FeedbackStatus> statuses;
+    std::vector<uint8_t> deltas;
+    std::vector<uint16_t> chunks;
 };
 
 } // namespace Voice

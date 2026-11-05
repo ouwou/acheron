@@ -11,9 +11,14 @@
 #include <optional>
 
 #include "Core/Video/CaptureSources.hpp"
+#include "Core/Video/ColourMatrix.hpp"
 
-struct AVFilterContext;
-struct AVFilterGraph;
+#if defined(Q_OS_WIN) && defined(ACHERON_HAVE_AVFILTER)
+#define ACHERON_WINDOWS_SCREEN_CAPTURE
+#elif defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && defined(ACHERON_HAVE_AVFILTER)
+#define ACHERON_LINUX_SCREEN_CAPTURE
+#endif
+
 struct AVFrame;
 
 namespace Acheron {
@@ -32,14 +37,9 @@ struct StackedWindow
     bool tabProxy = false;
     bool livePreview = false;
 };
-// the official client's rule: a window can be cut out of the screen only when nothing overlaps it,
-// its own menus and dialogs included
+// the official client's rule, which counts the window's own menus and dialogs as covering it
 [[nodiscard]] bool windowIsCovered(const QList<StackedWindow> &topDown, int target);
 
-constexpr int STILL_PICTURE_INTERVAL_MS = 500;
-[[nodiscard]] bool stillPictureIsDue(qint64 msSinceLastPicture, bool keyFrameWaitedFor, int framerate);
-
-// not thread safe
 class ScreenCapture
 {
 public:
@@ -73,7 +73,6 @@ public:
     void configure(const Request &request);
     Status read(AVFrame *into);
     void setPicturesWanted(bool wanted) { picturesWanted = wanted; }
-    // polled while a read waits on a window that may have stopped answering; false ends the wait
     void setStillWanted(std::function<bool()> wanted) { stillWanted = std::move(wanted); }
     [[nodiscard]] QString failure() const { return failureText; }
 
@@ -81,20 +80,13 @@ public:
     [[nodiscard]] QString captureName() const;
 
     static constexpr int RETRY_INTERVAL_MS = 250;
-    static constexpr int CARD_SCALING_RETRY_MS = 30'000;
     static constexpr int GIVE_UP_AFTER_MS = 5000;
     static constexpr int RESIZE_SETTLE_MS = 300;
-    static constexpr int DRAWING_LIMIT_MS = 5000;
 
 private:
-    enum class Path {
-        Duplication,
-        GraphicsCapture,
-        WindowByDuplication,
-        ScreenCopy,
-    };
-
     struct Backends;
+
+#ifdef ACHERON_WINDOWS_SCREEN_CAPTURE
     struct CutOut;
     enum class Drawing;
 
@@ -107,11 +99,13 @@ private:
     bool duplicateScreenOf(const QRect &client);
     Drawing drawnByItself(const QRect &client);
     Status deliverFromCard(AVFrame *captured, AVFrame *into);
-    [[nodiscard]] bool scalesOnCard() const;
     bool scaleOnCard(const AVFrame *from, const QRect &area, const QSize &size, const QRect &placed, AVFrame *into);
     int buildDuplication();
     int buildGraphicsCapture();
     void dropDuplication();
+#endif
+    [[nodiscard]] bool scalesOnCard() const;
+    [[nodiscard]] ColourMatrix matrixFor(const QSize &size) const;
     void startOver(const Request &wanted);
     void tearDown();
     void delivered();
@@ -123,9 +117,6 @@ private:
 
     Request request;
     std::unique_ptr<Backends> backends;
-    Path path = Path::Duplication;
-    AVFilterGraph *graph = nullptr;
-    AVFilterContext *sink = nullptr;
     bool picturesWanted = true;
     std::function<bool()> stillWanted;
     bool everDelivered = false;

@@ -46,9 +46,16 @@ namespace {
 std::mutex factoryMutex;
 CameraFrameSourceFactory replacementFactory;
 
+constexpr std::chrono::milliseconds CLOCK_STARTED_OVER{ 1000 };
+constexpr int SLOWEST_CLOCK_FOLLOWED = 5000;
+
 #if defined(ACHERON_HAVE_AVDEVICE) && (defined(Q_OS_WIN) || defined(Q_OS_LINUX))
 
 using Clock = std::chrono::steady_clock;
+
+constexpr int READ_WAIT_MS = 100;
+// another program holding the camera can make it open and then send nothing
+constexpr int NO_PACKET_TIMEOUT_MS = 5000;
 
 QString cameraText(const char *text)
 {
@@ -70,6 +77,7 @@ struct Mode
     AVCodecID codec;
 };
 
+// many USB cameras deliver 1280x720 at 30 only as MJPEG
 constexpr std::array MODES = {
     Mode{ "1280x720", "30", AV_CODEC_ID_MJPEG },
     Mode{ "1280x720", "30", AV_CODEC_ID_NONE },
@@ -104,7 +112,7 @@ const AVInputFormat *inputDevice()
     return device;
 }
 
-AVFormatContext *openInput(const QByteArray &url, const Mode &mode)
+InputPointer openInput(const QByteArray &url, const Mode &mode)
 {
     AVFormatContext *input = avformat_alloc_context();
     if (!input)
@@ -119,23 +127,22 @@ AVFormatContext *openInput(const QByteArray &url, const Mode &mode)
         av_dict_set(&options, "framerate", mode.framerate, 0);
     }
     av_dict_set_int(&options, "rtbufsize", DEVICE_BUFFER_BYTES, 0);
-    // frees the context when it fails
-    avformat_open_input(&input, url.constData(), inputDevice(), &options);
+    const bool opened = avformat_open_input(&input, url.constData(), inputDevice(), &options) >= 0;
     av_dict_free(&options);
-    return input;
+    return opened ? InputPointer(input) : nullptr;
 }
 
-AVCodecContext *openDecoder(const AVStream *stream)
+Media::CodecContextPointer openDecoder(const AVStream *stream)
 {
     const AVCodec *codec = avcodec_find_decoder(stream->codecpar->codec_id);
-    AVCodecContext *decoder = codec ? avcodec_alloc_context3(codec) : nullptr;
+    Media::CodecContextPointer decoder(codec ? avcodec_alloc_context3(codec) : nullptr);
     if (!decoder)
         return nullptr;
     // threaded decoding returns each picture that many pictures late
     decoder->thread_count = 1;
     decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
-    if (avcodec_parameters_to_context(decoder, stream->codecpar) < 0 || avcodec_open2(decoder, codec, nullptr) < 0)
-        avcodec_free_context(&decoder);
+    if (avcodec_parameters_to_context(decoder.get(), stream->codecpar) < 0 || avcodec_open2(decoder.get(), codec, nullptr) < 0)
+        return nullptr;
     return decoder;
 }
 
@@ -143,7 +150,7 @@ OpenCamera openCamera(const QByteArray &url)
 {
     for (const Mode &mode : MODES) {
         OpenCamera camera;
-        camera.input.reset(openInput(url, mode));
+        camera.input = openInput(url, mode);
         if (!camera.input || camera.input->nb_streams == 0 || camera.input->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
             continue;
 #ifdef Q_OS_LINUX
@@ -153,7 +160,7 @@ OpenCamera openCamera(const QByteArray &url)
             continue;
 #endif
         camera.sizeAskedFor = mode.size;
-        camera.decoder.reset(openDecoder(camera.input->streams[0]));
+        camera.decoder = openDecoder(camera.input->streams[0]);
         if (camera.decoder)
             return camera;
     }
@@ -194,7 +201,7 @@ std::chrono::steady_clock::time_point CaptureClock::at(std::optional<std::chrono
     if (stamped) {
         const Clock::duration ahead = readAt.time_since_epoch() - *stamped;
         const Clock::duration followed = ourClockAhead ? *ourClockAhead + (readAt - lastReadAt) / SLOWEST_CLOCK_FOLLOWED : ahead;
-        ourClockAhead = ahead - followed > STARTED_OVER ? ahead : std::min(ahead, followed);
+        ourClockAhead = ahead - followed > CLOCK_STARTED_OVER ? ahead : std::min(ahead, followed);
         taken = Clock::time_point(std::chrono::duration_cast<Clock::duration>(*stamped + *ourClockAhead));
     }
     lastReadAt = readAt;
@@ -237,7 +244,6 @@ QList<CameraDevice> cameraDevices()
     if (!inputDevice() || avdevice_list_input_sources(inputDevice(), nullptr, nullptr, &found) < 0)
         return {};
 
-    // microphones are in the same list
     QList<CameraDevice> cameras;
     for (int i = 0; i < found->nb_devices; i++) {
         const AVDeviceInfo *device = found->devices[i];
@@ -282,14 +288,11 @@ QList<CameraDevice> cameraDevices()
 
 #endif
 
-CameraCapture::CameraCapture() : newest(av_frame_alloc()) {}
-
 CameraCapture::~CameraCapture()
 {
     stopping = true;
     if (thread.joinable())
         thread.join();
-    av_frame_free(&newest);
 }
 
 bool CameraCapture::open(const QString &deviceId)
@@ -307,7 +310,7 @@ CameraFrameSource::Status CameraCapture::read(AVFrame *into, std::chrono::steady
     std::unique_lock lock(mutex);
     changed.wait_for(lock, std::chrono::milliseconds(READ_WAIT_MS), [this] { return newest->buf[0] || state == State::Ended; });
     if (newest->buf[0]) {
-        av_frame_move_ref(into, newest);
+        av_frame_move_ref(into, newest.get());
         capturedAt = newestCapturedAt;
         return Status::Frame;
     }
@@ -353,8 +356,8 @@ void CameraCapture::publish(AVFrame *picture, std::chrono::steady_clock::time_po
         picture->colorspace = AVCOL_SPC_SMPTE170M;
     {
         std::lock_guard lock(mutex);
-        av_frame_unref(newest);
-        av_frame_move_ref(newest, picture);
+        av_frame_unref(newest.get());
+        av_frame_move_ref(newest.get(), picture);
         newestCapturedAt = capturedAt;
     }
     changed.notify_all();
@@ -386,13 +389,13 @@ void CameraCapture::run(const QString &deviceId)
     const AVCodecDescriptor *codec = avcodec_descriptor_get(camera.decoder->codec_id);
     const bool everyPictureStandsAlone = codec && (codec->props & AV_CODEC_PROP_INTRA_ONLY);
     CaptureClock clock;
-    QElapsedTimer sincePicture;
-    sincePicture.start();
+    QElapsedTimer sincePacket;
+    sincePacket.start();
 
     while (!stopping) {
         const int got = av_read_frame(camera.input.get(), packet.get());
         if (got == AVERROR(EAGAIN)) {
-            if (sincePicture.elapsed() >= NO_PICTURE_TIMEOUT_MS) {
+            if (sincePacket.elapsed() >= NO_PACKET_TIMEOUT_MS) {
                 end(cameraText("The camera is not sending pictures. Another program may be using it."));
                 return;
             }
@@ -403,7 +406,7 @@ void CameraCapture::run(const QString &deviceId)
             end(cameraText("The camera was disconnected."));
             return;
         }
-        sincePicture.start();
+        sincePacket.start();
         const Clock::time_point readAt = Clock::now();
 
         while (everyPictureStandsAlone && av_read_frame(camera.input.get(), newer.get()) >= 0) {

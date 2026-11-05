@@ -1,7 +1,7 @@
-
 #include "Core/Media/HardwareDevices.hpp"
 #include "Core/Media/VideoDecoder.hpp"
 #include "HardwareTests.hpp"
+#include "TestPictures.hpp"
 #include "UI/Video/VideoSurface.hpp"
 
 #include <QDir>
@@ -20,7 +20,7 @@
 #include <algorithm>
 
 #ifdef Q_OS_WIN
-// before ffmpeg's header, which would otherwise pull it in as C
+// first: hwcontext_d3d11va.h would include it inside extern "C"
 #include <d3d11.h>
 #undef small
 #endif
@@ -39,130 +39,62 @@ extern "C" {
 #endif
 }
 
+using Acheron::Core::Media::BufferPointer;
+using Acheron::Core::Media::FramePointer;
+using Acheron::UI::SPEAKING_RING;
 using Acheron::UI::VideoSurface;
+using namespace TestPictures;
 
 namespace {
 
-AVFrame *solidFrame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+const char CANNOT_DRAW_FROM_CARD[] = "This surface cannot draw the card's picture where it is";
+const char NO_DEVICE_TO_DRAW_FROM[] = "No video device whose pictures this surface can draw";
+constexpr uint8_t GREY_LUMA = 126;
+
+[[nodiscard]] bool shown(QWidget &window, const QSize &size = QSize(320, 180))
 {
-    AVFrame *frame = av_frame_alloc();
-    frame->format = AV_PIX_FMT_YUV420P;
-    frame->width = width;
-    frame->height = height;
-    av_frame_get_buffer(frame, 0);
-    for (int row = 0; row < height; row++)
-        memset(frame->data[0] + row * frame->linesize[0], y, static_cast<size_t>(width));
-    for (int row = 0; row < height / 2; row++) {
-        memset(frame->data[1] + row * frame->linesize[1], cb, static_cast<size_t>(width / 2));
-        memset(frame->data[2] + row * frame->linesize[2], cr, static_cast<size_t>(width / 2));
-    }
+    window.resize(size);
+    window.show();
+    return QTest::qWaitForWindowExposed(&window);
+}
+
+FramePointer withGreyRightHalf(FramePointer frame)
+{
+    for (int row = 0; row < frame->height; row++)
+        memset(frame->data[0] + row * frame->linesize[0] + frame->width / 2, GREY_LUMA, static_cast<size_t>(frame->width - frame->width / 2));
     return frame;
 }
 
-// white on the left, grey on the right
-AVFrame *frameOfTwoHalves(int width, int height)
+void present(VideoSurface &surface, FramePointer frame)
 {
-    AVFrame *frame = solidFrame(width, height, 235, 128, 128);
-    for (int row = 0; row < height; row++)
-        memset(frame->data[0] + row * frame->linesize[0] + width / 2, 126, static_cast<size_t>(width - width / 2));
-    return frame;
-}
-
-#ifdef CARD_FORMAT
-AVFrame *solidNv12Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
-{
-    AVFrame *memory = av_frame_alloc();
-    memory->format = AV_PIX_FMT_NV12;
-    memory->width = width;
-    memory->height = height;
-    av_frame_get_buffer(memory, 0);
-    for (int row = 0; row < height; row++)
-        memset(memory->data[0] + row * memory->linesize[0], y, static_cast<size_t>(width));
-    for (int row = 0; row < height / 2; row++) {
-        uint8_t *pair = memory->data[1] + row * memory->linesize[1];
-        for (int column = 0; column < width / 2; column++) {
-            *pair++ = cb;
-            *pair++ = cr;
-        }
-    }
-    return memory;
-}
-#endif
-
-#ifdef HAVE_D3D11VA
-AVFrame *onCard(AVFrame *memory)
-{
-    const int width = memory->width;
-    const int height = memory->height;
-    AVBufferRef *device = nullptr;
-    if (av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_D3D11VA, nullptr, nullptr, 0) < 0) {
-        av_frame_free(&memory);
-        return nullptr;
-    }
-    AVBufferRef *pool = av_hwframe_ctx_alloc(device);
-    av_buffer_unref(&device);
-    auto *frames = reinterpret_cast<AVHWFramesContext *>(pool->data);
-    frames->format = AV_PIX_FMT_D3D11;
-    frames->sw_format = AV_PIX_FMT_NV12;
-    frames->width = width;
-    frames->height = height;
-    frames->initial_pool_size = 2;
-    static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = D3D11_BIND_DECODER;
-
-    AVFrame *frame = av_frame_alloc();
-    if (av_hwframe_ctx_init(pool) < 0 || av_hwframe_get_buffer(pool, frame, 0) < 0 || av_hwframe_transfer_data(frame, memory, 0) < 0)
-        av_frame_free(&frame);
-    av_frame_free(&memory);
-    av_buffer_unref(&pool);
-    return frame;
-}
-
-AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
-{
-    return onCard(solidNv12Frame(width, height, y, cb, cr));
-}
-
-AVFrame *frameOfTwoHalvesOnCard(int width, int height)
-{
-    AVFrame *memory = solidNv12Frame(width, height, 235, 128, 128);
-    for (int row = 0; row < height; row++)
-        memset(memory->data[0] + row * memory->linesize[0] + width / 2, 126, static_cast<size_t>(width - width / 2));
-    return onCard(memory);
-}
-#endif
-
-void present(VideoSurface &surface, AVFrame *frame)
-{
-    surface.sink()->present(frame);
-    av_frame_free(&frame);
+    surface.sink()->present(frame.get());
+    frame.reset();
     QCoreApplication::processEvents();
-}
-
-QImage shot(VideoSurface &surface);
-
-int layersOf(const VideoSurface &surface)
-{
-    int layers = 0;
-    const QWindowList windows = QGuiApplication::allWindows();
-    for (const QWindow *window : windows)
-        layers += surface.windowHandle() && window->parent() == surface.windowHandle() ? 1 : 0;
-    return layers;
-}
-
-QImage drawnOnce(VideoSurface &surface)
-{
-    present(surface, solidFrame(64, 36, 16, 128, 128));
-    return shot(surface);
 }
 
 QImage shot(VideoSurface &surface)
 {
-    QImage image = surface.snapshot();
-    for (int i = 0; i < 200 && image.isNull(); i++) {
-        QTest::qWait(10);
-        image = surface.snapshot();
-    }
+    QImage image;
+    if (!QTest::qWaitFor([&] { image = surface.snapshot(); return !image.isNull(); }, 2000))
+        return {};
     return image.convertToFormat(QImage::Format_RGB32);
+}
+
+void drawOnce(VideoSurface &surface)
+{
+    present(surface, solidFrame(BLACK, 64, 36));
+    shot(surface);
+}
+
+QList<QWindow *> layersOf(const VideoSurface &surface)
+{
+    QList<QWindow *> layers;
+    const QWindowList windows = QGuiApplication::allWindows();
+    for (QWindow *window : windows) {
+        if (surface.windowHandle() && window->parent() == surface.windowHandle())
+            layers.append(window);
+    }
+    return layers;
 }
 
 bool isNear(QRgb pixel, int red, int green, int blue)
@@ -171,68 +103,119 @@ bool isNear(QRgb pixel, int red, int green, int blue)
     return qAbs(qRed(pixel) - red) <= TOLERANCE && qAbs(qGreen(pixel) - green) <= TOLERANCE && qAbs(qBlue(pixel) - blue) <= TOLERANCE;
 }
 
-#ifdef HAVE_VAAPI
-// drm_fourcc.h
-constexpr quint64 MODIFIER_LINEAR = 0;
-constexpr quint64 MODIFIER_INVALID = 0x00ffffffffffffffULL;
-
-AVFrame *solidP010Frame(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+bool isNear(QRgb pixel, const QColor &colour)
 {
-    AVFrame *memory = av_frame_alloc();
-    memory->format = AV_PIX_FMT_P010;
-    memory->width = width;
-    memory->height = height;
-    av_frame_get_buffer(memory, 0);
-    for (int row = 0; row < height; row++) {
-        auto *line = reinterpret_cast<uint16_t *>(memory->data[0] + row * memory->linesize[0]);
-        std::fill(line, line + width, static_cast<uint16_t>(y << 8));
-    }
+    return isNear(pixel, colour.red(), colour.green(), colour.blue());
+}
+
+#ifdef CARD_FORMAT
+// known only once a first picture has made the surface's layer
+[[nodiscard]] bool takesCardPictures(VideoSurface &surface)
+{
+    drawOnce(surface);
+    return surface.sink()->acceptsHardwareFrames(CARD_FORMAT);
+}
+
+FramePointer solidNv12Frame(YuvSamples colour, int width, int height)
+{
+    FramePointer memory(av_frame_alloc());
+    if (!memory || Acheron::Core::Media::prepareWritable(memory.get(), AV_PIX_FMT_NV12, QSize(width, height)) < 0)
+        return nullptr;
+    for (int row = 0; row < height; row++)
+        memset(memory->data[0] + row * memory->linesize[0], colour.y, static_cast<size_t>(width));
     for (int row = 0; row < height / 2; row++) {
-        auto *pair = reinterpret_cast<uint16_t *>(memory->data[1] + row * memory->linesize[1]);
+        uint8_t *pair = memory->data[1] + row * memory->linesize[1];
         for (int column = 0; column < width / 2; column++) {
-            *pair++ = static_cast<uint16_t>(cb << 8);
-            *pair++ = static_cast<uint16_t>(cr << 8);
+            *pair++ = colour.u;
+            *pair++ = colour.v;
         }
     }
     return memory;
 }
 
-AVBufferRef *vaapiPool(const QByteArray &node, int width, int height, int surfaces = 0, AVPixelFormat layout = AV_PIX_FMT_NV12)
+BufferPointer cardPool(const char *device, int width, int height, int surfaces = 0, AVPixelFormat layout = AV_PIX_FMT_NV12)
 {
-    AVBufferRef *device = nullptr;
-    if (!Acheron::Core::Media::hardwareDeviceCanBeAskedFor(AV_HWDEVICE_TYPE_VAAPI) || av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_VAAPI, node.constData(), nullptr, 0) < 0)
+#ifdef HAVE_D3D11VA
+    constexpr AVHWDeviceType TYPE = AV_HWDEVICE_TYPE_D3D11VA;
+#else
+    constexpr AVHWDeviceType TYPE = AV_HWDEVICE_TYPE_VAAPI;
+#endif
+    AVBufferRef *created = nullptr;
+    if (!Acheron::Core::Media::hardwareDeviceCanBeAskedFor(TYPE) || av_hwdevice_ctx_create(&created, TYPE, device, nullptr, 0) < 0)
         return nullptr;
-    AVBufferRef *pool = av_hwframe_ctx_alloc(device);
-    av_buffer_unref(&device);
+    const BufferPointer card(created);
+    BufferPointer pool(av_hwframe_ctx_alloc(card.get()));
+    if (!pool)
+        return nullptr;
     auto *frames = reinterpret_cast<AVHWFramesContext *>(pool->data);
-    frames->format = AV_PIX_FMT_VAAPI;
+    frames->format = CARD_FORMAT;
     frames->sw_format = layout;
     frames->width = width;
     frames->height = height;
     frames->initial_pool_size = surfaces;
-    if (av_hwframe_ctx_init(pool) < 0)
-        av_buffer_unref(&pool);
+#ifdef HAVE_D3D11VA
+    static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = D3D11_BIND_DECODER;
+#endif
+    if (av_hwframe_ctx_init(pool.get()) < 0)
+        return nullptr;
     return pool;
 }
 
-AVFrame *onCard(AVBufferRef *pool, AVFrame *memory)
+FramePointer onCard(AVBufferRef *pool, const AVFrame *memory)
 {
-    AVFrame *frame = av_frame_alloc();
-    if (av_hwframe_get_buffer(pool, frame, 0) < 0 || av_hwframe_transfer_data(frame, memory, 0) < 0)
-        av_frame_free(&frame);
-    av_frame_free(&memory);
+    FramePointer frame(av_frame_alloc());
+    if (!frame || !memory || av_hwframe_get_buffer(pool, frame.get(), 0) < 0 || av_hwframe_transfer_data(frame.get(), memory, 0) < 0)
+        return nullptr;
     return frame;
 }
 
-AVFrame *solidFrameFrom(AVBufferRef *pool, uint8_t y, uint8_t cb, uint8_t cr)
+FramePointer solidFrameFrom(AVBufferRef *pool, YuvSamples colour)
 {
     const auto *frames = reinterpret_cast<const AVHWFramesContext *>(pool->data);
-    return onCard(pool, solidNv12Frame(frames->width, frames->height, y, cb, cr));
+    return onCard(pool, solidNv12Frame(colour, frames->width, frames->height).get());
+}
+#endif
+
+#ifdef HAVE_D3D11VA
+FramePointer onCard(const AVFrame *memory)
+{
+    const BufferPointer pool = cardPool(nullptr, memory->width, memory->height, 2);
+    return pool ? onCard(pool.get(), memory) : nullptr;
 }
 
-AVFrame *rampNv12Frame(QSize picture, QSize coded)
+FramePointer solidFrameOnCard(YuvSamples colour, int width, int height)
 {
-    AVFrame *memory = solidNv12Frame(coded.width(), coded.height(), 235, 128, 128);
+    return onCard(solidNv12Frame(colour, width, height).get());
+}
+#endif
+
+#ifdef HAVE_VAAPI
+// drm_fourcc.h
+constexpr quint64 MODIFIER_LINEAR = 0;
+constexpr quint64 MODIFIER_INVALID = 0x00ffffffffffffffULL;
+
+FramePointer solidP010Frame(YuvSamples colour, int width, int height)
+{
+    FramePointer memory(av_frame_alloc());
+    if (!memory || Acheron::Core::Media::prepareWritable(memory.get(), AV_PIX_FMT_P010, QSize(width, height)) < 0)
+        return nullptr;
+    for (int row = 0; row < height; row++) {
+        auto *line = reinterpret_cast<uint16_t *>(memory->data[0] + row * memory->linesize[0]);
+        std::fill(line, line + width, static_cast<uint16_t>(colour.y << 8));
+    }
+    for (int row = 0; row < height / 2; row++) {
+        auto *pair = reinterpret_cast<uint16_t *>(memory->data[1] + row * memory->linesize[1]);
+        for (int column = 0; column < width / 2; column++) {
+            *pair++ = static_cast<uint16_t>(colour.u << 8);
+            *pair++ = static_cast<uint16_t>(colour.v << 8);
+        }
+    }
+    return memory;
+}
+
+FramePointer rampNv12Frame(QSize picture, QSize coded)
+{
+    FramePointer memory = solidNv12Frame(WHITE, coded.width(), coded.height());
     for (int row = 0; row < picture.height(); row++) {
         for (int column = 0; column < picture.width(); column++)
             memory->data[0][row * memory->linesize[0] + column] = static_cast<uint8_t>(16 + 219 * column / picture.width());
@@ -244,14 +227,10 @@ AVFrame *rampNv12Frame(QSize picture, QSize coded)
     return memory;
 }
 
-AVFrame *solidFrameOnNode(const QByteArray &node, int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+FramePointer solidFrameOnNode(const QByteArray &node, YuvSamples colour, int width, int height)
 {
-    AVBufferRef *pool = vaapiPool(node, width, height);
-    if (!pool)
-        return nullptr;
-    AVFrame *frame = solidFrameFrom(pool, y, cb, cr);
-    av_buffer_unref(&pool);
-    return frame;
+    const BufferPointer pool = cardPool(node.constData(), width, height);
+    return pool ? solidFrameFrom(pool.get(), colour) : nullptr;
 }
 
 QList<QByteArray> renderNodes()
@@ -301,13 +280,11 @@ const EglHere &eglHere()
 
 quint64 modifierOf(const AVFrame *frame)
 {
-    AVFrame *exported = av_frame_alloc();
+    const FramePointer exported(av_frame_alloc());
     exported->format = AV_PIX_FMT_DRM_PRIME;
-    quint64 modifier = MODIFIER_INVALID;
-    if (av_hwframe_map(exported, frame, AV_HWFRAME_MAP_READ) >= 0)
-        modifier = reinterpret_cast<const AVDRMFrameDescriptor *>(exported->data[0])->objects[0].format_modifier;
-    av_frame_free(&exported);
-    return modifier;
+    if (av_hwframe_map(exported.get(), frame, AV_HWFRAME_MAP_READ) < 0)
+        return MODIFIER_INVALID;
+    return reinterpret_cast<const AVDRMFrameDescriptor *>(exported->data[0])->objects[0].format_modifier;
 }
 
 QByteArray drawingNode()
@@ -315,24 +292,22 @@ QByteArray drawingNode()
     static const QByteArray found = [] {
         const QByteArray node = eglHere().renderNode;
         VideoSurface surface;
-        surface.resize(160, 90);
-        surface.show();
-        AVFrame *frame = node.isEmpty() ? nullptr : solidFrameOnNode(node, 640, 360, 235, 128, 128);
-        if (!frame || !QTest::qWaitForWindowExposed(&surface)) {
-            av_frame_free(&frame);
+        if (node.isEmpty() || !shown(surface, QSize(160, 90)))
             return QByteArray();
-        }
+        FramePointer frame = solidFrameOnNode(node, WHITE, 640, 360);
+        if (!frame)
+            return QByteArray();
         shot(surface);
-        present(surface, frame);
+        present(surface, std::move(frame));
         shot(surface);
         return surface.drawsFromCard() ? node : QByteArray();
     }();
     return found;
 }
 
-AVFrame *solidFrameOnCard(int width, int height, uint8_t y, uint8_t cb, uint8_t cr)
+FramePointer solidFrameOnCard(YuvSamples colour, int width, int height)
 {
-    return drawingNode().isEmpty() ? nullptr : solidFrameOnNode(drawingNode(), width, height, y, cb, cr);
+    return drawingNode().isEmpty() ? nullptr : solidFrameOnNode(drawingNode(), colour, width, height);
 }
 #endif
 
@@ -386,11 +361,9 @@ void TestVideoSurface::initTestCase()
 void TestVideoSurface::frameFillsAMatchingSurface()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 360));
 
     const QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(0, 0), 255, 255, 255));
@@ -401,12 +374,10 @@ void TestVideoSurface::frameFillsAMatchingSurface()
 void TestVideoSurface::narrowerFrameIsCentredBetweenBars()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
     // 4:3 in a 16:9 surface: 240 wide, with a 40 pixel bar on each side
-    present(surface, solidFrame(640, 480, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 480));
 
     const QImage image = shot(surface);
     const qreal ratio = image.devicePixelRatio();
@@ -450,13 +421,11 @@ void TestVideoSurface::aTurnedPictureIsDrawnTheRightWayUp()
     QFETCH(int, quarterTurns);
 
     VideoSurface surface;
-    surface.resize(320, 320);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface, QSize(320, 320)));
 
-    AVFrame *frame = frameOfTwoHalves(640, 320);
-    Acheron::Core::Media::setQuarterTurns(frame, quarterTurns);
-    present(surface, frame);
+    FramePointer frame = withGreyRightHalf(solidFrame(WHITE, 640, 320));
+    Acheron::Core::Media::setQuarterTurns(frame.get(), quarterTurns);
+    present(surface, std::move(frame));
     verifyTurnedPicture(shot(surface));
 }
 
@@ -467,18 +436,15 @@ void TestVideoSurface::aTurnedPictureOnTheCardIsDrawnTheRightWayUp()
     QFETCH(int, quarterTurns);
 
     VideoSurface surface;
-    surface.resize(320, 320);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    drawnOnce(surface);
-    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+    QVERIFY(shown(surface, QSize(320, 320)));
+    if (!takesCardPictures(surface))
+        QSKIP(CANNOT_DRAW_FROM_CARD);
 
-    AVFrame *frame = frameOfTwoHalvesOnCard(640, 320);
+    FramePointer frame = onCard(withGreyRightHalf(solidNv12Frame(WHITE, 640, 320)).get());
     if (!frame)
-        QSKIP("No video device whose pictures this surface can draw");
-    Acheron::Core::Media::setQuarterTurns(frame, quarterTurns);
-    present(surface, frame);
+        QSKIP(NO_DEVICE_TO_DRAW_FROM);
+    Acheron::Core::Media::setQuarterTurns(frame.get(), quarterTurns);
+    present(surface, std::move(frame));
     QTRY_VERIFY(surface.drawsFromCard());
     verifyTurnedPicture(shot(surface));
 #else
@@ -489,16 +455,14 @@ void TestVideoSurface::aTurnedPictureOnTheCardIsDrawnTheRightWayUp()
 void TestVideoSurface::coloursFollowTheVideoStandard()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
-    // pure red differs between BT.709 (HD) and BT.601 (SD); untagged frames are read by their height
-    present(surface, solidFrame(1280, 720, 63, 102, 240));
+    // untagged, so read by their height
+    present(surface, solidFrame(RED_BT709, 1280, 720));
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
-    present(surface, solidFrame(640, 360, 81, 90, 240));
+    present(surface, solidFrame(RED_BT601, 640, 360));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 }
@@ -509,18 +473,15 @@ void TestVideoSurface::memoryEglCannotBeToldTheOrderOfIsReadBack()
 #ifdef HAVE_VAAPI
     if (!eglHere().present || eglHere().takesModifiers)
         QSKIP("Only for an EGL that cannot be told how a card orders its memory");
-    AVFrame *frame = eglHere().renderNode.isEmpty() ? nullptr : solidFrameOnNode(eglHere().renderNode, 1280, 720, 63, 102, 240);
+    FramePointer frame = eglHere().renderNode.isEmpty() ? nullptr : solidFrameOnNode(eglHere().renderNode, RED_BT709, 1280, 720);
     if (!frame)
         QSKIP("No video device on the card that draws");
-    const quint64 modifier = modifierOf(frame);
+    const quint64 modifier = modifierOf(frame.get());
 
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    drawnOnce(surface);
-    const bool offered = surface.sink()->acceptsHardwareFrames(CARD_FORMAT);
-    present(surface, frame);
+    QVERIFY(shown(surface));
+    const bool offered = takesCardPictures(surface);
+    present(surface, std::move(frame));
     const QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
     QCOMPARE(surface.drawsFromCard(), offered && (modifier == MODIFIER_LINEAR || modifier == MODIFIER_INVALID));
@@ -534,30 +495,26 @@ void TestVideoSurface::frameOnTheGraphicsCardIsDrawnFromThere()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef CARD_FORMAT
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-
-    drawnOnce(surface);
-    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+    QVERIFY(shown(surface));
+    if (!takesCardPictures(surface))
+        QSKIP(CANNOT_DRAW_FROM_CARD);
     QVERIFY(!surface.sink()->acceptsHardwareFrames(AV_PIX_FMT_DXVA2_VLD));
 
-    AVFrame *frame = solidFrameOnCard(1280, 720, 63, 102, 240);
+    FramePointer frame = solidFrameOnCard(RED_BT709, 1280, 720);
     if (!frame)
-        QSKIP("No video device whose pictures this surface can draw");
-    present(surface, frame);
+        QSKIP(NO_DEVICE_TO_DRAW_FROM);
+    present(surface, std::move(frame));
     QTRY_VERIFY(surface.drawsFromCard());
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(0, 0), 255, 0, 0));
     QVERIFY(isNear(image.pixel(image.width() - 1, image.height() - 1), 255, 0, 0));
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
-    frame = solidFrameOnCard(640, 480, 81, 90, 240);
+    frame = solidFrameOnCard(RED_BT601, 640, 480);
     QVERIFY(frame);
     const qreal ratio = image.devicePixelRatio();
     const int middle = image.height() / 2;
-    present(surface, frame);
+    present(surface, std::move(frame));
     QTRY_VERIFY(isNear(shot(surface).pixel(qRound(20 * ratio), middle), 0, 0, 0));
     image = shot(surface);
     QVERIFY(surface.drawsFromCard());
@@ -572,7 +529,7 @@ void TestVideoSurface::frameOnTheGraphicsCardIsDrawnFromThere()
     QVERIFY(!isNear(image.pixel(1, middle), 0, 0, 0));
     surface.setSpeaking(false);
 
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 360));
     image = shot(surface);
     QVERIFY(!surface.drawsFromCard());
     QVERIFY(isNear(image.pixel(image.width() / 2, middle), 255, 255, 255));
@@ -591,25 +548,23 @@ void TestVideoSurface::manySurfacesDrawFromTheGraphicsCard()
 #ifdef CARD_FORMAT
     constexpr int COUNT = 5;
     QWidget window;
-    window.resize(COUNT * 160, 90);
     QList<VideoSurface *> surfaces;
     for (int i = 0; i < COUNT; i++) {
         auto *surface = new VideoSurface(&window);
         surface->setGeometry(i * 160, 0, 160, 90);
         surfaces.append(surface);
     }
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QVERIFY(shown(window, QSize(COUNT * 160, 90)));
     for (VideoSurface *surface : surfaces)
-        drawnOnce(*surface);
+        drawOnce(*surface);
     if (!surfaces.first()->sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+        QSKIP(CANNOT_DRAW_FROM_CARD);
 
     for (int i = 0; i < COUNT; i++) {
-        AVFrame *frame = i % 2 == 0 ? solidFrameOnCard(640, 360, 235, 128, 128) : solidFrameOnCard(640, 360, 81, 90, 240);
+        FramePointer frame = solidFrameOnCard(i % 2 == 0 ? WHITE : RED_BT601, 640, 360);
         if (!frame)
-            QSKIP("No video device whose pictures this surface can draw");
-        present(*surfaces[i], frame);
+            QSKIP(NO_DEVICE_TO_DRAW_FROM);
+        present(*surfaces[i], std::move(frame));
     }
     for (VideoSurface *surface : surfaces)
         QTRY_VERIFY(surface->drawsFromCard());
@@ -621,7 +576,7 @@ void TestVideoSurface::manySurfacesDrawFromTheGraphicsCard()
     }
 
     surfaces[1]->hide();
-    present(*surfaces[1], solidFrameOnCard(640, 360, 235, 128, 128));
+    present(*surfaces[1], solidFrameOnCard(WHITE, 640, 360));
     surfaces[1]->show();
     QTRY_VERIFY(isNear(shot(*surfaces[1]).pixel(40, 40), 255, 255, 255));
 #else
@@ -634,27 +589,23 @@ void TestVideoSurface::pictureFromTheCardIsThePictureInMemory()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef HAVE_VAAPI
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    drawnOnce(surface);
-    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+    QVERIFY(shown(surface));
+    if (!takesCardPictures(surface))
+        QSKIP(CANNOT_DRAW_FROM_CARD);
     if (drawingNode().isEmpty())
-        QSKIP("No video device whose pictures this surface can draw");
+        QSKIP(NO_DEVICE_TO_DRAW_FROM);
 
     const QSize picture(500, 282);
     const QSize coded(512, 288);
-    AVFrame *memory = rampNv12Frame(picture, coded);
-    AVBufferRef *pool = vaapiPool(drawingNode(), coded.width(), coded.height());
+    FramePointer memory = rampNv12Frame(picture, coded);
+    const BufferPointer pool = cardPool(drawingNode().constData(), coded.width(), coded.height());
     QVERIFY(pool);
-    AVFrame *card = onCard(pool, av_frame_clone(memory));
-    av_buffer_unref(&pool);
+    FramePointer card = onCard(pool.get(), memory.get());
     QVERIFY(card);
 
     memory->width = picture.width();
     memory->height = picture.height();
-    present(surface, memory);
+    present(surface, std::move(memory));
     const QImage fromMemory = shot(surface);
     QVERIFY(!surface.drawsFromCard());
     QVERIFY(qBlue(fromMemory.pixel(160, 170)) > qBlue(fromMemory.pixel(160, 10)) + 100);
@@ -662,7 +613,7 @@ void TestVideoSurface::pictureFromTheCardIsThePictureInMemory()
 
     card->width = picture.width();
     card->height = picture.height();
-    present(surface, card);
+    present(surface, std::move(card));
     const QImage fromCard = shot(surface);
     QVERIFY(surface.drawsFromCard());
     QCOMPARE(fromCard.size(), fromMemory.size());
@@ -682,33 +633,26 @@ void TestVideoSurface::tenBitPictureFromTheCardIsReadBack()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef HAVE_VAAPI
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    drawnOnce(surface);
-    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+    QVERIFY(shown(surface));
+    if (!takesCardPictures(surface))
+        QSKIP(CANNOT_DRAW_FROM_CARD);
     if (drawingNode().isEmpty())
-        QSKIP("No video device whose pictures this surface can draw");
-    AVBufferRef *pool = vaapiPool(drawingNode(), 1280, 720, 0, AV_PIX_FMT_P010);
+        QSKIP(NO_DEVICE_TO_DRAW_FROM);
+    const BufferPointer pool = cardPool(drawingNode().constData(), 1280, 720, 0, AV_PIX_FMT_P010);
     if (!pool)
         QSKIP("No ten-bit surfaces on this card");
 
-    AVFrame *frame = onCard(pool, solidP010Frame(1280, 720, 63, 102, 240));
-    av_buffer_unref(&pool);
+    FramePointer frame = onCard(pool.get(), solidP010Frame(RED_BT709, 1280, 720).get());
     QVERIFY(frame);
-    present(surface, frame);
+    present(surface, std::move(frame));
     const QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
     QVERIFY(!surface.drawsFromCard());
     QVERIFY(!surface.sink()->acceptsHardwareFrames(CARD_FORMAT));
 
     VideoSurface other;
-    other.resize(320, 180);
-    other.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&other));
-    drawnOnce(other);
-    QVERIFY(other.sink()->acceptsHardwareFrames(CARD_FORMAT));
+    QVERIFY(shown(other));
+    QVERIFY(takesCardPictures(other));
 #else
     QSKIP("VAAPI only");
 #endif
@@ -719,42 +663,35 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
 #ifdef HAVE_VAAPI
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    drawnOnce(surface);
-    if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        QSKIP("This surface cannot draw the card's picture where it is");
+    QVERIFY(shown(surface));
+    if (!takesCardPictures(surface))
+        QSKIP(CANNOT_DRAW_FROM_CARD);
     if (drawingNode().isEmpty())
-        QSKIP("No video device whose pictures this surface can draw");
+        QSKIP(NO_DEVICE_TO_DRAW_FROM);
 
-    AVBufferRef *pool = vaapiPool(drawingNode(), 640, 360, 2);
+    const BufferPointer pool = cardPool(drawingNode().constData(), 640, 360, 2);
     QVERIFY(pool);
-    present(surface, solidFrameFrom(pool, 81, 90, 240));
+    present(surface, solidFrameFrom(pool.get(), RED_BT601));
     QImage image = shot(surface);
     QVERIFY(surface.drawsFromCard());
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
-    AVFrame *white = solidFrameFrom(pool, 235, 128, 128);
+    FramePointer white = solidFrameFrom(pool.get(), WHITE);
     QVERIFY(white);
-    surface.sink()->present(white);
-    av_frame_free(&white);
-    AVFrame *spare = av_frame_alloc();
-    QVERIFY(av_hwframe_get_buffer(pool, spare, 0) < 0);
+    surface.sink()->present(white.get());
+    white.reset();
+    const FramePointer spare(av_frame_alloc());
+    QVERIFY(av_hwframe_get_buffer(pool.get(), spare.get(), 0) < 0);
 
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
-    QCOMPARE(av_hwframe_get_buffer(pool, spare, 0), 0);
+    QCOMPARE(av_hwframe_get_buffer(pool.get(), spare.get(), 0), 0);
 
     surface.clear();
-    AVFrame *other = av_frame_alloc();
-    QVERIFY(av_hwframe_get_buffer(pool, other, 0) < 0);
+    const FramePointer other(av_frame_alloc());
+    QVERIFY(av_hwframe_get_buffer(pool.get(), other.get(), 0) < 0);
     shot(surface);
-    QCOMPARE(av_hwframe_get_buffer(pool, other, 0), 0);
-
-    av_frame_free(&spare);
-    av_frame_free(&other);
-    av_buffer_unref(&pool);
+    QCOMPARE(av_hwframe_get_buffer(pool.get(), other.get(), 0), 0);
 #else
     QSKIP("VAAPI only");
 #endif
@@ -763,33 +700,29 @@ void TestVideoSurface::cardSurfaceIsKeptFromTheDecoderWhileItIsDrawn()
 void TestVideoSurface::pictureSurvivesAMoveToAnotherWindow()
 {
     QWidget first;
-    first.resize(320, 180);
     auto *surface = new VideoSurface(&first);
     surface->setGeometry(0, 0, 320, 180);
-    first.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&first));
-    present(*surface, solidFrame(640, 360, 235, 128, 128));
+    QVERIFY(shown(first));
+    present(*surface, solidFrame(WHITE, 640, 360));
     QImage image = shot(*surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
     QWidget second;
-    second.resize(320, 180);
     surface->setParent(&second);
     surface->setGeometry(0, 0, 320, 180);
     surface->show();
-    second.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&second));
+    QVERIFY(shown(second));
     image = shot(*surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
-    present(*surface, solidFrame(1280, 720, 63, 102, 240));
+    present(*surface, solidFrame(RED_BT709, 1280, 720));
     image = shot(*surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
 
 #ifdef CARD_FORMAT
     if (surface->sink()->acceptsHardwareFrames(CARD_FORMAT)) {
-        if (AVFrame *frame = solidFrameOnCard(640, 360, 235, 128, 128)) {
-            present(*surface, frame);
+        if (FramePointer frame = solidFrameOnCard(WHITE, 640, 360)) {
+            present(*surface, std::move(frame));
             QTRY_VERIFY(surface->drawsFromCard());
 
             surface->setParent(&first);
@@ -804,9 +737,7 @@ void TestVideoSurface::pictureSurvivesAMoveToAnotherWindow()
 void TestVideoSurface::clickAndDoubleClickAreReported()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
     QSignalSpy clicks(&surface, &VideoSurface::clicked);
     QSignalSpy doubleClicks(&surface, &VideoSurface::doubleClicked);
@@ -820,14 +751,10 @@ void TestVideoSurface::clickAndDoubleClickAreReported()
     if (!surface.drawsWithGpu())
         return;
 
-    drawnOnce(surface);
-    QWindow *layer = nullptr;
-    const QWindowList windows = QGuiApplication::allWindows();
-    for (QWindow *window : windows) {
-        if (window->parent() == surface.windowHandle())
-            layer = window;
-    }
-    QVERIFY(layer);
+    drawOnce(surface);
+    const QList<QWindow *> layers = layersOf(surface);
+    QCOMPARE(layers.size(), 1);
+    QWindow *layer = layers.first();
 
     surface.setContextMenuPolicy(Qt::CustomContextMenu);
     QSignalSpy menus(&surface, &QWidget::customContextMenuRequested);
@@ -846,10 +773,8 @@ void TestVideoSurface::clickAndDoubleClickAreReported()
 void TestVideoSurface::geometryIsReported()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
     QSignalSpy geometry(&surface, &VideoSurface::geometryChanged);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
     const qreal ratio = surface.devicePixelRatioF();
     const int fullArea = qRound(320 * ratio) * qRound(180 * ratio);
@@ -858,7 +783,7 @@ void TestVideoSurface::geometryIsReported()
     QCOMPARE(geometry.last().at(0).toInt(), fullArea);
     QCOMPARE(geometry.last().at(1).toBool(), true);
 
-    present(surface, solidFrame(640, 480, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 480));
     QCOMPARE(geometry.last().at(0).toInt(), qRound(240 * ratio) * qRound(180 * ratio));
 
     surface.hide();
@@ -870,12 +795,10 @@ void TestVideoSurface::resizeRedrawsTheLastFrame()
 {
     // inside a window: on Wayland the compositor sets a top-level window's size and sets it back
     QWidget window;
-    window.resize(480, 270);
     VideoSurface surface(&window);
     surface.setGeometry(0, 0, 320, 180);
-    window.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&window));
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    QVERIFY(shown(window, QSize(480, 270)));
+    present(surface, solidFrame(WHITE, 640, 360));
 
     surface.resize(480, 270);
     QTest::qWait(300);
@@ -889,10 +812,8 @@ void TestVideoSurface::resizeRedrawsTheLastFrame()
 void TestVideoSurface::messagesDoNotDisturbThePicture()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    QVERIFY(shown(surface));
+    present(surface, solidFrame(WHITE, 640, 360));
 
     surface.setStatsText(QStringLiteral("Codec: H264"));
     QImage image = shot(surface);
@@ -912,9 +833,7 @@ void TestVideoSurface::messagesDoNotDisturbThePicture()
 void TestVideoSurface::avatarStandsInUntilThereIsAPicture()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
     QPixmap avatar(64, 64);
     avatar.fill(QColor(0, 200, 0));
@@ -924,7 +843,7 @@ void TestVideoSurface::avatarStandsInUntilThereIsAPicture()
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
     QVERIFY(isNear(image.pixel(4, 4), 0, 0, 0));
 
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 360));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
@@ -936,9 +855,7 @@ void TestVideoSurface::avatarStandsInUntilThereIsAPicture()
 void TestVideoSurface::speakingRingIsDrawn()
 {
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
 
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(1, image.height() / 2), 0, 0, 0));
@@ -953,13 +870,13 @@ void TestVideoSurface::speakingRingIsDrawn()
     QVERIFY(isNear(image.pixel(1, image.height() / 2), 0, 0, 0));
 
     // the corners are left out: the painter cuts them off and the graphics card doesnt
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 360));
     surface.setSpeaking(true);
     image = shot(surface);
     const int right = image.width() - 1;
     const int bottom = image.height() - 1;
     for (const QPoint &onTheRing : { QPoint(0, bottom / 2), QPoint(right, bottom / 2), QPoint(right / 2, 0), QPoint(right / 2, bottom) })
-        QVERIFY2(isNear(image.pixel(onTheRing), 0x23, 0xA5, 0x5A), qPrintable(QStringLiteral("%1,%2").arg(onTheRing.x()).arg(onTheRing.y())));
+        QVERIFY2(isNear(image.pixel(onTheRing), SPEAKING_RING), qPrintable(QStringLiteral("%1,%2").arg(onTheRing.x()).arg(onTheRing.y())));
     const int inside = qRound(4 * image.devicePixelRatio());
     for (const QPoint &offIt : { QPoint(inside, bottom / 2), QPoint(right - inside, bottom / 2), QPoint(right / 2, inside), QPoint(right / 2, bottom - inside), QPoint(right / 2, bottom / 2) })
         QVERIFY2(isNear(image.pixel(offIt), 255, 255, 255), qPrintable(QStringLiteral("%1,%2").arg(offIt.x()).arg(offIt.y())));
@@ -973,9 +890,7 @@ void TestVideoSurface::aSurfaceHasItsLayerOnlyWhileItHasAPicture()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
     if (!surface.drawsWithGpu())
         QSKIP("This surface draws without the graphics card");
 
@@ -986,61 +901,57 @@ void TestVideoSurface::aSurfaceHasItsLayerOnlyWhileItHasAPicture()
     surface.setSpeaking(true);
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
-    QVERIFY(isNear(image.pixel(1, image.height() / 2), 0x23, 0xA5, 0x5A));
-    QCOMPARE(layersOf(surface), 0);
+    QVERIFY(isNear(image.pixel(1, image.height() / 2), SPEAKING_RING));
+    QCOMPARE(layersOf(surface).size(), 0);
 
-    present(surface, solidFrame(640, 360, 235, 128, 128));
+    present(surface, solidFrame(WHITE, 640, 360));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
-    QVERIFY(isNear(image.pixel(1, image.height() / 2), 0x23, 0xA5, 0x5A));
-    QCOMPARE(layersOf(surface), 1);
+    QVERIFY(isNear(image.pixel(1, image.height() / 2), SPEAKING_RING));
+    QCOMPARE(layersOf(surface).size(), 1);
 
     surface.clear();
-    QCOMPARE(layersOf(surface), 0);
+    QCOMPARE(layersOf(surface).size(), 0);
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
 
-    present(surface, solidFrame(1280, 720, 63, 102, 240));
+    present(surface, solidFrame(RED_BT709, 1280, 720));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
-    QCOMPARE(layersOf(surface), 1);
+    QCOMPARE(layersOf(surface).size(), 1);
 }
 
 void TestVideoSurface::aSurfaceLongOffTheScreenGivesUpItsLayerAndKeepsItsPicture()
 {
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     VideoSurface surface;
-    surface.resize(320, 180);
-    surface.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&surface));
+    QVERIFY(shown(surface));
     if (!surface.drawsWithGpu())
         QSKIP("This surface draws without the graphics card");
 
-    drawnOnce(surface);
-    AVFrame *onCard = nullptr;
+    FramePointer picture;
 #ifdef CARD_FORMAT
-    if (surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-        onCard = solidFrameOnCard(1280, 720, 63, 102, 240);
+    if (takesCardPictures(surface))
+        picture = solidFrameOnCard(RED_BT709, 1280, 720);
 #endif
-    const bool fromCard = onCard != nullptr;
-    present(surface, fromCard ? onCard : solidFrame(1280, 720, 63, 102, 240));
+    const bool fromCard = picture != nullptr;
+    present(surface, fromCard ? std::move(picture) : solidFrame(RED_BT709, 1280, 720));
     if (fromCard)
         QTRY_VERIFY(surface.drawsFromCard());
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
-    QCOMPARE(layersOf(surface), 1);
+    QCOMPARE(layersOf(surface).size(), 1);
 
     surface.hide();
     QTest::qWait(500);
-    QCOMPARE(layersOf(surface), 1);
-    QTest::qWait(VideoSurface::NOT_SHOWN_BEFORE_RELEASED_MS);
-    QCOMPARE(layersOf(surface), 0);
+    QCOMPARE(layersOf(surface).size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(layersOf(surface).size(), 0, VideoSurface::NOT_SHOWN_BEFORE_RELEASED_MS);
 
     surface.show();
     QVERIFY(QTest::qWaitForWindowExposed(&surface));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0));
-    QCOMPARE(layersOf(surface), 1);
+    QCOMPARE(layersOf(surface).size(), 1);
     QVERIFY(!surface.drawsFromCard());
 }
 
@@ -1049,20 +960,16 @@ void TestVideoSurface::statisticsAreLeftOffASmallTile()
     const QString stats = QStringLiteral("Codec: H264\nResolution: 1280x720\nFrame rate: 30.0 fps\nBitrate: 900 kbps");
 
     VideoSurface large;
-    large.resize(480, 270);
-    large.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&large));
-    present(large, solidFrame(640, 360, 235, 128, 128));
+    QVERIFY(shown(large, QSize(480, 270)));
+    present(large, solidFrame(WHITE, 640, 360));
     large.setStatsText(stats);
     large.setCaption(QStringLiteral("caption text"));
     QImage image = shot(large);
     QVERIFY(!isNear(image.pixel(5, 5), 255, 255, 255));
 
     VideoSurface small;
-    small.resize(160, 90);
-    small.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&small));
-    present(small, solidFrame(640, 360, 235, 128, 128));
+    QVERIFY(shown(small, QSize(160, 90)));
+    present(small, solidFrame(WHITE, 640, 360));
     small.setStatsText(stats);
     image = shot(small);
     QVERIFY(isNear(image.pixel(5, 5), 255, 255, 255));
@@ -1077,33 +984,27 @@ void TestVideoSurface::pictureFromAnotherCardIsReadBack()
         if (node == eglHere().renderNode)
             continue;
         VideoSurface surface;
-        surface.resize(320, 180);
-        surface.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&surface));
-        drawnOnce(surface);
-        if (!surface.sink()->acceptsHardwareFrames(CARD_FORMAT))
-            QSKIP("This surface cannot draw the card's picture where it is");
-        AVFrame *frame = solidFrameOnNode(node, 1280, 720, 63, 102, 240);
+        QVERIFY(shown(surface));
+        if (!takesCardPictures(surface))
+            QSKIP(CANNOT_DRAW_FROM_CARD);
+        FramePointer frame = solidFrameOnNode(node, RED_BT709, 1280, 720);
         if (!frame)
             continue;
 
-        present(surface, frame);
+        present(surface, std::move(frame));
         QImage image = shot(surface);
         QVERIFY2(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 0, 0), node.constData());
         if (surface.drawsFromCard())
             continue;
 
         QVERIFY(!surface.sink()->acceptsHardwareFrames(CARD_FORMAT));
-        present(surface, solidFrame(640, 360, 235, 128, 128));
+        present(surface, solidFrame(WHITE, 640, 360));
         image = shot(surface);
         QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
 
         VideoSurface later;
-        later.resize(320, 180);
-        later.show();
-        QVERIFY(QTest::qWaitForWindowExposed(&later));
-        drawnOnce(later);
-        QVERIFY(!later.sink()->acceptsHardwareFrames(CARD_FORMAT));
+        QVERIFY(shown(later));
+        QVERIFY(!takesCardPictures(later));
         return;
     }
     QSKIP("No second graphics card whose pictures the first cannot draw where they are");
@@ -1112,7 +1013,6 @@ void TestVideoSurface::pictureFromAnotherCardIsReadBack()
 #endif
 }
 
-// test windows open on a screen other than the first, where there is one, and take no focus
 class OutOfTheWay : public QObject
 {
 protected:

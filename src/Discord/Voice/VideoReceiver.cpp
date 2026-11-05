@@ -50,7 +50,6 @@ void VideoReceiver::take(uint16_t sequence, uint32_t timestamp, bool marker, Pac
     const bool continuesNewNumbering = farFromExpected && sequenceAfterFarPacket == sequence;
     sequenceAfterFarPacket = farFromExpected && !continuesNewNumbering ? std::optional<uint16_t>(static_cast<uint16_t>(sequence + 1)) : std::nullopt;
     if (farFromExpected && !continuesNewNumbering) {
-        // RFC 3550, A.1
         counters.strays++;
         return;
     }
@@ -123,16 +122,13 @@ void VideoReceiver::take(uint16_t sequence, uint32_t timestamp, bool marker, Pac
         return;
     }
 
-    // a packet that only carries on the frame in front of it completes nothing, so a frame of N packets
-    // is put together once instead of looked over N times
-    if (marker || keyframeFound || !extendsRun || !continuesFrame)
+    const bool mayCompleteFrame = marker || keyframeFound || !extendsRun || !continuesFrame;
+    if (mayCompleteFrame)
         assemble();
 }
 
 void VideoReceiver::assemble()
 {
-    std::vector<std::span<const uint8_t>> payloads;
-
     while (nextSequence) {
         auto first = held.find(*nextSequence);
         if (first == held.end())
@@ -143,17 +139,17 @@ void VideoReceiver::assemble()
             continue;
         }
 
-        payloads.clear();
+        framePayloads.clear();
         auto last = first;
         bool complete = false;
         for (auto it = first; it != held.end(); ++it) {
-            if (it->first != *nextSequence + static_cast<qint64>(payloads.size()))
+            if (it->first != *nextSequence + static_cast<qint64>(framePayloads.size()))
                 return;
             if (!it->second.payload || it->second.timestamp != first->second.timestamp) {
                 complete = true;
                 break;
             }
-            payloads.push_back(it->second.payload->bytes());
+            framePayloads.push_back(it->second.payload->bytes());
             last = it;
             if (it->second.marker) {
                 complete = true;
@@ -165,8 +161,8 @@ void VideoReceiver::assemble()
 
         EncodedVideoFrame frame;
         frame.rtpTimestamp = first->second.timestamp;
-        frame.keyframe = std::any_of(payloads.begin(), payloads.end(), [this](std::span<const uint8_t> payload) { return startsKeyframe(videoCodec, payload); });
-        const bool assembled = assembleFrame(videoCodec, payloads, frame.data);
+        frame.keyframe = std::any_of(framePayloads.begin(), framePayloads.end(), [this](std::span<const uint8_t> payload) { return startsKeyframe(videoCodec, payload); });
+        const bool assembled = assembleFrame(videoCodec, framePayloads, frame.data);
 
         nextSequence = last->first + 1;
         held.erase(first, std::next(last));

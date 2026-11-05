@@ -17,14 +17,31 @@ namespace {
 constexpr uint8_t EMULATION_PREVENTION = 3;
 
 constexpr std::array<uint32_t, 13> PROFILES_WITH_CHROMA_FORMAT = { 100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135 };
+constexpr uint32_t CHROMA_444 = 3;
+
+constexpr int NAL_HEADER_BITS = 8;
+constexpr int PROFILE_BITS = 8;
+constexpr int CONSTRAINT_FLAGS_AND_LEVEL_BITS = 16;
+constexpr int ASPECT_RATIO_BITS = 8;
+constexpr uint32_t EXTENDED_SAR = 255;
+constexpr int SAR_BITS = 32;
+constexpr int VIDEO_FORMAT_AND_RANGE_BITS = 4;
+constexpr int COLOUR_DESCRIPTION_BITS = 24;
+constexpr int TIMING_INFO_BITS = 65;
+constexpr int HRD_SCALE_BITS = 8;
+constexpr int HRD_LENGTH_BITS = 20;
+constexpr int VUI_FLAGS_BEFORE_RESTRICTION = 8;
 
 constexpr uint32_t MOST_PICTURES_IN_ORDER_CYCLE = 255;
 constexpr uint32_t MOST_CODED_PICTURE_BUFFERS = 32;
 
 // what the official client writes into a restriction it adds
+constexpr bool ADDED_MOTION_VECTORS_OVER_PIC_BOUNDARIES = true;
 constexpr uint32_t ADDED_MAX_BYTES_PER_PIC_DENOM = 2;
 constexpr uint32_t ADDED_MAX_BITS_PER_MB_DENOM = 1;
 constexpr uint32_t ADDED_LOG2_MAX_MV_LENGTH = 16;
+
+constexpr uint32_t NO_REORDERING = 0;
 
 class BitWriter
 {
@@ -38,6 +55,8 @@ public:
         }
     }
 
+    void flag(bool set) { put(set ? 1 : 0, 1); }
+
     void ue(uint32_t value)
     {
         const uint64_t code = uint64_t(value) + 1;
@@ -46,7 +65,11 @@ public:
         put(code, length);
     }
 
-    [[nodiscard]] const std::vector<uint8_t> &aligned() const { return bytes; }
+    [[nodiscard]] std::vector<uint8_t> withTrailingBits()
+    {
+        flag(true);
+        return std::move(bytes);
+    }
 
 private:
     std::vector<uint8_t> bytes;
@@ -71,16 +94,16 @@ void skipScalingList(BitReader &reader, int size)
 
 void skipHrdParameters(BitReader &reader)
 {
-    const uint32_t codedPictureBuffers = reader.ue() + 1; // cpb_cnt_minus1
+    const uint32_t codedPictureBuffers = reader.ue() + 1;
     if (codedPictureBuffers > MOST_CODED_PICTURE_BUFFERS)
         return reader.fail();
-    reader.skip(8); // bit_rate_scale, cpb_size_scale
+    reader.skip(HRD_SCALE_BITS);
     for (uint32_t i = 0; i < codedPictureBuffers; i++) {
-        reader.ue(); // bit_rate_value_minus1
-        reader.ue(); // cpb_size_value_minus1
-        reader.skip(1); // cbr_flag
+        reader.ue();
+        reader.ue();
+        reader.skip(1);
     }
-    reader.skip(20); // the lengths of the three delays and of the time offset
+    reader.skip(HRD_LENGTH_BITS);
 }
 
 struct ParsedSps
@@ -90,7 +113,7 @@ struct ParsedSps
     size_t keptBits = 0;
 };
 
-// sections 7.3.2.1.1 and E.1.1; skipped fields are named as in the standard
+// field by field as in H264 7.3.2.1.1, E.1.1 and E.1.2
 std::optional<ParsedSps> parse(std::span<const uint8_t> sps)
 {
     if (sps.empty() || Discord::Voice::h264Type(sps[0]) != Discord::Voice::H264_SPS)
@@ -101,69 +124,74 @@ std::optional<ParsedSps> parse(std::span<const uint8_t> sps)
     BitReader reader(parsed.unescaped);
     SpsReordering &reordering = parsed.reordering;
 
-    reader.skip(8); // the NAL unit's header
-    const uint32_t profile = reader.bits(8);
-    reader.skip(16); // constraint_set flags, level_idc
-    reader.ue(); // seq_parameter_set_id
+    reader.skip(NAL_HEADER_BITS);
+    const uint32_t profile = reader.bits(PROFILE_BITS);
+    reader.skip(CONSTRAINT_FLAGS_AND_LEVEL_BITS);
+    reader.ue();
     if (std::ranges::find(PROFILES_WITH_CHROMA_FORMAT, profile) != PROFILES_WITH_CHROMA_FORMAT.end()) {
         const uint32_t chromaFormat = reader.ue();
-        if (chromaFormat == 3)
-            reader.skip(1); // separate_colour_plane_flag
-        reader.ue(); // bit_depth_luma_minus8
-        reader.ue(); // bit_depth_chroma_minus8
-        reader.skip(1); // qpprime_y_zero_transform_bypass_flag
-        if (reader.flag()) {
-            const int scalingLists = chromaFormat == 3 ? 12 : 8;
-            for (int i = 0; i < scalingLists; i++) {
-                if (reader.flag())
-                    skipScalingList(reader, i < 6 ? 16 : 64);
-            }
+        if (chromaFormat == CHROMA_444)
+            reader.skip(1);
+        reader.ue();
+        reader.ue();
+        reader.skip(1);
+        const bool hasScalingMatrix = reader.flag();
+        const int scalingLists = chromaFormat == CHROMA_444 ? 12 : 8;
+        for (int i = 0; hasScalingMatrix && i < scalingLists; i++) {
+            if (reader.flag())
+                skipScalingList(reader, i < 6 ? 16 : 64);
         }
     }
-    reader.ue(); // log2_max_frame_num_minus4
+    reader.ue();
     const uint32_t pictureOrderCountType = reader.ue();
     if (pictureOrderCountType == 0) {
-        reader.ue(); // log2_max_pic_order_cnt_lsb_minus4
+        reader.ue();
     } else if (pictureOrderCountType == 1) {
-        reader.skip(1); // delta_pic_order_always_zero_flag
-        reader.se(); // offset_for_non_ref_pic
-        reader.se(); // offset_for_top_to_bottom_field
+        reader.skip(1);
+        reader.se();
+        reader.se();
         const uint32_t picturesInCycle = reader.ue();
         if (picturesInCycle > MOST_PICTURES_IN_ORDER_CYCLE)
             return std::nullopt;
         for (uint32_t i = 0; i < picturesInCycle; i++)
-            reader.se(); // offset_for_ref_frame
+            reader.se();
     }
     reordering.maxNumRefFrames = reader.ue();
-    reader.skip(1); // gaps_in_frame_num_value_allowed_flag
-    reader.ue(); // pic_width_in_mbs_minus1
-    reader.ue(); // pic_height_in_map_units_minus1
-    if (!reader.flag())
-        reader.skip(1); // mb_adaptive_frame_field_flag
-    reader.skip(1); // direct_8x8_inference_flag
-    if (reader.flag()) {
-        for (int i = 0; i < 4; i++)
-            reader.ue(); // the four frame_crop offsets
-    }
+    reader.skip(1);
+    reader.ue();
+    reader.ue();
+    const bool frameMbsOnly = reader.flag();
+    if (!frameMbsOnly)
+        reader.skip(1);
+    reader.skip(1);
+    const bool hasFrameCropping = reader.flag();
+    for (int i = 0; hasFrameCropping && i < 4; i++)
+        reader.ue();
 
     parsed.keptBits = reader.position();
     reordering.hasVui = reader.flag();
     if (reordering.hasVui) {
-        if (reader.flag() && reader.bits(8) == 255) // aspect_ratio_idc, of which 255 is Extended_SAR
-            reader.skip(32); // sar_width, sar_height
-        if (reader.flag())
-            reader.skip(1); // overscan_appropriate_flag
-        if (reader.flag()) {
-            reader.skip(4); // video_format, video_full_range_flag
-            if (reader.flag())
-                reader.skip(24); // colour_primaries, transfer_characteristics, matrix_coefficients
+        const bool hasAspectRatio = reader.flag();
+        if (hasAspectRatio && reader.bits(ASPECT_RATIO_BITS) == EXTENDED_SAR)
+            reader.skip(SAR_BITS);
+        const bool hasOverscanInfo = reader.flag();
+        if (hasOverscanInfo)
+            reader.skip(1);
+        const bool hasVideoSignalType = reader.flag();
+        if (hasVideoSignalType) {
+            reader.skip(VIDEO_FORMAT_AND_RANGE_BITS);
+            const bool hasColourDescription = reader.flag();
+            if (hasColourDescription)
+                reader.skip(COLOUR_DESCRIPTION_BITS);
         }
-        if (reader.flag()) {
-            reader.ue(); // chroma_sample_loc_type_top_field
-            reader.ue(); // chroma_sample_loc_type_bottom_field
+        const bool hasChromaLocation = reader.flag();
+        if (hasChromaLocation) {
+            reader.ue();
+            reader.ue();
         }
-        if (reader.flag())
-            reader.skip(65); // num_units_in_tick, time_scale, fixed_frame_rate_flag
+        const bool hasTimingInfo = reader.flag();
+        if (hasTimingInfo)
+            reader.skip(TIMING_INFO_BITS);
         const bool hasNalHrd = reader.flag();
         if (hasNalHrd)
             skipHrdParameters(reader);
@@ -171,25 +199,25 @@ std::optional<ParsedSps> parse(std::span<const uint8_t> sps)
         if (hasVclHrd)
             skipHrdParameters(reader);
         if (hasNalHrd || hasVclHrd)
-            reader.skip(1); // low_delay_hrd_flag
-        reader.skip(1); // pic_struct_present_flag
+            reader.skip(1);
+        reader.skip(1);
 
         parsed.keptBits = reader.position();
         reordering.hasBitstreamRestriction = reader.flag();
         if (reordering.hasBitstreamRestriction) {
-            reader.skip(1); // motion_vectors_over_pic_boundaries_flag
-            reader.ue(); // max_bytes_per_pic_denom
-            reader.ue(); // max_bits_per_mb_denom
-            reader.ue(); // log2_max_mv_length_horizontal
-            reader.ue(); // log2_max_mv_length_vertical
+            reader.skip(1);
+            reader.ue();
+            reader.ue();
+            reader.ue();
+            reader.ue();
             parsed.keptBits = reader.position();
             reordering.maxNumReorderFrames = reader.ue();
             reordering.maxDecFrameBuffering = reader.ue();
         }
     }
 
-    // a truncated SPS has no stop bit
-    if (!reader.flag() || reader.failed())
+    const bool hasStopBit = reader.flag();
+    if (!hasStopBit || reader.failed())
         return std::nullopt;
     return parsed;
 }
@@ -251,21 +279,21 @@ std::optional<std::vector<uint8_t>> rewrittenSps(std::span<const uint8_t> sps)
         left -= static_cast<size_t>(count);
     }
     if (!parsed->reordering.hasVui) {
-        writer.put(1, 1);
-        writer.put(0, 8);
+        writer.flag(true);
+        writer.put(0, VUI_FLAGS_BEFORE_RESTRICTION);
     }
     if (!parsed->reordering.hasBitstreamRestriction) {
-        writer.put(1, 1);
-        writer.put(1, 1); // motion_vectors_over_pic_boundaries_flag
+        writer.flag(true);
+        writer.flag(ADDED_MOTION_VECTORS_OVER_PIC_BOUNDARIES);
         writer.ue(ADDED_MAX_BYTES_PER_PIC_DENOM);
         writer.ue(ADDED_MAX_BITS_PER_MB_DENOM);
         writer.ue(ADDED_LOG2_MAX_MV_LENGTH);
         writer.ue(ADDED_LOG2_MAX_MV_LENGTH);
     }
-    writer.ue(0); // max_num_reorder_frames
-    writer.ue(parsed->reordering.maxNumRefFrames); // max_dec_frame_buffering
-    writer.put(1, 1); // rbsp_stop_one_bit
-    return withEmulationPrevention(writer.aligned());
+    const uint32_t maxDecFrameBuffering = parsed->reordering.maxNumRefFrames;
+    writer.ue(NO_REORDERING);
+    writer.ue(maxDecFrameBuffering);
+    return withEmulationPrevention(writer.withTrailingBits());
 }
 
 bool rewriteSpsIn(std::vector<uint8_t> &accessUnit)

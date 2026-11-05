@@ -116,7 +116,6 @@ void DaveSession::onAnnounceCommitTransition(const QByteArray &payload)
     if (auto *roster = std::get_if<discord::dave::RosterMap>(&result)) {
         qCInfo(LogDave) << "ProcessCommit succeeded, roster size =" << roster->size();
         pendingTransitionReady = true;
-        // as the official client
         pendingTransitionBringsKeys = pendingTransitionBringsKeys || bringsNewKeys(*roster);
         emit sendReadyForTransition(transitionId);
         if (transitionId == 0)

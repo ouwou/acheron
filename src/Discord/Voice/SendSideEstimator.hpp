@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <vector>
 
 #include "Rtcp.hpp"
 
@@ -12,7 +13,7 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// the delay-based half of WebRTC's GoogCC, which the official client runs unchanged, with its numbers.
+// the delay-based half of WebRTC's GoogCC with its numbers, which the official client runs unchanged;
 // nothing probes the way, so no limit is known until it has been overused once
 class SendSideEstimator
 {
@@ -42,6 +43,13 @@ private:
     struct Sent
     {
         qint64 sentUs = 0;
+        int bytes = 0;
+    };
+
+    struct Arrived
+    {
+        qint64 sendUs = 0;
+        qint64 arrivalUs = 0;
         int bytes = 0;
     };
 
@@ -146,6 +154,7 @@ private:
     std::deque<Sent> sent;
     qint64 firstHeld = 0;
     qint64 nextNumber = 0;
+    std::vector<Arrived> arrived;
 
     bool haveReference = false;
     int32_t lastReference = 0;

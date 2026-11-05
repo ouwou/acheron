@@ -17,6 +17,8 @@ namespace {
 
 using Payload = std::span<const uint8_t>;
 
+constexpr uint8_t VP8_INTER_FRAME = 0x01;
+
 void appendStartCode(std::vector<uint8_t> &frame)
 {
     frame.insert(frame.end(), START_CODE.begin(), START_CODE.end());
@@ -108,6 +110,11 @@ bool assembleH264(std::span<const Payload> payloads, std::vector<uint8_t> &frame
     return !frame.empty();
 }
 
+bool firstSliceSegmentInPicture(uint8_t sliceHeaderStart)
+{
+    return sliceHeaderStart & 0x80;
+}
+
 bool h265StartsKeyframe(Payload payload)
 {
     if (payload.size() < 3)
@@ -116,9 +123,8 @@ bool h265StartsKeyframe(Payload payload)
     const uint8_t type = h265Type(payload[0]);
     if (type == H265_VPS || type == H265_SPS)
         return true;
-    // first_slice_segment_in_pic_flag is the slice header's first bit
     if (h265IsIrap(type))
-        return payload[2] & 0x80;
+        return firstSliceSegmentInPicture(payload[2]);
     if (type == H265_AP) {
         Payload units = payload.subspan(2);
         while (units.size() > 4) {
@@ -126,14 +132,14 @@ bool h265StartsKeyframe(Payload payload)
             if (size < 3 || size > units.size() - 2)
                 return false;
             const uint8_t unitType = h265Type(units[2]);
-            if (unitType == H265_VPS || unitType == H265_SPS || (h265IsIrap(unitType) && (units[4] & 0x80)))
+            if (unitType == H265_VPS || unitType == H265_SPS || (h265IsIrap(unitType) && firstSliceSegmentInPicture(units[4])))
                 return true;
             units = units.subspan(2 + size);
         }
         return false;
     }
     if (type == H265_FU)
-        return payload.size() > 3 && (payload[2] & FU_START) && h265IsIrap(payload[2] & 0x3F) && (payload[3] & 0x80);
+        return payload.size() > 3 && (payload[2] & FU_START) && h265IsIrap(payload[2] & 0x3F) && firstSliceSegmentInPicture(payload[3]);
     return false;
 }
 
@@ -172,7 +178,6 @@ bool assembleH265(std::span<const Payload> payloads, std::vector<uint8_t> &frame
     return !frame.empty();
 }
 
-// RFC 7741
 bool stripVp8Descriptor(Payload payload, Payload &data, bool &opensFrame)
 {
     if (payload.empty())
@@ -208,8 +213,7 @@ bool vp8StartsKeyframe(Payload payload)
     bool opensFrame = false;
     if (!stripVp8Descriptor(payload, data, opensFrame))
         return false;
-    // VP8: bit 0 of the first byte is clear on a key frame
-    return opensFrame && !(data[0] & 0x01);
+    return opensFrame && !(data[0] & VP8_INTER_FRAME);
 }
 
 bool assembleVp8(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
@@ -255,11 +259,11 @@ bool assembleAv1(std::span<const Payload> payloads, std::vector<uint8_t> &frame)
         for (int index = 0; !payload.empty(); index++) {
             Payload element = payload;
             if (elementCount == 0 || index + 1 < elementCount) {
-                size_t size = 0;
-                if (!readLeb128(payload, size) || size > payload.size())
+                const std::optional<size_t> size = readLeb128(payload);
+                if (!size || *size > payload.size())
                     return false;
-                element = payload.first(size);
-                payload = payload.subspan(size);
+                element = payload.first(*size);
+                payload = payload.subspan(*size);
             } else {
                 payload = {};
             }
@@ -313,8 +317,7 @@ void sizeLastObu(std::vector<uint8_t> &frame)
     }
 }
 
-// DAVE's trailer: an 8-byte tag, the nonce, the clear ranges as (offset, size) pairs, the trailer's
-// own size, and 0xFAFA
+// DAVE's trailer: an 8-byte tag, the nonce, the clear (offset, size) ranges, the trailer's size, 0xFAFA
 QString describeEncryptionTrailer(Payload frame)
 {
     constexpr size_t TAG_SIZE = 8;
@@ -326,19 +329,19 @@ QString describeEncryptionTrailer(Payload frame)
         return QStringLiteral("encrypted, trailer size %1 invalid").arg(trailerSize);
 
     Payload fields = frame.subspan(frame.size() - trailerSize + TAG_SIZE, trailerSize - TAG_SIZE - 3);
-    size_t nonce = 0;
-    if (!readLeb128(fields, nonce))
+    const std::optional<size_t> nonce = readLeb128(fields);
+    if (!nonce)
         return QStringLiteral("encrypted, nonce unreadable");
 
     QStringList ranges;
     while (!fields.empty()) {
-        size_t offset = 0;
-        size_t size = 0;
-        if (!readLeb128(fields, offset) || !readLeb128(fields, size))
+        const std::optional<size_t> offset = readLeb128(fields);
+        const std::optional<size_t> size = offset ? readLeb128(fields) : std::nullopt;
+        if (!size)
             break;
-        ranges.append(QStringLiteral("%1+%2").arg(offset).arg(size));
+        ranges.append(QStringLiteral("%1+%2").arg(*offset).arg(*size));
     }
-    return QStringLiteral("encrypted, trailer %1 bytes, nonce %2, clear ranges [%3]").arg(trailerSize).arg(nonce).arg(ranges.join(QLatin1Char(' ')));
+    return QStringLiteral("encrypted, trailer %1 bytes, nonce %2, clear ranges [%3]").arg(trailerSize).arg(*nonce).arg(ranges.join(QLatin1Char(' ')));
 }
 
 QString describeNals(Payload frame, bool h265)

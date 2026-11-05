@@ -12,8 +12,8 @@ namespace Core {
 
 using Discord::Voice::VoiceClient;
 
-StreamSession::StreamSession(const Discord::StreamKey &key, Audio::VoiceManager *voice, quint32 audioSource, QObject *parent)
-    : QObject(parent), streamKey(key), voice(voice), audioSource(audioSource)
+StreamSession::StreamSession(const Discord::StreamKey &key, Audio::VoiceManager *voice, QObject *parent)
+    : QObject(parent), streamKey(key), voice(voice), audioSource(voice->newAudioSource())
 {
     rtc = new StreamConnection(StreamConnection::Account::of(*voice), [](Discord::Voice::ConnectionParams &params) { params.videoCodecs = Media::offeredVideoCodecs(); }, this);
     connect(rtc, &StreamConnection::opened, this, &StreamSession::onRtcOpened);
@@ -46,11 +46,6 @@ void StreamSession::apply(const StreamRecord &record)
     if (isOver())
         return;
 
-    if (viewers != record.viewerIds) {
-        viewers = record.viewerIds;
-        emit viewersChanged();
-    }
-
     paused = record.paused;
     if (rtc->isConnected() && (currentState == State::Active || currentState == State::Paused))
         setState(paused ? State::Paused : State::Active);
@@ -73,9 +68,7 @@ void StreamSession::onRtcOpened(Audio::VoiceConnection *connection)
 
     decoder = std::make_unique<Media::VideoDecoder>();
     decoder->setSink(frameSink);
-    // the decoder outlives every call the client can still make: the connection stops before the decoder
-    // is released
-    decoder->setKeyframeRequester([client] { QMetaObject::invokeMethod(client, &VoiceClient::requestVideoKeyframeFromEveryone); });
+    decoder->setKeyframeRequester(client->queuedKeyframeRequestFrom(streamKey.ownerId));
     decoder->setCodecFailureHandler(client->queuedCodecWithdrawal());
     client->setVideoFrameHandler([target = decoder.get()](Snowflake, Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame) {
         target->push(codec, std::move(frame));
@@ -119,17 +112,10 @@ void StreamSession::onRtcFailed()
         setState(State::Failed);
 }
 
-void StreamSession::onRemoteVideoChanged(Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate)
+void StreamSession::onRemoteVideoChanged(Snowflake userId, bool active, std::optional<QSize> maxSize)
 {
-    if (userId != streamKey.ownerId || !active)
-        return;
-
-    const QSize size(maxWidth, maxHeight);
-    if (size == announcedSize && maxFramerate == announcedFramerate)
-        return;
-    announcedSize = size;
-    announcedFramerate = maxFramerate;
-    emit sourceChanged();
+    if (userId == streamKey.ownerId && active)
+        announcedPixels = maxSize ? static_cast<qint64>(maxSize->width()) * maxSize->height() : 0;
 }
 
 void StreamSession::onVideoStats(const Discord::Voice::VideoReceiveStats &stats)
@@ -152,14 +138,12 @@ void StreamSession::onVideoStats(const Discord::Voice::VideoReceiveStats &stats)
     statsBytes = stats.bytes;
     statsDecoded = latestStats.decoder.decoded;
 
-    fullPicturePixels = std::max({ fullPicturePixels, static_cast<qint64>(latestStats.decoder.width) * latestStats.decoder.height, static_cast<qint64>(announcedSize.width()) * announcedSize.height() });
+    fullPicturePixels = std::max({ fullPicturePixels, static_cast<qint64>(latestStats.decoder.width) * latestStats.decoder.height, announcedPixels });
     if (demand.observe(latestStats.decoder.backlogMs, latestStats.decoder.queuesDiscarded, demandClock.elapsed())) {
         qCInfo(LogVoice) << "Stream" << streamKey.toString() << "decoder backlog" << latestStats.decoder.backlogMs << "ms; now asking for" << demand.pixelShare() << "of the picture";
         pushWants();
     }
     latestStats.pixelShareAskedFor = demand.pixelShare();
-
-    emit statsChanged();
 }
 
 void StreamSession::setSink(std::shared_ptr<Media::VideoFrameSink> sink)

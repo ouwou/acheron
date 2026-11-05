@@ -1,10 +1,10 @@
-
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/VideoDepacketizer.hpp"
 #include "Discord/Voice/VideoPacketizer.hpp"
 #include "Discord/Voice/VideoSendStream.hpp"
 #include "VideoFrameHelpers.hpp"
+#include "VideoRtpSupport.hpp"
 
 #include <bytes/bytes.h>
 #include <dave/dave_interfaces.h>
@@ -23,6 +23,7 @@ namespace {
 using Bytes = std::vector<uint8_t>;
 using Payloads = std::vector<Bytes>;
 using namespace VideoFrameHelpers;
+using VideoRtpSupport::appendLeb128;
 
 constexpr uint32_t SSRC = 0x1234;
 constexpr uint32_t RTX_SSRC = 0x1299;
@@ -64,7 +65,6 @@ constexpr uint8_t OBU_METADATA = 5;
 constexpr uint8_t OBU_FRAME = 6;
 constexpr uint8_t OBU_TILE_LIST = 8;
 constexpr uint8_t OBU_PADDING = 15;
-// the element count lies between these bits
 constexpr int AV1_CONTINUES_PREVIOUS = 0x80;
 constexpr int AV1_CONTINUES_IN_NEXT = 0x40;
 constexpr int AV1_NEW_SEQUENCE = 0x08;
@@ -77,13 +77,6 @@ constexpr int av1Elements(int count)
 
 constexpr qint64 MS = 1000;
 constexpr qint64 SECOND = 1000 * MS;
-
-Bytes vp8Frame(bool keyframe, size_t size, uint32_t seed)
-{
-    Bytes frame = filler(size, seed);
-    frame[0] = static_cast<uint8_t>(keyframe ? (frame[0] & ~1) : (frame[0] | 1));
-    return frame;
-}
 
 void appendNal(Bytes &frame, uint8_t header, size_t size, uint32_t seed, int startCodeSize = 4)
 {
@@ -124,17 +117,6 @@ Bytes h265Keyframe(size_t pictureSize, int startCodeSize = 4)
     appendH265Nal(frame, H265_PPS, 9, 6, startCodeSize);
     appendH265Nal(frame, H265_IDR, pictureSize, 7, startCodeSize);
     return frame;
-}
-
-void appendLeb128(Bytes &out, size_t value)
-{
-    do {
-        uint8_t byte = value & 0x7F;
-        value >>= 7;
-        if (value != 0)
-            byte |= 0x80;
-        out.push_back(byte);
-    } while (value != 0);
 }
 
 struct Obu
@@ -309,14 +291,8 @@ Payloads payloadsOf(const std::vector<Written> &packets)
     return payloads;
 }
 
-constexpr VideoSendStream::Numbering FIRST{ 65533, 500, 65534, 0x7FFF };
-
-VideoSendStream vp8Sender()
-{
-    VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
-    sender.setCodec(VideoCodec::VP8, PAYLOAD_TYPE, RTX_PAYLOAD_TYPE);
-    return sender;
-}
+constexpr VideoSendStream::Numbering FIRST{ 65533, 500, 0x7FFF };
+constexpr uint16_t FIRST_TRANSPORT_SEQUENCE = 65534;
 
 void append32(Bytes &out, uint32_t value)
 {
@@ -346,6 +322,8 @@ class TestVideoSend : public QObject
 {
     Q_OBJECT
 private slots:
+    void init();
+
     void vp8FramesComeBackWhole_data();
     void vp8FramesComeBackWhole();
     void vp8PacketsOfAFrameShareItsPictureId();
@@ -402,7 +380,24 @@ private slots:
     void theReceiverCountIsRead();
     void theReceiverEstimateIsRead();
     void aVideoResetRequestIsRead();
+
+private:
+    VideoSendStream vp8Sender();
+
+    SendSideEstimator numbering;
 };
+
+void TestVideoSend::init()
+{
+    numbering.restart(FIRST_TRANSPORT_SEQUENCE);
+}
+
+VideoSendStream TestVideoSend::vp8Sender()
+{
+    VideoSendStream sender(SSRC, RTX_SSRC, FIRST, numbering);
+    sender.setCodec(VideoCodec::VP8, PAYLOAD_TYPE, RTX_PAYLOAD_TYPE);
+    return sender;
+}
 
 void TestVideoSend::vp8FramesComeBackWhole_data()
 {
@@ -979,24 +974,19 @@ void TestVideoSend::encryptedFramesSurvivePacketizing()
     QCOMPARE(plain, decrypted);
 }
 
-// documents an out-of-bounds write in vendored libdave (vendor/libdave/cpp/src/encryptor.cpp, v1.1.1).
-// Encryptor::Encrypt writes the grown frame and trailer through raw views of encryptedFrame.data()
-// without checking its size, while GetMaxCiphertextByteSize promises only frameSize + 75. each small
-// H264 slice widens its start code by a byte and adds a range to the trailer, so 20 of them overrun
-// where 19 dont. the asserts that would catch it are compiled out under NDEBUG
+// vendored libdave 1.1.1's Encrypt writes past the frameSize + 75 that GetMaxCiphertextByteSize promises, unchecked:
+// each small H264 slice widens its start code by a byte and adds a trailer range, so 20 of them overrun where 19 dont
 void TestVideoSend::encryptWritesPastTheBoundItPromises()
 {
-    constexpr uint8_t Canary = 0xCD;
-    constexpr size_t CanaryTail = 128;
+    constexpr uint8_t CANARY = 0xCD;
+    constexpr size_t CANARY_TAIL = 128;
 
-    // 3-byte start code, slice header, one byte covering all three exp-Golomb header values, then two
-    // encrypted bytes so the next start code opens a fresh clear range: 7 bytes in, 8 out plus a 6-byte
-    // range
-    const auto manyNalFrame = [](int units) {
+    // the slice header's three values fit one byte, and two encrypted bytes follow, so each slice opens a clear range
+    const auto slices = [](int count) {
         Bytes frame;
-        const uint8_t nal[] = { 0, 0, 1, static_cast<uint8_t>(NAL_SLICE), 0xE0, 0x55, 0x66 };
-        for (int i = 0; i < units; i++)
-            frame.insert(frame.end(), nal, nal + sizeof(nal));
+        const uint8_t slice[] = { 0, 0, 1, static_cast<uint8_t>(NAL_SLICE), 0xE0, 0x55, 0x66 };
+        for (int i = 0; i < count; i++)
+            frame.insert(frame.end(), slice, slice + sizeof(slice));
         return frame;
     };
 
@@ -1009,36 +999,36 @@ void TestVideoSend::encryptWritesPastTheBoundItPromises()
         bool succeeded = false;
     };
 
-    const auto encryptIntoExactlyTheStatedMax = [&](int units) {
-        const Bytes frame = manyNalFrame(units);
+    const auto encryptIntoExactlyTheStatedMax = [&](int sliceCount) {
+        const Bytes frame = slices(sliceCount);
 
         auto encryptor = discord::dave::CreateEncryptor();
         encryptor->SetKeyRatchet(std::make_unique<FixedKeyRatchet>());
         encryptor->AssignSsrcToCodec(SSRC, discord::dave::Codec::H264);
 
-        Measured m;
-        m.frameSize = frame.size();
-        m.statedMax = encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size());
+        Measured measured;
+        measured.frameSize = frame.size();
+        measured.statedMax = encryptor->GetMaxCiphertextByteSize(discord::dave::MediaType::Video, frame.size());
 
         // canary-filled past the stated maximum, so an overrun lands in our own allocation
-        Bytes buffer(m.statedMax + CanaryTail, Canary);
-        const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, SSRC, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(buffer.data(), m.statedMax), &m.bytesWritten);
-        m.succeeded = result == discord::dave::IEncryptor::Success;
+        Bytes buffer(measured.statedMax + CANARY_TAIL, CANARY);
+        const auto result = encryptor->Encrypt(discord::dave::MediaType::Video, SSRC, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(buffer.data(), measured.statedMax), &measured.bytesWritten);
+        measured.succeeded = result == discord::dave::IEncryptor::Success;
 
-        for (size_t i = buffer.size(); i-- > m.statedMax;) {
-            if (buffer[i] != Canary) {
-                m.overrun = i + 1 - m.statedMax;
+        for (size_t i = buffer.size(); i-- > measured.statedMax;) {
+            if (buffer[i] != CANARY) {
+                measured.overrun = i + 1 - measured.statedMax;
                 break;
             }
         }
-        return m;
+        return measured;
     };
 
     const Measured over = encryptIntoExactlyTheStatedMax(20);
     const Measured under = encryptIntoExactlyTheStatedMax(19);
 
-    qInfo() << "H264 20-unit frame:" << over.frameSize << "bytes, stated max" << over.statedMax << ", wrote" << over.bytesWritten << ", overran the stated end by" << over.overrun << "byte(s), succeeded" << over.succeeded;
-    qInfo() << "H264 19-unit frame:" << under.frameSize << "bytes, stated max" << under.statedMax << ", wrote" << under.bytesWritten << ", overran the stated end by" << under.overrun << "byte(s), succeeded" << under.succeeded;
+    qInfo() << "20 H264 slices:" << over.frameSize << "bytes, stated max" << over.statedMax << ", wrote" << over.bytesWritten << ", overran the stated end by" << over.overrun << "byte(s), succeeded" << over.succeeded;
+    qInfo() << "19 H264 slices:" << under.frameSize << "bytes, stated max" << under.statedMax << ", wrote" << under.bytesWritten << ", overran the stated end by" << under.overrun << "byte(s), succeeded" << under.succeeded;
 
     QVERIFY(over.overrun >= 1);
     QVERIFY(over.succeeded);
@@ -1065,7 +1055,7 @@ void TestVideoSend::packetsAreNumberedMarkedAndExtended()
         QCOMPARE(packet.header.payloadType, PAYLOAD_TYPE);
         QCOMPARE(packet.header.timestamp, ofFirstFrame ? 90000u : 93000u);
         QCOMPARE(packet.header.sequence, static_cast<uint16_t>(FIRST.sequence + i));
-        QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST.transportSequence + i));
+        QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST_TRANSPORT_SEQUENCE + i));
         QCOMPARE(packet.header.marker, i == 2 || i == 4);
 
         QVERIFY(packet.header.extension);
@@ -1099,10 +1089,9 @@ void TestVideoSend::theSendTimeIsSecondsInFixedPoint()
         return packets.size() == 1 ? packets[0].sendTime() : 0xFFFFFFFF;
     };
 
-    // eighteen bits of fraction: 1.5 s is 1.5 * 2^18
+    // six bits of whole seconds and eighteen of fraction, so 1.5 s is 1.5 * 2^18 and it wraps every 64 s
     QCOMPARE(sendTimeAt(1500 * MS), 0x060000u);
     QCOMPARE(sendTimeAt(250 * MS), 0x010000u);
-    // six bits of whole seconds, so it wraps every 64 s
     QCOMPARE(sendTimeAt(65 * SECOND), 0x040000u);
     QCOMPARE(sendTimeAt(64 * SECOND - 4), 0xFFFFFFu);
 }
@@ -1146,7 +1135,7 @@ void TestVideoSend::noPacketIsLargerThanTheLimit()
     QFETCH(Bytes, frame);
     QFETCH(int, largest);
 
-    VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
+    VideoSendStream sender(SSRC, RTX_SSRC, FIRST, numbering);
     sender.setCodec(static_cast<VideoCodec>(codec), PAYLOAD_TYPE, RTX_PAYLOAD_TYPE);
     sender.setBitrate(100000000);
     QVERIFY(sender.queueFrame(frame, 0, true, 0));
@@ -1196,7 +1185,6 @@ void TestVideoSend::aFrameLeavesAtThePaceOfItsBitrate()
     QFETCH(int, bitrate);
     QFETCH(bool, screen);
     constexpr int PACKETS = 20;
-    // the official client's: 1.1x the bitrate for a camera, 1x for a screen
     const double factor = screen ? 1.0 : 1.1;
     QCOMPARE(screen ? VideoSendStream::SCREEN_PACING_FACTOR : VideoSendStream::CAMERA_PACING_FACTOR, factor);
 
@@ -1234,15 +1222,18 @@ void TestVideoSend::aFrameLeavesAtThePaceOfItsBitrate()
 
 void TestVideoSend::aFrameWithinTheBurstLeavesAtOnce()
 {
+    constexpr int BITRATE = 3500000;
+    constexpr int PACKETS = 12;
+    QVERIFY(PACKETS * VideoSendStream::MAX_PACKET_SIZE <= burstOf(BITRATE, VideoSendStream::CAMERA_PACING_FACTOR));
+
     VideoSendStream sender = vp8Sender();
-    sender.setBitrate(3500000);
-    // 40 ms of 3.85 Mbps is 19 kB: a frame and a half at 30 fps
-    QVERIFY(sender.queueFrame(vp8Frame(false, 12 * VP8_ROOM, 81), 0, false, 0));
-    QCOMPARE(interval(sender, 0).size(), size_t(12));
+    sender.setBitrate(BITRATE);
+    QVERIFY(sender.queueFrame(vp8Frame(false, PACKETS * VP8_ROOM, 81), 0, false, 0));
+    QCOMPARE(interval(sender, 0).size(), size_t(PACKETS));
     QVERIFY(!sender.hasWaiting());
 
-    QVERIFY(sender.queueFrame(vp8Frame(false, 12 * VP8_ROOM, 82), 3000, false, 5 * MS));
-    QVERIFY(interval(sender, 5 * MS).size() < size_t(12));
+    QVERIFY(sender.queueFrame(vp8Frame(false, PACKETS * VP8_ROOM, 82), 3000, false, 5 * MS));
+    QVERIFY(interval(sender, 5 * MS).size() < size_t(PACKETS));
     QVERIFY(sender.hasWaiting());
 }
 
@@ -1284,7 +1275,7 @@ void TestVideoSend::aLostPacketIsSentAgainOnTheRetransmissionStream()
         QCOMPARE(packet.header.timestamp, 4500u);
         QCOMPARE(packet.header.marker, original.header.marker);
         QCOMPARE(packet.header.sequence, static_cast<uint16_t>(FIRST.rtxSequence + i));
-        QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST.transportSequence + 5 + i));
+        QCOMPARE(packet.transportSequence(), static_cast<uint16_t>(FIRST_TRANSPORT_SEQUENCE + 5 + i));
         QVERIFY(packet.sendTime() != original.sendTime());
 
         QCOMPARE(packet.payload.size(), original.payload.size() + 2);
@@ -1468,7 +1459,7 @@ void TestVideoSend::theHistoryOutlastsThreeRoundTrips()
 
 void TestVideoSend::withoutARetransmissionPayloadTypeNothingIsSentAgain()
 {
-    VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
+    VideoSendStream sender(SSRC, RTX_SSRC, FIRST, numbering);
     sender.setCodec(VideoCodec::VP8, PAYLOAD_TYPE, std::nullopt);
 
     QVERIFY(sender.queueFrame(vp8Frame(true, VP8_ROOM + 2, 96), 0, true, 0));
@@ -1532,7 +1523,7 @@ void TestVideoSend::anyCodecCanFollowAnyOther()
         { VideoCodec::AV1, 107, av1Frame(AV1_KEYFRAME_KEPT, LastObu::Unsized) },
     };
 
-    VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
+    VideoSendStream sender(SSRC, RTX_SSRC, FIRST, numbering);
     uint16_t sequence = FIRST.sequence;
     for (const Sent &from : codecs) {
         for (const Sent &to : codecs) {
@@ -1583,7 +1574,7 @@ void TestVideoSend::clearingForgetsWhatWaited()
 
 void TestVideoSend::framesAreRefusedWithoutACodec()
 {
-    VideoSendStream sender(SSRC, RTX_SSRC, FIRST);
+    VideoSendStream sender(SSRC, RTX_SSRC, FIRST, numbering);
     QCOMPARE(sender.codec(), VideoCodec::Unknown);
     QVERIFY(!sender.queueFrame(vp8Frame(true, 100, 104), 0, true, 0));
 

@@ -1,25 +1,25 @@
-
 #include "Core/ProxyConfig.hpp"
 #include "Discord/Voice/PacketBuffer.hpp"
 #include "Discord/Voice/UdpTransport.hpp"
+#include "FakeSocks5Proxy.hpp"
+#include "PacketBytes.hpp"
 
 #include <QSignalSpy>
 #include <QTcpServer>
-#include <QTcpSocket>
 #include <QTest>
 #include <QUdpSocket>
 #include <QtEndian>
 
 using Acheron::Core::ProxyConfig;
-using Acheron::Discord::Voice::PacketBuffer;
 using Acheron::Discord::Voice::PacketPool;
 using Acheron::Discord::Voice::UdpTransport;
+using PacketBytes::bytesOf;
+using PacketBytes::contentsOf;
 
 namespace {
 
 const QHostAddress LOOPBACK(QHostAddress::LocalHost);
 constexpr int IP_DISCOVERY_SIZE = 74;
-constexpr int IPV4_RELAY_HEADER_SIZE = 10;
 
 struct Datagram
 {
@@ -63,106 +63,30 @@ private:
     QUdpSocket socket;
 };
 
-class FakeSocks5Proxy : public QObject
+class RecordingTransport : public UdpTransport
 {
 public:
-    explicit FakeSocks5Proxy(quint16 mediaServerPort) : mediaServerPort(mediaServerPort)
+    explicit RecordingTransport(const ProxyConfig &proxy) : UdpTransport(proxy)
     {
-        control.listen(LOOPBACK, 0);
-        relay.bind(LOOPBACK, 0);
-
-        connect(&control, &QTcpServer::newConnection, this, [this] {
-            client = control.nextPendingConnection();
-            connect(client, &QTcpSocket::readyRead, this, [this] { onControlData(); });
-        });
-        connect(&relay, &QUdpSocket::readyRead, this, [this] { onRelayData(); });
+        setPacketHandler([this](PacketPool::Handle packet) { delivered.append(contentsOf(*packet)); });
     }
 
-    [[nodiscard]] ProxyConfig config() const
-    {
-        ProxyConfig proxy;
-        proxy.type = ProxyConfig::Type::Socks5;
-        proxy.host = LOOPBACK.toString();
-        proxy.port = control.serverPort();
-        return proxy;
-    }
-
-    [[nodiscard]] quint16 relayPort() const { return relay.localPort(); }
-
-    void sendRawToClient(const QByteArray &datagram) { relay.writeDatagram(datagram, LOOPBACK, clientPort); }
-
-    void closeControlConnection()
-    {
-        if (client)
-            client->disconnectFromHost();
-    }
-
-    QList<quint16> forwardedDestinationPorts;
-    bool associated = false;
-    quint16 clientPort = 0;
-
-private:
-    void onControlData()
-    {
-        const QByteArray data = client->readAll();
-        if (!greeted) {
-            greeted = true;
-            client->write(QByteArray("\x05\x00", 2));
-            return;
-        }
-        if (data.size() >= 4 && data.at(1) == 0x03) {
-            QByteArray reply("\x05\x00\x00\x01\x7f\x00\x00\x01", 8);
-            reply.append(2, '\0');
-            qToBigEndian(relay.localPort(), reply.data() + 8);
-            client->write(reply);
-            associated = true;
-        }
-    }
-
-    void onRelayData()
-    {
-        while (relay.hasPendingDatagrams()) {
-            QByteArray datagram(int(relay.pendingDatagramSize()), '\0');
-            quint16 senderPort = 0;
-            relay.readDatagram(datagram.data(), datagram.size(), nullptr, &senderPort);
-
-            if (senderPort == mediaServerPort) {
-                QByteArray wrapped("\x00\x00\x00\x01\x7f\x00\x00\x01", 8);
-                wrapped.append(2, '\0');
-                qToBigEndian(mediaServerPort, wrapped.data() + 8);
-                relay.writeDatagram(wrapped + datagram, LOOPBACK, clientPort);
-                continue;
-            }
-
-            clientPort = senderPort;
-            if (datagram.size() < IPV4_RELAY_HEADER_SIZE || datagram.at(3) != 0x01)
-                continue;
-            const quint16 destinationPort = qFromBigEndian<quint16>(datagram.constData() + 8);
-            forwardedDestinationPorts.append(destinationPort);
-            relay.writeDatagram(datagram.mid(IPV4_RELAY_HEADER_SIZE), LOOPBACK, destinationPort);
-        }
-    }
-
-    QTcpServer control;
-    QTcpSocket *client = nullptr;
-    QUdpSocket relay;
-    quint16 mediaServerPort;
-    bool greeted = false;
+    QList<QByteArray> delivered;
+    QSignalSpy discovered{ this, &UdpTransport::ipDiscovered };
 };
-
-QByteArray contentsOf(const PacketBuffer &packet)
-{
-    return QByteArray(reinterpret_cast<const char *>(packet.data()), packet.size());
-}
-
-std::span<const uint8_t> bytesOf(const QByteArray &bytes)
-{
-    return { reinterpret_cast<const uint8_t *>(bytes.constData()), static_cast<size_t>(bytes.size()) };
-}
 
 QByteArray rtpLikePayload(char fill, int size = 1200)
 {
     return QByteArray("\x80\x65", 2) + QByteArray(size - 2, fill);
+}
+
+[[nodiscard]] bool sendPacket(UdpTransport &transport, const QByteArray &payload)
+{
+    PacketPool::Handle packet = transport.acquirePacket();
+    if (!packet->append(bytesOf(payload)))
+        return false;
+    transport.send(*packet);
+    return true;
 }
 
 } // namespace
@@ -183,30 +107,29 @@ private slots:
 void TestUdpTransport::directDiscoveryThenPacketsBothWays()
 {
     FakeMediaServer server;
-    UdpTransport transport{ ProxyConfig() };
-    QList<QByteArray> delivered;
-    transport.setPacketHandler([&](PacketPool::Handle packet) { delivered.append(contentsOf(*packet)); });
-    QSignalSpy discovered(&transport, &UdpTransport::ipDiscovered);
+    RecordingTransport transport{ ProxyConfig() };
 
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 0x01020304);
 
     QTRY_COMPARE(server.received.size(), 1);
     const QByteArray request = server.received.first().payload;
     QCOMPARE(request.size(), IP_DISCOVERY_SIZE);
-    QCOMPARE(request.left(8), QByteArray::fromHex("0001" "0046" "01020304"));
+    QCOMPARE(request.left(8), QByteArray::fromHex("0001"
+                                                  "0046"
+                                                  "01020304"));
     QCOMPARE(request.mid(8), QByteArray(IP_DISCOVERY_SIZE - 8, '\0'));
     QCOMPARE(server.received.first().senderPort, transport.localPort());
 
     server.answerDiscovery(transport.localPort(), "198.51.100.9", 43210);
-    QTRY_COMPARE(discovered.size(), 1);
-    QCOMPARE(discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
-    QCOMPARE(discovered.first().at(1).toInt(), 43210);
-    QVERIFY(delivered.isEmpty());
+    QTRY_COMPARE(transport.discovered.size(), 1);
+    QCOMPARE(transport.discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
+    QCOMPARE(transport.discovered.first().at(1).toInt(), 43210);
+    QVERIFY(transport.delivered.isEmpty());
 
     const QByteArray inbound = rtpLikePayload('i');
     server.sendTo(transport.localPort(), inbound);
-    QTRY_COMPARE(delivered.size(), 1);
-    QCOMPARE(delivered.first(), inbound);
+    QTRY_COMPARE(transport.delivered.size(), 1);
+    QCOMPARE(transport.delivered.first(), inbound);
 
     const QByteArray outbound = rtpLikePayload('o');
     PacketPool::Handle packet = transport.acquirePacket();
@@ -222,10 +145,7 @@ void TestUdpTransport::directDropsDatagramsFromOtherSenders()
 {
     FakeMediaServer server;
     FakeMediaServer stranger;
-    UdpTransport transport{ ProxyConfig() };
-    QList<QByteArray> delivered;
-    transport.setPacketHandler([&](PacketPool::Handle packet) { delivered.append(contentsOf(*packet)); });
-    QSignalSpy discovered(&transport, &UdpTransport::ipDiscovered);
+    RecordingTransport transport{ ProxyConfig() };
 
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
     QTRY_COMPARE(server.received.size(), 1);
@@ -235,36 +155,35 @@ void TestUdpTransport::directDropsDatagramsFromOtherSenders()
     server.answerDiscovery(transport.localPort(), "198.51.100.9", 43210);
     server.sendTo(transport.localPort(), rtpLikePayload('s'));
 
-    QTRY_COMPARE(delivered.size(), 1);
-    QCOMPARE(delivered.first(), rtpLikePayload('s'));
-    QCOMPARE(discovered.size(), 1);
-    QCOMPARE(discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
+    QTRY_COMPARE(transport.delivered.size(), 1);
+    QCOMPARE(transport.delivered.first(), rtpLikePayload('s'));
+    QCOMPARE(transport.discovered.size(), 1);
+    QCOMPARE(transport.discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
 }
 
 void TestUdpTransport::socks5CarriesDiscoveryAndPacketsThroughRelay()
 {
     FakeMediaServer server;
-    FakeSocks5Proxy proxy(server.port());
-    UdpTransport transport{ proxy.config() };
-    QList<QByteArray> delivered;
-    transport.setPacketHandler([&](PacketPool::Handle packet) { delivered.append(contentsOf(*packet)); });
-    QSignalSpy discovered(&transport, &UdpTransport::ipDiscovered);
+    FakeSocks5Proxy proxy;
+    RecordingTransport transport{ proxy.config() };
 
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 0x0a0b0c0d);
 
     QTRY_COMPARE(server.received.size(), 1);
     QVERIFY(proxy.associated);
     QCOMPARE(server.received.first().payload.size(), IP_DISCOVERY_SIZE);
-    QCOMPARE(server.received.first().payload.left(8), QByteArray::fromHex("0001" "0046" "0a0b0c0d"));
+    QCOMPARE(server.received.first().payload.left(8), QByteArray::fromHex("0001"
+                                                                          "0046"
+                                                                          "0a0b0c0d"));
 
     server.answerDiscovery(proxy.relayPort(), "198.51.100.9", 43210);
-    QTRY_COMPARE(discovered.size(), 1);
-    QCOMPARE(discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
+    QTRY_COMPARE(transport.discovered.size(), 1);
+    QCOMPARE(transport.discovered.first().at(0).toString(), QStringLiteral("198.51.100.9"));
 
     const QByteArray inbound = rtpLikePayload('i');
     server.sendTo(proxy.relayPort(), inbound);
-    QTRY_COMPARE(delivered.size(), 1);
-    QCOMPARE(delivered.first(), inbound);
+    QTRY_COMPARE(transport.delivered.size(), 1);
+    QCOMPARE(transport.delivered.first(), inbound);
 
     const QByteArray outbound = rtpLikePayload('o');
     PacketPool::Handle packet = transport.acquirePacket();
@@ -282,22 +201,19 @@ void TestUdpTransport::socks5CarriesDiscoveryAndPacketsThroughRelay()
         QCOMPARE(datagram.senderPort, proxy.relayPort());
         QVERIFY(datagram.senderPort != transport.localPort());
     }
-    QCOMPARE(proxy.forwardedDestinationPorts, (QList<quint16>{ server.port(), server.port() }));
+    QCOMPARE(proxy.relayedTo, (QList<quint16>{ server.port(), server.port() }));
 }
 
 void TestUdpTransport::socks5DropsFragmentsAndUnwrappedDatagrams()
 {
     FakeMediaServer server;
-    FakeSocks5Proxy proxy(server.port());
-    UdpTransport transport{ proxy.config() };
-    QList<QByteArray> delivered;
-    transport.setPacketHandler([&](PacketPool::Handle packet) { delivered.append(contentsOf(*packet)); });
-    QSignalSpy discovered(&transport, &UdpTransport::ipDiscovered);
+    FakeSocks5Proxy proxy;
+    RecordingTransport transport{ proxy.config() };
 
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
     QTRY_COMPARE(server.received.size(), 1);
     server.answerDiscovery(proxy.relayPort(), "198.51.100.9", 43210);
-    QTRY_COMPARE(discovered.size(), 1);
+    QTRY_COMPARE(transport.discovered.size(), 1);
 
     const QByteArray payload = rtpLikePayload('p', 200);
     const QByteArray header("\x00\x00\x00\x01\x7f\x00\x00\x01\x4b\x86", 10);
@@ -313,8 +229,8 @@ void TestUdpTransport::socks5DropsFragmentsAndUnwrappedDatagrams()
     const QByteArray marker = rtpLikePayload('m', 200);
     proxy.sendRawToClient(header + marker);
 
-    QTRY_COMPARE(delivered.size(), 1);
-    QCOMPARE(delivered.first(), marker);
+    QTRY_COMPARE(transport.delivered.size(), 1);
+    QCOMPARE(transport.delivered.first(), marker);
 }
 
 void TestUdpTransport::socks5SendsNothingBeforeAssociationOrAfterItFails()
@@ -330,25 +246,22 @@ void TestUdpTransport::socks5SendsNothingBeforeAssociationOrAfterItFails()
 
     UdpTransport transport{ config };
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
-
-    PacketPool::Handle packet = transport.acquirePacket();
-    QVERIFY(packet->append(bytesOf(rtpLikePayload('l'))));
-    transport.send(*packet);
+    QVERIFY(sendPacket(transport, rtpLikePayload('l')));
 
     QTest::qWait(200);
     QVERIFY(server.received.isEmpty());
 
-    FakeSocks5Proxy proxy(server.port());
+    FakeSocks5Proxy proxy;
     UdpTransport proxied{ proxy.config() };
     QSignalSpy failed(&proxied, &UdpTransport::ipDiscoveryFailed);
     proxied.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
     QTRY_COMPARE(server.received.size(), 1);
 
-    proxy.closeControlConnection();
+    proxy.closeControlConnections();
     QTRY_COMPARE(failed.size(), 1);
 
     const int before = server.received.size();
-    proxied.send(*packet);
+    QVERIFY(sendPacket(proxied, rtpLikePayload('l')));
     QTest::qWait(200);
     QCOMPARE(server.received.size(), before);
 }
@@ -356,25 +269,21 @@ void TestUdpTransport::socks5SendsNothingBeforeAssociationOrAfterItFails()
 void TestUdpTransport::socks5ReportsRelayLossAfterDiscovery()
 {
     FakeMediaServer server;
-    FakeSocks5Proxy proxy(server.port());
-    UdpTransport transport{ proxy.config() };
-    QSignalSpy discovered(&transport, &UdpTransport::ipDiscovered);
+    FakeSocks5Proxy proxy;
+    RecordingTransport transport{ proxy.config() };
     QSignalSpy discoveryFailed(&transport, &UdpTransport::ipDiscoveryFailed);
     QSignalSpy relayLost(&transport, &UdpTransport::relayLost);
 
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
     QTRY_COMPARE(server.received.size(), 1);
     server.answerDiscovery(proxy.relayPort(), "198.51.100.9", 43210);
-    QTRY_COMPARE(discovered.size(), 1);
+    QTRY_COMPARE(transport.discovered.size(), 1);
 
-    // RFC 1928 ties the relay's life to the control connection
-    proxy.closeControlConnection();
+    proxy.closeControlConnections();
     QTRY_COMPARE(relayLost.size(), 1);
     QVERIFY(discoveryFailed.isEmpty());
 
-    PacketPool::Handle packet = transport.acquirePacket();
-    QVERIFY(packet->append(bytesOf(rtpLikePayload('l'))));
-    transport.send(*packet);
+    QVERIFY(sendPacket(transport, rtpLikePayload('l')));
     QTest::qWait(200);
     QCOMPARE(server.received.size(), 1);
 }
@@ -390,10 +299,7 @@ void TestUdpTransport::anHttpProxyCarriesNothing()
     UdpTransport transport{ config };
     QSignalSpy failed(&transport, &UdpTransport::ipDiscoveryFailed);
     transport.startIpDiscovery(LOOPBACK.toString(), server.port(), 1);
-
-    PacketPool::Handle packet = transport.acquirePacket();
-    QVERIFY(packet->append(bytesOf(rtpLikePayload('h'))));
-    transport.send(*packet);
+    QVERIFY(sendPacket(transport, rtpLikePayload('h')));
 
     QTRY_COMPARE(failed.size(), 1);
     QTest::qWait(200);

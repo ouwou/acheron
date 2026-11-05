@@ -9,7 +9,6 @@
 namespace Acheron {
 namespace UI {
 
-// the methods this platform has, those that cant work greyed out, and the remembered one chosen
 inline QComboBox *makeCaptureMethodCombo(QWidget *parent)
 {
     using Core::Video::CaptureMethod;

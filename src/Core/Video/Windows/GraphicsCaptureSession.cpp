@@ -41,16 +41,15 @@ void ruleOutGraphicsCapture()
     graphicsCaptureRuledOut = true;
 }
 
-std::shared_ptr<GraphicsCaptureSession> GraphicsCaptureSession::start(const QByteArray &chain, const QByteArray &adapter, int *error)
+std::shared_ptr<GraphicsCaptureSession> GraphicsCaptureSession::start(const QByteArray &chain, std::optional<int> adapter, int *error)
 {
-    AVBufferRef *device = nullptr;
-    *error = openDirect3dDevice(&device, adapter);
+    Media::BufferPointer device;
+    *error = openDirect3dDevice(device, adapter);
     if (*error < 0)
         return nullptr;
 
     auto session = std::make_shared<GraphicsCaptureSession>();
-    *error = assemble(chain, device, &session->graph, &session->sink);
-    av_buffer_unref(&device);
+    *error = assemble(chain, device.get(), &session->graph, &session->sink);
     if (*error < 0)
         return nullptr;
     std::thread([session] { session->run(); }).detach();

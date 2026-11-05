@@ -22,9 +22,8 @@ namespace Media {
         return true;
 
     static const bool loadable = [] {
-        // an ffmpeg linked against libva normally has loaded it already
-        if (void *linked = dlopen("libva.so.2", RTLD_NOLOAD | RTLD_LAZY)) {
-            dlclose(linked);
+        if (void *loadedWithFfmpeg = dlopen("libva.so.2", RTLD_NOLOAD | RTLD_LAZY)) {
+            dlclose(loadedWithFfmpeg);
             return true;
         }
         for (const char *library : { "libva.so.2", "libva-drm.so.2", "libva-x11.so.2" }) {

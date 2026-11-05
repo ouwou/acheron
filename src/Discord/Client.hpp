@@ -159,7 +159,7 @@ public:
 
     void sendCallConnect(Snowflake channelId);
 
-    void sendStreamCreate(const StreamKey &channel, const QString &preferredRegion);
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
     void sendStreamDelete(const QString &streamKey);
     void sendStreamWatch(const QString &streamKey);
     void sendStreamPing(const QString &streamKey);

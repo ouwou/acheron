@@ -36,6 +36,8 @@ class AudioPipeline : public QObject
 {
     Q_OBJECT
 public:
+    static constexpr quint32 VOICE_CONNECTION_SOURCE = 0;
+
     explicit AudioPipeline(QObject *parent = nullptr);
     ~AudioPipeline() override;
 
@@ -48,7 +50,6 @@ public slots:
 
     void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
 
-    // source 0 is the voice connection
     void onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
     void setSourceVolume(quint32 source, float volume);
     void removeSource(quint32 source);

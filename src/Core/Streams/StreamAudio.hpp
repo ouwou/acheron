@@ -21,8 +21,7 @@ namespace Audio {
 class OpusEncoder;
 }
 
-// captured silence is 16-bit rounding noise, measured at an RMS of 0.5 for a program playing nothing
-// and up to 1.8 for everything but one program
+// captured silence is 16-bit rounding noise, measured at an RMS of 0.5 for a silent program and up to 1.8 for everything but one program
 [[nodiscard]] inline bool isSilence(const QByteArray &pcm)
 {
     constexpr qint64 LOUDEST_SILENCE_RMS = 6;
@@ -74,7 +73,6 @@ class StreamAudio : public QObject
 public:
     // what the official client raises stream audio to, unless the voice bitrate is higher
     static constexpr int MIN_BITRATE = 128000;
-    // nothing is captured while the machine plays nothing
     static constexpr int SOUND_GONE_MS = 100;
 
     StreamAudio(Discord::Voice::VoiceClient *rtc, int bitrate);

@@ -36,9 +36,9 @@ namespace {
 using Target = LoopbackCapture::Target;
 
 constexpr DWORD ACTIVATION_TIMEOUT_MS = 3000;
-// 100 ns units
-constexpr REFERENCE_TIME BUFFER_DURATION = 200 * 10000;
-// Windows is silent while nothing plays
+constexpr REFERENCE_TIME REFERENCE_TIME_PER_MS = 10'000;
+constexpr REFERENCE_TIME BUFFER_DURATION = 200 * REFERENCE_TIME_PER_MS;
+// Windows hands over nothing while nothing plays
 constexpr DWORD SOUND_STOPPED_MS = 50;
 constexpr int BYTES_PER_SAMPLE_FRAME = AUDIO_CHANNELS * AUDIO_SAMPLE_BYTES;
 // Windows before 10 never signals a loopback capture's event, so it is polled
@@ -52,8 +52,7 @@ struct Released
 template <typename T>
 using ComPointer = std::unique_ptr<T, Released>;
 
-// called by Windows on its own thread. nothing promises Windows is done reading the request when the
-// call returns, so the handler owns it
+// called by Windows on a thread of its own; owns the request, which Windows may still read after the call returns
 class ActivationHandler final : public IActivateAudioInterfaceCompletionHandler
 {
 public:
@@ -150,6 +149,26 @@ QString failureText(const char *step, HRESULT result)
     return LoopbackCapture::tr("Windows could not capture the sound (%1, error 0x%2).").arg(QLatin1String(step)).arg(static_cast<quint32>(result), 8, 16, QLatin1Char('0'));
 }
 
+bool capturesWholeDevice(const Target &target)
+{
+    const bool everythingButThis = target.scope == LoopbackCapture::Scope::AllButProcessTree && target.processId == GetCurrentProcessId();
+    return everythingButThis && (!processLoopbackAvailable() || QSettings().value(WHOLE_DEVICE_KEY, false).toBool());
+}
+
+QString startReading(IAudioClient *client, ComPointer<IAudioCaptureClient> &reader)
+{
+    IAudioCaptureClient *service = nullptr;
+    HRESULT result = client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void **>(&service));
+    if (FAILED(result))
+        return failureText("IAudioClient::GetService", result);
+    reader.reset(service);
+
+    result = client->Start();
+    if (FAILED(result))
+        return failureText("IAudioClient::Start", result);
+    return {};
+}
+
 struct FreedMixFormat
 {
     void operator()(WAVEFORMATEX *format) const { CoTaskMemFree(format); }
@@ -174,7 +193,6 @@ AVSampleFormat sampleFormatOf(const WAVEFORMATEX &format)
     return AV_SAMPLE_FMT_NONE;
 }
 
-// the device mixes in its own rate and speakers; the stream takes 48 kHz stereo
 std::unique_ptr<SwrContext, FreedResampler> resamplerFrom(const WAVEFORMATEX &format, AVSampleFormat sampleFormat)
 {
     AVChannelLayout from = {};
@@ -246,7 +264,7 @@ private:
                 continue;
             }
 
-            const QString failure = target->wholeDevice ? captureWholeDevice(request) : capture(*target, request);
+            const QString failure = capturesWholeDevice(*target) ? captureWholeDevice(request) : capture(*target, request);
             if (failure.isEmpty() || superseded(request))
                 continue;
             qCWarning(LogVoice) << "Sound capture of process" << target->processId << "failed:" << failure;
@@ -297,15 +315,9 @@ private:
         if (FAILED(result))
             return failureText("IAudioClient::SetEventHandle", result);
 
-        IAudioCaptureClient *service = nullptr;
-        result = client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void **>(&service));
-        if (FAILED(result))
-            return failureText("IAudioClient::GetService", result);
-        const ComPointer<IAudioCaptureClient> reader(service);
-
-        result = client->Start();
-        if (FAILED(result))
-            return failureText("IAudioClient::Start", result);
+        ComPointer<IAudioCaptureClient> reader;
+        if (const QString refused = startReading(client.get(), reader); !refused.isEmpty())
+            return refused;
 
         QByteArray unsent;
         unsent.reserve(AUDIO_FRAME_SIZE * 2);
@@ -319,9 +331,7 @@ private:
                 continue;
             }
             if (woken == WAIT_TIMEOUT) {
-                unsent.append(AUDIO_FRAME_SIZE - unsent.size(), '\0');
-                emit owner->frameCaptured(unsent);
-                unsent.clear();
+                owner->sendRest(unsent);
                 continue;
             }
             if (woken != WAIT_OBJECT_0 + 1) {
@@ -340,8 +350,7 @@ private:
         return failure;
     }
 
-    // Windows before 10 cannot leave this program out of a capture, so the whole output device is taken
-    // and what this program played is removed from it
+    // Windows before 10 cant leave this program out of a capture, so its own playback is taken out instead
     QString captureWholeDevice(quint64 request)
     {
         IMMDeviceEnumerator *madeEnumerator = nullptr;
@@ -376,15 +385,9 @@ private:
         if (FAILED(result))
             return failureText("IAudioClient::Initialize", result);
 
-        IAudioCaptureClient *service = nullptr;
-        result = client->GetService(__uuidof(IAudioCaptureClient), reinterpret_cast<void **>(&service));
-        if (FAILED(result))
-            return failureText("IAudioClient::GetService", result);
-        const ComPointer<IAudioCaptureClient> reader(service);
-
-        result = client->Start();
-        if (FAILED(result))
-            return failureText("IAudioClient::Start", result);
+        ComPointer<IAudioCaptureClient> reader;
+        if (const QString refused = startReading(client.get(), reader); !refused.isEmpty())
+            return refused;
         qCInfo(LogVoice) << "Capturing the whole output device at" << format->nSamplesPerSec << "Hz," << format->nChannels << "channels, taking this program's own sound out";
 
         DeviceReader deviceReader(owner, resampler.get(), static_cast<int>(format->nBlockAlign));
@@ -430,7 +433,7 @@ private:
                     return result;
                 heard = true;
                 if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)
-                    remover.startOver();
+                    remover.forgetDelays();
                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
                     silence.assign(static_cast<size_t>(frames) * bytesPerFrame, 0);
                     samples = silence.data();
@@ -440,14 +443,7 @@ private:
             }
         }
 
-        void flush()
-        {
-            if (unsent.isEmpty())
-                return;
-            unsent.append(AUDIO_FRAME_SIZE - unsent.size(), '\0');
-            emit owner->frameCaptured(unsent);
-            unsent.clear();
-        }
+        void flush() { owner->sendRest(unsent); }
 
     private:
         void convert(const BYTE *samples, int frames, qint64 capturedAt)
@@ -460,17 +456,15 @@ private:
             if (made <= 0)
                 return;
 
-            // the resampler holds some frames back, so what comes out was captured that much earlier
-            const qint64 heldBack = swr_get_delay(resampler, 10'000'000);
+            // the resampler holds frames back, so what comes out was captured that much earlier
+            const qint64 heldBack = swr_get_delay(resampler, PlayedSound::TICKS_PER_SECOND);
             remover.remove(converted.data(), made, capturedAt - heldBack);
-            for (int i = 0; i < made * AUDIO_CHANNELS; i++) {
-                const auto sample = static_cast<int16_t>(std::lround(std::clamp(converted[i], -1.0f, 32767.0f / 32768.0f) * 32768.0f));
-                unsent.append(reinterpret_cast<const char *>(&sample), sizeof(sample));
-            }
-            while (unsent.size() >= AUDIO_FRAME_SIZE) {
-                emit owner->frameCaptured(unsent.left(AUDIO_FRAME_SIZE));
-                unsent.remove(0, AUDIO_FRAME_SIZE);
-            }
+            const auto had = unsent.size();
+            unsent.resize(had + made * BYTES_PER_SAMPLE_FRAME);
+            auto *stereo = reinterpret_cast<int16_t *>(unsent.data() + had);
+            for (int i = 0; i < made * AUDIO_CHANNELS; i++)
+                stereo[i] = static_cast<int16_t>(std::lround(std::clamp(converted[i], -1.0f, 32767.0f / 32768.0f) * 32768.0f));
+            while (owner->sendFrame(unsent)) {}
         }
 
         LoopbackCapture *owner;
@@ -501,11 +495,7 @@ private:
             else
                 unsent.append(reinterpret_cast<const char *>(samples), size);
             reader->ReleaseBuffer(sampleFrames);
-
-            while (unsent.size() >= AUDIO_FRAME_SIZE) {
-                emit owner->frameCaptured(unsent.left(AUDIO_FRAME_SIZE));
-                unsent.remove(0, AUDIO_FRAME_SIZE);
-            }
+            while (owner->sendFrame(unsent)) {}
         }
     }
 
@@ -569,9 +559,7 @@ LoopbackCapture::~LoopbackCapture() = default;
 
 void LoopbackCapture::start(quint32 processId, Scope scope)
 {
-    const bool ofEverythingButThis = scope == Scope::AllButProcessTree && processId == GetCurrentProcessId();
-    const bool wholeDevice = ofEverythingButThis && (!processLoopbackAvailable() || QSettings().value(WHOLE_DEVICE_KEY, false).toBool());
-    worker->request(Target{ processId, scope, wholeDevice });
+    worker->request(Target{ processId, scope });
 }
 
 void LoopbackCapture::stop()

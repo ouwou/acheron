@@ -4,6 +4,8 @@
 
 #include "Core/Video/ScreenCapture.hpp"
 
+#include <dwmapi.h>
+
 #include <algorithm>
 #include <cwchar>
 #include <vector>
@@ -14,17 +16,6 @@ namespace Video {
 namespace Win {
 
 namespace {
-
-// missing from headers that also target Windows 7
-constexpr DWORD FRAME_BOUNDS_ATTRIBUTE = 9;
-constexpr DWORD CLOAKED_ATTRIBUTE = 14;
-
-HRESULT windowAttribute(HWND window, DWORD attribute, void *value, DWORD size)
-{
-    using GetAttribute = HRESULT(WINAPI *)(HWND, DWORD, PVOID, DWORD);
-    static const auto getAttribute = reinterpret_cast<GetAttribute>(reinterpret_cast<void *>(GetProcAddress(LoadLibraryW(L"dwmapi.dll"), "DwmGetWindowAttribute")));
-    return getAttribute ? getAttribute(window, attribute, value, size) : E_INVALIDARG;
-}
 
 bool hasClass(HWND window, const wchar_t *name)
 {
@@ -49,14 +40,14 @@ HWND windowOf(const QString &sourceId)
 bool isCloaked(HWND window)
 {
     DWORD cloak = 0;
-    const HRESULT asked = windowAttribute(window, CLOAKED_ATTRIBUTE, &cloak, sizeof(cloak));
-    return SUCCEEDED(asked) ? cloak == 1 || cloak == 2 : asked != E_INVALIDARG;
+    const HRESULT asked = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak));
+    return SUCCEEDED(asked) ? cloak == DWM_CLOAKED_APP || cloak == DWM_CLOAKED_SHELL : asked != E_INVALIDARG;
 }
 
 QRect visibleBounds(HWND window)
 {
     RECT bounds = {};
-    if (FAILED(windowAttribute(window, FRAME_BOUNDS_ATTRIBUTE, &bounds, sizeof(bounds))) || IsRectEmpty(&bounds)) {
+    if (FAILED(DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &bounds, sizeof(bounds))) || IsRectEmpty(&bounds)) {
         if (!GetWindowRect(window, &bounds))
             return {};
     }
@@ -125,7 +116,7 @@ bool shellSurfaceCovers(std::vector<HWND> ordinary, const QRect &client)
             continue;
 
         DWORD cloak = 0;
-        if (FAILED(windowAttribute(window, CLOAKED_ATTRIBUTE, &cloak, sizeof(cloak))) || cloak != 0)
+        if (FAILED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloak, sizeof(cloak))) || cloak != 0)
             continue;
         if (visibleBounds(window).intersects(client))
             return true;

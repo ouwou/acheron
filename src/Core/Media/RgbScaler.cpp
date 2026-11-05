@@ -86,8 +86,10 @@ bool RgbScaler::scale(const AVFrame *frame, QImage &into)
 
     const Source source{ frame->width, frame->height, frame->format, usesBt709(frame), isFullRange(frame), into.size() };
     context = sws_getCachedContext(context, frame->width, frame->height, static_cast<AVPixelFormat>(frame->format), into.width(), into.height(), AV_PIX_FMT_RGB32, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (!context)
+    if (!context) {
+        configuredFor = {};
         return false;
+    }
 
     if (source != configuredFor) {
         configuredFor = source;

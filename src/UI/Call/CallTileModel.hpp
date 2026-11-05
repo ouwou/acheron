@@ -26,7 +26,6 @@ struct TileKey
     [[nodiscard]] bool isStream() const { return kind == Kind::Stream; }
 
     bool operator==(const TileKey &other) const { return kind == other.kind && userId == other.userId; }
-    bool operator!=(const TileKey &other) const { return !(*this == other); }
     bool operator<(const TileKey &other) const { return std::tie(kind, userId) < std::tie(other.kind, other.userId); }
 };
 

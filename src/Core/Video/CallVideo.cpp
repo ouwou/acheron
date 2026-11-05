@@ -17,11 +17,8 @@ namespace {
 const char *const DISABLED_USERS_KEY = "video/disabled_users";
 const char *const MAX_DECODERS_KEY = "video/max_decoders";
 
-// a card hand-over costs the same at any size, which for small pictures is more than decoding in
-// memory: measured with nine tiles on a Radeon RX 7800 XT, 1.0 ms of CPU a picture against 0.6 ms at
-// 640x360
+// a card hand-over costs the same at any size, more than decoding a small picture in memory: 1.0 ms of CPU a picture against 0.6 ms at 640x360, measured with nine tiles on a Radeon RX 7800 XT
 constexpr int MOST_ASKED_OF_A_PICTURE_DECODED_IN_MEMORY = 70;
-// a call can show many cameras at once, so each decodes on one thread
 constexpr int SOFTWARE_THREADS_PER_CAMERA = 1;
 constexpr int EXPIRY_CHECK_MS = 1000;
 
@@ -245,32 +242,24 @@ void CallVideo::replan()
 
     const Discord::Voice::SinkWantsPlan plan = Discord::Voice::planSinkWants(input);
 
-    QHash<Snowflake, std::shared_ptr<Media::VideoDecoder>> retired;
-    {
-        std::lock_guard lock(decoderMutex);
-        for (auto it = decoders.begin(); it != decoders.end();) {
-            if (plan.deliver.contains(it.key())) {
-                ++it;
-                continue;
-            }
-            retired.insert(it.key(), it.value());
-            it = decoders.erase(it);
-        }
-        for (auto it = plan.deliver.constBegin(); it != plan.deliver.constEnd(); ++it) {
-            if (decoders.contains(it.key()))
-                continue;
+    QHash<Snowflake, std::shared_ptr<Media::VideoDecoder>> planned;
+    for (auto it = plan.deliver.constBegin(); it != plan.deliver.constEnd(); ++it) {
+        std::shared_ptr<Media::VideoDecoder> decoder = decoderOf(it.key());
+        if (!decoder) {
             const int asked = plan.wants.bySsrc.value(it.value(), plan.wants.any.value_or(Discord::Voice::sinkWantLevel(1)));
             const bool onCard = Media::hardwareDecodingEnabled() && asked > MOST_ASKED_OF_A_PICTURE_DECODED_IN_MEMORY;
-            auto decoder = std::make_shared<Media::VideoDecoder>(onCard, SOFTWARE_THREADS_PER_CAMERA);
+            decoder = std::make_shared<Media::VideoDecoder>(onCard ? Media::VideoDecoder::Hardware::Allowed : Media::VideoDecoder::Hardware::Off, SOFTWARE_THREADS_PER_CAMERA);
             decoder->setSink(tiles.value(it.key()).sink);
-            // the decoders go before the client: detach() runs once the connection has stopped
             VoiceClient *client = connection->client();
-            decoder->setKeyframeRequester([client, userId = it.key()] { QMetaObject::invokeMethod(client, [client, userId] { client->requestVideoKeyframeFrom(userId); }); });
+            decoder->setKeyframeRequester(client->queuedKeyframeRequestFrom(it.key()));
             decoder->setCodecFailureHandler(client->queuedCodecWithdrawal());
-            decoders.insert(it.key(), std::move(decoder));
         }
+        planned.insert(it.key(), std::move(decoder));
     }
-    retired.clear();
+    {
+        std::lock_guard lock(decoderMutex);
+        decoders.swap(planned);
+    }
 
     QSet<quint32> deliver;
     for (quint32 ssrc : plan.deliver)

@@ -13,13 +13,8 @@
 #include <thread>
 
 #include "Core/Media/DecodeDemand.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Discord/Voice/VideoFrame.hpp"
-
-struct AVBufferRef;
-struct AVCodec;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
 
 namespace Acheron {
 namespace Core {
@@ -30,7 +25,7 @@ void setHardwareDecodingEnabled(bool enabled);
 
 [[nodiscard]] QList<Discord::Voice::VideoCodec> decodableVideoCodecs();
 
-// left no decoder time to spare, so not offered again until the program restarts
+// for the rest of the run, as it left a decoder no time to spare
 [[nodiscard]] bool decodingGivenUpOn(Discord::Voice::VideoCodec codec);
 
 // clockwise, to be seen the right way up. carried as the display matrix decoders also read from a stream
@@ -70,13 +65,18 @@ public:
         bool hardware = false;
     };
 
-    explicit VideoDecoder(bool allowHardware = hardwareDecodingEnabled(), int softwareThreads = MAX_SOFTWARE_THREADS);
+    enum class Hardware {
+        Allowed,
+        Off,
+    };
+
+    explicit VideoDecoder(Hardware hardware = hardwareDecodingEnabled() ? Hardware::Allowed : Hardware::Off, int softwareThreads = MAX_SOFTWARE_THREADS);
     ~VideoDecoder();
 
     void setSink(std::shared_ptr<VideoFrameSink> sink);
-    // on the decoder's thread
+    // runs on the decoder's thread, or on push()'s when it discards a full queue
     void setKeyframeRequester(std::function<void()> requester);
-    // on the decoder's thread
+    // runs on the decoder's thread
     void setCodecFailureHandler(std::function<void(Discord::Voice::VideoCodec)> handler);
 
     void push(Discord::Voice::VideoCodec codec, Discord::Voice::EncodedVideoFrame frame);
@@ -101,12 +101,15 @@ private:
 
     void run();
     bool open(Discord::Voice::VideoCodec codec);
+    bool openOrWithdraw(Discord::Voice::VideoCodec codec);
     bool openHardware(Discord::Voice::VideoCodec codec);
     bool openSoftware(Discord::Voice::VideoCodec codec);
     void close();
     void decode(Queued &queued);
     [[nodiscard]] bool decodeWithOpenDecoder(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size);
+    void fallBackToSoftware(const Discord::Voice::EncodedVideoFrame &paddedFrame, int size);
     void startOverAtNextKeyframe();
+    void countDropped();
     void reportUndecodableFrame();
     void reportCodecFailure(Discord::Voice::VideoCodec codec);
     void giveUpCodecUnderStrain(double decodeMs);
@@ -123,20 +126,19 @@ private:
     Stats counters;
 
     // decoder thread only
-    AVCodecContext *context = nullptr;
-    AVBufferRef *hardwareDevice = nullptr;
-    AVFrame *decoded = nullptr;
-    AVFrame *downloaded = nullptr;
-    AVPacket *packet = nullptr;
+    CodecContextPointer context;
+    BufferPointer hardwareDevice;
+    const FramePointer decoded{ av_frame_alloc() };
+    const FramePointer downloaded{ av_frame_alloc() };
+    const PacketPointer packet{ av_packet_alloc() };
     Discord::Voice::VideoCodec openCodec = Discord::Voice::VideoCodec::Unknown;
-    int hardwarePixelFormat = -1;
+    AVPixelFormat hardwarePixelFormat = AV_PIX_FMT_NONE;
     const char *hardwareName = nullptr;
     bool hardwareAllowed;
     int softwareThreads;
     std::optional<std::chrono::steady_clock::time_point> hardwareRuledOutUntil;
     bool hardwareProven = false;
-    // the card refused this stream (its profile or size), which says nothing about the codec's other streams
-    bool hardwareTurnedDown = false;
+    bool cardRefusedThisStream = false;
     std::optional<Discord::Voice::VideoCodec> unopenableCodec;
     quint64 framesSinceOpen = 0;
     bool awaitingKeyframe = true;

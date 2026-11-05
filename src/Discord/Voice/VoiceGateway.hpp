@@ -55,7 +55,7 @@ signals:
     void readyReceived(const VoiceReady &data);
     void sessionDescriptionReceived(const SessionDescription &data);
     void speakingReceived(const SpeakingData &data);
-    void clientConnected(const ClientConnectData &data);
+    void videoStateReceived(const RemoteVideoState &remote);
     void clientsConnected(const QStringList &userIds);
     void clientDisconnected(Core::Snowflake userId);
     void sessionUpdated(const SessionUpdate &update);
@@ -80,7 +80,7 @@ private:
     void handleSpeaking(const QJsonObject &data);
     void handleHeartbeatAck(quint64 nonce);
     void handleResumed();
-    void handleClientConnect(const QJsonObject &data);
+    void handleVideo(const QJsonObject &data);
     void handleClientsConnected(const QJsonObject &data);
     void handleClientDisconnect(const QJsonObject &data);
     void handleDavePrepareTransition(const QJsonObject &data);

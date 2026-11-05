@@ -15,8 +15,7 @@
 namespace Acheron {
 namespace Core {
 
-// cached as the official client does: a result lasts two minutes, a failed lookup backs off ten seconds
-// longer each time, and a rate limit waits as long as the server asks
+// cached by the official client's rules
 class StreamPreviews : public QObject
 {
     Q_OBJECT
@@ -54,8 +53,7 @@ private:
     QHash<QString, Entry> entries;
 };
 
-// uploaded when the official client does: half a second after the video starts, every five minutes,
-// and a minute after a failure or a due upload while capture was stalled
+// uploaded when the official client uploads them
 class StreamPreviewUploader : public QObject
 {
     Q_OBJECT

@@ -8,16 +8,16 @@ endif()
 
 set(FFMPEG_RUNTIME_DLLS "" CACHE INTERNAL "ffmpeg shared libraries to stage next to the exe, if any")
 
-# The libraries MediaDecoder calls into. A shared build ships avfilter and avdevice
-# beside them; staging those too costs 33 MB of DLLs nothing here ever loads.
+# The libraries MediaDecoder calls into.
 set(FFMPEG_COMPONENTS avcodec avformat avutil swscale swresample)
 
-# Screen capture and on-card scaling for sending video live in avfilter. It is taken when
-# cameras and screen shares are built (ENABLE_VIDEO) and the prebuilt package has it, and done
-# without otherwise, in which case nothing can be shared.
-set(FFMPEG_HAVE_AVFILTER OFF CACHE INTERNAL "whether the ffmpeg target includes libavfilter" FORCE)
-# Cameras are opened through avdevice, on the same terms.
-set(FFMPEG_HAVE_AVDEVICE OFF CACHE INTERNAL "whether the ffmpeg target includes libavdevice" FORCE)
+# Screen capture and on-card scaling (avfilter) and cameras (avdevice), taken only for
+# cameras and screen shares, since a shared build's DLLs of them cost 33 MB. Each is
+# optional: without it that much less can be shared.
+set(FFMPEG_VIDEO_COMPONENTS "")
+if(ENABLE_VIDEO AND ENABLE_VOICE)
+    set(FFMPEG_VIDEO_COMPONENTS avfilter avdevice)
+endif()
 
 # ffmpeg 5.1, where AVChannelLayout replaced the channel-layout fields MediaDecoder
 # needs. Both routes below check it, or a distro on an older ffmpeg (Ubuntu 22.04 is
@@ -56,15 +56,12 @@ if(FFMPEG_FROM_VCPKG)
     add_library(ffmpeg INTERFACE)
     target_include_directories(ffmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
     target_link_libraries(ffmpeg INTERFACE ${FFMPEG_LIBRARIES})
-    if(ENABLE_VIDEO AND ENABLE_VOICE)
-        foreach(_ffmpeg_optional AVFILTER AVDEVICE)
-            string(TOLOWER ${_ffmpeg_optional} _ffmpeg_optional_name)
-            if(FFMPEG_lib${_ffmpeg_optional_name}_FOUND)
-                target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_${_ffmpeg_optional})
-                set(FFMPEG_HAVE_${_ffmpeg_optional} ON CACHE INTERNAL "whether the ffmpeg target includes lib${_ffmpeg_optional_name}" FORCE)
-            endif()
-        endforeach()
-    endif()
+    foreach(_ffmpeg_component ${FFMPEG_VIDEO_COMPONENTS})
+        if(FFMPEG_lib${_ffmpeg_component}_FOUND)
+            string(TOUPPER ${_ffmpeg_component} _ffmpeg_component_upper)
+            target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_${_ffmpeg_component_upper})
+        endif()
+    endforeach()
     message(STATUS "Using static ffmpeg from vcpkg")
     return()
 endif()
@@ -79,17 +76,14 @@ if(PkgConfig_FOUND AND NOT MSVC)
     if(TARGET PkgConfig::FFMPEG_PC)
         add_library(ffmpeg INTERFACE)
         target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG_PC)
-        if(ENABLE_VIDEO AND ENABLE_VOICE)
-            foreach(_ffmpeg_optional AVFILTER AVDEVICE)
-                string(TOLOWER ${_ffmpeg_optional} _ffmpeg_optional_name)
-                pkg_check_modules(FFMPEG_${_ffmpeg_optional}_PC QUIET IMPORTED_TARGET lib${_ffmpeg_optional_name})
-                if(TARGET PkgConfig::FFMPEG_${_ffmpeg_optional}_PC)
-                    target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG_${_ffmpeg_optional}_PC)
-                    target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_${_ffmpeg_optional})
-                    set(FFMPEG_HAVE_${_ffmpeg_optional} ON CACHE INTERNAL "whether the ffmpeg target includes lib${_ffmpeg_optional_name}" FORCE)
-                endif()
-            endforeach()
-        endif()
+        foreach(_ffmpeg_component ${FFMPEG_VIDEO_COMPONENTS})
+            string(TOUPPER ${_ffmpeg_component} _ffmpeg_component_upper)
+            pkg_check_modules(FFMPEG_${_ffmpeg_component_upper}_PC QUIET IMPORTED_TARGET lib${_ffmpeg_component})
+            if(TARGET PkgConfig::FFMPEG_${_ffmpeg_component_upper}_PC)
+                target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG_${_ffmpeg_component_upper}_PC)
+                target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_${_ffmpeg_component_upper})
+            endif()
+        endforeach()
         message(STATUS "Using ffmpeg from pkg-config")
         return()
     endif()
@@ -145,35 +139,21 @@ if(FFMPEG_INCLUDE_DIR AND NOT _ffmpeg_missing
     message(STATUS "Using ffmpeg from ${FFMPEG_INCLUDE_DIR}")
 
     set(_ffmpeg_staged_components ${FFMPEG_COMPONENTS})
-    set(_ffmpeg_for_video OFF)
-    if(ENABLE_VIDEO AND ENABLE_VOICE)
-        set(_ffmpeg_for_video ON)
-    endif()
-    if(NOT FFMPEG_avfilter_LIBRARY OR NOT _ffmpeg_for_video)
-        unset(FFMPEG_avfilter_LIBRARY CACHE)
-    endif()
-    if(_ffmpeg_for_video)
-        find_library(FFMPEG_avfilter_LIBRARY NAMES avfilter libavfilter PATH_SUFFIXES lib)
-    endif()
-    if(FFMPEG_avfilter_LIBRARY)
-        target_link_libraries(ffmpeg INTERFACE "${FFMPEG_avfilter_LIBRARY}")
-        target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_AVFILTER)
-        list(APPEND _ffmpeg_staged_components avfilter)
-        set(FFMPEG_HAVE_AVFILTER ON CACHE INTERNAL "whether the ffmpeg target includes libavfilter" FORCE)
-    endif()
-
-    if(NOT FFMPEG_avdevice_LIBRARY OR NOT _ffmpeg_for_video)
-        unset(FFMPEG_avdevice_LIBRARY CACHE)
-    endif()
-    if(_ffmpeg_for_video)
-        find_library(FFMPEG_avdevice_LIBRARY NAMES avdevice libavdevice PATH_SUFFIXES lib)
-    endif()
-    if(FFMPEG_avdevice_LIBRARY)
-        target_link_libraries(ffmpeg INTERFACE "${FFMPEG_avdevice_LIBRARY}")
-        target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_AVDEVICE)
-        list(APPEND _ffmpeg_staged_components avdevice)
-        set(FFMPEG_HAVE_AVDEVICE ON CACHE INTERNAL "whether the ffmpeg target includes libavdevice" FORCE)
-    endif()
+    foreach(_ffmpeg_component ${FFMPEG_VIDEO_COMPONENTS})
+        if(NOT FFMPEG_${_ffmpeg_component}_LIBRARY)
+            unset(FFMPEG_${_ffmpeg_component}_LIBRARY CACHE)
+        endif()
+        find_library(FFMPEG_${_ffmpeg_component}_LIBRARY
+            NAMES ${_ffmpeg_component} lib${_ffmpeg_component}
+            PATH_SUFFIXES lib
+        )
+        if(FFMPEG_${_ffmpeg_component}_LIBRARY)
+            string(TOUPPER ${_ffmpeg_component} _ffmpeg_component_upper)
+            target_link_libraries(ffmpeg INTERFACE "${FFMPEG_${_ffmpeg_component}_LIBRARY}")
+            target_compile_definitions(ffmpeg INTERFACE ACHERON_HAVE_${_ffmpeg_component_upper})
+            list(APPEND _ffmpeg_staged_components ${_ffmpeg_component})
+        endif()
+    endforeach()
 
     # shared prebuilds keep their DLLs in <prefix>/bin, staged next to the exe later
     get_filename_component(_ffmpeg_prefix "${FFMPEG_INCLUDE_DIR}" DIRECTORY)

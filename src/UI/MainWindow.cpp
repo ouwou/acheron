@@ -1193,7 +1193,6 @@ void MainWindow::updateCallHost()
 }
 
 #ifdef ACHERON_HAVE_VIDEO
-// later: the request may come from the view's own menu or slot
 void MainWindow::removeCallView(Snowflake accountId)
 {
     if (CallView *view = callViews.take(accountId)) {
@@ -1295,13 +1294,18 @@ void MainWindow::onLiveParticipantHoverChanged(const QModelIndex &proxyIndex)
 
     // as the official client
     const bool mayLook = instance->voiceChannelId() == channelId || !guildId.isValid() || instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
+    if (!mayLook) {
+        if (streamPreviewPopup)
+            streamPreviewPopup->dismiss();
+        return;
+    }
 
     if (!streamPreviewPopup)
         streamPreviewPopup = new StreamPreviewPopup(session->getImageManager(), this);
 
     const QRect rowArea = channelTree->visualRect(proxyIndex);
     const QRect rowOnScreen(channelTree->viewport()->mapToGlobal(rowArea.topLeft()), rowArea.size());
-    streamPreviewPopup->showFor(mayLook ? instance->streamPreviews() : nullptr, instance->accountId(), Discord::StreamKey::forChannel(guildId, channelId, row->userId).toString(), rowOnScreen);
+    streamPreviewPopup->showFor(instance->streamPreviews(), instance->accountId(), Discord::StreamKey::forChannel(guildId, channelId, row->userId).toString(), rowOnScreen);
 #else
     Q_UNUSED(proxyIndex);
 #endif
@@ -2963,7 +2967,7 @@ QWidget *buildRoleChip(const Discord::Role &role, QWidget *parent)
 } // namespace
 
 void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId, Snowflake guildId,
-                                     QPoint globalPos, const std::function<void(QMenu &)> &extend)
+                                     QPoint globalPos, const std::function<void(QMenu &)> &addLeadingEntries)
 {
     QMenu menu(this);
     QPointer<ClientInstance> instanceGuard(instance);
@@ -2983,8 +2987,8 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
         menu.addSeparator();
     }
 
-    if (extend)
-        extend(menu);
+    if (addLeadingEntries)
+        addLeadingEntries(menu);
 
     QAction *profileAction = menu.addAction(tr("Profile"));
     connect(profileAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {

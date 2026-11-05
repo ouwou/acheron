@@ -28,8 +28,8 @@ namespace Voice {
     return bytes * 8'000'000 / us;
 }
 
-// pacing, history and retransmission budget follow the official client's WebRTC and its numbers, except
-// MAX_QUEUE_MS. the owner calls startInterval() every PACE_INTERVAL_MS while anything waits
+// pacing, history and repairs follow the official client's WebRTC and its numbers, except MAX_QUEUE_MS.
+// the owner calls startInterval() every PACE_INTERVAL_MS while anything waits
 class VideoSendStream
 {
 public:
@@ -37,7 +37,6 @@ public:
     {
         uint16_t sequence = 0;
         uint16_t rtxSequence = 0;
-        uint16_t transportSequence = 0;
         uint16_t pictureId = 0;
     };
 
@@ -54,10 +53,8 @@ public:
         std::optional<int> roundTripMs;
     };
 
-    VideoSendStream(uint32_t ssrc, uint32_t rtxSsrc, const Numbering &first);
-
-    // `estimator` must outlive this
-    void numberWith(SendSideEstimator *estimator) { transport = estimator; }
+    // one estimator numbers the packets of every stream on a connection, as the sequence is transport-wide; it must outlive this
+    VideoSendStream(uint32_t ssrc, uint32_t rtxSsrc, const Numbering &first, SendSideEstimator &estimator);
 
     [[nodiscard]] VideoCodec codec() const { return packetizer ? packetizer->codec() : VideoCodec::Unknown; }
 
@@ -83,14 +80,12 @@ public:
     static constexpr int MAX_PACKET_SIZE = 1200;
     static constexpr int PACE_INTERVAL_MS = 5;
     static constexpr int STARTING_BITRATE = 1000000;
-    // WebRTC paces a camera at 1.1x its bitrate and screen content at 1x; the official client marks Go
-    // Live as screen content
+    // the official client marks Go Live as screen content, which WebRTC paces at 1x where a camera gets 1.1x
     static constexpr double CAMERA_PACING_FACTOR = 1.1;
     static constexpr double SCREEN_PACING_FACTOR = 1.0;
     static constexpr int BURST_MS = 40;
     static constexpr int MAX_BURST_BYTES = 63000;
-    // WebRTC lets its queue reach two seconds, relying on a bandwidth estimate and frame dropper this
-    // client lacks
+    // WebRTC lets its queue reach 2 s, relying on a bandwidth estimate and frame dropper this client lacks
     static constexpr int MAX_QUEUE_MS = 200;
     static constexpr int RETRANSMISSION_WINDOW_MS = 500;
     // a packet is kept for a second or three round trips, whichever is longer, and three times as long
@@ -100,7 +95,6 @@ public:
     static constexpr int HISTORY_PACKETS = 600;
     static constexpr int SPARSE_HISTORY_FACTOR = 3;
     static constexpr int MAX_HISTORY_PACKETS = 9600;
-    // WebRTC's margin on the measured round trip
     static constexpr int ROUND_TRIP_MARGIN_MS = 5;
 
     static constexpr int CLEAR_SIZE = RtpHeader::FIXED_SIZE + RtpHeader::EXTENSION_PREAMBLE_SIZE;
@@ -159,8 +153,7 @@ private:
 
     uint16_t nextSequence;
     uint16_t nextRtxSequence;
-    uint16_t nextTransportSequence;
-    SendSideEstimator *transport = nullptr;
+    SendSideEstimator &estimator;
     uint16_t firstPictureId;
 
     std::deque<Packet> queued;

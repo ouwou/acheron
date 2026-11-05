@@ -1,10 +1,9 @@
 #include "Core/Video/ScreenCapture.hpp"
 
-#if defined(Q_OS_WIN) && defined(ACHERON_HAVE_AVFILTER)
+#ifdef ACHERON_WINDOWS_SCREEN_CAPTURE
 
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
-#include "Core/Media/RgbScaler.hpp"
 #include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/PictureConverter.hpp"
@@ -45,6 +44,14 @@ namespace {
 using Clock = std::chrono::steady_clock;
 using Media::describeError;
 
+enum class Path {
+    Duplication,
+    GraphicsCapture,
+    WindowByDuplication,
+    ScreenCopy,
+};
+
+constexpr int DRAWING_LIMIT_MS = 5000;
 // as the official client
 constexpr int REACH_PAST_SCREEN = 15;
 // graphics capture can hand over empty pictures for a while after a window is shown or captured
@@ -99,11 +106,11 @@ enum class ScreenCapture::Drawing {
 
 struct ScreenCapture::Backends
 {
-    ~Backends()
-    {
-        av_buffer_unref(&pool);
-        av_buffer_unref(&device);
-    }
+    ~Backends() { avfilter_graph_free(&graph); }
+
+    Path path = Path::Duplication;
+    AVFilterGraph *graph = nullptr;
+    AVFilterContext *sink = nullptr;
 
     HWND window = nullptr;
     QSize clientSize;
@@ -122,9 +129,9 @@ struct ScreenCapture::Backends
     std::unique_ptr<Bitmap> screenCopy;
     PointerPainter pointer;
     bool copyDelivered = false;
-    AVBufferRef *device = nullptr;
+    Media::BufferPointer device;
     int deviceAdapter = -1;
-    AVBufferRef *pool = nullptr;
+    Media::BufferPointer pool;
     std::shared_ptr<WindowDrawer> drawer;
     quint64 cutOutPictures = 0;
     quint64 drawnPictures = 0;
@@ -250,12 +257,12 @@ void ScreenCapture::configure(const Request &wanted)
     const bool turned = monitor && monitor->turned;
     const bool copied = !backends->window && (request.method == CaptureMethod::ScreenCopy || !duplicationUsable());
     if (request.method != CaptureMethod::ScreenCopy && (usesGraphicsCapture(request.method, backends->window != nullptr) || (turned && graphicsCaptureUsable())))
-        path = Path::GraphicsCapture;
+        backends->path = Path::GraphicsCapture;
     else if (copied)
-        path = Path::ScreenCopy;
+        backends->path = Path::ScreenCopy;
     else
-        path = backends->window ? Path::WindowByDuplication : Path::Duplication;
-    if (turned && path == Path::Duplication)
+        backends->path = backends->window ? Path::WindowByDuplication : Path::Duplication;
+    if (turned && backends->path == Path::Duplication)
         qCWarning(LogVideo) << request.sourceId << "is turned, and without graphics capture its picture is sent the way the screen has it";
 }
 
@@ -266,7 +273,7 @@ bool ScreenCapture::deliversOnlyChanges() const
 
 QString ScreenCapture::captureName() const
 {
-    switch (path) {
+    switch (backends->path) {
     case Path::GraphicsCapture:
         return QStringLiteral("gfxcapture");
     case Path::WindowByDuplication:
@@ -292,12 +299,12 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         if (watched != Status::Frame)
             return watched;
     }
-    // ddagrab must keep being read to stay in time with the screen
-    if (!picturesWanted && path != Path::Duplication) {
+    // left unread, ddagrab later hands over every picture it missed at once, so it is read even while none is wanted
+    if (!picturesWanted && backends->path != Path::Duplication) {
         std::this_thread::sleep_for(pictureInterval(request.framerate));
         return Status::NoFrame;
     }
-    switch (path) {
+    switch (backends->path) {
     case Path::GraphicsCapture:
         return readGraphicsCapture(into);
     case Path::WindowByDuplication:
@@ -320,10 +327,9 @@ ScreenCapture::Status ScreenCapture::watchWindow()
         return Status::Closed;
     }
 
-    // graphics capture leaves out a window excluded from capture by itself; duplication would show it
-    // black
+    // graphics capture leaves out a window kept out of captures; duplication would show it black
     DWORD affinity = 0;
-    const bool keptOutOfCaptures = path == Path::WindowByDuplication && GetWindowDisplayAffinity(state.window, &affinity) && affinity != 0;
+    const bool keptOutOfCaptures = state.path == Path::WindowByDuplication && GetWindowDisplayAffinity(state.window, &affinity) && affinity != 0;
     const QRect client = IsIconic(state.window) || !IsWindowVisible(state.window) || keptOutOfCaptures ? QRect() : clientOnScreen(state.window);
     if (client.isEmpty()) {
         // hiding a window ends its graphics capture; minimising it doesnt
@@ -349,7 +355,7 @@ ScreenCapture::Status ScreenCapture::watchWindow()
         if (state.session)
             state.session->abandon();
         state.session.reset();
-        av_buffer_unref(&state.pool);
+        state.pool.reset();
         av_frame_unref(state.lastOfScreen.get());
         state.drawingDelivered = QSize();
     }
@@ -358,7 +364,7 @@ ScreenCapture::Status ScreenCapture::watchWindow()
 
 bool ScreenCapture::scaleOnCard(const AVFrame *from, const QRect &area, const QSize &size, const QRect &placed, AVFrame *into)
 {
-    const CardScaler::Output output = { size, Media::encodesAsBt601(size.height(), request.bt601Only), request.rgbOnCard };
+    const CardScaler::Output output = { .size = size, .matrix = matrixFor(size), .rgbWillDo = request.rgbOnCard };
     if (backends->scaler.scale(from, area, output, placed, into))
         return true;
     suspendCardScaling();
@@ -367,7 +373,8 @@ bool ScreenCapture::scaleOnCard(const AVFrame *from, const QRect &area, const QS
 
 ScreenCapture::Status ScreenCapture::readDuplication(AVFrame *into)
 {
-    if (!graph) {
+    Backends &state = *backends;
+    if (!state.graph) {
         if (waitedForRetry(retryAt))
             return Status::Stalled;
         const int built = buildDuplication();
@@ -375,11 +382,8 @@ ScreenCapture::Status ScreenCapture::readDuplication(AVFrame *into)
             return afterFailure(built);
     }
 
-    // read even when no picture is wanted: ddagrab makes up a missed read by handing the next pictures over
-    // at once
-    Backends &state = *backends;
     AVFrame *captured = state.captured.get();
-    const int got = av_buffersink_get_frame(sink, captured);
+    const int got = av_buffersink_get_frame(state.sink, captured);
     if (got == AVERROR(EAGAIN))
         return Status::NoFrame;
     if (got < 0)
@@ -402,7 +406,7 @@ ScreenCapture::Status ScreenCapture::readGraphicsCapture(AVFrame *into)
         if (waitedForRetry(state.remakeAt))
             return Status::NoFrame;
         const int built = buildGraphicsCapture();
-        if (built < 0 && path != Path::GraphicsCapture)
+        if (built < 0 && state.path != Path::GraphicsCapture)
             return Status::Stalled;
         if (built < 0)
             return afterFailure(built);
@@ -447,25 +451,25 @@ ScreenCapture::Status ScreenCapture::deliverFromCard(AVFrame *captured, AVFrame 
     const QSize ownSize(captured->width, captured->height);
     const QSize size = encodeSizeFor(ownSize, request.maxHeight);
     const char *wentOn = "read back and scaled in software";
-    const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
     if (rgbStaysOnCard(request) && size == ownSize) {
         wentOn = "kept on the graphics card as it is";
         av_frame_move_ref(into, captured);
-        markColours(into, false);
+        markColours(into, ColourMatrix::Bt709);
     } else if (scalesOnCard() && scaleOnCard(captured, wholeOf(captured), size, QRect(QPoint(0, 0), size), into)) {
         wentOn = "scaled on the graphics card and kept there";
         av_frame_unref(captured);
     } else {
+        const ColourMatrix matrix = matrixFor(size);
         int converted = readBack(captured, state.bgra.get());
         av_frame_unref(captured);
         if (converted >= 0)
-            converted = state.converter.convert(state.bgra.get(), size, request.softwareFormat, bt601, into);
+            converted = state.converter.convert(state.bgra.get(), size, request.softwareFormat, matrix, into);
         if (converted < 0)
             return afterFailure(converted);
-        markColours(into, bt601);
+        markColours(into, matrix);
     }
 
-    if (path == Path::Duplication && std::exchange(state.wentOn, wentOn) != wentOn)
+    if (state.path == Path::Duplication && std::exchange(state.wentOn, wentOn) != wentOn)
         qCInfo(LogVideo) << "Capturing" << request.sourceId << "as" << size.width() << "x" << size.height() << wentOn;
     delivered();
     return Status::Frame;
@@ -503,19 +507,19 @@ ScreenCapture::Status ScreenCapture::readWindowByDuplication(AVFrame *into)
         ready = scaleOnCard(whole, cut.onScreen, size, scaledPart(cut.inPicture, state.pictureSize, size), into);
     } else {
         if (cutOut)
-            ready = cutOntoCard(whole, cut.onScreen, state.pool, cut.inPicture.topLeft(), card) && (staysOnCard || (prepareBgra(bgra, state.pictureSize) && av_hwframe_transfer_data(bgra, card, 0) >= 0));
+            ready = cutOntoCard(whole, cut.onScreen, state.pool.get(), cut.inPicture.topLeft(), card) && (staysOnCard || (prepareBgra(bgra, state.pictureSize) && av_hwframe_transfer_data(bgra, card, 0) >= 0));
         else if (staysOnCard)
-            ready = av_hwframe_get_buffer(state.pool, card, 0) >= 0 && av_hwframe_transfer_data(card, bgra, 0) >= 0;
+            ready = av_hwframe_get_buffer(state.pool.get(), card, 0) >= 0 && av_hwframe_transfer_data(card, bgra, 0) >= 0;
 
-        const bool bt601 = !staysOnCard && Media::encodesAsBt601(size.height(), request.bt601Only);
+        const ColourMatrix matrix = staysOnCard ? ColourMatrix::Bt709 : matrixFor(size);
         if (ready && scaledOnCard)
             ready = scaleOnCard(card, wholeOf(card), size, QRect(QPoint(0, 0), size), into);
         else if (ready && staysOnCard)
             av_frame_move_ref(into, card);
         else if (ready)
-            ready = state.converter.convert(bgra, size, request.softwareFormat, bt601, into) >= 0;
+            ready = state.converter.convert(bgra, size, request.softwareFormat, matrix, into) >= 0;
         if (ready && !scaledOnCard)
-            markColours(into, bt601);
+            markColours(into, matrix);
     }
     av_frame_unref(card);
     av_frame_unref(state.lastOfScreen.get());
@@ -560,8 +564,10 @@ ScreenCapture::Status ScreenCapture::readScreenCopy(AVFrame *into)
         state.screenCopy = std::make_unique<Bitmap>(area.size());
         state.copyDelivered = false;
     }
-    if (!state.screenCopy->usable())
+    if (!state.screenCopy->usable()) {
+        state.screenCopy.reset();
         return afterFailure(AVERROR(ENOMEM));
+    }
 
     const HDC screen = GetDC(nullptr);
     const bool copied = screen && BitBlt(state.screenCopy->context(), 0, 0, area.width(), area.height(), screen, area.x(), area.y(), screenCopyOperation());
@@ -583,12 +589,12 @@ ScreenCapture::Status ScreenCapture::readScreenCopy(AVFrame *into)
     copyTopLeft(*state.screenCopy, bgra);
 
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
-    const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
-    const int converted = state.converter.convert(bgra, size, request.softwareFormat, bt601, into);
+    const ColourMatrix matrix = matrixFor(size);
+    const int converted = state.converter.convert(bgra, size, request.softwareFormat, matrix, into);
     state.copyDelivered = converted >= 0;
     if (converted < 0)
         return afterFailure(converted);
-    markColours(into, bt601);
+    markColours(into, matrix);
 
     const char *const wentOn = "copied by GDI and scaled in software";
     if (std::exchange(state.wentOn, wentOn) != wentOn)
@@ -617,23 +623,22 @@ bool ScreenCapture::duplicateScreenOf(const QRect &client)
     const int adapter = state.screen ? state.screen->adapter : std::max(0, state.deviceAdapter);
     if (adapter != state.deviceAdapter || (!state.device && retryDue)) {
         dropDuplication();
-        av_buffer_unref(&state.pool);
-        av_buffer_unref(&state.device);
+        state.pool.reset();
         state.deviceAdapter = adapter;
-        if (openDirect3dDevice(&state.device, QByteArray::number(adapter)) < 0)
+        if (openDirect3dDevice(state.device, adapter) < 0)
             retryLater();
     }
     if (state.device && !state.pool)
-        state.pool = cardPictures(state.device, state.pictureSize);
+        state.pool = cardPictures(state.device.get(), state.pictureSize);
 
     if (!state.pool || !state.screen || state.screen->turned)
         return false;
-    if (graph)
+    if (state.graph)
         return true;
     if (!retryDue)
         return false;
 
-    const int built = assemble(duplicationChain(*state.screen, request.framerate), state.device, &graph, &sink);
+    const int built = assemble(duplicationChain(*state.screen, request.framerate), state.device.get(), &state.graph, &state.sink);
     if (built < 0) {
         // Windows takes the screen away for a mode change, and it may come back another size
         state.screenChanged = true;
@@ -662,7 +667,7 @@ bool ScreenCapture::cutOutOfScreen(const QRect &client, CutOut *cut)
     state.drawnBecause = "its screen had no picture";
     AVFrame *whole = state.wholeScreen.get();
     av_frame_unref(whole);
-    const int got = av_buffersink_get_frame(sink, whole);
+    const int got = av_buffersink_get_frame(state.sink, whole);
     if (got < 0) {
         if (got != AVERROR(EAGAIN)) {
             dropDuplication();
@@ -712,7 +717,7 @@ ScreenCapture::Drawing ScreenCapture::drawnByItself(const QRect &client)
         return Drawing::Failed;
     copyTopLeft(drawn, asDrawn);
     av_frame_unref(bgra);
-    return state.rescaler.convert(asDrawn, state.pictureSize, AV_PIX_FMT_BGRA, false, bgra) >= 0 ? Drawing::Drawn : Drawing::Failed;
+    return state.rescaler.scaleBgra(asDrawn, state.pictureSize, bgra) >= 0 ? Drawing::Drawn : Drawing::Failed;
 }
 
 // neither source recovers by itself: ddagrab not from losing its screen or a mode change, graphics
@@ -721,7 +726,6 @@ ScreenCapture::Status ScreenCapture::afterFailure(int error)
 {
     tearDown();
     const QString reason = captureLostText(backends->window ? CaptureSource::Kind::Window : CaptureSource::Kind::Screen);
-    // access is denied while the secure desktop shows (a UAC prompt, the lock screen)
     const bool secureDesktopShowing = error == AVERROR(EPERM) && everDelivered;
     return giveUpOrRetry(reason.arg(describeError(error)), secureDesktopShowing);
 }
@@ -734,13 +738,12 @@ int ScreenCapture::buildDuplication()
         return AVERROR(ENODEV);
 
     // ddagrab counts outputs on the adapter of the device it is given
-    AVBufferRef *device = nullptr;
-    int result = openDirect3dDevice(&device, QByteArray::number(monitor->adapter));
+    Media::BufferPointer device;
+    int result = openDirect3dDevice(device, monitor->adapter);
     if (result < 0)
         return result;
 
-    result = assemble(duplicationChain(*monitor, request.framerate), device, &graph, &sink);
-    av_buffer_unref(&device);
+    result = assemble(duplicationChain(*monitor, request.framerate), device.get(), &backends->graph, &backends->sink);
     backends->wentOn = "";
     return result;
 }
@@ -751,7 +754,7 @@ int ScreenCapture::buildGraphicsCapture()
 
     QSize ownSize = state.pictureSize;
     QByteArray source;
-    QByteArray adapter;
+    std::optional<int> adapter;
     if (state.window) {
         source = ":hwnd=" + QByteArray::number(static_cast<qulonglong>(reinterpret_cast<quintptr>(state.window)));
     } else {
@@ -761,7 +764,7 @@ int ScreenCapture::buildGraphicsCapture()
             return AVERROR(ENODEV);
         ownSize = evenSize(monitor->geometry.size());
         source = ":hmonitor=" + QByteArray::number(static_cast<qulonglong>(reinterpret_cast<quintptr>(monitor->handle)));
-        adapter = QByteArray::number(monitor->adapter);
+        adapter = monitor->adapter;
     }
 
     // graphics capture stretches what it captured over the whole picture, which is wrong for a window
@@ -782,9 +785,14 @@ int ScreenCapture::buildGraphicsCapture()
     if (state.window)
         state.emptyPicturesUntil = Clock::now() + std::chrono::milliseconds(EMPTY_PICTURES_FOR_MS);
     if (result >= 0) {
-        qCInfo(LogVideo) << "Capturing" << request.sourceId << "by graphics capture as" << size.width() << "x" << size.height() << (asCaptured ? "kept on the graphics card as it is" : scalesByItself ? "scaled by graphics capture and kept on the graphics card"
-                                                                                                                                                                                : scalesOnCard()       ? "scaled on the graphics card and kept there"
-                                                                                                                                                                                                       : "read back and scaled in software");
+        const char *wentOn = "read back and scaled in software";
+        if (asCaptured)
+            wentOn = "kept on the graphics card as it is";
+        else if (scalesByItself)
+            wentOn = "scaled by graphics capture and kept on the graphics card";
+        else if (scalesOnCard())
+            wentOn = "scaled on the graphics card and kept there";
+        qCInfo(LogVideo) << "Capturing" << request.sourceId << "by graphics capture as" << size.width() << "x" << size.height() << wentOn;
         return result;
     }
 
@@ -793,18 +801,18 @@ int ScreenCapture::buildGraphicsCapture()
     const bool leftToChoose = request.method == CaptureMethod::Auto && state.window && !everDelivered;
     if ((result == AVERROR(ENOSYS) || leftToChoose) && duplicationUsable()) {
         qCInfo(LogVideo) << "Graphics capture of" << request.sourceId << "failed (" << describeError(result) << "); using desktop duplication";
-        path = state.window ? Path::WindowByDuplication : Path::Duplication;
+        state.path = state.window ? Path::WindowByDuplication : Path::Duplication;
     } else if (result == AVERROR(ENOSYS) && !state.window) {
         qCInfo(LogVideo) << "Graphics capture of" << request.sourceId << "failed (" << describeError(result) << "); copying the screen";
-        path = Path::ScreenCopy;
+        state.path = Path::ScreenCopy;
     }
     return result;
 }
 
 void ScreenCapture::dropDuplication()
 {
-    avfilter_graph_free(&graph);
-    sink = nullptr;
+    avfilter_graph_free(&backends->graph);
+    backends->sink = nullptr;
     av_frame_unref(backends->lastOfScreen.get());
 }
 

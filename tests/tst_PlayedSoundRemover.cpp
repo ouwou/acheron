@@ -20,10 +20,9 @@ constexpr int OFF_FRAMES = RATE / 10;
 
 qint64 timeOf(qint64 frame)
 {
-    return START + frame * 10'000'000 / RATE;
+    return START + frame * PlayedSound::TICKS_PER_SECOND / RATE;
 }
 
-// noise in bursts, as speech comes
 std::vector<int16_t> speechLike(int frames, float level, unsigned seed)
 {
     std::mt19937 random(seed);
@@ -83,12 +82,11 @@ Run play(PlayedSoundRemover &remover, PlayedSound &sound, const std::vector<int1
     return run;
 }
 
-// how much of the output is not the other sound, over the last `frames`
-double leftOver(const Run &run, int frames)
+double leftOver(const Run &run, int lastFrames)
 {
     double error = 0.0;
     double wanted = 0.0;
-    for (size_t i = run.output.size() - static_cast<size_t>(frames) * 2; i < run.output.size(); i++) {
+    for (size_t i = run.output.size() - static_cast<size_t>(lastFrames) * 2; i < run.output.size(); i++) {
         error += (run.output[i] - run.other[i]) * (run.output[i] - run.other[i]);
         wanted += run.other[i] * run.other[i];
     }
@@ -132,7 +130,7 @@ void TestPlayedSoundRemover::anEchoIsTakenOut()
     PlayedSoundRemover remover([sound] { return std::vector{ sound }; });
     const Run run = play(remover, *sound, speechLike(FRAMES, playedLevel, 1), steadyNoise(FRAMES, otherLevel, 2), [&](qint64) { return Device{ gain, delay }; });
 
-    QCOMPARE(remover.delayOf(sound), std::optional<qint64>(delay));
+    QCOMPARE(remover.framesLateOf(sound), std::optional<qint64>(delay));
     const double left = leftOver(run, RATE);
     qInfo() << "left over" << 10.0 * std::log10(left) << "dB";
     QVERIFY(left < 1e-3);
@@ -145,7 +143,7 @@ void TestPlayedSoundRemover::soundThatIsNotOursIsLeftAlone()
     PlayedSoundRemover remover([sound] { return std::vector{ sound }; });
     const Run run = play(remover, *sound, speechLike(FRAMES, 0.2f, 3), steadyNoise(FRAMES, 0.05f, 4), [](qint64) { return Device{ 1.0f, 3000, false }; });
 
-    QVERIFY(!remover.delayOf(sound));
+    QVERIFY(!remover.framesLateOf(sound));
     QVERIFY(leftOver(run, FRAMES) < 1e-9);
 }
 
@@ -157,7 +155,7 @@ void TestPlayedSoundRemover::aNewDelayIsFound()
     PlayedSoundRemover remover([sound] { return std::vector{ sound }; });
     const Run run = play(remover, *sound, speechLike(FRAMES, 0.2f, 5), steadyNoise(FRAMES, 0.05f, 6), [](qint64 frame) { return Device{ 1.0f, frame < SKIP_AT ? 3000 : 3480 }; });
 
-    QCOMPARE(remover.delayOf(sound), std::optional<qint64>(3480));
+    QCOMPARE(remover.framesLateOf(sound), std::optional<qint64>(3480));
     QVERIFY(leftOver(run, RATE) < 1e-3);
 }
 

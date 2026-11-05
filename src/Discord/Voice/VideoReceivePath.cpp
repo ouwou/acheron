@@ -22,15 +22,30 @@ namespace {
 
 constexpr uint8_t ORIENTATION_TURNS_MASK = 0x03;
 
+std::optional<int> quarterTurnsIn(std::span<const uint8_t> extensions)
+{
+    const std::span<const uint8_t> orientation = findRtpExtension(extensions, VIDEO_ORIENTATION_EXTENSION);
+    if (orientation.size() != 1)
+        return std::nullopt;
+    return orientation[0] & ORIENTATION_TURNS_MASK;
+}
+
 struct AnnouncedVideo
 {
     QList<VideoLayer> layers;
-    int maxWidth = 0;
-    int maxHeight = 0;
-    int maxFramerate = 0;
+    std::optional<QSize> maxSize;
+    std::optional<int> maxFramerate;
 };
 
-AnnouncedVideo announcedVideo(const ClientConnectData &data, bool streamContext)
+std::optional<QSize> fixedMaxSize(const StreamDescription &stream)
+{
+    if (!stream.maxResolution.hasValue())
+        return std::nullopt;
+    const QSize size(stream.maxResolution->width, stream.maxResolution->height);
+    return size.isEmpty() ? std::nullopt : std::optional<QSize>(size);
+}
+
+AnnouncedVideo announcedVideo(const RemoteVideoState &data, bool streamContext)
 {
     AnnouncedVideo announced;
     if (data.videoSsrc.get() == 0)
@@ -50,16 +65,13 @@ AnnouncedVideo announcedVideo(const ClientConnectData &data, bool streamContext)
         }
         announced.layers.append(layer);
 
-        if (layer.quality == FULL_QUALITY || announced.maxWidth == 0) {
-            if (stream.maxResolution.hasValue()) {
-                announced.maxWidth = stream.maxResolution->width;
-                announced.maxHeight = stream.maxResolution->height;
-            }
-            announced.maxFramerate = stream.maxFramerate.valueOr(0);
+        if (layer.quality == FULL_QUALITY || !announced.maxSize) {
+            if (const std::optional<QSize> size = fixedMaxSize(stream))
+                announced.maxSize = size;
+            announced.maxFramerate = stream.maxFramerate.hasValue() ? std::optional<int>(stream.maxFramerate.get()) : std::nullopt;
         }
     }
-    // on a voice connection the official client goes by the video SSRC alone and ignores each entry's
-    // active flag
+    // on a voice connection the official client goes by the video SSRC and ignores each entry's active flag
     if (announced.layers.isEmpty() && !streamContext)
         announced.layers = flaggedInactive;
     if (announced.layers.isEmpty() && data.streams.valueOr().isEmpty()) {
@@ -109,11 +121,8 @@ bool VoiceClient::VideoReceivePath::receive(const ParsedRtp &rtp, PacketPool::Ha
     return false;
 }
 
-void VoiceClient::VideoReceivePath::noteRtpExtensions(std::span<const uint8_t> extensions)
+void VoiceClient::VideoReceivePath::noteTransportSequence(std::span<const uint8_t> extensions)
 {
-    const std::span<const uint8_t> orientation = findRtpExtension(extensions, VIDEO_ORIENTATION_EXTENSION);
-    turnsOfOpenedPacket = orientation.size() == 1 ? std::optional<int>(orientation[0] & ORIENTATION_TURNS_MASK) : std::nullopt;
-
     if (!tick->isActive())
         return;
     const std::span<const uint8_t> sequence = findRtpExtension(extensions, TRANSPORT_SEQUENCE_EXTENSION);
@@ -124,7 +133,8 @@ void VoiceClient::VideoReceivePath::noteRtpExtensions(std::span<const uint8_t> e
 void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPool::Handle packet, VideoCodec codec, VideoReceiver::Arrival arrival)
 {
     const RtpHeader &header = rtp.header;
-    if (!client.openRtpPayload(rtp, *packet))
+    const std::optional<std::span<const uint8_t>> extensions = client.openRtpPayload(rtp, *packet);
+    if (!extensions)
         return;
     // the transport numbering is the connection's, not any one stream's
     state.transportMediaSsrc = header.ssrc;
@@ -133,7 +143,7 @@ void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPoo
     quint32 ssrc = header.ssrc;
     uint16_t sequence = header.sequence;
     if (retransmission) {
-        // RFC 4588. one with no payload is probe padding
+        // one with no payload is probe padding
         auto primary = state.rtxToPrimary.constFind(ssrc);
         if (primary == state.rtxToPrimary.constEnd() || packet->size() <= RTX_HEADER_SIZE)
             return;
@@ -151,8 +161,8 @@ void VoiceClient::VideoReceivePath::receiveVideo(const ParsedRtp &rtp, PacketPoo
         return;
 
     RemoteVideo &video = it->second;
-    if (turnsOfOpenedPacket && *turnsOfOpenedPacket != video.quarterTurns) {
-        video.quarterTurns = *turnsOfOpenedPacket;
+    if (const std::optional<int> turns = quarterTurnsIn(*extensions); turns && *turns != video.quarterTurns) {
+        video.quarterTurns = *turns;
         qCInfo(LogVideo) << "Video of SSRC" << ssrc << "is to be turned" << video.quarterTurns * 90 << "degrees clockwise";
     }
 
@@ -186,7 +196,7 @@ void VoiceClient::VideoReceivePath::deliverFrames(quint32 ssrc, RemoteVideo &vid
                     video.receiver->requestKeyframe();
                     return;
                 }
-            } else if (!dave->isDowngraded()) {
+            } else if (dave->awaitsKeys()) {
                 state.droppedAwaitingDaveKeys = true;
                 return;
             }
@@ -210,15 +220,15 @@ bool VoiceClient::VideoReceivePath::daveDecrypt(quint32 ssrc, std::vector<uint8_
     return true;
 }
 
-void VoiceClient::VideoReceivePath::onClientConnect(const ClientConnectData &data)
+void VoiceClient::VideoReceivePath::onVideoState(const RemoteVideoState &remote)
 {
-    if (payloadTypes.isEmpty() || !data.userId.hasValue())
+    if (payloadTypes.isEmpty() || !remote.userId.hasValue())
         return;
-    const Core::Snowflake userId = data.userId.get();
+    const Core::Snowflake userId = remote.userId.get();
     if (!userId.isValid() || userId == client.params.userId)
         return;
 
-    const AnnouncedVideo announced = announcedVideo(data, client.params.streamContext);
+    const AnnouncedVideo announced = announcedVideo(remote, client.params.streamContext);
     const QList<VideoLayer> &layers = announced.layers;
 
     const auto known = state.remoteLayers.constFind(userId);
@@ -242,7 +252,7 @@ void VoiceClient::VideoReceivePath::onClientConnect(const ClientConnectData &dat
     if (!state.explicitPlan && client.params.streamContext)
         planSingleSenders();
     emit client.remoteVideoLayersChanged(userId, layers);
-    emit client.remoteVideoChanged(userId, !layers.isEmpty(), announced.maxWidth, announced.maxHeight, announced.maxFramerate);
+    emit client.remoteVideoChanged(userId, !layers.isEmpty(), announced.maxSize, announced.maxFramerate);
 }
 
 void VoiceClient::VideoReceivePath::onClientDisconnect(Core::Snowflake userId)
@@ -252,7 +262,7 @@ void VoiceClient::VideoReceivePath::onClientDisconnect(Core::Snowflake userId)
     if (!hadVideo)
         return;
     emit client.remoteVideoLayersChanged(userId, {});
-    emit client.remoteVideoChanged(userId, false, 0, 0, 0);
+    emit client.remoteVideoChanged(userId, false, std::nullopt, std::nullopt);
 }
 
 void VoiceClient::VideoReceivePath::removeRemoteVideo(Core::Snowflake userId)
@@ -265,6 +275,7 @@ void VoiceClient::VideoReceivePath::removeRemoteVideo(Core::Snowflake userId)
         state.rtxToPrimary.remove(it->second.rtxSsrc);
         client.ssrcToUserIdMap.remove(it->first);
         state.deliveredSsrcs.remove(it->first);
+        state.senderReports.remove(it->first);
         it = state.remoteVideos.erase(it);
     }
     state.remoteLayers.remove(userId);
@@ -440,8 +451,7 @@ void VoiceClient::VideoReceivePath::onTick()
         return;
     }
 
-    // a compound packet must open with a report. NACKs and PLIs go first; transport feedback takes the
-    // room left
+    // a compound packet must open with a report; NACKs and PLIs go before transport feedback, which takes the room left
     PacketPool::Handle packet = client.udpTransport->acquirePacket();
     packet->resize(packet->tailroom() - VoiceEncryption::TRAILER_SIZE);
     int size = writeReceiverReport(packet->bytes(), client.localSsrc, reports);
@@ -467,9 +477,7 @@ void VoiceClient::VideoReceivePath::onTick()
         }
     }
     packet->resize(size);
-
-    if (client.encryption->seal(*packet, RTCP_CLEAR_SIZE))
-        client.udpTransport->send(*packet);
+    client.sealAndSend(*packet, RTCP_CLEAR_SIZE);
 
     if (reportDue) {
         state.reportedMs = now;

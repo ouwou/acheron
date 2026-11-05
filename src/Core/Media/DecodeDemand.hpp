@@ -43,7 +43,6 @@ private:
 class DecodeStrain
 {
 public:
-    // true when the decoder has been busy most of the time for long enough
     bool observe(double decodeMs, qint64 nowMs);
 
     static constexpr int WINDOW_MS = 5000;

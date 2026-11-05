@@ -44,7 +44,7 @@ void StreamPreviews::onLookupDone(const QString &streamKey, const Discord::Strea
 
     if (lookup.url.isEmpty()) {
         it->failures++;
-        it->retryAtMs = now + (lookup.retryAfterMs > 0 ? lookup.retryAfterMs : BACKOFF_STEP_MS * it->failures);
+        it->retryAtMs = now + lookup.retryAfterMs.value_or(BACKOFF_STEP_MS * it->failures);
     } else {
         it->failures = 0;
         it->retryAtMs = 0;

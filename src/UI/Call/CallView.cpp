@@ -121,7 +121,6 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
 
 CallView::~CallView()
 {
-    // before the stage deletes the surfaces, which emit as they go
     tiles.clear();
     if (video)
         video->setFocused(Snowflake::Invalid);

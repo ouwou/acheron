@@ -47,28 +47,25 @@ StreamPreviewPopup::StreamPreviewPopup(Core::ImageManager *imageManager, QWidget
     layout->addWidget(thumbnail);
 }
 
-void StreamPreviewPopup::showFor(Core::StreamPreviews *streamPreviews, Core::Snowflake account, const QString &key, const QRect &rowOnScreen)
+void StreamPreviewPopup::showFor(Core::StreamPreviews *previews, Core::Snowflake account, const QString &key, const QRect &rowOnScreen)
 {
     disconnect(previewChangedConnection);
-    previews = streamPreviews;
+    if (key != streamKey)
+        thumbnail->clear();
     accountId = account;
     streamKey = key;
     thumbnailUrl.clear();
 
-    if (!previews) {
-        showMessage(tr("No permission"));
-    } else {
-        previewChangedConnection = connect(previews, &Core::StreamPreviews::previewChanged, this, [this](const QString &changedKey, const QUrl &url) {
-            if (changedKey == streamKey && !url.isEmpty())
-                showThumbnail(url);
-        });
+    previewChangedConnection = connect(previews, &Core::StreamPreviews::previewChanged, this, [this](const QString &changedKey, const QUrl &url) {
+        if (changedKey == streamKey && !url.isEmpty())
+            showThumbnail(url);
+    });
 
-        const QUrl cached = previews->request(streamKey);
-        if (cached.isEmpty())
-            showMessage(tr("Stream just started. Get in here!"));
-        else
-            showThumbnail(cached);
-    }
+    const QUrl cached = previews->request(streamKey);
+    if (cached.isEmpty())
+        showMessage(tr("Stream just started. Get in here!"));
+    else
+        showThumbnail(cached);
 
     adjustSize();
     placeBeside(rowOnScreen);
@@ -78,7 +75,6 @@ void StreamPreviewPopup::showFor(Core::StreamPreviews *streamPreviews, Core::Sno
 void StreamPreviewPopup::dismiss()
 {
     disconnect(previewChangedConnection);
-    streamKey.clear();
     thumbnailUrl.clear();
     hide();
 }

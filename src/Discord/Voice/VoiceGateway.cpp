@@ -14,7 +14,6 @@ namespace Voice {
 
 namespace {
 
-// lets a stopped connection go at once while its proxy or server keeps it waiting
 int abortOnceStopped(void *gateway, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 {
     return static_cast<const VoiceGateway *>(gateway)->isStopping() ? 1 : 0;
@@ -181,7 +180,7 @@ void VoiceGateway::onPayloadReceived(const QJsonObject &root)
         handleClientsConnected(d.toObject());
         break;
     case VoiceOpCode::VIDEO:
-        handleClientConnect(d.toObject());
+        handleVideo(d.toObject());
         break;
     case VoiceOpCode::SESSION_UPDATE:
         emit sessionUpdated(SessionUpdate::fromJson(d.toObject()));
@@ -268,15 +267,15 @@ void VoiceGateway::handleResumed()
     emit resumed();
 }
 
-void VoiceGateway::handleClientConnect(const QJsonObject &data)
+void VoiceGateway::handleVideo(const QJsonObject &data)
 {
-    ClientConnectData client = ClientConnectData::fromJson(data);
+    const RemoteVideoState remote = RemoteVideoState::fromJson(data);
 
-    qCInfo(LogVoice) << "Client connected: user =" << client.userId.get()
-                     << "audio_ssrc =" << client.audioSsrc
-                     << "video_ssrc =" << client.videoSsrc;
+    qCInfo(LogVoice) << "Video state: user =" << remote.userId.get()
+                     << "audio_ssrc =" << remote.audioSsrc
+                     << "video_ssrc =" << remote.videoSsrc;
 
-    emit clientConnected(client);
+    emit videoStateReceived(remote);
 }
 
 void VoiceGateway::handleClientDisconnect(const QJsonObject &data)

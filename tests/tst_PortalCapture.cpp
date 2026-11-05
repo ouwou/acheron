@@ -4,6 +4,7 @@
 
 #if defined(ACHERON_HAVE_PIPEWIRE) && defined(ACHERON_HAVE_DBUS)
 
+#include "Core/Media/FfmpegPointers.hpp"
 #include "PipeWireTestSource.hpp"
 #include "ProcessUsage.hpp"
 
@@ -18,6 +19,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QSet>
 
 #include <cstdio>
@@ -35,6 +37,8 @@ extern "C" {
 }
 
 using namespace Acheron::Core::Video;
+using Acheron::Core::Media::FramePointer;
+using PortalCapture::PictureMemory;
 using Result = LinuxGrabber::Result;
 using ProcessUsage::threadsOfThisProcess;
 
@@ -47,12 +51,6 @@ const char NO_CARD_MEMORY[] = "This machine does not let a program make graphics
 constexpr QSize SMALL(64, 48);
 constexpr QSize LARGER(96, 80);
 constexpr int SOURCE_BUFFERS = PipeWireTestSource::BUFFERS;
-
-struct FrameDeleter
-{
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
 
 FramePointer emptyFrame()
 {
@@ -172,7 +170,7 @@ std::optional<int> pipeWireObjectsOfThisProcess()
 class TestSource : public PipeWireTestSource
 {
 public:
-    explicit TestSource(const QSize &size, spa_video_format format = SPA_VIDEO_FORMAT_BGRx, bool offersCard = false) : PipeWireTestSource(size, draw, format, offersCard) {}
+    explicit TestSource(const QSize &size, spa_video_format format = SPA_VIDEO_FORMAT_BGRx, Buffers buffers = Buffers::InMemory) : PipeWireTestSource(size, draw, format, buffers) {}
 };
 
 bool firstPictureArrives(PipeWireTestSource &source, LinuxGrabber *grabber, AVFrame *into, quint32 number = 0)
@@ -399,8 +397,7 @@ private:
         return { { QStringLiteral("streams"), QVariant::fromValue(QList<OfferedStream>{ OfferedStream{ told.node, properties } }) }, { QStringLiteral("restore_token"), told.nextToken } };
     }
 
-    // a portal that names its requests itself cant be listened to before it is asked, so it gives the
-    // caller time to find out where to listen
+    // a portal that names its requests itself cant be listened to in advance, so it gives the caller time to find where to listen
     void respond(const QString &request, uint response, const QVariantMap &results)
     {
         QTimer::singleShot(told.namesItsRequestsItself ? 200 : 0, this, [request, response, results] {
@@ -420,14 +417,14 @@ private:
 
 struct Capture
 {
-    explicit Capture(const QSize &size, int framerate = 1000, bool onCard = false, spa_video_format format = SPA_VIDEO_FORMAT_BGRx)
-        : source(std::make_unique<TestSource>(size, format, onCard))
+    explicit Capture(const QSize &size, int framerate = 1000, PictureMemory memory = PictureMemory::MemoryOnly, spa_video_format format = SPA_VIDEO_FORMAT_BGRx)
+        : source(std::make_unique<TestSource>(size, format, memory == PictureMemory::CardOrMemory ? TestSource::Buffers::OnTheCard : TestSource::Buffers::InMemory))
     {
         const quint32 node = source->node();
         if (node == PW_ID_ANY)
             return;
         adopted = PortalCapture::adopt(node, size);
-        grabber = PortalCapture::open(adopted.id, framerate, onCard);
+        grabber = PortalCapture::open(adopted.id, framerate, memory);
         running = firstPictureArrives(*source, grabber.get(), frame.get());
         av_frame_unref(frame.get());
     }
@@ -511,7 +508,7 @@ void TestPortalCapture::aPictureArrivesWithEveryPixelAsItWasSent()
     QFETCH(int, handedOver);
     QFETCH(QString, named);
 
-    Capture capture(SMALL, 1000, false, static_cast<spa_video_format>(sent));
+    Capture capture(SMALL, 1000, PictureMemory::MemoryOnly, static_cast<spa_video_format>(sent));
     QVERIFY(capture.running);
     QVERIFY(capture.source->send(77));
     QCOMPARE(capture.grab(), Result::Frame);
@@ -591,7 +588,7 @@ void TestPortalCapture::aSpoiledPictureIsPassedOver()
     QFETCH(bool, onCard);
     if (onCard && !TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    Capture capture(SMALL, 1000, onCard);
+    Capture capture(SMALL, 1000, onCard ? PictureMemory::CardOrMemory : PictureMemory::MemoryOnly);
     QVERIFY(capture.running);
 
     QVERIFY(capture.source->send(5, static_cast<TestSource::Spoiling>(spoiling)));
@@ -644,11 +641,11 @@ void TestPortalCapture::theSizeOfASourceIsWhatItsPicturesTurnOutToBe()
 {
     TestSource source(SMALL);
     const CaptureSource adopted = PortalCapture::adopt(source.node(), LARGER);
-    QVERIFY(adopted.id.startsWith(QLatin1String("pipewire:")));
+    QVERIFY(adopted.id.startsWith(PIPEWIRE_SOURCE_PREFIX));
     QCOMPARE(adopted.geometry, QRect(QPoint(0, 0), LARGER));
     QCOMPARE(PortalCapture::sizeOf(adopted), LARGER);
 
-    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, false);
+    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, PictureMemory::MemoryOnly);
     QVERIFY(grabber);
     const FramePointer frame = emptyFrame();
     QVERIFY(firstPictureArrives(source, grabber.get(), frame.get()));
@@ -694,13 +691,13 @@ void TestPortalCapture::releasingTheSourceClosesWhatCapturesIt()
     PortalCapture::release(capture.adopted.id);
 
     QCOMPARE(capture.grab(100), Result::Closed);
-    QVERIFY(!PortalCapture::open(capture.adopted.id, 30, false));
+    QVERIFY(!PortalCapture::open(capture.adopted.id, 30, PictureMemory::MemoryOnly));
 }
 
 void TestPortalCapture::aNodeThatIsNotThereFails()
 {
     const CaptureSource adopted = PortalCapture::adopt(0x7ffffff0, SMALL);
-    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, false);
+    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, PictureMemory::MemoryOnly);
     QVERIFY(grabber);
 
     const FramePointer frame = emptyFrame();
@@ -719,8 +716,8 @@ void TestPortalCapture::aNodeThatIsNotThereFails()
 
 void TestPortalCapture::aSourceNobodyRegisteredCannotBeOpened()
 {
-    QVERIFY(!PortalCapture::open(QStringLiteral("pipewire:123456"), 30, false));
-    QVERIFY(!PortalCapture::open(QStringLiteral("screen:0"), 30, false));
+    QVERIFY(!PortalCapture::open(QStringLiteral("pipewire:123456"), 30, PictureMemory::MemoryOnly));
+    QVERIFY(!PortalCapture::open(QStringLiteral("screen:0"), 30, PictureMemory::MemoryOnly));
     CaptureSource unknown;
     unknown.id = QStringLiteral("pipewire:123456");
     QCOMPARE(PortalCapture::sizeOf(unknown), QSize());
@@ -733,7 +730,7 @@ void TestPortalCapture::openingAndClosingTwentyTimesLeavesNothingBehind()
     const CaptureSource adopted = PortalCapture::adopt(source.node(), SMALL);
     const FramePointer frame = emptyFrame();
     const auto captureOnce = [&] {
-        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, false);
+        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 30, PictureMemory::MemoryOnly);
         return firstPictureArrives(source, grabber.get(), frame.get());
     };
 
@@ -747,7 +744,7 @@ void TestPortalCapture::openingAndClosingTwentyTimesLeavesNothingBehind()
     QTRY_COMPARE(source.buffers(), 0);
 
     {
-        const std::unique_ptr<LinuxGrabber> open = PortalCapture::open(adopted.id, 30, false);
+        const std::unique_ptr<LinuxGrabber> open = PortalCapture::open(adopted.id, 30, PictureMemory::MemoryOnly);
         QTRY_VERIFY(threadsOfThisProcess() > threads);
         QTRY_VERIFY(pipeWireObjectsOfThisProcess().value_or(0) > 2);
     }
@@ -766,7 +763,7 @@ void TestPortalCapture::aPictureOnTheCardIsHandedOverWhereItIs()
 {
     if (!TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    Capture capture(SMALL, 1000, true);
+    Capture capture(SMALL, 1000, PictureMemory::CardOrMemory);
     QVERIFY(capture.running);
     QVERIFY(capture.source->agreedOnCard());
     QVERIFY(capture.source->send(31));
@@ -801,9 +798,9 @@ void TestPortalCapture::syncObjectsAfterAPicturesPlanesAreNotTakenForPlanes()
         QSKIP(NO_CARD_MEMORY);
     if (!PipeWireTestSource::HAS_SYNC_OBJECTS)
         QSKIP("The PipeWire this was built with has no sync objects for a buffer to end in.");
-    PipeWireTestSource source(SMALL, draw, SPA_VIDEO_FORMAT_BGRx, true, true);
+    PipeWireTestSource source(SMALL, draw, SPA_VIDEO_FORMAT_BGRx, PipeWireTestSource::Buffers::OnTheCardWithSyncObjects);
     const CaptureSource adopted = PortalCapture::adopt(source.node(), SMALL);
-    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 1000, true);
+    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 1000, PictureMemory::CardOrMemory);
     const FramePointer frame = emptyFrame();
     QVERIFY(firstPictureArrives(source, grabber.get(), frame.get(), 71));
 
@@ -819,7 +816,7 @@ void TestPortalCapture::aPictureOnTheCardIsNotDrawnOverWhileItIsKept()
 {
     if (!TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    Capture capture(SMALL, 1000, true);
+    Capture capture(SMALL, 1000, PictureMemory::CardOrMemory);
     QVERIFY(capture.running);
     QCOMPARE(capture.source->buffers(), SOURCE_BUFFERS);
 
@@ -838,8 +835,14 @@ void TestPortalCapture::aPictureOnTheCardIsNotDrawnOverWhileItIsKept()
         QCOMPARE(pixelsThatDifferOnCard(kept[number - 1].get(), number), 0);
 
     const AVDRMFrameDescriptor *layout = layoutOf(kept.front().get());
+    const size_t bytes = layout->objects[0].size;
     const int watched = fcntl(layout->objects[0].fd, F_DUPFD_CLOEXEC, 3);
-    void *mapped = mmap(nullptr, layout->objects[0].size, PROT_READ, MAP_SHARED, watched, 0);
+    void *mapped = mmap(nullptr, bytes, PROT_READ, MAP_SHARED, watched, 0);
+    const auto unmapped = qScopeGuard([&] {
+        if (mapped != MAP_FAILED)
+            munmap(mapped, bytes);
+        ::close(watched);
+    });
     QVERIFY(mapped != MAP_FAILED);
     std::thread([&kept] { kept.erase(kept.begin()); }).join();
     for (quint32 number = 200; number < 200 + 3 * SOURCE_BUFFERS; number++) {
@@ -847,8 +850,6 @@ void TestPortalCapture::aPictureOnTheCardIsNotDrawnOverWhileItIsKept()
         QCOMPARE(capture.grab(), Result::Frame);
     }
     const quint32 drawnSince = *static_cast<const quint32 *>(mapped) & 0x00ffffffu;
-    munmap(mapped, layout->objects[0].size);
-    ::close(watched);
     QVERIFY2(drawnSince >= 200, "the buffer of a picture no longer kept did not go back to the source");
 }
 
@@ -856,7 +857,7 @@ void TestPortalCapture::keepingMorePicturesThanTheSourceCanSpareDoesNotStopIt()
 {
     if (!TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    Capture capture(SMALL, 1000, true);
+    Capture capture(SMALL, 1000, PictureMemory::CardOrMemory);
     QVERIFY(capture.running);
 
     std::vector<FramePointer> kept;
@@ -878,7 +879,7 @@ void TestPortalCapture::aPictureOnTheCardOutlivesWhatCapturedIt()
     const FramePointer beforeResize = emptyFrame();
     const FramePointer beforeClosing = emptyFrame();
     {
-        Capture capture(SMALL, 1000, true);
+        Capture capture(SMALL, 1000, PictureMemory::CardOrMemory);
         QVERIFY(capture.running);
         QVERIFY(capture.source->send(51));
         QCOMPARE(capture.grabber->grab(beforeResize.get(), milliseconds(500)), Result::Frame);
@@ -903,9 +904,9 @@ void TestPortalCapture::memoryIsUsedWhereTheCardWasNotAskedFor()
 {
     if (!TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    TestSource source(SMALL, SPA_VIDEO_FORMAT_BGRx, true);
+    TestSource source(SMALL, SPA_VIDEO_FORMAT_BGRx, TestSource::Buffers::OnTheCard);
     const CaptureSource adopted = PortalCapture::adopt(source.node(), SMALL);
-    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 1000, false);
+    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(adopted.id, 1000, PictureMemory::MemoryOnly);
     const FramePointer frame = emptyFrame();
     QVERIFY(firstPictureArrives(source, grabber.get(), frame.get(), 61));
 
@@ -920,11 +921,11 @@ void TestPortalCapture::cardBuffersAnotherConsumerSettledAreNotHandedOverAsMemor
 {
     if (!TestSource::cardMemoryCanBeMade())
         QSKIP(NO_CARD_MEMORY);
-    Capture first(SMALL, 1000, true);
+    Capture first(SMALL, 1000, PictureMemory::CardOrMemory);
     QVERIFY(first.running);
     QVERIFY(first.source->agreedOnCard());
 
-    const std::unique_ptr<LinuxGrabber> second = PortalCapture::open(first.adopted.id, 1000, false);
+    const std::unique_ptr<LinuxGrabber> second = PortalCapture::open(first.adopted.id, 1000, PictureMemory::MemoryOnly);
     const FramePointer frame = emptyFrame();
     Result result = Result::NoFrame;
     for (QElapsedTimer waited = startedTimer(); result == Result::NoFrame && waited.elapsed() < 5000;) {
@@ -969,8 +970,7 @@ void TestPortalCapture::anAskingThePortalTurnsDownEndsWithAReasonAndNoSession()
             reason = why;
             answers++;
         });
-        for (QElapsedTimer waited = startedTimer(); answers == 0 && waited.elapsed() < 2000;)
-            QTest::qWait(20);
+        (void)QTest::qWaitFor([&answers] { return answers > 0; }, 2000);
     }
     QTest::qWait(500);
     qInfo() << "The portal's answer to a token it cannot read:" << reason;
@@ -1151,7 +1151,7 @@ void TestPortalOfTheTests::aSourceChosenInTheDialogIsCapturedAndReleased()
     PortalCapture::chooseAgain(window ? CaptureSource::Kind::Window : CaptureSource::Kind::Screen, &token, &receiver, [&answer](const CaptureSource &chosen, const QString &why) { answer = { answer.answers + 1, chosen, why }; });
     QTRY_COMPARE(answer.answers, 1);
     QVERIFY2(answer.reason.isEmpty(), qPrintable(answer.reason));
-    QVERIFY(answer.source.id.startsWith(QLatin1String("pipewire:")));
+    QVERIFY(answer.source.id.startsWith(PIPEWIRE_SOURCE_PREFIX));
     QCOMPARE(answer.source.kind, window ? CaptureSource::Kind::Window : CaptureSource::Kind::Screen);
     QCOMPARE(answer.source.name, window ? QStringLiteral("Window") : QStringLiteral("Screen"));
     QCOMPARE(answer.source.geometry, QRect(QPoint(0, 0), SMALL));
@@ -1167,7 +1167,7 @@ void TestPortalOfTheTests::aSourceChosenInTheDialogIsCapturedAndReleased()
     QCOMPARE(asked.sourceOptions.value(QStringLiteral("persist_mode")), QVariant(2u));
     QCOMPARE(asked.sourceOptions.value(QStringLiteral("restore_token")), QVariant(QStringLiteral("the-token-from-last-time")));
 
-    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(answer.source.id, 1000, false);
+    const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(answer.source.id, 1000, PictureMemory::MemoryOnly);
     const FramePointer frame = emptyFrame();
     QVERIFY(firstPictureArrives(source, grabber.get(), frame.get(), 91));
     QCOMPARE(pixelsThatDiffer(frame.get(), 91), 0);
@@ -1177,7 +1177,7 @@ void TestPortalOfTheTests::aSourceChosenInTheDialogIsCapturedAndReleased()
     QVERIFY(!portal.whatWasAsked().calls.contains(QStringLiteral("Session.Close")));
     PortalCapture::release(answer.source.id);
     QTRY_VERIFY(portal.whatWasAsked().calls.contains(QStringLiteral("Session.Close")));
-    QVERIFY(!PortalCapture::open(answer.source.id, 30, false));
+    QVERIFY(!PortalCapture::open(answer.source.id, 30, PictureMemory::MemoryOnly));
 }
 
 void TestPortalOfTheTests::aSourceIsOpenedAgainAndAgainOnThePortalsOneConnection()
@@ -1196,7 +1196,7 @@ void TestPortalOfTheTests::aSourceIsOpenedAgainAndAgainOnThePortalsOneConnection
 
     const FramePointer frame = emptyFrame();
     for (quint32 number = 1; number <= 20; number++) {
-        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(answer.source.id, 1000, false);
+        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(answer.source.id, 1000, PictureMemory::MemoryOnly);
         QVERIFY2(firstPictureArrives(source, grabber.get(), frame.get(), number), qPrintable(QStringLiteral("capture %1: %2").arg(number).arg(grabber->failure())));
         QCOMPARE(pixelsThatDiffer(frame.get(), number), 0);
     }
@@ -1252,8 +1252,9 @@ void TestPortalCapture::theRealScreenIsCapturedInMemoryAndOnTheCard()
     const CaptureSource screen = approved.source;
 
     qInfo() << "The portal handed over" << screen.id << "of" << screen.geometry.size() << "after" << approved.answeredAfterMs << "ms, which is sooner than anybody answers a dialog";
-    for (const bool onCard : { false, true }) {
-        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(screen.id, 30, onCard);
+    for (const PictureMemory memory : { PictureMemory::MemoryOnly, PictureMemory::CardOrMemory }) {
+        const bool askedForTheCard = memory == PictureMemory::CardOrMemory;
+        const std::unique_ptr<LinuxGrabber> grabber = PortalCapture::open(screen.id, 30, memory);
         QVERIFY(grabber);
         const FramePointer frame = emptyFrame();
         Result first = Result::NoFrame;
@@ -1275,9 +1276,9 @@ void TestPortalCapture::theRealScreenIsCapturedInMemoryAndOnTheCard()
         waited.restart();
         while (waited.elapsed() < 1000)
             pictures += grabber->grab(frame.get(), milliseconds(50)) == Result::Frame;
-        qInfo().noquote() << (onCard ? "Asked for the card:" : "Asked for memory:") << grabber->name() << "handed over" << pictures << "pictures in a second";
+        qInfo().noquote() << (askedForTheCard ? "Asked for the card:" : "Asked for memory:") << grabber->name() << "handed over" << pictures << "pictures in a second";
         QVERIFY(pictures <= 31);
-        if (onCard && frame->format != AV_PIX_FMT_DRM_PRIME)
+        if (askedForTheCard && frame->format != AV_PIX_FMT_DRM_PRIME)
             qWarning("The desktop did not leave its pictures on the card although it was asked to.");
         if (frame->format != AV_PIX_FMT_DRM_PRIME)
             continue;
@@ -1290,8 +1291,12 @@ void TestPortalCapture::theRealScreenIsCapturedInMemoryAndOnTheCard()
         while (waited.elapsed() < 1500)
             whileKept += grabber->grab(frame.get(), milliseconds(50)) == Result::Frame;
         const std::optional<size_t> afterwards = hashOnCard(kept.get());
-        qInfo() << "While one picture was kept" << whileKept << "more came in a second and a half; the kept one" << (!asKept ? "cannot be read back" : asKept == afterwards ? "stayed as it was"
-                                                                                                                                                                            : "was drawn over");
+        const char *keptOne = "was drawn over";
+        if (!asKept)
+            keptOne = "cannot be read back";
+        else if (asKept == afterwards)
+            keptOne = "stayed as it was";
+        qInfo() << "While one picture was kept" << whileKept << "more came in a second and a half; the kept one" << keptOne;
         QVERIFY2(whileKept > 0 || pictures < 5, "the desktop stopped sending while a picture of its was kept");
         if (asKept)
             QCOMPARE(afterwards, asKept);

@@ -15,11 +15,9 @@
 #include "Streams/StreamManager.hpp"
 #include "Streams/StreamPreviews.hpp"
 #ifdef ACHERON_HAVE_VIDEO
-#include "Media/CodecSupport.hpp"
 #include "Streams/StreamBroadcaster.hpp"
-#include "Video/CameraPipeline.hpp"
-#include "Video/CameraSender.hpp"
 #include "Streams/StreamWatcher.hpp"
+#include "Video/CameraSender.hpp"
 #endif
 #include "Discord/Enums.hpp"
 #include "Storage/DatabaseManager.hpp"
@@ -108,8 +106,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 #ifdef ACHERON_HAVE_VIDEO
     streamWatch = new StreamWatcher(client, streamManager, voiceManager, this);
     streamBroadcast = new StreamBroadcaster(client, streamManager, voiceManager, [this] { return screenShareTerms(); }, this);
-    cameraSend = new CameraSender(
-            client, voiceManager, streamBroadcast, [this] { return screenShareTerms().allowed; }, this);
+    cameraSend = new CameraSender(client, voiceManager, streamBroadcast, [this] { return screenShareTerms().allowed; }, this);
 #endif
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
@@ -127,9 +124,6 @@ ClientInstance::ClientInstance(const AccountInfo &info,
         streamWatch->reset();
         streamBroadcast->reset();
         cameraSend->reset();
-        // a voice connection offers only the send codecs known when it is made, and the first probe is slow
-        if (Video::cameraCaptureAvailable())
-            Media::whenSendCodecsKnown(voiceManager, [voice = voiceManager](const QList<Discord::Voice::VideoCodec> &codecs) { voice->setEncodableVideoCodecs(Media::cameraCodecs(codecs)); });
 #endif
         streamManager->reset();
         streamPreviewCache->clear();
@@ -1467,13 +1461,11 @@ void ClientInstance::markCategoryAsRead(Snowflake guildId, Snowflake categoryId)
 ClientInstance::~ClientInstance()
 {
 #ifdef ACHERON_HAVE_VIDEO
-    // it sends on the voice manager's connection and asks the broadcaster what is shared
+    // these still use the voice manager as they go, which QObject would delete first
     delete cameraSend;
     cameraSend = nullptr;
-    // its sessions feed the voice manager's mixer
     delete streamWatch;
     streamWatch = nullptr;
-    // it reads the voice manager and the repositories
     delete streamBroadcast;
     streamBroadcast = nullptr;
 #endif
@@ -1597,7 +1589,7 @@ ShareTerms ClientInstance::screenShareTerms()
     if (!currentVoiceGuildId.isValid()) {
         shareTerms.allowed = true;
         if (const auto call = callStore->call(currentVoiceChannelId))
-            shareTerms.preferredRegion = call->region.value_or(QString());
+            shareTerms.preferredRegion = call->region;
         return shareTerms;
     }
 

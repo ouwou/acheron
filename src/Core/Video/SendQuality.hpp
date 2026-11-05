@@ -54,19 +54,18 @@ struct BitrateLimits
 
 [[nodiscard]] BitrateLimits bitrateLimits(const SendQuality &quality);
 
-// zero `viewerPixels` means the server hasnt said. for a very small picture the maximum can fall under
-// the minimum, as in the official client
-[[nodiscard]] BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &quality, qint64 encodedPixels, int framerate, qint64 viewerPixels);
+// for a very small picture the maximum can fall under the minimum, as in the official client
+[[nodiscard]] BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &quality, qint64 encodedPixels, int framerate, std::optional<qint64> viewerPixels);
 
 // taken up only when more than a twentieth away, so dragging a window doesnt drag the encoder along
 class ViewerSize
 {
 public:
-    bool offer(qint64 pixelCount);
-    [[nodiscard]] qint64 pixelCount() const { return adopted; }
+    bool offer(std::optional<qint64> pixelCount);
+    [[nodiscard]] std::optional<qint64> pixelCount() const { return adopted; }
 
 private:
-    qint64 adopted = 0;
+    std::optional<qint64> adopted;
 };
 
 // `video/delay_estimate` off leaves out the delay estimate

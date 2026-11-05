@@ -1390,7 +1390,7 @@ void Client::sendCallConnect(Snowflake channelId)
     gateway->sendCallConnect(channelId);
 }
 
-void Client::sendStreamCreate(const StreamKey &channel, const QString &preferredRegion)
+void Client::sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion)
 {
     gateway->sendStreamCreate(channel, preferredRegion);
 }
@@ -1422,8 +1422,6 @@ void Client::fetchStreamPreview(const QString &streamKey, StreamPreviewCallback 
 
     httpClient->get("/streams/" + streamKey + "/preview", query, [callback](const HttpResponse &response) {
         StreamPreviewLookup preview;
-        preview.statusCode = response.statusCode;
-
         const QJsonObject body = QJsonDocument::fromJson(response.body).object();
         if (response.success)
             preview.url = QUrl(body["url"].toString());

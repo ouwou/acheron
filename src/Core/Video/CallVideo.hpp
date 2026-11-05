@@ -78,8 +78,7 @@ private:
     QSet<Snowflake> disabledUsers;
     Snowflake focusedUser;
     Snowflake ownUser;
-    // with exactly one, the official client asks for no more than the tile needs, except in stage channels,
-    // which this client doesnt tell apart
+    // with exactly one, the official client asks only for what the tile needs, except in stage channels, which this client doesnt tell apart
     QSet<Snowflake> othersOnServer;
 
     QElapsedTimer clock;

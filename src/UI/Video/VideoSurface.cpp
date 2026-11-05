@@ -20,7 +20,6 @@ const char *const GPU_DRAWING_KEY = "video/gpu_drawing";
 
 constexpr int RESCALE_DELAY_MS = 120;
 
-// remote sessions and some old machines have none
 bool openGlWorks()
 {
     static const bool works = [] {
@@ -308,7 +307,6 @@ void VideoSurface::paintOverlays(QPainter &painter, bool hasPicture, bool withSp
     }
 
     if (!captionText.isEmpty()) {
-        // the painter may be on the GL framebuffer, whose font sizes are unreliable
         painter.setFont(font());
         const QRect bounds = fontMetrics().boundingRect(rect().adjusted(8, 8, -8, -8), Qt::AlignLeft | Qt::AlignBottom, captionText);
         painter.fillRect(bounds.adjusted(-4, -2, 4, 2), QColor(0, 0, 0, 170));

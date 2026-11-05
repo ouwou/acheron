@@ -1,9 +1,11 @@
 #pragma once
 
+#include "Core/Media/VideoEncoder.hpp"
 #include "Discord/Voice/VideoFrame.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace EncodedFrameChecks {
@@ -40,6 +42,36 @@ inline constexpr int OBU_SEQUENCE_HEADER = 1;
 inline constexpr int OBU_TEMPORAL_DELIMITER = 2;
 inline constexpr int OBU_FRAME_HEADER = 3;
 inline constexpr int OBU_FRAME = 6;
+inline constexpr int AV1_KEY_FRAME = 0;
+
+inline std::vector<uint8_t> annexB(const std::vector<std::vector<uint8_t>> &nals, size_t startCodeSize = 4)
+{
+    std::vector<uint8_t> unit;
+    for (const std::vector<uint8_t> &nal : nals) {
+        unit.insert(unit.end(), startCodeSize - 1, 0);
+        unit.push_back(1);
+        unit.insert(unit.end(), nal.begin(), nal.end());
+    }
+    return unit;
+}
+
+struct Finished
+{
+    bool whole = false;
+    bool keyframe = false;
+    std::vector<uint8_t> data;
+};
+
+inline Finished finish(Acheron::Core::Media::EncodedFrameFinisher &finisher, const std::vector<uint8_t> &data)
+{
+    EncodedVideoFrame frame;
+    frame.data = data;
+    Finished finished;
+    finished.whole = finisher.finish(frame);
+    finished.keyframe = frame.keyframe;
+    finished.data = std::move(frame.data);
+    return finished;
+}
 
 struct Obu
 {
@@ -99,9 +131,11 @@ inline bool isWellFormed(VideoCodec codec, const EncodedVideoFrame &frame)
         }
         if (!picture || picture->size == 0)
             return false;
-        // show_existing_frame, frame_type (two bits, 0 is a key frame), show_frame
         const uint8_t opening = frame.data[picture->payload];
-        const bool keyFrame = !(opening & 0x80) && ((opening >> 5) & 0x03) == 0 && (opening & 0x10);
+        const bool showExistingFrame = opening & 0x80;
+        const int frameType = (opening >> 5) & 0x03;
+        const bool showFrame = opening & 0x10;
+        const bool keyFrame = !showExistingFrame && frameType == AV1_KEY_FRAME && showFrame;
         return keyFrame == frame.keyframe && (!keyFrame || hasSequenceHeader);
     }
 

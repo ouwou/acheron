@@ -12,7 +12,6 @@
 namespace Acheron {
 namespace UI {
 
-// the same entries wherever a call's video is offered: in the channel list and on its tiles
 inline QString callVideoText(const char *text)
 {
     return QCoreApplication::translate("Acheron::UI::CallVideoMenu", text);

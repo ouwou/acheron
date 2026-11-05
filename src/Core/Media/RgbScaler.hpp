@@ -15,7 +15,6 @@ namespace Acheron {
 namespace Core {
 namespace Media {
 
-// as players do
 [[nodiscard]] bool usesBt709AtHeight(int height);
 [[nodiscard]] inline bool encodesAsBt601(int height, bool bt601Only)
 {

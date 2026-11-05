@@ -15,8 +15,7 @@
 namespace ProcessUsage {
 
 #ifdef Q_OS_WIN
-// counted in cycles: Windows' thread times are sampled at its clock tick, which misses threads that
-// wake for a few milliseconds at a time
+// in cycles, as Windows samples thread times at its clock tick and misses threads that wake for a few milliseconds
 inline double processCpuMs()
 {
     static const double cyclesPerMs = [] {

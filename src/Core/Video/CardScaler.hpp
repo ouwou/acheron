@@ -5,21 +5,23 @@
 
 #include <memory>
 
+#include "Core/Video/ColourMatrix.hpp"
+
 struct AVFrame;
 
 namespace Acheron {
 namespace Core {
 namespace Video {
 
-// Direct3D 11's video processor. not ffmpeg's scale_d3d11: it allocates a 10-texture array a Radeon RX
-// 7800 XT wont make of NV12, cant crop, and leaves the colours to the driver. not thread safe
+// Direct3D 11's video processor on Windows, scale_vaapi on Linux. not ffmpeg's scale_d3d11, which allocates
+// a 10-texture array a Radeon RX 7800 XT wont make of NV12, cant crop, and leaves the colours to the driver
 class CardScaler
 {
 public:
     struct Output
     {
         QSize size;
-        bool bt601 = false;
+        ColourMatrix matrix = ColourMatrix::Bt709;
         bool rgbWillDo = false;
 
         bool operator==(const Output &) const = default;

@@ -46,7 +46,6 @@ public:
     void start(const CameraSettings &settings);
     void stop();
     void requestKeyframe(int layer = CAMERA_FULL_LAYER);
-    // an encoder that cant follow a rate live is reopened, costing a key frame, so move this in steps
     void setBitrate(int bitrateBps, int layer = CAMERA_FULL_LAYER);
     void setEncoding(const QSize &encodeSize, int framerate, int layer = CAMERA_FULL_LAYER);
     void setEncodingSuspended(bool suspended, int layer = CAMERA_FULL_LAYER);

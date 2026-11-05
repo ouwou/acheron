@@ -11,7 +11,7 @@
 #include <optional>
 #include <thread>
 
-struct AVFrame;
+#include "Core/Media/FfmpegPointers.hpp"
 
 namespace Acheron {
 namespace Core {
@@ -48,9 +48,6 @@ class CaptureClock
 public:
     [[nodiscard]] std::chrono::steady_clock::time_point at(std::optional<std::chrono::microseconds> stamped, std::chrono::steady_clock::time_point readAt);
 
-    static constexpr std::chrono::milliseconds STARTED_OVER{ 1000 };
-    static constexpr int SLOWEST_CLOCK_FOLLOWED = 5000;
-
 private:
     std::optional<std::chrono::steady_clock::duration> ourClockAhead;
     std::chrono::steady_clock::time_point lastReadAt;
@@ -59,12 +56,10 @@ private:
 
 #if defined(ACHERON_HAVE_AVDEVICE) && (defined(Q_OS_WIN) || defined(Q_OS_LINUX))
 
-// asks for 1280x720 at 30 as MJPEG (the only way many USB cameras deliver it), then any format, then
-// 640x480, then anything. its own thread reads and decodes, so nothing waits in the device's buffer
 class CameraCapture : public CameraFrameSource
 {
 public:
-    CameraCapture();
+    CameraCapture() = default;
     ~CameraCapture() override;
 
     CameraCapture(const CameraCapture &) = delete;
@@ -74,10 +69,6 @@ public:
     [[nodiscard]] Status read(AVFrame *into, std::chrono::steady_clock::time_point &capturedAt) override;
     [[nodiscard]] QString failure() const override;
     [[nodiscard]] QString description() const override;
-
-    static constexpr int READ_WAIT_MS = 100;
-    // another program holding the camera can make it open and then send nothing
-    static constexpr int NO_PICTURE_TIMEOUT_MS = 5000;
 
 private:
     enum class State {
@@ -96,7 +87,7 @@ private:
     State state = State::Opening;
     QString failureText;
     QString mode;
-    AVFrame *newest;
+    const Media::FramePointer newest{ av_frame_alloc() };
     std::chrono::steady_clock::time_point newestCapturedAt;
 
     std::atomic<bool> stopping{ false };

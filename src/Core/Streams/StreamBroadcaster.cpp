@@ -7,7 +7,6 @@
 #include "Core/Media/CodecSupport.hpp"
 #include "Core/Streams/StreamAudio.hpp"
 #include "Core/Streams/StreamPreviews.hpp"
-#include "Core/Video/ScreenCapture.hpp"
 #include "Discord/Client.hpp"
 
 #include <QCoreApplication>
@@ -22,15 +21,6 @@ using Discord::Voice::LocalVideoDescription;
 using Discord::Voice::VideoCodec;
 using Discord::Voice::VideoSendStats;
 using Discord::Voice::VoiceClient;
-
-namespace {
-
-bool sameDescription(const LocalVideoDescription &a, const LocalVideoDescription &b)
-{
-    return a.maxSize == b.maxSize && a.maxFramerate == b.maxFramerate && a.maxBitrateBps == b.maxBitrateBps;
-}
-
-} // namespace
 
 StreamBroadcaster::StreamBroadcaster(Discord::Client *client, StreamManager *streams, Audio::VoiceManager *voice, TermsProvider terms, QObject *parent)
     : QObject(parent), client(client), streams(streams), voice(voice), terms(std::move(terms))
@@ -120,7 +110,7 @@ void StreamBroadcaster::start(const Video::CaptureSource &chosen, const Video::S
     failureText.clear();
 
     const ShareTerms here = terms();
-    if (!canShare()) {
+    if (!voice->isConnected() || !here.allowed) {
         Video::releaseSource(chosen);
         fail(tr("You cannot share your screen here."));
         return;
@@ -165,7 +155,7 @@ void StreamBroadcaster::setQuality(const Video::SendQuality &quality)
         return;
     sendQuality = quality;
     if (pipeline)
-        startPipeline();
+        startPipeline(pipelineCodec);
 }
 
 void StreamBroadcaster::stop()
@@ -180,11 +170,11 @@ void StreamBroadcaster::end(GatewayNotice notice)
 
     sendCodecs.cancel();
     startTimeout.stop();
+    codecTimeout.stop();
     previewUploader->stop();
 
     if (rtc) {
-        if (Audio::VoiceConnection *connection = rtc->connection())
-            rtc->close([client = connection->client()] { client->stopVideo(); });
+        rtc->close([](VoiceClient *connection) { connection->stopVideo(); });
         // not deleted here: this may be one of its own signals
         std::exchange(rtc, nullptr)->deleteLater();
     }
@@ -194,9 +184,8 @@ void StreamBroadcaster::end(GatewayNotice notice)
     Video::releaseSource(source);
 
     createSent = false;
-    sendCodec = VideoCodec::Unknown;
-    receivers.reset();
     captureStalled = false;
+    previewUploader->setStalled(false);
     soundCaptureFailed = false;
     viewerSize = {};
     limits = {};
@@ -306,7 +295,7 @@ void StreamBroadcaster::onRtcOpened(Audio::VoiceConnection *connection)
     connect(connection, &Audio::VoiceConnection::videoSendStatsUpdated, this, &StreamBroadcaster::onSendStats);
     connect(connection, &Audio::VoiceConnection::videoKeyframeRequested, this, &StreamBroadcaster::onKeyframeRequested);
     connect(connection, &Audio::VoiceConnection::videoReceiversChanged, this, &StreamBroadcaster::onReceiversChanged);
-    connect(connection, &Audio::VoiceConnection::videoWantsReceived, this, [this](int, int pixelCount) { onWantsReceived(pixelCount); });
+    connect(connection, &Audio::VoiceConnection::videoWantsReceived, this, &StreamBroadcaster::onWantsReceived);
     sendFramesToRtc();
 }
 
@@ -324,6 +313,7 @@ void StreamBroadcaster::onRtcClosed()
 {
     videoAnnounced = false;
     serverCodec = VideoCodec::Unknown;
+    receivers.reset();
     codecTimeout.stop();
     QObject::disconnect(framesToRtc);
     soundCapture.reset();
@@ -389,29 +379,31 @@ void StreamBroadcaster::onRtcConnected()
 {
     videoAnnounced = false;
     startSoundCapture();
-    useServerCodec();
+    sendOnceReady();
 }
 
 void StreamBroadcaster::onSendCodecChanged(VideoCodec codec)
 {
     serverCodec = codec;
-    if (rtc->isConnected())
-        useServerCodec();
+    sendOnceReady();
 }
 
-void StreamBroadcaster::useServerCodec()
+void StreamBroadcaster::sendOnceReady()
 {
-    if (serverCodec == VideoCodec::Unknown)
+    if (!rtc || !rtc->isConnected())
         return;
 
-    codecTimeout.stop();
-    if (pipeline && serverCodec == sendCodec) {
-        if (pipelineStarted && !videoAnnounced)
-            announceVideo();
+    if (serverCodec == VideoCodec::Unknown) {
+        if (!codecTimeout.isActive())
+            codecTimeout.start();
         return;
     }
-    sendCodec = serverCodec;
-    startPipeline();
+    codecTimeout.stop();
+
+    if (!pipeline || pipelineCodec != serverCodec)
+        startPipeline(serverCodec);
+    else if (pipelineStarted && !videoAnnounced)
+        announceVideo();
 }
 
 void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
@@ -422,11 +414,8 @@ void StreamBroadcaster::withdrawCodecsUnfitFor(const QSize &size)
 
     qCInfo(LogVoice) << "Screen share" << streamKey.toString() << "withdraws AV1: its encoder would add black to" << size;
     offeredCodecs = fit;
-    if (!rtc || !rtc->connection())
-        return;
-    rtc->run([fit](VoiceClient *connection) { connection->offerVideoEncoding(fit); });
-    if (!fit.contains(sendCodec))
-        codecTimeout.start();
+    if (rtc)
+        rtc->run([fit](VoiceClient *connection) { connection->offerVideoEncoding(fit); });
 }
 
 void StreamBroadcaster::onSendStats(const VideoSendStats &sent)
@@ -451,13 +440,13 @@ void StreamBroadcaster::onReceiversChanged(int count)
     applySuspension();
 }
 
-void StreamBroadcaster::onWantsReceived(int pixelCount)
+void StreamBroadcaster::onWantsReceived(int, std::optional<int> pixelCount)
 {
     if (viewerSize.offer(pixelCount))
         refreshLimits();
 }
 
-void StreamBroadcaster::startPipeline()
+void StreamBroadcaster::startPipeline(VideoCodec codec)
 {
     stopPipeline();
     onCaptureStalled(false);
@@ -466,7 +455,7 @@ void StreamBroadcaster::startPipeline()
     rate.restart(limits.minBps, limits.maxBps);
 
     pipeline = std::make_unique<Video::ScreenPipeline>();
-    // the pipeline is the context, so whatever it still had on the way goes with it
+    pipelineCodec = codec;
     Video::ScreenPipeline *started = pipeline.get();
     connect(started, &Video::ScreenPipeline::started, started, [this](const QSize &size, int framerate) { onPipelineStarted(size, framerate); });
     connect(started, &Video::ScreenPipeline::previewReady, started, [this](const QImage &preview) { onPreviewReady(preview); });
@@ -480,7 +469,7 @@ void StreamBroadcaster::startPipeline()
     settings.sourceId = source.id;
     settings.maxHeight = sendQuality.heightLimit();
     settings.framerate = sendQuality.framerate;
-    settings.codec = sendCodec;
+    settings.codec = codec;
     appliedBitrate = rate.bitrate();
     settings.bitrateBps = appliedBitrate;
     settings.maxBitrateBps = limits.maxBps;
@@ -525,9 +514,7 @@ void StreamBroadcaster::onPipelineStarted(const QSize &size, int framerate)
     encodedFramerate = framerate;
     withdrawCodecsUnfitFor(size);
     refreshLimits();
-
-    if (rtc && rtc->isConnected() && !videoAnnounced)
-        announceVideo();
+    sendOnceReady();
     applySuspension();
 }
 
@@ -549,7 +536,7 @@ void StreamBroadcaster::onCaptureStalled(bool stalled)
     emit stateChanged();
 }
 
-// as in the official client
+// as the official client
 void StreamBroadcaster::onSourceClosed()
 {
     stop();
@@ -582,7 +569,7 @@ void StreamBroadcaster::announceVideo()
     rtc->run([description = announced](VoiceClient *connection) { connection->startVideo(description); });
     tellBitrate();
     applySuspension();
-    // the client dropped what came before it took the announcement, including the first key frame
+    // frames from before the announcement were dropped, the first key frame with them
     pipeline->requestKeyframe();
 
     previewUploader->start(streamKey.toString());
@@ -594,7 +581,7 @@ void StreamBroadcaster::describeVideoIfChanged()
     if (!videoAnnounced || !rtc || !rtc->isConnected())
         return;
     const LocalVideoDescription description = videoDescription();
-    if (sameDescription(description, announced))
+    if (description == announced)
         return;
 
     announced = description;
@@ -644,7 +631,7 @@ void StreamBroadcaster::tellBitrate()
 void StreamBroadcaster::applySuspension()
 {
     const bool suspend = Video::encodingSuspends(pipelineStarted, videoAnnounced, receivers);
-    if (suspend == encodingSuspended)
+    if (!pipeline || suspend == encodingSuspended)
         return;
     encodingSuspended = suspend;
     pipeline->setEncodingSuspended(suspend);

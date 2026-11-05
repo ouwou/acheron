@@ -8,6 +8,7 @@ using Acheron::UI::CallFacts;
 using Acheron::UI::CallParticipant;
 using Acheron::UI::MAX_STRIP_TILES;
 using Acheron::UI::planTiles;
+using Acheron::UI::TILE_GAP;
 using Acheron::UI::TileKey;
 using Acheron::UI::TilePlan;
 
@@ -48,7 +49,7 @@ private slots:
 
     void videoOpensACollapsedCall()
     {
-        CallFacts facts = callWith({ { ALICE, true } });
+        CallFacts facts = callWith({ { .userId = ALICE, .streaming = true } });
         facts.collapsedToBar = true;
         const TilePlan plan = planTiles(facts);
         QCOMPARE(plan.videoCount, 1);
@@ -57,7 +58,7 @@ private slots:
 
     void withVideoTheOthersFollowTheCheckbox()
     {
-        CallFacts facts = callWith({ { ALICE, false, true }, { BOB } });
+        CallFacts facts = callWith({ { .userId = ALICE, .cameraSending = true }, { BOB } });
         QVERIFY(planTiles(facts).tiles.contains(TileKey::personOf(BOB)));
 
         facts.nonVideoShown = false;
@@ -67,7 +68,7 @@ private slots:
 
     void aDisabledCameraHasNoTileAndNoVideo()
     {
-        const TilePlan plan = planTiles(callWith({ { ALICE, false, true, true }, { BOB } }));
+        const TilePlan plan = planTiles(callWith({ { .userId = ALICE, .cameraSending = true, .cameraDisabled = true }, { BOB } }));
         QCOMPARE(plan.videoCount, 0);
         QVERIFY(!plan.tiles.contains(TileKey::personOf(ALICE)));
         QVERIFY(plan.tiles.contains(TileKey::personOf(BOB)));
@@ -94,7 +95,7 @@ private slots:
         for (const QRect &place : places)
             QVERIFY(area.contains(place));
         QCOMPARE(places[0].size(), places[4].size());
-        QCOMPARE(places[3].top(), places[0].bottom() + 1 + Acheron::UI::TILE_GAP);
+        QCOMPARE(places[3].top(), places[0].bottom() + 1 + TILE_GAP);
     }
 
     void aFocusedTileTakesMostOfTheArea()

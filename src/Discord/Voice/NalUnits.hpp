@@ -12,8 +12,7 @@ namespace Voice {
 
 inline constexpr std::array<uint8_t, 4> START_CODE = { 0, 0, 0, 1 };
 
-// the NAL units of an Annex B stream, without their start codes. a zero byte before a three-byte start
-// code belongs to the start code
+// a zero byte before a three-byte start code is taken for the four-byte form's
 [[nodiscard]] inline std::vector<std::span<const uint8_t>> splitAnnexB(std::span<const uint8_t> stream)
 {
     constexpr size_t SHORT_START_CODE_SIZE = 3;

@@ -40,7 +40,6 @@ struct CaptureSource
         Window,
     };
 
-    // "screen:<output name>", stable while other screens come and go, or "window:<handle>"
     QString id;
     Kind kind = Kind::Screen;
     QString name;
@@ -50,12 +49,9 @@ struct CaptureSource
 
 enum class CaptureMethod {
     Auto,
-    // Windows 10 draws a yellow border around the captured window
     GraphicsCapture,
-    // a window is cut out of its screen while nothing overlaps it and drawn by itself otherwise, as the
-    // official client does on Windows 10
     DesktopDuplication,
-    // the only way Windows 7 has; what draws straight to the screen, like a full-screen game, comes out black
+    // the only way Windows 7 has
     ScreenCopy,
     Portal,
     X11,

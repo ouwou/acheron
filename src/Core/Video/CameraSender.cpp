@@ -39,7 +39,7 @@ CameraSender::CameraSender(Discord::Client *client, Audio::VoiceManager *voice, 
     connect(voice, &Audio::VoiceManager::rtcConnectionClosing, this, &CameraSender::onRtcConnectionClosing);
     connect(voice, &Audio::VoiceManager::voiceDisconnected, this, &CameraSender::onVoiceDisconnected);
     connect(voice, &Audio::VoiceManager::channelVoiceMemberChanged, this, &CameraSender::onVoiceMembershipChanged);
-    connect(voice, &Audio::VoiceManager::participantVoiceStateChanged, this, &CameraSender::onOwnVoiceStateChanged);
+    connect(voice, &Audio::VoiceManager::participantVoiceStateChanged, this, &CameraSender::onParticipantVoiceStateChanged);
     connect(voice, &Audio::VoiceManager::speakingChanged, this, &CameraSender::onSpeakingChanged);
     connect(screenShare, &StreamBroadcaster::stateChanged, this, &CameraSender::onScreenShareChanged);
 
@@ -51,7 +51,6 @@ CameraSender::CameraSender(Discord::Client *client, Audio::VoiceManager *voice, 
 
 CameraSender::~CameraSender()
 {
-    QObject::disconnect(framesToRtc);
     stopPipeline();
 }
 
@@ -64,6 +63,10 @@ void CameraSender::reset()
 {
     if (isOn())
         fail(tr("Your camera was turned off because the connection to Discord was restarted."), GatewayNotice::Skip);
+
+    // a voice connection offers only the send codecs known when it is made, and the first probe is slow
+    if (Video::cameraCaptureAvailable())
+        Media::whenSendCodecsKnown(this, [this](const QList<VideoCodec> &codecs) { voice->setEncodableVideoCodecs(Media::cameraCodecs(codecs)); });
 }
 
 void CameraSender::setState(State state)
@@ -102,7 +105,7 @@ void CameraSender::turnOn(const QString &wantedDeviceId)
             return;
         deviceId = wantedDeviceId;
         if (pipeline)
-            startPipeline();
+            startPipeline(pipelineCodec);
         return;
     }
 
@@ -207,8 +210,10 @@ void CameraSender::onVoiceMembershipChanged()
         end(GatewayNotice::Send, State::Off);
 }
 
-void CameraSender::onOwnVoiceStateChanged()
+void CameraSender::onParticipantVoiceStateChanged(Snowflake, Snowflake userId)
 {
+    if (userId != voice->accountUserId())
+        return;
     for (Layer &layer : layers)
         layer.plan.setSelfMuted(voice->isSelfMuted());
     applyPlan();
@@ -240,7 +245,7 @@ void CameraSender::onRtcConnectionCreated(Audio::VoiceConnection *connection)
     connect(rtc, &Audio::VoiceConnection::videoSendLayersKnown, this, &CameraSender::onSendLayersKnown);
     connect(rtc, &Audio::VoiceConnection::videoKeyframeRequested, this, &CameraSender::onKeyframeRequested);
     connect(rtc, &Audio::VoiceConnection::videoReceiversChanged, this, &CameraSender::onReceiversChanged);
-    connect(rtc, &Audio::VoiceConnection::videoWantsReceived, this, [this](int want, int, int quality) { onWantsReceived(want, quality); });
+    connect(rtc, &Audio::VoiceConnection::videoWantsReceived, this, &CameraSender::onWantsReceived);
     sendFramesToRtc();
 }
 
@@ -254,7 +259,7 @@ void CameraSender::onRtcConnectionClosing()
     rtc = nullptr;
     rtcConnected = false;
     videoAnnounced = false;
-    sendCodec = VideoCodec::Unknown;
+    serverCodec = VideoCodec::Unknown;
     hasSecondLayer = false;
     for (Layer &layer : layers)
         layer.receivers.reset();
@@ -282,7 +287,7 @@ void CameraSender::onRtcStateChanged(VoiceClient::State state)
 
 void CameraSender::onSendCodecChanged(VideoCodec codec)
 {
-    sendCodec = codec;
+    serverCodec = codec;
     sendOnceReady();
 }
 
@@ -322,7 +327,7 @@ void CameraSender::onReceiversChanged(int count, int quality)
     applySuspension();
 }
 
-void CameraSender::onWantsReceived(int want, int quality)
+void CameraSender::onWantsReceived(int want, std::optional<int>, int quality)
 {
     layers[static_cast<size_t>(layerOf(quality))].plan.setWant(want);
     applyPlan();
@@ -333,26 +338,25 @@ void CameraSender::sendOnceReady()
     if (!isOn() || !encodersKnown || !rtcConnected)
         return;
 
-    if (sendCodec == VideoCodec::Unknown) {
+    if (serverCodec == VideoCodec::Unknown) {
         if (!codecTimeout.isActive())
             codecTimeout.start();
         return;
     }
     codecTimeout.stop();
 
-    if (!pipeline || pipelineCodec != sendCodec)
-        startPipeline();
+    if (!pipeline || pipelineCodec != serverCodec)
+        startPipeline(serverCodec);
     else if (pipelineStarted && !videoAnnounced)
         announceVideo();
 }
 
-void CameraSender::startPipeline()
+void CameraSender::startPipeline(VideoCodec codec)
 {
     stopPipeline();
 
     pipeline = std::make_unique<Video::CameraPipeline>();
-    pipelineCodec = sendCodec;
-    // the pipeline is the context, so whatever it still had on the way goes with it
+    pipelineCodec = codec;
     Video::CameraPipeline *started = pipeline.get();
     connect(started, &Video::CameraPipeline::started, started, [this](const QSize &size, int, int layer) {
         if (layer == CAMERA_FULL_LAYER)
@@ -369,7 +373,7 @@ void CameraSender::startPipeline()
     const Layer &second = layers[CAMERA_SECOND_LAYER];
     Video::CameraSettings settings;
     settings.deviceId = deviceId;
-    settings.codec = sendCodec;
+    settings.codec = codec;
     settings.encodeSize = full.asked.size;
     settings.framerate = full.asked.framerate;
     settings.bitrateBps = full.asked.bitrateBps;
@@ -403,8 +407,8 @@ void CameraSender::sendFramesToRtc()
     if (!pipeline || !rtc)
         return;
 
-    VoiceClient *client = rtc->client();
-    framesToRtc = connect(pipeline.get(), &Video::CameraPipeline::frameEncoded, client, [connection = client, secondQuality = layers[CAMERA_SECOND_LAYER].quality](const Video::EncodedFramePointer &frame, int layer) {
+    VoiceClient *connection = rtc->client();
+    framesToRtc = connect(pipeline.get(), &Video::CameraPipeline::frameEncoded, connection, [connection, secondQuality = layers[CAMERA_SECOND_LAYER].quality](const Video::EncodedFramePointer &frame, int layer) {
         connection->sendVideoFrame(*frame, layer == CAMERA_SECOND_LAYER ? secondQuality : Discord::Voice::FULL_QUALITY);
     });
 }
@@ -453,7 +457,7 @@ void CameraSender::announceVideo()
         connection->setVideoBitrate(secondBitrate, secondQuality);
     });
     applySuspension();
-    // the client dropped what came before it took the announcement, including the first key frame
+    // frames from before the announcement were dropped, the first key frame with them
     pipeline->requestKeyframe(CAMERA_FULL_LAYER);
     pipeline->requestKeyframe(CAMERA_SECOND_LAYER);
     setState(State::On);

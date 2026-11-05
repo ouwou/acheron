@@ -6,10 +6,10 @@
 #include <QTimer>
 
 #include <memory>
+#include <optional>
 
 #include "Core/Media/DecodeDemand.hpp"
 #include "Core/Media/VideoDecoder.hpp"
-#include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Streams/StreamConnection.hpp"
 #include "Core/Streams/StreamManager.hpp"
@@ -48,15 +48,12 @@ public:
         double pixelShareAskedFor = 1;
     };
 
-    StreamSession(const Discord::StreamKey &key, Audio::VoiceManager *voice, quint32 audioSource, QObject *parent = nullptr);
+    StreamSession(const Discord::StreamKey &key, Audio::VoiceManager *voice, QObject *parent = nullptr);
     ~StreamSession() override;
 
     [[nodiscard]] const Discord::StreamKey &key() const { return streamKey; }
     [[nodiscard]] State state() const { return currentState; }
     [[nodiscard]] bool isOver() const { return currentState == State::Ended || currentState == State::Failed || currentState == State::Full; }
-    [[nodiscard]] QList<Snowflake> viewerIds() const { return viewers; }
-    [[nodiscard]] QSize sourceSize() const { return announcedSize; }
-    [[nodiscard]] int sourceFramerate() const { return announcedFramerate; }
     [[nodiscard]] Stats stats() const { return latestStats; }
     [[nodiscard]] float volume() const { return audioVolume; }
 
@@ -71,9 +68,6 @@ public:
 
 signals:
     void stateChanged();
-    void viewersChanged();
-    void sourceChanged();
-    void statsChanged();
     void pingRequested();
 
 private slots:
@@ -82,7 +76,7 @@ private slots:
     void onRtcClosed();
     void onRtcReconnecting();
     void onRtcFailed();
-    void onRemoteVideoChanged(Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate);
+    void onRemoteVideoChanged(Snowflake userId, bool active, std::optional<QSize> maxSize);
     void onVideoStats(const Discord::Voice::VideoReceiveStats &stats);
 
 private:
@@ -94,10 +88,8 @@ private:
     quint32 audioSource;
 
     State currentState = State::Connecting;
-    QList<Snowflake> viewers;
     bool paused = false;
-    QSize announcedSize;
-    int announcedFramerate = 0;
+    qint64 announcedPixels = 0;
 
     StreamConnection *rtc;
     std::unique_ptr<Media::VideoDecoder> decoder;

@@ -411,7 +411,6 @@ jobs:
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
 
-      # left out of the build without video, which has to do without them
       - name: Install what cameras and screen shares need
         if: matrix.video == 'ON'
         run: |

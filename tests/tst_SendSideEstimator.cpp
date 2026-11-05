@@ -1,4 +1,3 @@
-
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/SendSideEstimator.hpp"
 #include "Discord/Voice/TransportFeedback.hpp"
@@ -207,7 +206,6 @@ void TestSendSideEstimator::itClimbsBackOnceTheWayKeepsUp()
 
 void TestSendSideEstimator::theNumberingRunsThroughItsWrap()
 {
-    // 2 Mbps is some two hundred packets a second, so the numbering wraps within three
     Call call(6'000'000, 65'000);
     call.run(4, 2'000'000);
     const qint64 acknowledged = call.estimator.acknowledged().value_or(0);

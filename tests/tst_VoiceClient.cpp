@@ -1,6 +1,3 @@
-// a real VoiceClient against a stand-in voice server on loopback that speaks just enough of Discord's
-// side to bring a connection up and pass video both ways
-
 #include "Core/Audio/VoiceConnection.hpp"
 #ifdef ACHERON_HAVE_VIDEO
 #include "Core/Streams/StreamConnection.hpp"
@@ -14,6 +11,8 @@
 #include "Discord/Voice/VideoSendStream.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 #include "Discord/Voice/VoiceEncryption.hpp"
+#include "FakeSocks5Proxy.hpp"
+#include "PacketBytes.hpp"
 
 #include <QCryptographicHash>
 #include <QJsonArray>
@@ -30,13 +29,17 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 using namespace Acheron;
 using namespace Acheron::Discord::Voice;
+using PacketBytes::bytesOf;
 
 namespace {
+
+const QHostAddress LOOPBACK(QHostAddress::LocalHost);
 
 constexpr int VIDEO_PAYLOAD_TYPE = 101;
 constexpr int RTX_PAYLOAD_TYPE = 102;
@@ -49,9 +52,11 @@ constexpr int PACKETS_PER_FRAME = 3;
 constexpr quint64 ALICE = 1001;
 constexpr quint32 ALICE_SSRC = 6000;
 constexpr quint32 ALICE_RTX_SSRC = 6001;
+constexpr quint16 ALICE_FIRST_SEQUENCE = 100;
 constexpr quint64 BOB = 1002;
 constexpr quint32 BOB_SSRC = 7000;
 constexpr quint32 BOB_RTX_SSRC = 7001;
+constexpr quint16 BOB_FIRST_SEQUENCE = 40000;
 
 constexpr quint32 OWN_AUDIO_SSRC = 777;
 constexpr quint32 OWN_VIDEO_SSRC = OWN_AUDIO_SSRC + 1;
@@ -68,11 +73,11 @@ struct RtpSeen
     Bytes payload;
 };
 
-// abs-send-time: 24 bits of 6.18 fixed point
 double sendTimeOf(const RtpSeen &packet)
 {
+    constexpr int ABS_SEND_TIME_FRACTION_BITS = 18;
     const std::span<const uint8_t> time = findRtpExtension(packet.extensions, ABS_SEND_TIME_EXTENSION);
-    return time.size() == 3 ? ((time[0] << 16) | (time[1] << 8) | time[2]) / 262144.0 : -1.0;
+    return time.size() == 3 ? readBigEndian24(time.data()) / double(1 << ABS_SEND_TIME_FRACTION_BITS) : -1.0;
 }
 
 Bytes pictureLoss(quint32 mediaSsrc)
@@ -108,19 +113,16 @@ Bytes receiverEstimate(quint64 bitsPerSecond)
     return packet;
 }
 
-// Discord's "DISX": an application packet with one of the sender's SSRCs where the packet's sender
-// would be
 Bytes videoReset(quint32 ssrc)
 {
-    Bytes packet = { 0x80, 204, 0, 2, 0, 0, 0, 0, 0x58, 0x53, 0x49, 0x44 };
+    Bytes packet = { 0x80, 204, 0, 2, 0, 0, 0, 0, 'X', 'S', 'I', 'D' };
     qToBigEndian(ssrc, packet.data() + 4);
     return packet;
 }
 
-// Discord's "DIS0": an application packet with a twelve-byte entry per receiver
 Bytes receiverCount(quint32 ssrc, int receivers)
 {
-    Bytes packet = { static_cast<uint8_t>(0x80 | receivers), 204, 0, static_cast<uint8_t>(2 + receivers * 3), 0, 0, 0, 0, 0x30, 0x53, 0x49, 0x44 };
+    Bytes packet = { static_cast<uint8_t>(0x80 | receivers), 204, 0, static_cast<uint8_t>(2 + receivers * 3), 0, 0, 0, 0, '0', 'S', 'I', 'D' };
     qToBigEndian(ssrc, packet.data() + 4);
     packet.resize(packet.size() + static_cast<size_t>(receivers) * 12, 0x11);
     return packet;
@@ -139,9 +141,8 @@ class FakeVoiceServer : public QObject
 public:
     FakeVoiceServer()
     {
-        gateway.listen(QHostAddress::LocalHost);
-        // spelled out, because Qt 5 takes the bare enumerator for a port number
-        media.bind(QHostAddress(QHostAddress::LocalHost));
+        gateway.listen(LOOPBACK);
+        media.bind(LOOPBACK);
         connect(&gateway, &QTcpServer::newConnection, this, &FakeVoiceServer::onGatewayConnection);
         connect(&media, &QUdpSocket::readyRead, this, &FakeVoiceServer::onDatagrams);
     }
@@ -372,7 +373,7 @@ private:
             quint16 fromPort = 0;
             media.readDatagram(datagram.data(), datagram.size(), &from, &fromPort);
             mediaSenderPorts.insert(fromPort);
-            const std::span<const uint8_t> bytes(reinterpret_cast<const uint8_t *>(datagram.constData()), static_cast<size_t>(datagram.size()));
+            const std::span<const uint8_t> bytes = bytesOf(datagram);
 
             constexpr int IP_DISCOVERY_SIZE = 74;
             if (!cipher && datagram.size() == IP_DISCOVERY_SIZE) {
@@ -481,158 +482,6 @@ private:
     quint16 nextTransportSequence = 0;
 };
 
-class FakeSocks5Proxy : public QObject
-{
-public:
-    FakeSocks5Proxy()
-    {
-        control.listen(QHostAddress::LocalHost);
-        relay.bind(QHostAddress(QHostAddress::LocalHost));
-        connect(&control, &QTcpServer::newConnection, this, &FakeSocks5Proxy::onConnection);
-        connect(&relay, &QUdpSocket::readyRead, this, &FakeSocks5Proxy::onRelayData);
-    }
-
-    [[nodiscard]] Core::ProxyConfig config() const
-    {
-        Core::ProxyConfig proxy;
-        proxy.type = Core::ProxyConfig::Type::Socks5;
-        proxy.host = QStringLiteral("127.0.0.1");
-        proxy.port = control.serverPort();
-        return proxy;
-    }
-
-    [[nodiscard]] quint16 relayPort() const { return relay.localPort(); }
-
-    QList<quint16> connectedTo;
-    QList<quint16> onwardPorts;
-    bool associated = false;
-    int datagramsToServer = 0;
-    int datagramsToClient = 0;
-
-private:
-    enum class Stage {
-        Greeting,
-        Request,
-        Tunnelling,
-        Associated,
-    };
-
-    struct Control
-    {
-        QTcpSocket *client = nullptr;
-        QTcpSocket *onward = nullptr;
-        QByteArray buffer;
-        Stage stage = Stage::Greeting;
-    };
-
-    void onConnection()
-    {
-        while (QTcpSocket *client = control.nextPendingConnection()) {
-            auto state = std::make_shared<Control>();
-            state->client = client;
-            connect(client, &QTcpSocket::readyRead, this, [this, state] { onControlData(state); });
-        }
-    }
-
-    void onControlData(const std::shared_ptr<Control> &shared)
-    {
-        Control &state = *shared;
-        state.buffer.append(state.client->readAll());
-
-        if (state.stage == Stage::Greeting) {
-            if (state.buffer.size() < 2 || state.buffer.size() < 2 + static_cast<uint8_t>(state.buffer.at(1)))
-                return;
-            state.buffer.remove(0, 2 + static_cast<uint8_t>(state.buffer.at(1)));
-            state.client->write(QByteArray("\x05\x00", 2));
-            state.stage = Stage::Request;
-        }
-
-        if (state.stage == Stage::Request) {
-            if (state.buffer.size() < 5)
-                return;
-            const char command = state.buffer.at(1);
-            const char addressType = state.buffer.at(3);
-            int addressSize = 4;
-            int addressOffset = 4;
-            if (addressType == 0x03) {
-                addressSize = static_cast<uint8_t>(state.buffer.at(4));
-                addressOffset = 5;
-            } else if (addressType == 0x04) {
-                addressSize = 16;
-            }
-            const int requestSize = addressOffset + addressSize + 2;
-            if (state.buffer.size() < requestSize)
-                return;
-            const QByteArray address = state.buffer.mid(addressOffset, addressSize);
-            const quint16 port = qFromBigEndian<quint16>(state.buffer.constData() + addressOffset + addressSize);
-            state.buffer.remove(0, requestSize);
-
-            QByteArray reply("\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00", 10);
-            if (command == 0x03) {
-                qToBigEndian(relay.localPort(), reply.data() + 8);
-                state.client->write(reply);
-                state.stage = Stage::Associated;
-                associated = true;
-                return;
-            }
-
-            const QString host = addressType == 0x01 ? QHostAddress(qFromBigEndian<quint32>(address.constData())).toString() : QString::fromLatin1(address);
-            state.onward = new QTcpSocket(this);
-            QTcpSocket *client = state.client;
-            QTcpSocket *onward = state.onward;
-            connect(onward, &QTcpSocket::connected, this, [this, shared, port, reply] {
-                connectedTo.append(port);
-                onwardPorts.append(shared->onward->localPort());
-                shared->client->write(reply);
-                shared->stage = Stage::Tunnelling;
-                shared->onward->write(shared->buffer);
-                shared->buffer.clear();
-            });
-            connect(onward, &QTcpSocket::readyRead, client, [client, onward] { client->write(onward->readAll()); });
-            connect(onward, &QTcpSocket::disconnected, client, &QTcpSocket::disconnectFromHost);
-            connect(client, &QTcpSocket::disconnected, onward, &QTcpSocket::disconnectFromHost);
-            onward->connectToHost(host, port);
-            return;
-        }
-
-        if (state.stage == Stage::Tunnelling) {
-            state.onward->write(state.buffer);
-            state.buffer.clear();
-        }
-    }
-
-    void onRelayData()
-    {
-        constexpr int RELAY_HEADER_SIZE = 10;
-        while (relay.hasPendingDatagrams()) {
-            QByteArray datagram(static_cast<int>(relay.pendingDatagramSize()), Qt::Uninitialized);
-            quint16 senderPort = 0;
-            relay.readDatagram(datagram.data(), datagram.size(), nullptr, &senderPort);
-
-            if (destinations.contains(senderPort)) {
-                QByteArray header("\x00\x00\x00\x01\x7f\x00\x00\x01\x00\x00", RELAY_HEADER_SIZE);
-                qToBigEndian(senderPort, header.data() + 8);
-                relay.writeDatagram(header + datagram, QHostAddress(QHostAddress::LocalHost), clientPort);
-                datagramsToClient++;
-                continue;
-            }
-
-            clientPort = senderPort;
-            if (datagram.size() < RELAY_HEADER_SIZE || datagram.at(3) != 0x01)
-                continue;
-            const quint16 destination = qFromBigEndian<quint16>(datagram.constData() + 8);
-            destinations.insert(destination);
-            relay.writeDatagram(datagram.mid(RELAY_HEADER_SIZE), QHostAddress(QHostAddress::LocalHost), destination);
-            datagramsToServer++;
-        }
-    }
-
-    QTcpServer control;
-    QUdpSocket relay;
-    quint16 clientPort = 0;
-    QSet<quint16> destinations;
-};
-
 struct FrameSeen
 {
     quint64 userId = 0;
@@ -672,17 +521,20 @@ EncodedVideoFrame h265Keyframe(quint32 timestamp)
     return frame;
 }
 
-constexpr std::array<uint8_t, 5> AV1_SEQUENCE_HEADER = { 0x0A, 3, 0x11, 0x22, 0x33 };
+constexpr uint8_t OBU_HAS_SIZE = 0x02;
+constexpr uint8_t OBU_SEQUENCE_HEADER = 1 << 3;
+constexpr uint8_t OBU_TEMPORAL_DELIMITER = 2 << 3;
+constexpr uint8_t OBU_FRAME = 6 << 3;
+constexpr std::array<uint8_t, 5> AV1_SEQUENCE_HEADER = { OBU_SEQUENCE_HEADER | OBU_HAS_SIZE, 3, 0x11, 0x22, 0x33 };
 constexpr size_t AV1_PICTURE_SIZE = 3000;
 
 EncodedVideoFrame av1Frame(bool keyframe, quint32 timestamp)
 {
     EncodedVideoFrame frame;
-    frame.data = { 0x12, 0 };
+    frame.data = { OBU_TEMPORAL_DELIMITER | OBU_HAS_SIZE, 0 };
     if (keyframe)
         frame.data.insert(frame.data.end(), AV1_SEQUENCE_HEADER.begin(), AV1_SEQUENCE_HEADER.end());
-    // the frame's header, and 3000 as LEB128
-    frame.data.insert(frame.data.end(), { 0x32, 0xB8, 0x17 });
+    frame.data.insert(frame.data.end(), { OBU_FRAME | OBU_HAS_SIZE, 0x80 | (AV1_PICTURE_SIZE & 0x7F), AV1_PICTURE_SIZE >> 7 });
     frame.data.resize(frame.data.size() + AV1_PICTURE_SIZE, 0x5A);
     frame.rtpTimestamp = timestamp;
     frame.keyframe = keyframe;
@@ -694,13 +546,18 @@ Bytes av1AsAssembled(bool keyframe)
     Bytes frame;
     if (keyframe)
         frame.assign(AV1_SEQUENCE_HEADER.begin(), AV1_SEQUENCE_HEADER.end());
-    frame.push_back(0x30);
+    frame.push_back(OBU_FRAME);
     frame.resize(frame.size() + AV1_PICTURE_SIZE, 0x5A);
     return frame;
 }
 
 struct Call
 {
+    enum class Sends {
+        Nothing,
+        Video,
+    };
+
     enum class Kind {
         Voice,
         VoiceWithSecondLayer,
@@ -708,8 +565,9 @@ struct Call
         StreamWithSound,
     };
 
-    explicit Call(bool sendsVideo = false, Kind kind = Kind::Voice, const Core::ProxyConfig &proxy = {})
+    explicit Call(Sends sends = Sends::Nothing, Kind kind = Kind::Voice, const Core::ProxyConfig &proxy = {})
     {
+        const bool sendsVideo = sends == Sends::Video;
         ConnectionParams params;
         params.endpoint = server.endpoint();
         params.proxy = proxy;
@@ -773,6 +631,14 @@ struct Call
         MediaSinkWants wants;
         wants.any = 100;
         client->setVideoPlan(wants, { ALICE_SSRC, BOB_SSRC });
+    }
+
+    void receiveKeyframesFromAliceAndBob()
+    {
+        receiveAliceAndBob();
+        server.sendFrame(ALICE_SSRC, 0, ALICE_FIRST_SEQUENCE, true);
+        server.sendFrame(BOB_SSRC, 0, BOB_FIRST_SEQUENCE, true);
+        QTRY_COMPARE(frames.size(), 2);
     }
 
     [[nodiscard]] int framesFrom(quint64 userId) const
@@ -904,7 +770,7 @@ void TestVoiceClient::aVoiceConnectionDeclaresOneCameraLayer()
 
 void TestVoiceClient::aVoiceConnectionMayDeclareASecondCameraLayer()
 {
-    Call call(false, Call::Kind::VoiceWithSecondLayer);
+    Call call(Call::Sends::Nothing, Call::Kind::VoiceWithSecondLayer);
     QTRY_VERIFY(call.isUp());
 
     QCOMPARE(call.server.receivedText(0).size(), 1);
@@ -935,11 +801,9 @@ void TestVoiceClient::framesReachTheHandlerUnderTheirSender()
 {
     Call call;
     QTRY_VERIFY(call.isUp());
-    call.receiveAliceAndBob();
+    call.receiveKeyframesFromAliceAndBob();
 
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
-    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
-    call.server.sendFrame(ALICE_SSRC, 1, 100, false);
+    call.server.sendFrame(ALICE_SSRC, 1, ALICE_FIRST_SEQUENCE, false);
     QTRY_COMPARE(call.frames.size(), 3);
 
     QCOMPARE(call.framesFrom(ALICE), 2);
@@ -961,11 +825,11 @@ void TestVoiceClient::framesCarryTheTurnTheirSenderLastAskedFor()
     constexpr int NO_PACKET_LOST = -1;
     constexpr uint8_t CAMERA_BIT_AND_90_DEGREES = 0x09;
     constexpr uint8_t UPRIGHT = 0x00;
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
-    call.server.sendFrame(ALICE_SSRC, 1, 100, false, NO_PACKET_LOST, CAMERA_BIT_AND_90_DEGREES);
-    call.server.sendFrame(ALICE_SSRC, 2, 100, false);
-    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
-    call.server.sendFrame(ALICE_SSRC, 3, 100, false, NO_PACKET_LOST, UPRIGHT);
+    call.server.sendFrame(ALICE_SSRC, 0, ALICE_FIRST_SEQUENCE, true);
+    call.server.sendFrame(ALICE_SSRC, 1, ALICE_FIRST_SEQUENCE, false, NO_PACKET_LOST, CAMERA_BIT_AND_90_DEGREES);
+    call.server.sendFrame(ALICE_SSRC, 2, ALICE_FIRST_SEQUENCE, false);
+    call.server.sendFrame(BOB_SSRC, 0, BOB_FIRST_SEQUENCE, true);
+    call.server.sendFrame(ALICE_SSRC, 3, ALICE_FIRST_SEQUENCE, false, NO_PACKET_LOST, UPRIGHT);
     QTRY_COMPARE(call.frames.size(), 5);
 
     QCOMPARE(call.frames[0].quarterTurns, 0);
@@ -1001,25 +865,21 @@ void TestVoiceClient::aKeyframeRequestGoesToThatSenderAlone()
 {
     Call call;
     QTRY_VERIFY(call.isUp());
-    call.receiveAliceAndBob();
-
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
-    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
-    QTRY_COMPARE(call.frames.size(), 2);
+    call.receiveKeyframesFromAliceAndBob();
     QTest::qWait(100);
     call.server.keyframeRequests.clear();
 
     call.client->requestVideoKeyframeFrom(Core::Snowflake(ALICE));
     QTRY_VERIFY(call.server.keyframeRequests.contains(ALICE_SSRC));
 
-    call.server.sendFrame(ALICE_SSRC, 1, 100, false);
-    call.server.sendFrame(BOB_SSRC, 1, 40000, false);
+    call.server.sendFrame(ALICE_SSRC, 1, ALICE_FIRST_SEQUENCE, false);
+    call.server.sendFrame(BOB_SSRC, 1, BOB_FIRST_SEQUENCE, false);
     QTRY_COMPARE(call.framesFrom(BOB), 2);
     QTest::qWait(VideoReceiver::KEYFRAME_REQUEST_INTERVAL_MS + 200);
     QCOMPARE(call.framesFrom(ALICE), 1);
     QVERIFY(!call.server.keyframeRequests.contains(BOB_SSRC));
 
-    call.server.sendFrame(ALICE_SSRC, 2, 100, true);
+    call.server.sendFrame(ALICE_SSRC, 2, ALICE_FIRST_SEQUENCE, true);
     QTRY_COMPARE(call.framesFrom(ALICE), 2);
 }
 
@@ -1027,30 +887,26 @@ void TestVoiceClient::aVideoResetRequestStartsThatSendersVideoOver()
 {
     Call call;
     QTRY_VERIFY(call.isUp());
-    call.receiveAliceAndBob();
-
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
-    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
-    QTRY_COMPARE(call.frames.size(), 2);
+    call.receiveKeyframesFromAliceAndBob();
     QTest::qWait(100);
     call.server.keyframeRequests.clear();
 
     call.server.sendFeedback({ videoReset(ALICE_RTX_SSRC) });
     QTRY_VERIFY(call.server.keyframeRequests.contains(ALICE_SSRC));
 
-    call.server.sendFrame(ALICE_SSRC, 1, 100, false);
-    call.server.sendFrame(BOB_SSRC, 1, 40000, false);
+    call.server.sendFrame(ALICE_SSRC, 1, ALICE_FIRST_SEQUENCE, false);
+    call.server.sendFrame(BOB_SSRC, 1, BOB_FIRST_SEQUENCE, false);
     QTRY_COMPARE(call.framesFrom(BOB), 2);
     QTest::qWait(200);
     QCOMPARE(call.framesFrom(ALICE), 1);
     QVERIFY(!call.server.keyframeRequests.contains(BOB_SSRC));
 
-    call.server.sendFrame(ALICE_SSRC, 2, 100, true);
+    call.server.sendFrame(ALICE_SSRC, 2, ALICE_FIRST_SEQUENCE, true);
     QTRY_COMPARE(call.framesFrom(ALICE), 2);
 
     call.server.keyframeRequests.clear();
     call.server.sendFeedback({ videoReset(0x7777) });
-    call.server.sendFrame(ALICE_SSRC, 3, 100, false);
+    call.server.sendFrame(ALICE_SSRC, 3, ALICE_FIRST_SEQUENCE, false);
     QTRY_COMPARE(call.framesFrom(ALICE), 3);
     QVERIFY(call.server.keyframeRequests.isEmpty());
 }
@@ -1059,10 +915,8 @@ void TestVoiceClient::everyPacketTheServerNumberedIsReportedBack()
 {
     Call call;
     QTRY_VERIFY(call.isUp());
-    call.receiveAliceAndBob();
+    call.receiveKeyframesFromAliceAndBob();
 
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
-    call.server.sendFrame(BOB_SSRC, 0, 40000, true);
     constexpr int PROBE_PAYLOAD_TYPE = 96;
     const std::vector<uint8_t> padding(40, 0);
     call.server.sendPacket(ALICE_RTX_SSRC, PROBE_PAYLOAD_TYPE, 9, 0, false, padding);
@@ -1079,7 +933,7 @@ void TestVoiceClient::theServerNamesTheCodecVideoIsSentWith()
     QCOMPARE(receiving.client->videoSendCodec(), VideoCodec::Unknown);
 
     VideoCodec codecAtConnected = VideoCodec::Unknown;
-    Call call(true);
+    Call call(Call::Sends::Video);
     QObject::connect(call.client.get(), &VoiceClient::connected, call.client.get(), [&] { codecAtConnected = call.client->videoSendCodec(); });
     QCOMPARE(call.client->videoSendCodec(), VideoCodec::Unknown);
     QTRY_VERIFY(call.isUp());
@@ -1089,7 +943,7 @@ void TestVoiceClient::theServerNamesTheCodecVideoIsSentWith()
 
 void TestVoiceClient::nothingIsSaidOfVideoBeforeItHasStarted()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
 
     call.startVideo();
     QTRY_VERIFY(call.isUp());
@@ -1110,7 +964,7 @@ void TestVoiceClient::nothingIsSaidOfVideoBeforeItHasStarted()
 
 void TestVoiceClient::startingVideoAnnouncesEveryLayerItHas()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.readyStreams = QJsonArray{
         QJsonObject{ { "type", "video" }, { "rid", "50" }, { "ssrc", 5002 }, { "rtx_ssrc", 5003 }, { "quality", 50 }, { "active", false } },
         QJsonObject{ { "type", "video" }, { "rid", "100" }, { "ssrc", 5000 }, { "rtx_ssrc", 5005 }, { "quality", 100 }, { "active", false } },
@@ -1157,7 +1011,7 @@ void TestVoiceClient::eachLayerIsAStreamOfItsOwnUnderOneNumbering()
     constexpr quint32 SECOND_SSRC = 5002;
     constexpr quint32 SECOND_RTX_SSRC = 5003;
     constexpr int MEDIA_SINK_WANTS = 15;
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.readyStreams = QJsonArray{
         QJsonObject{ { "type", "video" }, { "rid", "100" }, { "ssrc", 5000 }, { "rtx_ssrc", 5001 }, { "quality", 100 }, { "active", false } },
         QJsonObject{ { "type", "video" }, { "rid", "50" }, { "ssrc", int(SECOND_SSRC) }, { "rtx_ssrc", int(SECOND_RTX_SSRC) }, { "quality", 50 }, { "active", false } },
@@ -1206,13 +1060,14 @@ void TestVoiceClient::eachLayerIsAStreamOfItsOwnUnderOneNumbering()
 
     call.server.send(MEDIA_SINK_WANTS, QJsonObject{ { "any", 30 }, { QString::number(SECOND_SSRC), 60 }, { "pixelCounts", QJsonObject{ { QString::number(SECOND_SSRC), 147456 } } } });
     QTRY_COMPARE(wants.count(), 2);
-    const auto said = [&wants](int index) { return QList<int>({ wants[index][0].toInt(), wants[index][1].toInt(), wants[index][2].toInt() }); };
-    QCOMPARE(said(0), QList<int>({ 30, 0, 100 }));
-    QCOMPARE(said(1), QList<int>({ 60, 147456, 50 }));
+    const auto said = [&wants](int index) { return std::make_tuple(wants[index][0].toInt(), wants[index][1].value<std::optional<int>>(), wants[index][2].toInt()); };
+    const std::optional<int> unsaid;
+    QCOMPARE(said(0), std::make_tuple(30, unsaid, 100));
+    QCOMPARE(said(1), std::make_tuple(60, std::optional<int>(147456), 50));
     call.server.send(MEDIA_SINK_WANTS, QJsonObject{ { "any", 0 }, { "5000", 0 }, { QString::number(SECOND_SSRC), 60 } });
     QTRY_COMPARE(wants.count(), 4);
-    QCOMPARE(said(2), QList<int>({ 100, 0, 100 }));
-    QCOMPARE(said(3), QList<int>({ 60, 0, 50 }));
+    QCOMPARE(said(2), std::make_tuple(100, unsaid, 100));
+    QCOMPARE(said(3), std::make_tuple(60, unsaid, 50));
 
     QTRY_VERIFY_WITH_TIMEOUT(statistics.count() >= 1, 1500);
     const VideoSendStats sent = statistics.last()[0].value<VideoSendStats>();
@@ -1228,7 +1083,7 @@ void TestVoiceClient::eachLayerIsAStreamOfItsOwnUnderOneNumbering()
 
 void TestVoiceClient::withoutStreamsFromTheServerTheSsrcsFollowTheAudioOne()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
 
     call.startVideo();
@@ -1238,12 +1093,11 @@ void TestVoiceClient::withoutStreamsFromTheServerTheSsrcsFollowTheAudioOne()
 
 void TestVoiceClient::aFrameLeavesAtThePaceOfTheBitrateItWasEncodedAt()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
 
-    // twelve kilobytes at half a megabit: a 40 ms burst at once, the rest over more than a tenth of a
-    // second, read off the packets' own send times so machine load doesnt matter
+    // after the pacer's 40 ms burst, the rest of 12 KB at 500 kbps takes over 100 ms by the packets' own send times
     constexpr int PACKETS = 11;
     const auto timeToLeave = [&](quint32 timestamp) {
         call.server.rtp.clear();
@@ -1267,7 +1121,7 @@ void TestVoiceClient::aFrameLeavesAtThePaceOfTheBitrateItWasEncodedAt()
 
 void TestVoiceClient::aFrameArrivesAsPacketsThatReassemble()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
 
@@ -1297,7 +1151,7 @@ void TestVoiceClient::aFrameArrivesAsPacketsThatReassemble()
 
 void TestVoiceClient::stoppingVideoSaysSoAndSendsNothingMore()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
     call.client->sendVideoFrame(videoFrame(1000, true, 0));
@@ -1330,7 +1184,7 @@ void TestVoiceClient::aNackBringsThePacketBackOnTheRetransmissionStream()
     constexpr quint32 VIDEO_SSRC = 5000;
     constexpr quint32 RTX_SSRC = 5005;
 
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.readyStreams = QJsonArray{ QJsonObject{ { "type", "video" }, { "rid", "100" }, { "ssrc", qint64(VIDEO_SSRC) }, { "rtx_ssrc", qint64(RTX_SSRC) }, { "quality", 100 }, { "active", false } } };
     QTRY_VERIFY(call.isUp());
     call.startVideo();
@@ -1361,7 +1215,7 @@ void TestVoiceClient::aNackBringsThePacketBackOnTheRetransmissionStream()
 
 void TestVoiceClient::keyframeRequestsReachTheEncoderButNotInABurst()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
     QSignalSpy keyframes(call.client.get(), &VoiceClient::videoKeyframeRequested);
@@ -1387,7 +1241,7 @@ void TestVoiceClient::keyframeRequestsReachTheEncoderButNotInABurst()
 
 void TestVoiceClient::theReceiverCountIsPassedOn()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     QSignalSpy receivers(call.client.get(), &VoiceClient::videoReceiversChanged);
     QSignalSpy keyframes(call.client.get(), &VoiceClient::videoKeyframeRequested);
@@ -1420,7 +1274,7 @@ void TestVoiceClient::theReceiverCountIsPassedOn()
 
 void TestVoiceClient::whatViewersWantIsPassedOn()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     QSignalSpy wants(call.client.get(), &VoiceClient::videoWantsReceived);
 
@@ -1435,18 +1289,19 @@ void TestVoiceClient::whatViewersWantIsPassedOn()
     call.server.send(MEDIA_SINK_WANTS, QJsonObject{ { other, 10 } });
     QTRY_COMPARE(wants.count(), 6);
 
-    const auto said = [&wants](int index) { return qMakePair(wants[index][0].toInt(), wants[index][1].toInt()); };
-    QCOMPARE(said(0), qMakePair(100, 0));
-    QCOMPARE(said(1), qMakePair(50, 230400));
-    QCOMPARE(said(2), qMakePair(20, 0));
-    QCOMPARE(said(3), qMakePair(30, 0));
-    QCOMPARE(said(4), qMakePair(100, 0));
-    QCOMPARE(said(5), qMakePair(100, 0));
+    const auto said = [&wants](int index) { return qMakePair(wants[index][0].toInt(), wants[index][1].value<std::optional<int>>()); };
+    const std::optional<int> unsaid;
+    QCOMPARE(said(0), qMakePair(100, unsaid));
+    QCOMPARE(said(1), qMakePair(50, std::optional<int>(230400)));
+    QCOMPARE(said(2), qMakePair(20, unsaid));
+    QCOMPARE(said(3), qMakePair(30, unsaid));
+    QCOMPARE(said(4), qMakePair(100, unsaid));
+    QCOMPARE(said(5), qMakePair(100, unsaid));
 }
 
 void TestVoiceClient::aSenderReportAndStatisticsFollowEverySecond()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
     QSignalSpy statistics(call.client.get(), &VoiceClient::videoSendStatsUpdated);
@@ -1505,22 +1360,22 @@ void TestVoiceClient::aSenderReportAndStatisticsFollowEverySecond()
 
 void TestVoiceClient::aWayFoundToFallBehindIsSaidAtOnce()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
     call.client->setVideoBitrate(1'000'000);
     QSignalSpy statistics(call.client.get(), &VoiceClient::videoSendStatsUpdated);
 
-    // about a megabit for a second and a half: four kilobytes thirty times a second
     constexpr int FRAMES = 45;
+    constexpr int FRAME_BYTES = 4000;
+    constexpr int FRAME_INTERVAL_MS = 33;
     for (int i = 0; i < FRAMES; i++) {
-        call.client->sendVideoFrame(videoFrame(4000, i == 0, 90000 + static_cast<quint32>(i) * 3000));
-        QTest::qWait(33);
+        call.client->sendVideoFrame(videoFrame(FRAME_BYTES, i == 0, 90000 + static_cast<quint32>(i) * 3000));
+        QTest::qWait(FRAME_INTERVAL_MS);
     }
     QTRY_VERIFY(call.server.rtp.size() >= FRAMES * 4);
 
-    // reported as a way that carries half of what was sent (not half a megabit, since a busy machine
-    // sends these more slowly)
+    // half of what was really sent, not of the megabit asked for: a busy machine sends slower
     double bitsSent = 0;
     for (const RtpSeen &packet : std::as_const(call.server.rtp))
         bitsSent += packet.size * 8;
@@ -1558,7 +1413,7 @@ void TestVoiceClient::aWayFoundToFallBehindIsSaidAtOnce()
 
 void TestVoiceClient::aChangeOfCodecIsTakenUp()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     QTRY_VERIFY(call.isUp());
     call.startVideo();
     QSignalSpy codecs(call.client.get(), &VoiceClient::videoSendCodecChanged);
@@ -1581,8 +1436,11 @@ void TestVoiceClient::aChangeOfCodecIsTakenUp()
         QCOMPARE(int(packet.header.payloadType), H264_PAYLOAD_TYPE);
         QCOMPARE(packet.header.timestamp, 6000u);
     }
-    QCOMPARE(call.server.rtp[0].payload[0] & 0x1F, 24);
-    QCOMPARE(call.server.rtp[1].payload[0] & 0x1F, 28);
+    constexpr int NAL_TYPE = 0x1F;
+    constexpr int STAP_A = 24;
+    constexpr int FU_A = 28;
+    QCOMPARE(call.server.rtp[0].payload[0] & NAL_TYPE, STAP_A);
+    QCOMPARE(call.server.rtp[1].payload[0] & NAL_TYPE, FU_A);
     QCOMPARE(call.reassembled(VideoCodec::H264, OWN_VIDEO_SSRC), keyframe.data);
 
     call.server.sendFeedback({ nack(OWN_VIDEO_SSRC, call.server.rtp[1].header.sequence) });
@@ -1602,7 +1460,7 @@ void TestVoiceClient::aChangeToAv1WaitsForItsKeyframe()
 {
     constexpr int SESSION_UPDATE = 14;
 
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.videoCodec = QStringLiteral("H264");
     QTRY_VERIFY(call.isUp());
     QCOMPARE(call.client->videoSendCodec(), VideoCodec::H264);
@@ -1658,8 +1516,7 @@ void TestVoiceClient::encodersFoundLateAreOfferedInASessionUpdate()
 
     call.client->offerVideoEncoding({ VideoCodec::H264, VideoCodec::VP8 });
     QTRY_COMPARE(call.server.receivedText(SESSION_UPDATE).size(), 1);
-    QCOMPARE(call.server.receivedText(SESSION_UPDATE)[0],
-             QByteArray(R"({"op":14,"d":{"codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120},{"name":"VP8","type":"video","priority":1000,"payload_type":101,"rtx_payload_type":102,"encode":true,"decode":true}]}})"));
+    QCOMPARE(call.server.receivedText(SESSION_UPDATE)[0], QByteArray(R"({"op":14,"d":{"codecs":[{"name":"opus","type":"audio","priority":1000,"payload_type":120},{"name":"VP8","type":"video","priority":1000,"payload_type":101,"rtx_payload_type":102,"encode":true,"decode":true}]}})"));
 
     QCOMPARE(codecs.count(), 1);
     QCOMPARE(call.client->videoSendCodec(), VideoCodec::VP8);
@@ -1692,7 +1549,7 @@ void TestVoiceClient::aCodecWithdrawnWhileInUseSendsNothingUntilAnotherIsNamed()
 {
     constexpr int SESSION_UPDATE = 14;
 
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.videoCodec = QStringLiteral("AV1");
     QTRY_VERIFY(call.isUp());
     QCOMPARE(call.client->videoSendCodec(), VideoCodec::AV1);
@@ -1753,7 +1610,7 @@ void TestVoiceClient::onlyACommitThatGivesSomeoneAKeyWantsAKeyframe()
 
 void TestVoiceClient::noVideoGoesOutWhileEndToEndKeysAreMissing()
 {
-    Call call(true);
+    Call call(Call::Sends::Video);
     call.server.daveProtocolVersion = 1;
     QTRY_VERIFY(call.isUp());
     QSignalSpy keyframes(call.client.get(), &VoiceClient::videoKeyframeRequested);
@@ -1793,7 +1650,7 @@ void TestVoiceClient::sharedSoundIsAnnouncedOnceAndMarkedAtEveryRun()
     constexpr int FRAMES_PER_RUN = 4;
     constexpr int BETWEEN_RUNS_MS = 150;
 
-    Call call(true, Call::Kind::StreamWithSound);
+    Call call(Call::Sends::Video, Call::Kind::StreamWithSound);
     QTRY_VERIFY(call.isUp());
 
     QTest::qWait(200);
@@ -1833,7 +1690,7 @@ void TestVoiceClient::sharedSoundIsAnnouncedOnceAndMarkedAtEveryRun()
 
 void TestVoiceClient::aStreamWithoutSoundSendsNoAudio()
 {
-    Call call(true, Call::Kind::Stream);
+    Call call(Call::Sends::Video, Call::Kind::Stream);
     QTRY_VERIFY(call.isUp());
 
     call.client->beginSoundshare();
@@ -1858,7 +1715,7 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
     const Call::Kind kind = streamWithSound ? Call::Kind::StreamWithSound : Call::Kind::Voice;
 
     FakeSocks5Proxy proxy;
-    Call call(true, kind, proxy.config());
+    Call call(Call::Sends::Video, kind, proxy.config());
     QTRY_VERIFY(call.isUp());
 
     QCOMPARE(proxy.connectedTo, QList<quint16>{ call.server.gatewayPort() });
@@ -1866,7 +1723,7 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
     QVERIFY(proxy.associated);
 
     call.receiveAliceAndBob();
-    call.server.sendFrame(ALICE_SSRC, 0, 100, true);
+    call.server.sendFrame(ALICE_SSRC, 0, ALICE_FIRST_SEQUENCE, true);
     QTRY_COMPARE(call.framesFrom(ALICE), 1);
 
     call.startVideo();
@@ -1879,7 +1736,7 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
     QTRY_VERIFY(call.server.acknowledgedUpTo > 0);
 
     QCOMPARE(call.server.mediaSenderPorts, QSet<quint16>{ proxy.relayPort() });
-    QVERIFY(proxy.datagramsToServer > 0);
+    QVERIFY(!proxy.relayedTo.isEmpty());
     QVERIFY(proxy.datagramsToClient > 0);
     QCOMPARE(call.server.undecryptable, 0);
 }
@@ -1887,12 +1744,14 @@ void TestVoiceClient::aProxiedConnectionReachesTheServerThroughTheProxyAlone()
 #ifdef ACHERON_HAVE_VIDEO
 namespace {
 
-Core::StreamRecord readyAt(const FakeVoiceServer &server, const QString &token = QStringLiteral("token"))
+constexpr quint64 RTC_SERVER_ID = 500;
+
+Core::StreamRecord readyAt(const QString &endpoint, const QString &token = QStringLiteral("token"))
 {
     Core::StreamRecord record;
     record.state = Core::StreamRecord::State::Ready;
-    record.rtcServerId = Core::Snowflake(500);
-    record.endpoint = server.endpoint();
+    record.rtcServerId = Core::Snowflake(RTC_SERVER_ID);
+    record.endpoint = endpoint;
     record.token = token;
     return record;
 }
@@ -1917,19 +1776,18 @@ void TestVoiceClient::aStreamConnectionIsMadeWhereTheGatewaySays()
     QSignalSpy opened(rtc.get(), &Core::StreamConnection::opened);
     QSignalSpy connected(rtc.get(), &Core::StreamConnection::connected);
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QTRY_COMPARE(connected.size(), 1);
     QCOMPARE(opened.size(), 1);
     QVERIFY(rtc->isConnected());
 
-    // the RTC channel is the one below the gateway's RTC server
     const QList<QJsonObject> identify = server.received(0);
     QCOMPARE(identify.size(), 1);
-    QCOMPARE(identify.first()["server_id"].toString(), QStringLiteral("500"));
-    QCOMPARE(identify.first()["channel_id"].toString(), QStringLiteral("499"));
+    QCOMPARE(identify.first()["server_id"].toString(), QString::number(RTC_SERVER_ID));
+    QCOMPARE(identify.first()["channel_id"].toString(), QString::number(RTC_SERVER_ID - 1));
     QCOMPARE(identify.first()["streams"].toArray().first().toObject()["type"].toString(), QStringLiteral("screen"));
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QTest::qWait(200);
     QCOMPARE(opened.size(), 1);
     QCOMPARE(server.gatewayConnections(), 1);
@@ -1944,7 +1802,7 @@ void TestVoiceClient::aDroppedStreamConnectionIsMadeAgainAfterAPing()
     QSignalSpy pings(rtc.get(), &Core::StreamConnection::pingRequested);
     QSignalSpy closed(rtc.get(), &Core::StreamConnection::closed);
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QTRY_COMPARE(connected.size(), 1);
 
     server.closeWith(4014);
@@ -1953,7 +1811,7 @@ void TestVoiceClient::aDroppedStreamConnectionIsMadeAgainAfterAPing()
     QCOMPARE(closed.size(), 1);
     QVERIFY(!rtc->isConnected());
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QTRY_COMPARE(connected.size(), 2);
     QTest::qWait(Core::StreamConnection::RECONNECT_DELAY_MS + 300);
     QCOMPARE(server.gatewayConnections(), 2);
@@ -1970,9 +1828,9 @@ void TestVoiceClient::aStreamConnectionDroppingEveryTimeIsGivenUpOn()
     QSignalSpy pings(rtc.get(), &Core::StreamConnection::pingRequested);
 
     server.dropOnIdentify = true;
-    QObject::connect(rtc.get(), &Core::StreamConnection::pingRequested, rtc.get(), [&rtc, &server] { rtc->apply(readyAt(server)); });
+    QObject::connect(rtc.get(), &Core::StreamConnection::pingRequested, rtc.get(), [&rtc, &server] { rtc->apply(readyAt(server.endpoint())); });
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 20000);
     QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::Lost);
     QCOMPARE(pings.size(), Core::StreamConnection::MAX_RECONNECTS);
@@ -1988,7 +1846,7 @@ void TestVoiceClient::aStreamThatMovesIsFollowed()
     QSignalSpy connected(rtc.get(), &Core::StreamConnection::connected);
     QSignalSpy reconnecting(rtc.get(), &Core::StreamConnection::reconnecting);
 
-    rtc->apply(readyAt(first));
+    rtc->apply(readyAt(first.endpoint()));
     QTRY_COMPARE(connected.size(), 1);
 
     Core::StreamRecord moving;
@@ -1997,7 +1855,7 @@ void TestVoiceClient::aStreamThatMovesIsFollowed()
     QCOMPARE(reconnecting.size(), 1);
     QVERIFY(!rtc->connection());
 
-    rtc->apply(readyAt(second, QStringLiteral("another token")));
+    rtc->apply(readyAt(second.endpoint(), QStringLiteral("another token")));
     QTRY_COMPARE(connected.size(), 2);
     QCOMPARE(second.received(0).first()["token"].toString(), QStringLiteral("another token"));
 }
@@ -2005,16 +1863,11 @@ void TestVoiceClient::aStreamThatMovesIsFollowed()
 void TestVoiceClient::aStreamConnectionNotUpInTimeFails()
 {
     QTcpServer silent;
-    QVERIFY(silent.listen(QHostAddress(QHostAddress::LocalHost)));
+    QVERIFY(silent.listen(LOOPBACK));
     const auto rtc = streamConnection();
     QSignalSpy failed(rtc.get(), &Core::StreamConnection::failed);
 
-    Core::StreamRecord record;
-    record.state = Core::StreamRecord::State::Ready;
-    record.rtcServerId = Core::Snowflake(500);
-    record.endpoint = QStringLiteral("127.0.0.1:%1").arg(silent.serverPort());
-    record.token = QStringLiteral("token");
-    rtc->apply(record);
+    rtc->apply(readyAt(QStringLiteral("127.0.0.1:%1").arg(silent.serverPort())));
 
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, Core::StreamConnection::CONNECT_TIMEOUT_MS + 3000);
     QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::TimedOut);
@@ -2031,7 +1884,7 @@ void TestVoiceClient::aStreamConnectionRefusesAProxyThatCannotCarryIt()
     const auto rtc = streamConnection(http);
     QSignalSpy failed(rtc.get(), &Core::StreamConnection::failed);
 
-    rtc->apply(readyAt(server));
+    rtc->apply(readyAt(server.endpoint()));
     QCOMPARE(failed.size(), 1);
     QCOMPARE(failureOf(failed), Core::StreamConnection::Failure::ProxyRefused);
     QTest::qWait(200);

@@ -4,7 +4,7 @@
 #include "Core/Theme/Icons.hpp"
 #include "Core/Video/CameraPipeline.hpp"
 #include "Core/Video/CameraSender.hpp"
-#include "Core/Video/ScreenCapture.hpp"
+#include "Core/Video/CaptureSources.hpp"
 #include "UI/ElidedLabel.hpp"
 #include "UI/ScreenSharePicker.hpp"
 
@@ -23,11 +23,6 @@ using Core::StreamBroadcaster;
 using Core::Video::SendQuality;
 
 namespace {
-
-const char *const SHARE_ICON = "screen-share";
-const char *const STOP_SHARING_ICON = "screen-share-off";
-const char *const CAMERA_ICON = "video";
-const char *const STOP_CAMERA_ICON = "video-off";
 
 void changeShareQuality(StreamBroadcaster *broadcaster, const SendQuality &quality)
 {
@@ -148,7 +143,7 @@ void CallControlsBar::apply(const Chrome &chrome)
     shareButton->setVisible(captureAvailable && broadcaster);
     shareButton->setEnabled(sharing || (broadcaster && broadcaster->canShare()));
     shareButton->setText(sharing ? tr("Stop Sharing") : tr("Share Screen"));
-    shareButton->setIcon(Core::Theme::Icons::icon(QLatin1String(sharing ? STOP_SHARING_ICON : SHARE_ICON), Core::Theme::Token::ButtonText));
+    shareButton->setIcon(Core::Theme::Icons::icon(sharing ? Core::Theme::Icons::Name::ScreenShareOff : Core::Theme::Icons::Name::ScreenShare, Core::Theme::Token::ButtonText));
     shareButton->setPopupMode(sharing ? QToolButton::MenuButtonPopup : QToolButton::DelayedPopup);
     shareButton->setMenu(sharing ? shareQualityMenu : nullptr);
 
@@ -157,7 +152,7 @@ void CallControlsBar::apply(const Chrome &chrome)
     cameraButton->setEnabled(cameraOn || (camera && camera->canTurnOn()));
     cameraButton->setText(cameraOn ? tr("Stop Camera") : tr("Camera"));
     cameraButton->setToolTip(cameraOn ? tr("Turn Off Camera") : tr("Turn On Camera"));
-    cameraButton->setIcon(Core::Theme::Icons::icon(QLatin1String(cameraOn ? STOP_CAMERA_ICON : CAMERA_ICON), Core::Theme::Token::ButtonText));
+    cameraButton->setIcon(Core::Theme::Icons::icon(cameraOn ? Core::Theme::Icons::Name::VideoOff : Core::Theme::Icons::Name::Video, Core::Theme::Token::ButtonText));
 
     nonVideoCheck->setVisible(chrome.videoPresent && !barOnly);
     statsButton->setVisible(chrome.videoPresent && !barOnly);

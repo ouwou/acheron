@@ -50,7 +50,7 @@ public:
                              const QList<QPair<Core::Snowflake, Core::Snowflake>> &threads);
     void sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
     void sendCallConnect(Core::Snowflake channelId);
-    void sendStreamCreate(const StreamKey &channel, const QString &preferredRegion);
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
     void sendStreamDelete(const QString &streamKey);
     void sendStreamWatch(const QString &streamKey);
     void sendStreamPing(const QString &streamKey);

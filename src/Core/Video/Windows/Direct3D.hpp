@@ -4,9 +4,13 @@
 #include <QSize>
 #include <QtGlobal>
 
+#include <optional>
+
 #include <windows.h>
 
 #include <d3d11_1.h>
+
+#include "Core/Media/FfmpegPointers.hpp"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -41,10 +45,13 @@ private:
     AVD3D11VADeviceContext *device;
 };
 
-// an empty adapter is the default one
-[[nodiscard]] inline int openDirect3dDevice(AVBufferRef **device, const QByteArray &adapter)
+[[nodiscard]] inline int openDirect3dDevice(Media::BufferPointer &device, std::optional<int> adapter)
 {
-    return av_hwdevice_ctx_create(device, AV_HWDEVICE_TYPE_D3D11VA, adapter.isEmpty() ? nullptr : adapter.constData(), nullptr, 0);
+    const QByteArray adapterName = adapter ? QByteArray::number(*adapter) : QByteArray();
+    AVBufferRef *made = nullptr;
+    const int result = av_hwdevice_ctx_create(&made, AV_HWDEVICE_TYPE_D3D11VA, adapter ? adapterName.constData() : nullptr, nullptr, 0);
+    device.reset(made);
+    return result;
 }
 
 inline AVD3D11VADeviceContext *direct3d(AVBufferRef *device)

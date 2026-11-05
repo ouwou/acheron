@@ -11,10 +11,6 @@ namespace Core {
 namespace Video {
 namespace Win {
 
-namespace {
-
-} // namespace
-
 std::vector<Monitor> attachedMonitors()
 {
     using CreateFactory = HRESULT(WINAPI *)(REFIID, void **);

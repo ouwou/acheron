@@ -42,8 +42,7 @@ struct ShareTerms
 {
     bool allowed = false;
     Video::SharerTier tier;
-    // empty is sent to the gateway as null
-    QString preferredRegion;
+    std::optional<QString> preferredRegion;
 };
 
 class StreamBroadcaster : public QObject
@@ -101,8 +100,7 @@ public:
     void stop();
 
     static constexpr int START_TIMEOUT_MS = 5000;
-    // a rate change can reopen the encoder and cost a key frame, so changes in quick succession are
-    // gathered into one
+    // a rate change can reopen the encoder, costing a key frame, so changes close together are gathered into one
     static constexpr int BITRATE_SETTLE_MS = 2000;
 
 signals:
@@ -128,9 +126,9 @@ private slots:
     void onSendStats(const Acheron::Discord::Voice::VideoSendStats &stats);
     void onKeyframeRequested();
     void onReceiversChanged(int receivers);
+    void onWantsReceived(int want, std::optional<int> pixelCount);
 
 private:
-    void onWantsReceived(int pixelCount);
     void onPipelineStarted(const QSize &encodedSize, int framerate);
     void onPreviewReady(const QImage &preview);
     void onCaptureStalled(bool stalled);
@@ -148,10 +146,10 @@ private:
     [[nodiscard]] bool soundIsOneProgram() const;
     [[nodiscard]] bool sendsSound() const;
     void startSoundCapture();
-    void useServerCodec();
 
+    void sendOnceReady();
     void withdrawCodecsUnfitFor(const QSize &size);
-    void startPipeline();
+    void startPipeline(Discord::Voice::VideoCodec codec);
     void stopPipeline();
     void sendFramesToRtc();
     void announceVideo();
@@ -174,9 +172,8 @@ private:
     Video::CaptureSource source;
     bool audioWanted = false;
     Video::SendQuality sendQuality;
-    QString preferredRegion;
-    // a withdrawn codec stays withdrawn for the share, or dragging a window's edge would flip the codec
-    // back and forth
+    std::optional<QString> preferredRegion;
+    // a withdrawn codec stays withdrawn, or dragging a window's edge would flip codecs back and forth
     QList<Discord::Voice::VideoCodec> offeredCodecs;
     Media::SendCodecRequest sendCodecs;
     bool createSent = false;
@@ -184,17 +181,16 @@ private:
 
     StreamConnection *rtc = nullptr;
     Discord::Voice::VideoCodec serverCodec = Discord::Voice::VideoCodec::Unknown;
-    Discord::Voice::VideoCodec sendCodec = Discord::Voice::VideoCodec::Unknown;
     bool videoAnnounced = false;
     Discord::Voice::LocalVideoDescription announced;
     std::optional<int> receivers;
 
-    // lives as long as one RTC connection
     std::unique_ptr<StreamAudio> streamAudio;
     std::unique_ptr<Audio::LoopbackCapture> soundCapture;
     bool soundCaptureFailed = false;
 
     std::unique_ptr<Video::ScreenPipeline> pipeline;
+    Discord::Voice::VideoCodec pipelineCodec = Discord::Voice::VideoCodec::Unknown;
     QMetaObject::Connection framesToRtc;
     bool pipelineStarted = false;
     QSize encodedSize;

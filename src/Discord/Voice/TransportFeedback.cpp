@@ -1,11 +1,9 @@
 #include "TransportFeedback.hpp"
 
-#include "Rtcp.hpp"
-
 #include <QtEndian>
 
+#include <algorithm>
 #include <cstdlib>
-#include <vector>
 
 namespace Acheron {
 namespace Discord {
@@ -53,7 +51,18 @@ void TransportFeedback::onPacket(uint16_t transportSequence, qint64 arrivalUs)
     if (reportedUpTo && sequence < *reportedUpTo)
         return;
     sequences.advance(sequence);
-    arrivals.emplace(sequence, arrivalUs);
+    hold(sequence, arrivalUs);
+}
+
+void TransportFeedback::hold(qint64 sequence, qint64 arrivalUs)
+{
+    if (arrivals.empty() || sequence > arrivals.back().sequence) {
+        arrivals.push_back(Arrival{ sequence, arrivalUs });
+        return;
+    }
+    const auto at = std::lower_bound(arrivals.begin(), arrivals.end(), sequence, [](const Arrival &held, qint64 wanted) { return held.sequence < wanted; });
+    if (at == arrivals.end() || at->sequence != sequence)
+        arrivals.insert(at, Arrival{ sequence, arrivalUs });
 }
 
 int TransportFeedback::write(std::span<uint8_t> out, uint32_t senderSsrc, uint32_t mediaSsrc)
@@ -61,22 +70,22 @@ int TransportFeedback::write(std::span<uint8_t> out, uint32_t senderSsrc, uint32
     if (arrivals.empty())
         return 0;
 
-    const qint64 baseSequence = arrivals.begin()->first;
-    const qint64 referenceTime = arrivals.begin()->second / REFERENCE_UNIT_US;
+    const qint64 baseSequence = arrivals.front().sequence;
+    const qint64 referenceTime = arrivals.front().atUs / REFERENCE_UNIT_US;
 
-    std::vector<FeedbackStatus> statuses;
-    std::vector<uint8_t> deltas;
+    statuses.clear();
+    deltas.clear();
     qint64 previousUs = referenceTime * REFERENCE_UNIT_US;
     qint64 sequence = baseSequence;
     auto next = arrivals.begin();
     while (next != arrivals.end() && static_cast<int>(statuses.size()) < MAX_STATUSES) {
-        if (next->first != sequence) {
+        if (next->sequence != sequence) {
             statuses.push_back(FeedbackStatus::NotReceived);
             sequence++;
             continue;
         }
 
-        const qint64 delta = (next->second - previousUs) / DELTA_UNIT_US;
+        const qint64 delta = (next->atUs - previousUs) / DELTA_UNIT_US;
         if (delta < INT16_MIN || delta > INT16_MAX)
             break;
         if (delta >= 0 && delta <= UINT8_MAX) {
@@ -99,7 +108,7 @@ int TransportFeedback::write(std::span<uint8_t> out, uint32_t senderSsrc, uint32
         return 0;
     }
 
-    std::vector<uint16_t> chunks;
+    chunks.clear();
     appendChunks(statuses, chunks);
 
     const int unpadded = HEADER_SIZE + static_cast<int>(chunks.size()) * 2 + static_cast<int>(deltas.size());
@@ -124,7 +133,6 @@ int TransportFeedback::write(std::span<uint8_t> out, uint32_t senderSsrc, uint32
     }
     for (const uint8_t delta : deltas)
         *p++ = delta;
-    // padding ends with its own length
     for (int i = 0; i < padding; i++)
         *p++ = i + 1 == padding ? static_cast<uint8_t>(padding) : 0;
 

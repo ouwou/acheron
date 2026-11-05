@@ -61,7 +61,6 @@ void TestOpusEncoder::theHighestBitrateStillFitsOnePacket()
 
 void TestOpusEncoder::anOrdinaryBitrateIsNotHeldBack()
 {
-    // 128 kbps is 320 bytes per 20 ms
     const int largest = largestPacket(128000);
     QVERIFY2(largest > 250 && largest < 500, qPrintable(QString::number(largest)));
 }

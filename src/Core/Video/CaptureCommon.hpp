@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "Core/Video/CaptureSources.hpp"
+#include "Core/Video/ColourMatrix.hpp"
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -22,9 +23,8 @@ namespace Core {
 namespace Video {
 
 inline constexpr int STALLED_WAIT_MS = 50;
-// past the time a picture was due, before a read says nothing new came
 inline constexpr int NOTHING_NEW_WAIT_MS = 25;
-// graphics card encoders refuse much smaller pictures; a smaller window gets black around it
+// graphics card encoders refuse much smaller pictures
 inline constexpr QSize SMALLEST_WINDOW_PICTURE(160, 120);
 
 inline QString captureText(const char *text)
@@ -67,6 +67,7 @@ inline QSize shrunkToFit(const QSize &size, const QSize &bound)
 }
 
 inline constexpr int RGB32_BYTES_PER_PIXEL = 4;
+inline constexpr int BGRA_ALPHA_BYTE = 3;
 
 inline void makeOpaque(QImage &image)
 {
@@ -77,7 +78,6 @@ inline void makeOpaque(QImage &image)
     }
 }
 
-// into a 32-bit picture: the top left of `from`, and black wherever it doesnt reach
 inline void copyTopLeftOnBlack(const uint8_t *from, qsizetype fromStride, const QSize &fromSize, AVFrame *into)
 {
     const int columns = std::min(fromSize.width(), into->width);
@@ -114,7 +114,6 @@ inline std::chrono::microseconds pictureInterval(int framerate)
     return std::chrono::microseconds(1'000'000 / std::max(1, framerate));
 }
 
-// waits a little, while there is time left until `retryAt`
 inline bool waitedForRetry(std::chrono::steady_clock::time_point retryAt)
 {
     const auto now = std::chrono::steady_clock::now();
@@ -124,10 +123,9 @@ inline bool waitedForRetry(std::chrono::steady_clock::time_point retryAt)
     return true;
 }
 
-// pictures of the screen's own RGB
-inline void markColours(AVFrame *picture, bool bt601)
+inline void markColours(AVFrame *picture, ColourMatrix matrix)
 {
-    picture->colorspace = bt601 ? AVCOL_SPC_SMPTE170M : AVCOL_SPC_BT709;
+    picture->colorspace = matrix == ColourMatrix::Bt601 ? AVCOL_SPC_SMPTE170M : AVCOL_SPC_BT709;
     picture->color_range = AVCOL_RANGE_MPEG;
 }
 

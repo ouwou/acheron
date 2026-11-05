@@ -3,16 +3,15 @@
 #include "Core/Video/LinuxCapture.hpp"
 
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
-#include "ProcessUsage.hpp"
+#include "CaptureSourceChecks.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "X11TestWindow.hpp"
 
 #include <QElapsedTimer>
 #include <QProcess>
 #include <QStandardPaths>
 
-#include <cstdlib>
-#include <cstring>
-#include <ctime>
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -29,12 +28,12 @@ extern "C" {
 
 using namespace Acheron;
 using namespace Acheron::Core::Video;
-using ProcessUsage::processCpuMs;
 
 #if defined(ACHERON_HAVE_XCB) && defined(ACHERON_HAVE_AVDEVICE)
 
 namespace {
 
+using Core::Media::FramePointer;
 using Result = LinuxGrabber::Result;
 using std::chrono::milliseconds;
 
@@ -52,11 +51,10 @@ using TestWindow = X11TestWindow;
 template <typename T>
 using Reply = X11TestWindow::Reply<T>;
 
-struct FrameDeleter
+xcb_window_t xcbWindowOf(const CaptureSource &window)
 {
-    void operator()(AVFrame *frame) const { av_frame_free(&frame); }
-};
-using FramePointer = std::unique_ptr<AVFrame, FrameDeleter>;
+    return static_cast<xcb_window_t>(windowHandleOf(window.id).value_or(XCB_NONE));
+}
 
 double shareOf(const AVFrame *frame, quint32 colour, QRect area = QRect())
 {
@@ -103,32 +101,20 @@ bool showsWithin(LinuxGrabber &grabber, AVFrame *frame, quint32 colour, const QR
     return false;
 }
 
-struct Pace
-{
-    int pictures = 0;
-    double seconds = 0;
-    double cpuMs = 0;
-    QSize size;
-};
-
-Pace paceOf(LinuxGrabber &grabber, int ms)
+double framesPerSecondOf(LinuxGrabber &grabber, int ms)
 {
     const FramePointer frame(av_frame_alloc());
-    Pace pace;
     if (grabUntil(grabber, frame.get(), Result::Frame) != Result::Frame)
-        return pace;
+        return 0;
 
-    const double cpuBefore = processCpuMs();
+    int pictures = 0;
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < ms) {
         if (grabber.grab(frame.get(), milliseconds(100)) == Result::Frame)
-            pace.pictures++;
+            pictures++;
     }
-    pace.seconds = static_cast<double>(timer.nsecsElapsed()) / 1e9;
-    pace.cpuMs = processCpuMs() - cpuBefore;
-    pace.size = sizeOf(frame.get());
-    return pace;
+    return pictures / (static_cast<double>(timer.nsecsElapsed()) / 1e9);
 }
 
 } // namespace
@@ -244,7 +230,7 @@ void TestX11Capture::screensAreListedTheSameEveryTime()
     QVERIFY(!screens.isEmpty());
     for (int i = 0; i < screens.size(); i++) {
         qInfo() << screens[i].id << screens[i].name << screens[i].geometry;
-        QVERIFY(screens[i].id.size() > QStringLiteral("screen:").size() && screens[i].id.startsWith(QStringLiteral("screen:")));
+        QVERIFY(screens[i].id.size() > SCREEN_SOURCE_PREFIX.size() && screens[i].id.startsWith(SCREEN_SOURCE_PREFIX));
         QCOMPARE(screens[i].name, QStringLiteral("Screen %1").arg(i + 1));
         QCOMPARE(screens[i].kind, CaptureSource::Kind::Screen);
         QCOMPARE(screens[i].processId, 0u);
@@ -354,19 +340,11 @@ void TestX11Capture::windowsAreListedWithoutThisProgramsOwn()
     QTRY_VERIFY(own.isShown());
     QTest::qWait(200);
 
-    // window titles stay out of the log
     const QList<CaptureSource> windows = X11Capture::windows();
     qInfo() << windows.size() << "windows listed";
-    QStringList ids;
-    for (const CaptureSource &window : windows) {
-        QCOMPARE(window.kind, CaptureSource::Kind::Window);
-        QVERIFY(window.id.startsWith(QStringLiteral("window:")));
-        QVERIFY(!ids.contains(window.id));
-        ids.append(window.id);
-        QVERIFY(!window.name.isEmpty());
-        QVERIFY(window.processId != static_cast<quint32>(getpid()));
-    }
-    QVERIFY(!ids.contains(own.source().id));
+    const QString problem = CaptureSourceChecks::problemWithListedWindows(windows, static_cast<quint32>(getpid()));
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
+    QVERIFY(std::none_of(windows.cbegin(), windows.cend(), [&own](const CaptureSource &window) { return window.id == own.sourceId(); }));
 }
 
 void TestX11Capture::otherProgramsWindowsAreListedTopFirst()
@@ -396,20 +374,20 @@ void TestX11Capture::otherProgramsWindowsAreListedTopFirst()
     QCOMPARE(messages.kind, CaptureSource::Kind::Window);
     QCOMPARE(messages.geometry.size(), QSize(300, 200));
     QVERIFY(quietScreen.geometry.contains(messages.geometry));
-    QCOMPARE(messages.geometry, TestWindow::onRoot(*display, messages.id.mid(7).toUInt()));
+    QCOMPARE(messages.geometry, TestWindow::onRoot(*display, xcbWindowOf(messages)));
     // xmessage doesnt say which process it is
     QCOMPARE(messages.processId, 0u);
     QCOMPARE(X11Capture::sizeOf(messages), QSize(300, 200));
 
     QCOMPARE(terminal.processId, static_cast<quint32>(second.processId()));
     QVERIFY(!terminal.geometry.isEmpty());
-    QCOMPARE(terminal.geometry, TestWindow::onRoot(*display, terminal.id.mid(7).toUInt()));
+    QCOMPARE(terminal.geometry, TestWindow::onRoot(*display, xcbWindowOf(terminal)));
 
     const std::vector<quint32> stacked = TestWindow::numbers(connection, root, "_NET_CLIENT_LIST_STACKING");
     if (!stacked.empty()) {
         QStringList topDown;
         for (auto window = stacked.rbegin(); window != stacked.rend(); ++window)
-            topDown.append(QStringLiteral("window:%1").arg(*window));
+            topDown.append(windowSourceId(*window));
         QStringList listed;
         for (const CaptureSource &window : X11Capture::windows())
             listed.append(window.id);
@@ -418,7 +396,7 @@ void TestX11Capture::otherProgramsWindowsAreListedTopFirst()
         qInfo() << "the window opened last is" << (listed.indexOf(terminal.id) < listed.indexOf(messages.id) ? "listed first" : "listed second");
     }
 
-    TestWindow::minimise(*display, messages.id.mid(7).toUInt());
+    TestWindow::minimise(*display, xcbWindowOf(messages));
     QTRY_COMPARE(X11Capture::sizeOf(messages), QSize());
     QVERIFY(isListed(below));
     QVERIFY(X11Capture::thumbnail(messages, QSize(160, 90)).isNull());
@@ -553,13 +531,12 @@ void TestX11Capture::aWindowIsCapturedWithoutTheShadowItDrawsItself()
     if (!connection)
         QSKIP(NO_DISPLAY);
 
-    // as GTK has it: this much of the window's left, right, top and bottom is shadow
     TestWindow::Look outside = look(QSize(480, 360), GREEN);
     outside.title = titleFor("with a shadow");
     outside.ours = false;
     outside.shown = false;
     TestWindow window(outside);
-    window.set("_GTK_FRAME_EXTENTS", XCB_ATOM_CARDINAL, { 30, 50, 20, 40 });
+    window.setShadow({ .left = 30, .right = 50, .top = 20, .bottom = 40 });
     TestWindow::Look within;
     within.inside = QSize(400, 300);
     within.at = QPoint(30, 20);
@@ -588,7 +565,7 @@ void TestX11Capture::aWindowIsCapturedWithoutTheShadowItDrawsItself()
     QCOMPARE(sizeOf(frame.get()), QSize(400, 300));
 
     content.moveTo(QPoint(60, 40));
-    window.set("_GTK_FRAME_EXTENTS", XCB_ATOM_CARDINAL, { 60, 20, 40, 20 });
+    window.setShadow({ .left = 60, .right = 20, .top = 40, .bottom = 20 });
     QTest::qWait(SETTLE_MS + 200);
     QVERIFY(showsWithin(*grabber, frame.get(), RED));
     QCOMPARE(sizeOf(frame.get()), QSize(400, 300));
@@ -596,7 +573,7 @@ void TestX11Capture::aWindowIsCapturedWithoutTheShadowItDrawsItself()
 
     content.moveTo(QPoint(0, 0));
     content.resizeInside(QSize(480, 360));
-    window.set("_GTK_FRAME_EXTENTS", XCB_ATOM_CARDINAL, { 0, 0, 0, 0 });
+    window.setShadow({});
     QElapsedTimer sinceChange;
     sinceChange.start();
     while (sinceChange.elapsed() < 3000 && sizeOf(frame.get()) != QSize(480, 360)) {
@@ -633,7 +610,7 @@ void TestX11Capture::aShadowThatDoesNotFitItsWindowIsIgnored()
     whole.ours = false;
     whole.shown = false;
     TestWindow window(whole);
-    window.set("_GTK_FRAME_EXTENTS", XCB_ATOM_CARDINAL, std::vector<quint32>(sides.begin(), sides.end()));
+    window.set(TestWindow::FRAME_EXTENTS, XCB_ATOM_CARDINAL, std::vector<quint32>(sides.begin(), sides.end()));
     window.show();
     QTRY_VERIFY(window.isShown());
     if (!aWindowManagerRuns())
@@ -863,7 +840,7 @@ void TestX11Capture::aSourceThatIsNotThereFails_data()
     QTest::newRow("a screen that is not attached") << QStringLiteral("screen:NOT-ATTACHED-1");
     QTest::newRow("a screen by its old number") << QStringLiteral("screen:0");
     QTest::newRow("a screen without a name") << QStringLiteral("screen:");
-    QTest::newRow("a window that was never opened") << (connection ? QStringLiteral("window:%1").arg(xcb_generate_id(connection)) : QString());
+    QTest::newRow("a window that was never opened") << (connection ? windowSourceId(xcb_generate_id(connection)) : QString());
     QTest::newRow("no window") << QStringLiteral("window:0");
     QTest::newRow("neither") << QStringLiteral("pipewire:1");
     QTest::newRow("nothing") << QString();
@@ -979,8 +956,7 @@ void TestX11Capture::theFrameRateAskedForIsKept()
 
     const TestWindow window(look(QSize(640, 360), BLUE));
     const std::unique_ptr<LinuxGrabber> grabber = X11Capture::open(window.source().id, framerate);
-    const Pace pace = paceOf(*grabber, 2000);
-    const double fps = pace.pictures / pace.seconds;
+    const double fps = framesPerSecondOf(*grabber, 2000);
     qInfo() << fps << "pictures a second";
     QVERIFY(fps > framerate * 0.95 && fps < framerate * 1.05);
 }

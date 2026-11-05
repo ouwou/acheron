@@ -19,6 +19,7 @@
 #include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include <unistd.h>
 
@@ -281,7 +282,7 @@ private:
         if (client == clients.end() || !info->props)
             return;
 
-        // pipewire-pulse reports its own process as the connection's; only that one comes from the kernel
+        // sec.pid comes from the kernel, but for a pipewire-pulse client it is pipewire-pulse itself
         const bool throughPulse = spa_streq(spa_dict_lookup(info->props, PW_KEY_CLIENT_API), "pipewire-pulse");
         client->second.processId = QByteArray(spa_dict_lookup(info->props, throughPulse ? PW_KEY_APP_PROCESS_ID : PW_KEY_SEC_PID)).toUInt();
         client->second.name = QString::fromUtf8(spa_dict_lookup(info->props, PW_KEY_APP_NAME));
@@ -446,7 +447,7 @@ private:
         streaming = false;
     }
 
-    // not from inside PipeWire's callback
+    // deferred, as it is called from PipeWire's callbacks of what close() destroys
     void fail(const QString &detail)
     {
         broken = failureText(detail);
@@ -470,7 +471,7 @@ private:
     // PipeWire hands over a whole graph cycle at once
     void read()
     {
-        while (sendFrame()) {}
+        while (owner->sendFrame(unsent)) {}
 
         while (pw_buffer *buffer = pw_stream_dequeue_buffer(stream)) {
             const spa_data &data = buffer->buffer->datas[0];
@@ -481,7 +482,7 @@ private:
             pw_stream_queue_buffer(stream, buffer);
         }
 
-        sendFrame();
+        owner->sendFrame(unsent);
         keepPace();
     }
 
@@ -501,27 +502,16 @@ private:
         }
     }
 
-    bool sendFrame()
-    {
-        if (unsent.size() < AUDIO_FRAME_SIZE)
-            return false;
-        emit owner->frameCaptured(unsent.left(AUDIO_FRAME_SIZE));
-        unsent.remove(0, AUDIO_FRAME_SIZE);
-        return true;
-    }
-
     // PipeWire runs a node only once something running links to it
     void sendNext()
     {
-        if (sendFrame() || streaming)
+        if (owner->sendFrame(unsent) || streaming)
             return;
 
-        if (!unsent.isEmpty()) {
-            unsent.append(AUDIO_FRAME_SIZE - unsent.size(), '\0');
-            sendFrame();
-        } else if (graph->isPlaying()) {
+        if (!unsent.isEmpty())
+            owner->sendRest(unsent);
+        else if (graph->isPlaying())
             emit owner->frameCaptured(QByteArray(AUDIO_FRAME_SIZE, '\0'));
-        }
     }
 
     [[nodiscard]] bool inScope(const Graph::Node &node)
@@ -552,13 +542,19 @@ private:
     void relink()
     {
         const quint32 self = pw_stream_get_node_id(stream);
+        std::vector<std::pair<quint32, QByteArray>> inputs;
+        for (const auto &[id, port] : graph->ports) {
+            if (port.node == self && !port.output)
+                inputs.emplace_back(id, port.channel);
+        }
+
         std::set<std::pair<quint32, quint32>> missing;
         for (const auto &[outputId, output] : graph->ports) {
             const auto node = graph->nodes.find(output.node);
             if (!output.output || node == graph->nodes.end() || !inScope(node->second))
                 continue;
-            for (const auto &[inputId, input] : graph->ports) {
-                if (input.node == self && !input.output && carries(node->second, output.channel, input.channel))
+            for (const auto &[inputId, channel] : inputs) {
+                if (carries(node->second, output.channel, channel))
                     missing.insert({ outputId, inputId });
             }
         }

@@ -46,11 +46,11 @@ constexpr auto RESIZE_SETTLE = std::chrono::milliseconds(ScreenCapture::RESIZE_S
 constexpr auto HIDDEN_WAIT = std::chrono::milliseconds(STALLED_WAIT_MS);
 constexpr int THUMBNAIL_FRAMERATE = 20;
 constexpr auto THUMBNAIL_WAIT = std::chrono::milliseconds(500);
-// ICCCM 4.1.3.1
 constexpr quint32 NORMAL_STATE = 1;
 constexpr quint32 ICONIC_STATE = 3;
 constexpr uint32_t LONGEST_PROPERTY = 4096;
 constexpr int DEEPEST_FRAME = 4;
+const char *const FRAME_EXTENTS = "_GTK_FRAME_EXTENTS";
 
 struct Disconnect
 {
@@ -107,7 +107,7 @@ xcb_atom_t atom(const Display &display, const char *name)
 
 struct Atoms
 {
-    explicit Atoms(const Display &display) : clientListStacking(atom(display, "_NET_CLIENT_LIST_STACKING")), clientList(atom(display, "_NET_CLIENT_LIST")), wmState(atom(display, "WM_STATE")), processId(atom(display, "_NET_WM_PID")), windowType(atom(display, "_NET_WM_WINDOW_TYPE")), normalType(atom(display, "_NET_WM_WINDOW_TYPE_NORMAL")), dialogType(atom(display, "_NET_WM_WINDOW_TYPE_DIALOG")), state(atom(display, "_NET_WM_STATE")), skipTaskbar(atom(display, "_NET_WM_STATE_SKIP_TASKBAR")), name(atom(display, "_NET_WM_NAME")) {}
+    explicit Atoms(const Display &display) : clientListStacking(atom(display, "_NET_CLIENT_LIST_STACKING")), clientList(atom(display, "_NET_CLIENT_LIST")), wmState(atom(display, "WM_STATE")), processId(atom(display, "_NET_WM_PID")), windowType(atom(display, "_NET_WM_WINDOW_TYPE")), normalType(atom(display, "_NET_WM_WINDOW_TYPE_NORMAL")), dialogType(atom(display, "_NET_WM_WINDOW_TYPE_DIALOG")), state(atom(display, "_NET_WM_STATE")), skipTaskbar(atom(display, "_NET_WM_STATE_SKIP_TASKBAR")), name(atom(display, "_NET_WM_NAME")), frameExtents(atom(display, FRAME_EXTENTS)) {}
 
     xcb_atom_t clientListStacking;
     xcb_atom_t clientList;
@@ -119,6 +119,7 @@ struct Atoms
     xcb_atom_t state;
     xcb_atom_t skipTaskbar;
     xcb_atom_t name;
+    xcb_atom_t frameExtents;
 };
 
 Reply<xcb_get_property_reply_t> property(const Display &display, xcb_window_t window, xcb_atom_t name)
@@ -236,22 +237,22 @@ Showing showingOf(const Display &display, xcb_window_t window)
 }
 
 // GTK draws a window's shadow inside the window and gives its size in _GTK_FRAME_EXTENTS
-QRect insideOf(const Display &display, xcb_window_t window)
+QRect insideOf(const Display &display, xcb_window_t window, xcb_atom_t frameExtents)
 {
     const Reply<xcb_get_geometry_reply_t> geometry(xcb_get_geometry_reply(display, xcb_get_geometry(display, window), nullptr));
     if (!geometry)
         return {};
-    const std::vector<quint32> shadow = numbers(display, window, atom(display, "_GTK_FRAME_EXTENTS"));
+    const std::vector<quint32> shadow = numbers(display, window, frameExtents);
     const QRect whole(0, 0, geometry->width, geometry->height);
     if (shadow.size() != 4 || quint64(shadow[0]) + shadow[1] >= geometry->width || quint64(shadow[2]) + shadow[3] >= geometry->height)
         return whole;
     return whole.adjusted(static_cast<int>(shadow[0]), static_cast<int>(shadow[2]), -static_cast<int>(shadow[1]), -static_cast<int>(shadow[3]));
 }
 
-QRect insideOnRoot(const Display &display, xcb_window_t window)
+QRect insideOnRoot(const Display &display, xcb_window_t window, xcb_atom_t frameExtents)
 {
     const Reply<xcb_translate_coordinates_reply_t> corner(xcb_translate_coordinates_reply(display, xcb_translate_coordinates(display, window, display.root, 0, 0), nullptr));
-    return corner ? insideOf(display, window).translated(corner->dst_x, corner->dst_y) : QRect();
+    return corner ? insideOf(display, window, frameExtents).translated(corner->dst_x, corner->dst_y) : QRect();
 }
 
 std::vector<xcb_window_t> childrenOf(const Display &display, xcb_window_t window)
@@ -330,6 +331,7 @@ private:
 
     Display display;
     xcb_window_t window;
+    xcb_atom_t frameExtents = XCB_ATOM_NONE;
     QRect screen;
     int framerate;
     InputPointer input;
@@ -356,6 +358,7 @@ Grabber::Grabber(const QString &sourceId, int framerate) : display(connectToDisp
             fail(AVERROR(ENODEV));
             return;
         }
+        frameExtents = atom(display, FRAME_EXTENTS);
         if (has(display, &xcb_composite_id))
             xcb_composite_redirect_window(display, window, XCB_COMPOSITE_REDIRECT_AUTOMATIC);
         return;
@@ -380,7 +383,7 @@ LinuxGrabber::Result Grabber::fail(int error)
 LinuxGrabber::Result Grabber::watchWindow(Clock::time_point until)
 {
     const Showing showing = showingOf(display, window);
-    const QRect inside = insideOf(display, window);
+    const QRect inside = insideOf(display, window, frameExtents);
     if (xcb_connection_has_error(display))
         return fail(AVERROR(EIO));
     if (showing == Showing::Gone) {
@@ -541,7 +544,7 @@ QList<CaptureSource> windows()
         source.id = windowSourceId(window);
         source.kind = CaptureSource::Kind::Window;
         source.name = titleOf(display, atoms, window);
-        source.geometry = insideOnRoot(display, window);
+        source.geometry = insideOnRoot(display, window, atoms.frameExtents);
         const std::vector<quint32> process = numbers(display, window, atoms.processId);
         source.processId = process.empty() ? 0 : process[0];
         if (!source.name.isEmpty())
@@ -576,7 +579,7 @@ QSize sizeOf(const CaptureSource &source)
 
     const Display display = connectToDisplay();
     const xcb_window_t window = windowOf(source.id);
-    return display && window && showingOf(display, window) == Showing::Shown ? insideOf(display, window).size() : QSize();
+    return display && window && showingOf(display, window) == Showing::Shown ? insideOf(display, window, atom(display, FRAME_EXTENTS)).size() : QSize();
 }
 
 void restoreIfMinimised(const CaptureSource &window)

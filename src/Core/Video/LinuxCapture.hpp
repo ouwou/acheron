@@ -6,10 +6,15 @@
 #include <QString>
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 
 #include "Core/Video/CaptureSources.hpp"
+
+extern "C" {
+#include <libavutil/pixfmt.h>
+}
 
 class QObject;
 struct AVFrame;
@@ -40,7 +45,6 @@ public:
 
 namespace X11Capture {
 
-// xwayland doesnt show the desktop
 [[nodiscard]] bool usable();
 [[nodiscard]] QList<CaptureSource> screens();
 [[nodiscard]] QList<CaptureSource> windows();
@@ -53,6 +57,11 @@ void restoreIfMinimised(const CaptureSource &window);
 
 namespace PortalCapture {
 
+enum class PictureMemory {
+    CardOrMemory,
+    MemoryOnly,
+};
+
 [[nodiscard]] bool usable();
 // called once, on `receiver`'s thread and only while it lives
 void choose(CaptureSource::Kind kind, QObject *receiver, std::function<void(const CaptureSource &, const QString &)> chosen);
@@ -60,7 +69,8 @@ void choose(CaptureSource::Kind kind, QObject *receiver, std::function<void(cons
 void chooseAgain(CaptureSource::Kind kind, QString *token, QObject *receiver, std::function<void(const CaptureSource &, const QString &)> chosen);
 [[nodiscard]] CaptureSource adopt(quint32 node, const QSize &size);
 [[nodiscard]] QSize sizeOf(const CaptureSource &source);
-[[nodiscard]] std::unique_ptr<LinuxGrabber> open(const QString &sourceId, int framerate, bool onCard);
+[[nodiscard]] std::unique_ptr<LinuxGrabber> open(const QString &sourceId, int framerate, PictureMemory memory);
+[[nodiscard]] AVPixelFormat formatOfFourcc(uint32_t fourcc);
 // any thread
 void release(const QString &sourceId);
 

@@ -3,6 +3,7 @@
 #if defined(Q_OS_WIN)
 
 #include "Core/Media/FfmpegPointers.hpp"
+#include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/Windows/Direct3D.hpp"
 
 extern "C" {
@@ -42,9 +43,9 @@ void copyOnCard(const AVFrame *from, const QRect &area, AVFrame *to, const QPoin
 
 } // namespace
 
-AVBufferRef *cardPictures(AVBufferRef *device, const QSize &size)
+Media::BufferPointer cardPictures(AVBufferRef *device, const QSize &size)
 {
-    AVBufferRef *pool = av_hwframe_ctx_alloc(device);
+    Media::BufferPointer pool(av_hwframe_ctx_alloc(device));
     if (!pool)
         return nullptr;
     auto *frames = reinterpret_cast<AVHWFramesContext *>(pool->data);
@@ -53,8 +54,8 @@ AVBufferRef *cardPictures(AVBufferRef *device, const QSize &size)
     frames->width = size.width();
     frames->height = size.height();
     static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = D3D11_BIND_RENDER_TARGET;
-    if (av_hwframe_ctx_init(pool) < 0)
-        av_buffer_unref(&pool);
+    if (av_hwframe_ctx_init(pool.get()) < 0)
+        return nullptr;
     return pool;
 }
 
@@ -79,7 +80,7 @@ bool isEmptyPicture(const AVFrame *onCard, AVFrame *scratch)
     for (int row = 0; row < POINTS_ACROSS; row++) {
         const uint8_t *line = scratch->data[0] + (scratch->height * (2 * row + 1) / (2 * POINTS_ACROSS)) * scratch->linesize[0];
         for (int column = 0; column < POINTS_ACROSS; column++) {
-            if (line[(scratch->width * (2 * column + 1) / (2 * POINTS_ACROSS)) * 4 + 3] != 0)
+            if (line[(scratch->width * (2 * column + 1) / (2 * POINTS_ACROSS)) * RGB32_BYTES_PER_PIXEL + BGRA_ALPHA_BYTE] != 0)
                 return false;
         }
     }

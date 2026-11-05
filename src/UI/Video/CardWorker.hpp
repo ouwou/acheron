@@ -40,10 +40,10 @@ public:
             job(); }, Qt::QueuedConnection);
     }
 
-    // blocks. not from the worker's thread
     template <typename Job>
-    void run(Job job)
+    void runAndWait(Job job)
     {
+        Q_ASSERT(QThread::currentThread() != &thread);
         QMetaObject::invokeMethod(&context, [this, &job] {
             enter();
             job(); }, Qt::BlockingQueuedConnection);
@@ -97,9 +97,8 @@ private:
 
     std::mutex mutex;
     Texture ready;
-    // the layer's thread only, apart from the exchange with `ready`
-    Texture front;
     bool readyIsNew = false;
+    Texture front;
     bool frontIsCurrent = false;
 };
 

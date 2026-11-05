@@ -22,13 +22,13 @@ using Discord::Voice::VideoCodec;
 
 constexpr int PREVIEW_INTERVAL_MS = 500;
 constexpr QSize PREVIEW_BOUND(512, 288);
-constexpr int STATS_INTERVAL_MS = 1000;
+constexpr int STILL_PICTURE_INTERVAL_MS = 500;
 // a window being closed is hidden for a moment first; that ends the share rather than pausing it
 constexpr int HIDDEN_BEFORE_PAUSED_MS = 200;
 
-QString noEncoderFor(VideoCodec codec)
+bool stillPictureIsDue(qint64 msSinceLastPicture, bool keyFrameWaitedFor, int framerate)
 {
-    return ScreenPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(codec));
+    return msSinceLastPicture >= STILL_PICTURE_INTERVAL_MS || (keyFrameWaitedFor && msSinceLastPicture >= 1000 / std::max(1, framerate));
 }
 
 } // namespace
@@ -103,8 +103,13 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
     int capturedLately = 0;
 
     while (thread.isCurrent(session)) {
-        if (!request.keepOnCard && encoder.takesCardFrames()) {
-            request.keepOnCard = true;
+        const bool keepOnCard = encoder.takesCardFrames();
+        const bool rgbOnCard = encoder.takesRgbCardFrames();
+        if (request.keepOnCard != keepOnCard || request.rgbOnCard != rgbOnCard) {
+            if (request.keepOnCard && !keepOnCard)
+                qCInfo(LogVideo) << "The encoder does not take pictures that are on the graphics card; reading them back into memory";
+            request.keepOnCard = keepOnCard;
+            request.rgbOnCard = rgbOnCard;
             screen.configure(request);
         }
 
@@ -175,9 +180,6 @@ void ScreenPipeline::Worker::capture(const ScreenSettings &settings, CaptureMeth
             encoded.clear();
             const Media::VideoEncoder::Outcome outcome = encoder.encode(picture, timestamp, encoded);
             if (outcome == Media::VideoEncoder::Outcome::CardFramesRefused) {
-                qCInfo(LogVideo) << "The encoder does not take pictures that are on the graphics card; reading them back into memory";
-                request.keepOnCard = false;
-                screen.configure(request);
                 av_frame_unref(frame.get());
                 av_frame_unref(kept.get());
                 continue;

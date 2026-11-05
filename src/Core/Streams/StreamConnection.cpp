@@ -11,7 +11,7 @@ using Discord::Voice::VoiceClient;
 
 namespace {
 
-// the id one below the RTC server's when the gateway names no channel
+// as the official client when the gateway names no channel
 Snowflake streamRtcChannelId(Snowflake rtcServerId, Snowflake rtcChannelId)
 {
     return rtcChannelId.isValid() ? rtcChannelId : Snowflake(static_cast<quint64>(rtcServerId) - 1);
@@ -71,7 +71,7 @@ void StreamConnection::apply(const StreamRecord &record)
     }
 }
 
-void StreamConnection::close(const std::function<void()> &beforeStop)
+void StreamConnection::close(const BeforeStop &beforeStop)
 {
     connectTimeout.stop();
     reconnectDelay.stop();
@@ -149,7 +149,7 @@ void StreamConnection::onConnectTimedOut()
     fail(Failure::TimedOut);
 }
 
-void StreamConnection::dropConnection(const std::function<void()> &beforeStop)
+void StreamConnection::dropConnection(const BeforeStop &beforeStop)
 {
     reconnectDelay.stop();
     if (!current)
@@ -157,7 +157,10 @@ void StreamConnection::dropConnection(const std::function<void()> &beforeStop)
 
     Audio::VoiceConnection *going = std::exchange(current, nullptr);
     connectedNow = false;
-    going->stop(beforeStop);
+    going->stop([&beforeStop, client = going->client()] {
+        if (beforeStop)
+            beforeStop(client);
+    });
     emit closed(going);
     // not deleted here: this may be one of its own signals
     going->deleteLater();

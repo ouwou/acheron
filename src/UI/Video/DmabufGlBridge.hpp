@@ -8,7 +8,7 @@
 
 #include <memory>
 
-struct AVFrame;
+#include "Core/Media/FfmpegPointers.hpp"
 
 namespace Acheron {
 namespace UI {
@@ -19,8 +19,8 @@ class DmabufGlBridge
 public:
     [[nodiscard]] static bool contextSupportsIt();
 
-    // for the caller to free, or null. waits for decoding to finish
-    [[nodiscard]] static AVFrame *exported(const AVFrame *frame);
+    // waits for decoding to finish
+    [[nodiscard]] static Core::Media::FramePointer exported(const AVFrame *frame);
 
     DmabufGlBridge();
     ~DmabufGlBridge();
@@ -36,7 +36,7 @@ private:
     struct Egl;
 
     std::unique_ptr<Egl> egl;
-    AVFrame *held;
+    const Core::Media::FramePointer held{ av_frame_alloc() };
 };
 
 } // namespace UI

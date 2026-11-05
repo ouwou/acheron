@@ -5,8 +5,7 @@
 namespace Acheron {
 namespace UI {
 
-// for the texture bound to GL_TEXTURE_2D
-inline void setSampling(QOpenGLFunctions *gl, GLenum filter)
+inline void setBoundTextureSampling(QOpenGLFunctions *gl, GLenum filter)
 {
     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(filter));
     gl->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(filter));

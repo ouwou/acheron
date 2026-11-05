@@ -35,8 +35,7 @@ struct StreamKey
 struct StreamPreviewLookup
 {
     QUrl url;
-    int statusCode = 0;
-    qint64 retryAfterMs = 0;
+    std::optional<qint64> retryAfterMs;
 };
 
 } // namespace Discord

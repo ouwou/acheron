@@ -6,9 +6,11 @@
 #include "Core/Video/CameraCapture.hpp"
 #include "Core/Video/CameraPipeline.hpp"
 #include "ColourChecks.hpp"
+#include "DecodingHelpers.hpp"
 #include "EncodedFrameChecks.hpp"
 #include "ProcessUsage.hpp"
 #include "HardwareTests.hpp"
+#include "TestPictures.hpp"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -17,19 +19,19 @@
 #include <QRegularExpression>
 #include <QSet>
 #include <QTest>
-#include <QThread>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <ctime>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -62,6 +64,7 @@ namespace {
 using ColourChecks::distance;
 using ColourChecks::inYuv;
 using ColourChecks::Yuv;
+using Core::Media::FramePointer;
 using Clock = std::chrono::steady_clock;
 
 constexpr int BITRATE = 1'500'000;
@@ -75,13 +78,6 @@ constexpr int DARK_GREY = 60;
 constexpr int LIGHT_GREY = 200;
 constexpr int SQUARE_LUMA = 220;
 constexpr int AROUND_SQUARE_LUMA = 40;
-
-using FramePointer = std::shared_ptr<AVFrame>;
-
-FramePointer makeFrame()
-{
-    return FramePointer(av_frame_alloc(), [](AVFrame *frame) { av_frame_free(&frame); });
-}
 
 struct SyntheticCamera
 {
@@ -133,57 +129,37 @@ private:
 
 void paint(AVFrame *picture, const SyntheticCamera &camera, int index)
 {
+    if (camera.shows == SyntheticCamera::Shows::Movement) {
+        TestPictures::paintMovement(picture, index);
+        return;
+    }
+
     const AVPixFmtDescriptor *layout = av_pix_fmt_desc_get(camera.format);
     const int width = picture->width;
     const int height = picture->height;
     const int chromaWidth = AV_CEIL_RSHIFT(width, layout->log2_chroma_w);
     const int chromaHeight = AV_CEIL_RSHIFT(height, layout->log2_chroma_h);
     const Yuv colour = inYuv(COLOUR_RED, COLOUR_GREEN, COLOUR_BLUE, camera.colorspace == AVCOL_SPC_BT709, camera.fullRange);
+    const bool oneColour = camera.shows == SyntheticCamera::Shows::OneColour;
     const int squareSide = height / 3;
 
-    uint32_t noise = 12345u + static_cast<uint32_t>(index) * 2654435761u;
     for (int y = 0; y < height; y++) {
         uint8_t *row = picture->data[0] + y * picture->linesize[0];
         for (int x = 0; x < width; x++) {
-            uint8_t value = 0;
-            switch (camera.shows) {
-            case SyntheticCamera::Shows::Movement:
-                value = static_cast<uint8_t>((x + y) / 4 + index * 3);
-                if (x >= width / 4 && x < width * 3 / 4 && y >= height / 3 && y < height * 2 / 3)
-                    value = static_cast<uint8_t>(((x + 3 * index) * 7) ^ ((y + 2 * index) * 5));
-                if (x < width / 4 && y < height / 6) {
-                    noise = noise * 1664525u + 1013904223u;
-                    value = static_cast<uint8_t>(96 + (noise >> 26));
-                }
-                break;
-            case SyntheticCamera::Shows::Square:
-                value = std::abs(2 * x - width) < squareSide && std::abs(2 * y - height) < squareSide ? SQUARE_LUMA : AROUND_SQUARE_LUMA;
-                break;
-            case SyntheticCamera::Shows::TwoGreys:
-                value = x < width / 2 ? DARK_GREY : LIGHT_GREY;
-                break;
-            case SyntheticCamera::Shows::OneColour:
-                value = static_cast<uint8_t>(std::lround(colour.y));
-                break;
-            }
-            row[x] = value;
+            if (oneColour)
+                row[x] = static_cast<uint8_t>(std::lround(colour.y));
+            else if (camera.shows == SyntheticCamera::Shows::Square)
+                row[x] = std::abs(2 * x - width) < squareSide && std::abs(2 * y - height) < squareSide ? SQUARE_LUMA : AROUND_SQUARE_LUMA;
+            else
+                row[x] = x < width / 2 ? DARK_GREY : LIGHT_GREY;
         }
     }
 
+    const auto u = static_cast<uint8_t>(oneColour ? std::lround(colour.u) : 128);
+    const auto v = static_cast<uint8_t>(oneColour ? std::lround(colour.v) : 128);
     for (int y = 0; y < chromaHeight; y++) {
-        for (int x = 0; x < chromaWidth; x++) {
-            uint8_t u = 128;
-            uint8_t v = 128;
-            if (camera.shows == SyntheticCamera::Shows::Movement) {
-                u = static_cast<uint8_t>(128 + y / 4 + index * 2);
-                v = static_cast<uint8_t>(64 + x / 4 + index * 5);
-            } else if (camera.shows == SyntheticCamera::Shows::OneColour) {
-                u = static_cast<uint8_t>(std::lround(colour.u));
-                v = static_cast<uint8_t>(std::lround(colour.v));
-            }
-            picture->data[1][y * picture->linesize[1] + x] = u;
-            picture->data[2][y * picture->linesize[2] + x] = v;
-        }
+        memset(picture->data[1] + y * picture->linesize[1], u, static_cast<size_t>(chromaWidth));
+        memset(picture->data[2] + y * picture->linesize[2], v, static_cast<size_t>(chromaWidth));
     }
 }
 
@@ -211,14 +187,11 @@ public:
 
         const int different = camera->shows == SyntheticCamera::Shows::Movement ? 8 : 1;
         for (int index = 0; index < different; index++) {
-            FramePointer picture = makeFrame();
-            picture->format = camera->format;
-            picture->width = camera->size.width();
-            picture->height = camera->size.height();
+            FramePointer picture(av_frame_alloc());
+            if (!picture || Core::Media::prepareWritable(picture.get(), camera->format, camera->size) < 0)
+                return false;
             picture->colorspace = camera->colorspace;
             picture->color_range = camera->fullRange ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
-            if (av_frame_get_buffer(picture.get(), 0) < 0)
-                return false;
             paint(picture.get(), *camera, index);
             pictures.push_back(std::move(picture));
         }
@@ -278,7 +251,7 @@ public:
     std::atomic<int> frames{ 0 };
     std::mutex mutex;
     QList<QSize> sizes;
-    FramePointer last = makeFrame();
+    FramePointer last{ av_frame_alloc() };
 };
 
 struct Decoded
@@ -292,30 +265,20 @@ struct Decoded
 
 Decoded decodeAll(VideoCodec codec, const std::vector<EncodedFramePointer> &frames, size_t from = 0, size_t to = SIZE_MAX)
 {
+    const size_t end = std::min(to, frames.size());
+    const size_t begin = std::min(from, end);
     const auto sink = std::make_shared<KeepingSink>();
     Decoded decoded;
-    int pushed = 0;
     {
-        Core::Media::VideoDecoder decoder(false);
+        Core::Media::VideoDecoder decoder(Core::Media::VideoDecoder::Hardware::Off);
         decoder.setSink(sink);
-
-        QElapsedTimer timer;
-        timer.start();
-        for (size_t i = from; i < std::min(to, frames.size()); i++) {
-            decoder.push(codec, EncodedVideoFrame(*frames[i]));
-            pushed++;
-            while (pushed - sink->frames > 20 && timer.elapsed() < 10000)
-                QThread::msleep(1);
-        }
-        while (sink->frames < pushed && timer.elapsed() < 10000)
-            QThread::msleep(2);
-        QThread::msleep(50);
+        DecodingHelpers::decodeAndWait(decoder, codec, std::span<const EncodedFramePointer>(frames).subspan(begin, end - begin), sink->frames);
         decoded.errors = decoder.stats().errors;
         decoded.dropped = decoder.stats().dropped;
     }
     decoded.pictures = sink->frames;
     decoded.sizes = sink->sizes;
-    decoded.last = sink->last;
+    decoded.last = std::move(sink->last);
     return decoded;
 }
 
@@ -343,6 +306,26 @@ QSize brightExtent(const AVFrame *frame)
     return QSize(across, down);
 }
 
+QSize brightExtent(const QImage &image)
+{
+    int across = 0;
+    int down = 0;
+    for (int x = 0; x < image.width(); x++)
+        across += qGreen(image.pixel(x, image.height() / 2)) > 128 ? 1 : 0;
+    for (int y = 0; y < image.height(); y++)
+        down += qGreen(image.pixel(image.width() / 2, y)) > 128 ? 1 : 0;
+    return QSize(across, down);
+}
+
+QString problemWithTheSquare(const QSize &extent, const QSize &cameraSize, const QSize &shownAt)
+{
+    constexpr int WITHIN = 3;
+    const int side = cameraSize.height() / 3 * shownAt.height() / cameraSize.height();
+    if (std::abs(extent.width() - side) <= WITHIN && std::abs(extent.height() - side) <= WITHIN)
+        return {};
+    return QStringLiteral("the square is %1x%2, expected %3 a side").arg(extent.width()).arg(extent.height()).arg(side);
+}
+
 QImage inRgb(const AVFrame *frame)
 {
     QImage image = Core::Media::RgbScaler::allocate(QSize(frame->width, frame->height), QImage::Format_RGB32);
@@ -362,10 +345,7 @@ QString describe(QRgb pixel)
 
 bool arePicturesOfTheSizeSent(VideoCodec codec, const QList<QSize> &decoded, const QSize &sent)
 {
-    if (decoded.size() != 1)
-        return false;
-    const QSize beyond = decoded.first() - sent;
-    return beyond == QSize(0, 0) || (codec == VideoCodec::AV1 && beyond.width() >= 0 && beyond.width() < 64 && beyond.height() >= 0 && beyond.height() < 16);
+    return decoded.size() == 1 && DecodingHelpers::isTheSizeSent(codec, decoded.first(), sent);
 }
 
 struct PipelineRecord
@@ -646,13 +626,13 @@ void TestCameraCapture::aCamerasOwnClockSaysWhenAPictureWasTaken()
 void TestCameraCapture::aCameraClockThatRunsSlowIsFollowed()
 {
     using namespace std::chrono;
-    // twenty minutes of a camera clock losing a ten-thousandth: 120 ms by the end
-    constexpr int PICTURES = 36'000;
+    constexpr int TWENTY_MINUTES_OF_PICTURES = 20 * 60 * 30;
+    constexpr int CAMERA_CLOCK_LOSES_ONE_PART_IN = 10'000;
     const Clock::time_point began = Clock::time_point(seconds(1000));
 
     CaptureClock clock;
-    for (int index = 0; index < PICTURES; index++) {
-        const microseconds stamped = index * CAMERA_INTERVAL - index * CAMERA_INTERVAL / 10'000;
+    for (int index = 0; index < TWENTY_MINUTES_OF_PICTURES; index++) {
+        const microseconds stamped = index * CAMERA_INTERVAL - index * CAMERA_INTERVAL / CAMERA_CLOCK_LOSES_ONE_PART_IN;
         const Clock::time_point readAt = began + index * CAMERA_INTERVAL + QUICKEST_READ;
         const qint64 behind = duration_cast<microseconds>(readAt - clock.at(stamped, readAt)).count();
         QVERIFY2(behind >= 0 && behind <= 1'000, qPrintable(QStringLiteral("picture %1 is taken to be %2 us old").arg(index).arg(behind)));
@@ -758,9 +738,8 @@ void TestCameraCapture::aCameraOfAnotherShapeKeepsItsShape()
     QCOMPARE(decoded.sizes, QList<QSize>{ expected });
 
     QVERIFY(isPlanar420(decoded.last.get()));
-    const QSize square = brightExtent(decoded.last.get());
-    const int side = cameraSize.height() / 3 * expected.height() / cameraSize.height();
-    QVERIFY2(std::abs(square.width() - side) <= 3 && std::abs(square.height() - side) <= 3, qPrintable(QStringLiteral("the square is %1x%2, expected %3 a side").arg(square.width()).arg(square.height()).arg(side)));
+    const QString problem = problemWithTheSquare(brightExtent(decoded.last.get()), cameraSize, expected);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
 }
 
 void TestCameraCapture::picturesAreThinnedToTheFrameRate_data()
@@ -1094,8 +1073,7 @@ void TestCameraCapture::aCameraOpenedWhileSuspendedIsAnnounced()
     QCOMPARE(decoded.sizes, QList<QSize>{ QSize(480, 360) });
 }
 
-// MJPEG cameras send full range; passed on as is, a viewer assuming video range would crush darks and
-// lights
+// MJPEG cameras send full range, which a viewer taking it for video range would crush
 void TestCameraCapture::aFullRangeCameraKeepsItsBrightness()
 {
     QFETCH(VideoCodec, codec);
@@ -1226,15 +1204,8 @@ void TestCameraCapture::thePreviewIsSmallAndFrequent()
     }
     QVERIFY(record.previews.first().constBits() != record.previews.last().constBits());
 
-    const QImage last = record.previews.last();
-    int across = 0;
-    int down = 0;
-    for (int x = 0; x < last.width(); x++)
-        across += qGreen(last.pixel(x, last.height() / 2)) > 128 ? 1 : 0;
-    for (int y = 0; y < last.height(); y++)
-        down += qGreen(last.pixel(last.width() / 2, y)) > 128 ? 1 : 0;
-    const int side = cameraSize.height() / 3 * expected.height() / cameraSize.height();
-    QVERIFY2(std::abs(across - side) <= 3 && std::abs(down - side) <= 3, qPrintable(QStringLiteral("the square is %1x%2, expected %3 a side").arg(across).arg(down).arg(side)));
+    const QString problem = problemWithTheSquare(brightExtent(record.previews.last()), cameraSize, expected);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
 }
 
 void TestCameraCapture::theBitrateIsFollowed()
@@ -1503,7 +1474,7 @@ void TestCameraCapture::aPictureOutlivesItsCamera()
     if (!source->open(QString()))
         QSKIP(qPrintable(QStringLiteral("the camera could not be used: %1").arg(source->failure())));
 
-    const FramePointer picture = makeFrame();
+    const FramePointer picture(av_frame_alloc());
     Clock::time_point capturedAt;
     CameraFrameSource::Status status = CameraFrameSource::Status::NoFrame;
     QElapsedTimer open;

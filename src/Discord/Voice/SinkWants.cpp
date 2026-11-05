@@ -83,7 +83,6 @@ SinkWantsPlan planSinkWants(const SinkWantsInput &input)
                 } else if (enlarged) {
                     plan.wants.bySsrc.insert(layer.ssrc, NONE);
                 } else {
-                    // as the official client
                     if (input.oneToOne)
                         plan.wants.bySsrc.insert(layer.ssrc, forTile);
                     taken = layer.ssrc;

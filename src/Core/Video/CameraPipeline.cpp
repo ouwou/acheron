@@ -39,7 +39,6 @@ using Media::FramePointer;
 
 constexpr int PREVIEWS_PER_SECOND = 15;
 constexpr QSize PREVIEW_BOUND(640, 360);
-constexpr int STATS_INTERVAL_MS = 1000;
 
 struct Encoding
 {
@@ -71,9 +70,8 @@ private:
     std::optional<Clock::time_point> due;
 };
 
-// in the colours a viewer assumes when the stream doesnt say: video range (an MJPEG camera sends
-// full) and BT.709 from 720 lines up, BT.601 below. AMF drops a BT.601 marking, and VP8 cant carry
-// one
+// in the colours a viewer assumes when the stream doesnt say: video range (an MJPEG camera sends full) and
+// BT.709 from 720 lines up, BT.601 below. AMF drops a BT.601 marking, and VP8 cant carry one
 class EncodePictureMaker
 {
 public:
@@ -91,7 +89,6 @@ public:
         if (wanted != configuredFor && !configure(wanted))
             return nullptr;
 
-        // an encoder may still hold the last picture
         if (Media::prepareWritable(made.get(), format, size) < 0)
             return nullptr;
         if (sws_scale(context, camera->data, camera->linesize, 0, camera->height, made->data, made->linesize) <= 0)
@@ -271,7 +268,7 @@ std::optional<Asked> CameraPipeline::Worker::takeAsked(int layer)
 
 void CameraPipeline::Worker::capture(const CameraSettings &settings, quint64 session)
 {
-    const QString noEncoder = CameraPipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(settings.codec));
+    const QString noEncoder = noEncoderFor(settings.codec);
     std::deque<Layer> layers;
     for (int index = 0; index < CAMERA_LAYERS; index++)
         layers.emplace_back(Encoding{ settings.encodeSize, std::max(1, settings.framerate) });

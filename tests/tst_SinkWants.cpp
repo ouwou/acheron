@@ -1,6 +1,3 @@
-// the expected values are the official client's: its ladder (docs/video-re/re-voice-gateway-video.md,
-// section 5) and its off-screen rules
-
 #include "Core/Video/TileVisibility.hpp"
 #include "Discord/Voice/SinkWants.hpp"
 
@@ -13,12 +10,17 @@ using Core::TileVisibility;
 
 namespace {
 
-VideoSender camera(quint64 userId, quint32 highSsrc, bool twoLayers = true)
+enum class Layers {
+    One,
+    Two,
+};
+
+VideoSender camera(quint64 userId, quint32 highSsrc, Layers layers = Layers::Two)
 {
     VideoSender sender;
     sender.userId = Snowflake(userId);
     sender.layers.append(VideoLayer{ highSsrc, highSsrc + 1, 100 });
-    if (twoLayers)
+    if (layers == Layers::Two)
         sender.layers.append(VideoLayer{ highSsrc + 2, highSsrc + 3, 50 });
     return sender;
 }
@@ -101,7 +103,7 @@ void TestSinkWants::nobodySending()
 void TestSinkWants::oneSenderWithOneEncoding()
 {
     SinkWantsInput input;
-    input.senders = { camera(1, 500, false) };
+    input.senders = { camera(1, 500, Layers::One) };
 
     const SinkWantsPlan plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"any":100})"));
@@ -133,7 +135,7 @@ void TestSinkWants::severalSendersShareTheBudget()
 void TestSinkWants::focusedSenderGetsFullQuality()
 {
     SinkWantsInput input;
-    input.senders = { camera(1, 500), camera(2, 600), camera(3, 700, false) };
+    input.senders = { camera(1, 500), camera(2, 600), camera(3, 700, Layers::One) };
     input.focusedUser = Snowflake(2);
 
     SinkWantsPlan plan = planSinkWants(input);
@@ -181,7 +183,7 @@ void TestSinkWants::callOfTwoSizesTheRequestToTheTile()
     SinkWantsPlan plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"500":0,"502":60,"any":100})"));
 
-    input.senders = { camera(1, 500, false) };
+    input.senders = { camera(1, 500, Layers::One) };
     input.senders[0].tilePixels = 100000;
     plan = planSinkWants(input);
     QCOMPARE(json(plan), QByteArray(R"({"500":60,"any":100})"));

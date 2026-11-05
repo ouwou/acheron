@@ -33,7 +33,7 @@ struct SinkWantsInput
 {
     QList<VideoSender> senders;
     Core::Snowflake focusedUser;
-    // where the official client also sizes its request to the tile
+    // the one case where the official client also sizes its request to the tile
     bool oneToOne = false;
 };
 
@@ -43,11 +43,9 @@ struct SinkWantsPlan
     QHash<Core::Snowflake, quint32> deliver;
 };
 
-// the official client's ladder: 1280x720 worth of pixels shared between everyone, stepping down further
-// for a tile smaller than the step
+// the official client's ladder: 1280x720 worth of pixels shared by everyone, a step lower for a tile smaller than the step
 [[nodiscard]] int sinkWantLevel(int videoSenders, int tilePixels = 0);
 
-// the official desktop client's rules
 [[nodiscard]] SinkWantsPlan planSinkWants(const SinkWantsInput &input);
 
 } // namespace Voice

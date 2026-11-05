@@ -1,10 +1,8 @@
-// the cipher cases include known-answer vectors built here with libsodium's detached-nonce primitives,
-// so a mistake in which bytes are authenticated, or where the tag and nonce go, fails even though seal
-// and open would still round-trip
-
 #include "Discord/Voice/PacketBuffer.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
+#include "Discord/Voice/Socks5UdpAssociation.hpp"
 #include "Discord/Voice/VoiceEncryption.hpp"
+#include "PacketBytes.hpp"
 
 #include <QTest>
 
@@ -13,21 +11,15 @@
 #include <cstring>
 
 using namespace Acheron::Discord::Voice;
+using PacketBytes::bytesOf;
+using PacketBytes::toByteArray;
 
 Q_DECLARE_METATYPE(EncryptionMode)
 Q_DECLARE_METATYPE(PacketKind)
 
 namespace {
 
-std::span<const uint8_t> bytesOf(const QByteArray &bytes)
-{
-    return { reinterpret_cast<const uint8_t *>(bytes.constData()), static_cast<size_t>(bytes.size()) };
-}
-
-QByteArray toByteArray(std::span<const uint8_t> bytes)
-{
-    return QByteArray(reinterpret_cast<const char *>(bytes.data()), static_cast<int>(bytes.size()));
-}
+constexpr uint8_t AUDIO_LEVEL_EXTENSION = 1;
 
 void fill(PacketBuffer &packet, const QByteArray &content)
 {
@@ -37,7 +29,7 @@ void fill(PacketBuffer &packet, const QByteArray &content)
 
 QByteArray testKey()
 {
-    QByteArray key(32, '\0');
+    QByteArray key(VoiceEncryption::KEY_SIZE, '\0');
     for (int i = 0; i < key.size(); ++i)
         key[i] = char(i * 7 + 1);
     return key;
@@ -119,6 +111,8 @@ private slots:
     void openRejectsShortPackets_data();
     void openRejectsShortPackets();
     void sealNeedsTailroom();
+    void aKeyOfAnyOtherSizeIsRefused_data();
+    void aKeyOfAnyOtherSizeIsRefused();
 
     void bufferKeepsHeadroomForRelayHeader();
     void bufferBoundsAreEnforced();
@@ -174,7 +168,6 @@ void TestRtp::classifyRejectsNonRtp_data()
     QTest::newRow("version 1") << (QByteArray(1, '\x40') + QByteArray(31, '\0'));
     QTest::newRow("version 3") << (QByteArray(1, '\xc0') + QByteArray(31, '\0'));
     QTest::newRow("rtp shorter than its fixed header") << QByteArray("\x80\x78\x00\x01\x00\x00\x00\x00\x00\x00\x00", 11);
-    // IP discovery responses share the socket and start with a 16-bit type of 2
     QTest::newRow("ip discovery response") << (QByteArray("\x00\x02\x00\x46", 4) + QByteArray(70, '\0'));
 }
 
@@ -246,9 +239,14 @@ void TestRtp::parseRejectsTruncatedHeaders_data()
     QTest::newRow("extension preamble cut short") << (QByteArray(1, '\x90') + rest + QByteArray::fromHex("bede00"));
 }
 
+void TestRtp::parseRejectsTruncatedHeaders()
+{
+    QFETCH(QByteArray, packet);
+    QVERIFY(!parseRtp(bytesOf(packet)).has_value());
+}
+
 void TestRtp::paddingIsCountedByTheLastByte()
 {
-    // Discord fills the padding with the count; the standard only promises the last byte
     const std::vector<uint8_t> padded = { 0xAA, 0xBB, 0x03, 0x03, 0x03 };
     QCOMPARE(rtpPaddingSize(padded), std::optional<int>(3));
     const std::vector<uint8_t> zeroFilled = { 0xAA, 0x00, 0x00, 0x00, 0x04 };
@@ -261,12 +259,6 @@ void TestRtp::paddingIsCountedByTheLastByte()
     const std::vector<uint8_t> tooLong = { 0xAA, 0x09 };
     QVERIFY(!rtpPaddingSize(tooLong));
     QVERIFY(!rtpPaddingSize({}));
-}
-
-void TestRtp::parseRejectsTruncatedHeaders()
-{
-    QFETCH(QByteArray, packet);
-    QVERIFY(!parseRtp(bytesOf(packet)).has_value());
 }
 
 void TestRtp::parseSurvivesTruncationFuzz()
@@ -326,30 +318,37 @@ void TestRtp::writeRefusesWhatItCannotExpress()
 
 void TestRtp::findsExtensionElements()
 {
-    // abs-send-time (id 3, 3 bytes), transport-wide-cc (id 5, 2 bytes), audio level (id 1, 1 byte)
-    const QByteArray elements = QByteArray::fromHex("32aabbcc" "511234" "107f" "000000");
+    const QByteArray elements = QByteArray::fromHex("32aabbcc"
+                                                    "511234"
+                                                    "107f"
+                                                    "000000");
 
-    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), 3)), QByteArray::fromHex("aabbcc"));
-    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), 5)), QByteArray::fromHex("1234"));
-    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), 1)), QByteArray::fromHex("7f"));
-    QVERIFY(findRtpExtension(bytesOf(elements), 2).empty());
-    QVERIFY(findRtpExtension({}, 3).empty());
+    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), ABS_SEND_TIME_EXTENSION)), QByteArray::fromHex("aabbcc"));
+    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), TRANSPORT_SEQUENCE_EXTENSION)), QByteArray::fromHex("1234"));
+    QCOMPARE(toByteArray(findRtpExtension(bytesOf(elements), AUDIO_LEVEL_EXTENSION)), QByteArray::fromHex("7f"));
+    QVERIFY(findRtpExtension(bytesOf(elements), TRANSMISSION_OFFSET_EXTENSION).empty());
+    QVERIFY(findRtpExtension({}, ABS_SEND_TIME_EXTENSION).empty());
 }
 
 void TestRtp::extensionLookupSkipsPaddingAndStopsAtReserved()
 {
-    const QByteArray padded = QByteArray::fromHex("0000" "107f" "00" "5112340000");
-    QCOMPARE(toByteArray(findRtpExtension(bytesOf(padded), 5)), QByteArray::fromHex("1234"));
+    const QByteArray padded = QByteArray::fromHex("0000"
+                                                  "107f"
+                                                  "00"
+                                                  "5112340000");
+    QCOMPARE(toByteArray(findRtpExtension(bytesOf(padded), TRANSPORT_SEQUENCE_EXTENSION)), QByteArray::fromHex("1234"));
 
-    // id 15 ends the block; whatever follows it must not be read as elements
-    const QByteArray stopped = QByteArray::fromHex("107f" "f0" "511234");
-    QCOMPARE(toByteArray(findRtpExtension(bytesOf(stopped), 1)), QByteArray::fromHex("7f"));
-    QVERIFY(findRtpExtension(bytesOf(stopped), 5).empty());
+    const QByteArray stopped = QByteArray::fromHex("107f"
+                                                   "f0"
+                                                   "511234");
+    QCOMPARE(toByteArray(findRtpExtension(bytesOf(stopped), AUDIO_LEVEL_EXTENSION)), QByteArray::fromHex("7f"));
+    QVERIFY(findRtpExtension(bytesOf(stopped), TRANSPORT_SEQUENCE_EXTENSION).empty());
 }
 
 void TestRtp::extensionLookupSurvivesTruncation()
 {
-    const QByteArray elements = QByteArray::fromHex("32aabbcc" "5f000102030405060708090a0b0c0d0e0f");
+    const QByteArray elements = QByteArray::fromHex("32aabbcc"
+                                                    "5f000102030405060708090a0b0c0d0e0f");
 
     for (int length = 0; length <= elements.size(); ++length) {
         const auto found = findRtpExtension(bytesOf(elements.left(length)), 5);
@@ -369,7 +368,9 @@ void TestRtp::writesExtensionsPaddedToWords()
     uint8_t out[16];
     std::memset(out, 0xee, sizeof(out));
     QCOMPARE(writeRtpExtensions(elements, out), 8);
-    QCOMPARE(toByteArray({ out, 8 }), QByteArray::fromHex("32aabbcc" "511234" "00"));
+    QCOMPARE(toByteArray({ out, 8 }), QByteArray::fromHex("32aabbcc"
+                                                          "511234"
+                                                          "00"));
 
     QCOMPARE(writeRtpExtensions({}, out), 0);
 }
@@ -496,7 +497,9 @@ void TestRtp::rtcpKeepsEightBytesClear()
     QFETCH(EncryptionMode, mode);
 
     const QByteArray key = testKey();
-    const QByteArray rtcp = QByteArray::fromHex("81c90007" "000000aa") + QByteArray(24, 'r');
+    const QByteArray rtcp = QByteArray::fromHex("81c90007"
+                                                "000000aa") +
+                            QByteArray(24, 'r');
 
     VoiceEncryption cipher(mode, key);
     PacketBuffer packet;
@@ -596,21 +599,46 @@ void TestRtp::sealNeedsTailroom()
     QCOMPARE(packet.size(), int(PacketBuffer::MAX_CONTENT));
 }
 
+void TestRtp::aKeyOfAnyOtherSizeIsRefused_data()
+{
+    QTest::addColumn<QByteArray>("key");
+    QTest::newRow("a byte short") << testKey().left(VoiceEncryption::KEY_SIZE - 1);
+    QTest::newRow("a byte over") << testKey() + QByteArray(1, 'x');
+}
+
+void TestRtp::aKeyOfAnyOtherSizeIsRefused()
+{
+    QFETCH(QByteArray, key);
+
+    const QByteArray clear = QByteArray::fromHex("8078000100000000000000aa");
+    const QByteArray plaintext("payload");
+    VoiceEncryption cipher(EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE, key);
+
+    PacketBuffer packet;
+    fill(packet, clear + plaintext);
+    QVERIFY(!cipher.seal(packet, clear.size()));
+    QCOMPARE(toByteArray(packet.bytes()), clear + plaintext);
+
+    fill(packet, referenceSeal(EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE, testKey(), clear, plaintext, 0));
+    QVERIFY(!cipher.open(packet, clear.size()));
+}
+
 void TestRtp::bufferKeepsHeadroomForRelayHeader()
 {
+    constexpr int RELAY_HEADER = Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE;
+    const QByteArray rtp("rtp packet");
     PacketBuffer packet;
-    fill(packet, QByteArray("rtp packet"));
+    fill(packet, rtp);
 
-    // 22 bytes for an IPv6 destination
-    QVERIFY(packet.headroom() >= 22);
+    QVERIFY(packet.headroom() >= RELAY_HEADER);
     uint8_t *content = packet.data();
 
-    QVERIFY(packet.growFront(22));
-    QCOMPARE(packet.size(), 32);
-    QCOMPARE(static_cast<const void *>(packet.data() + 22), static_cast<const void *>(content));
+    QVERIFY(packet.growFront(RELAY_HEADER));
+    QCOMPARE(packet.size(), int(rtp.size()) + RELAY_HEADER);
+    QCOMPARE(static_cast<const void *>(packet.data() + RELAY_HEADER), static_cast<const void *>(content));
 
-    QVERIFY(packet.dropFront(22));
-    QCOMPARE(toByteArray(packet.bytes()), QByteArray("rtp packet"));
+    QVERIFY(packet.dropFront(RELAY_HEADER));
+    QCOMPARE(toByteArray(packet.bytes()), rtp);
     QCOMPARE(static_cast<const void *>(packet.data()), static_cast<const void *>(content));
 }
 

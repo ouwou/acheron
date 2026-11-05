@@ -23,10 +23,10 @@
 class X11TestWindow
 {
 public:
-    // ICCCM 4.1.3.1
     static constexpr quint32 WITHDRAWN_STATE = 0;
     static constexpr quint32 NORMAL_STATE = 1;
     static constexpr quint32 ICONIC_STATE = 3;
+    static constexpr const char *FRAME_EXTENTS = "_GTK_FRAME_EXTENTS";
 
     struct Free
     {
@@ -74,6 +74,14 @@ public:
         bool ownOpacity = false;
     };
 
+    struct Shadow
+    {
+        quint32 left = 0;
+        quint32 right = 0;
+        quint32 top = 0;
+        quint32 bottom = 0;
+    };
+
     static xcb_atom_t atom(xcb_connection_t *connection, const char *name)
     {
         const Reply<xcb_intern_atom_reply_t> reply(xcb_intern_atom_reply(connection, xcb_intern_atom(connection, 0, static_cast<uint16_t>(std::strlen(name)), name), nullptr));
@@ -111,7 +119,6 @@ public:
         return XCB_NONE;
     }
 
-    // ICCCM 4.1.4
     static void minimise(const Display &display, xcb_window_t window)
     {
         xcb_client_message_event_t message = {};
@@ -148,9 +155,11 @@ public:
         }
         if (look.ours)
             set("_NET_WM_PID", XCB_ATOM_CARDINAL, { static_cast<quint32>(getpid()) });
-        // WM_SIZE_HINTS; the first number says the user chose the place and size (ICCCM 4.1.2.3)
-        std::vector<quint32> hints(18, 0);
-        hints[0] = 1 | 2;
+        constexpr size_t SIZE_HINTS_FIELDS = 18;
+        constexpr quint32 USER_CHOSE_POSITION = 1;
+        constexpr quint32 USER_CHOSE_SIZE = 2;
+        std::vector<quint32> hints(SIZE_HINTS_FIELDS, 0);
+        hints.front() = USER_CHOSE_POSITION | USER_CHOSE_SIZE;
         set("WM_NORMAL_HINTS", XCB_ATOM_WM_SIZE_HINTS, hints);
         if (look.outOfTheWay) {
             set("_NET_WM_STATE", XCB_ATOM_ATOM, { atom(connection, "_NET_WM_STATE_ABOVE"), atom(connection, "_NET_WM_STATE_SKIP_TASKBAR") });
@@ -173,7 +182,7 @@ public:
 
     [[nodiscard]] bool isOpen() const { return id != XCB_NONE; }
     [[nodiscard]] xcb_window_t handle() const { return id; }
-    [[nodiscard]] QString sourceId() const { return QStringLiteral("window:%1").arg(id); }
+    [[nodiscard]] QString sourceId() const { return Acheron::Core::Video::windowSourceId(id); }
     [[nodiscard]] Acheron::Core::Video::CaptureSource source() const
     {
         Acheron::Core::Video::CaptureSource source;
@@ -203,6 +212,7 @@ public:
     }
     void setAtoms(const char *name, const char *value) { set(name, XCB_ATOM_ATOM, { atom(display.connection, value) }); }
     void setState(quint32 state) { set("WM_STATE", atom(display.connection, "WM_STATE"), { state, XCB_NONE }); }
+    void setShadow(const Shadow &shadow) { set(FRAME_EXTENTS, XCB_ATOM_CARDINAL, { shadow.left, shadow.right, shadow.top, shadow.bottom }); }
 
     void show()
     {

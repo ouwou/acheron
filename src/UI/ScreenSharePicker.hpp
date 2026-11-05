@@ -29,8 +29,6 @@ public:
     [[nodiscard]] static QString heightLabel(int height);
     [[nodiscard]] static QString framerateLabel(int framerate);
 
-    static constexpr QSize THUMBNAIL_SIZE = QSize(168, 94);
-
 signals:
     void shareRequested(const Acheron::Core::Video::CaptureSource &source, const Acheron::Core::Video::SendQuality &quality, bool withAudio);
 

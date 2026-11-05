@@ -48,7 +48,7 @@ public:
     // through the card the picture is in a window of its own, which grab() doesnt see
     [[nodiscard]] QImage snapshot();
 
-    // shorter, and switching away and back would cost a moment without a picture every time
+    // any shorter and every switch away and back would cost a moment without a picture
     static constexpr int NOT_SHOWN_BEFORE_RELEASED_MS = 10'000;
 
 signals:

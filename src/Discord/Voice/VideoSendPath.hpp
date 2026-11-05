@@ -42,8 +42,7 @@ public:
     void receiveRtcp(const ReceivedRtcp &received);
     void onMediaSinkWants(const MediaSinkWants &wants);
 
-    // as the official client: every layer's SSRC, not the RTX ones, since frames are encrypted before
-    // packetizing
+    // as the official client, every layer's SSRC and no RTX one, since frames are encrypted before packetizing
     void registerWithDave();
     void askEveryLayerForKeyframe();
     void askAwaitingLayersForKeyframe();
@@ -79,7 +78,7 @@ private:
     void paceByBitrate();
     void announce();
     void announceOff();
-    bool daveEncrypt(std::span<const uint8_t> frame, quint32 ssrc, std::vector<uint8_t> &encrypted);
+    [[nodiscard]] std::optional<std::span<const uint8_t>> daveEncrypt(std::span<const uint8_t> frame, quint32 ssrc);
     void startPacing();
     void onPaceTick();
     void onSendReportTick();
@@ -95,6 +94,7 @@ private:
     QElapsedTimer clock;
 
     QList<StreamDescription> streams;
+    SendSideEstimator estimator;
     std::vector<Layer> layers;
     VideoCodec sendCodec = VideoCodec::Unknown;
     QString serverCodecName;
@@ -106,7 +106,6 @@ private:
     std::unique_ptr<QTimer> keyframeTimer;
     quint64 keyframeRequests = 0;
     std::optional<quint64> receiverEstimateBps;
-    SendSideEstimator estimator;
     std::optional<qint64> reportedDelayEstimateBps;
     qint64 sendReportedUs = 0;
     std::vector<uint8_t> encryptedFrame;

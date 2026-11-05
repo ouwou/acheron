@@ -12,7 +12,6 @@ namespace Core {
 namespace Audio {
 
 [[nodiscard]] bool processLoopbackAvailable();
-// what a shared screen sounds like: everything playing but this program
 [[nodiscard]] bool everythingButThisProgramCapturable();
 
 struct PlayingProgram
@@ -36,24 +35,26 @@ public:
     {
         quint32 processId = 0;
         Scope scope = Scope::ProcessTree;
-        bool wholeDevice = false;
     };
 
     explicit LoopbackCapture(QObject *parent = nullptr);
     ~LoopbackCapture() override;
 
-    // any thread. a frame already on its way may still arrive after stop()
+    // any thread; a frame already on its way may still arrive after stop()
     void start(quint32 processId, Scope scope);
     void stop();
 
 signals:
-    // frames come while anything at all plays on the machine, holding silence (noise, not zeros) while
-    // nothing in scope does
+    // only while something on the machine plays, holding silence while nothing in scope does
     void frameCaptured(const QByteArray &pcm);
     void failed(const QString &reason);
 
 private:
     class Worker;
+
+    bool sendFrame(QByteArray &unsent);
+    void sendRest(QByteArray &unsent);
+
     std::unique_ptr<Worker> worker;
 };
 

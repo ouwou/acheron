@@ -47,8 +47,7 @@ enum class StreamEndReason {
     return reason == StreamEndReason::Unauthorized || reason == StreamEndReason::SafetyGuildRateLimited;
 }
 
-// the gateway sends stream events only to the owner and viewers; who else is live comes from voice
-// states
+// the gateway sends stream events only to the owner and viewers; who else is live comes from voice states
 class StreamManager : public QObject
 {
     Q_OBJECT

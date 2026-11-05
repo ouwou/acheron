@@ -1,11 +1,10 @@
 #include "Core/Video/ScreenCapture.hpp"
 
-#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && defined(ACHERON_HAVE_AVFILTER)
+#ifdef ACHERON_LINUX_SCREEN_CAPTURE
 
 #include "Core/Logging.hpp"
 #include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/HardwareDevices.hpp"
-#include "Core/Media/RgbScaler.hpp"
 #include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/CardScaler.hpp"
 #include "Core/Video/LinuxCapture.hpp"
@@ -15,12 +14,10 @@
 
 #include <algorithm>
 #include <cstring>
-#include <thread>
 
 extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_drm.h>
-#include <libavutil/macros.h>
 }
 
 namespace Acheron {
@@ -83,21 +80,6 @@ QList<CaptureSource> offeredByTheDesktop(CaptureSource::Kind kind)
     return offered;
 }
 
-AVPixelFormat formatOfFourcc(uint32_t fourcc)
-{
-    switch (fourcc) {
-    case MKTAG('X', 'R', '2', '4'):
-        return AV_PIX_FMT_BGR0;
-    case MKTAG('A', 'R', '2', '4'):
-        return AV_PIX_FMT_BGRA;
-    case MKTAG('X', 'B', '2', '4'):
-        return AV_PIX_FMT_RGB0;
-    case MKTAG('A', 'B', '2', '4'):
-        return AV_PIX_FMT_RGBA;
-    }
-    return AV_PIX_FMT_NONE;
-}
-
 bool placedOnBlack(const AVFrame *from, const QSize &size, AVFrame *into)
 {
     if (Media::prepareWritable(into, from->format, size) < 0)
@@ -111,12 +93,6 @@ bool placedOnBlack(const AVFrame *from, const QSize &size, AVFrame *into)
 
 struct ScreenCapture::Backends
 {
-    ~Backends()
-    {
-        av_buffer_unref(&mappedPictures);
-        av_buffer_unref(&device);
-    }
-
     bool mapOntoCard(const AVFrame *prime);
 
     std::unique_ptr<LinuxGrabber> grabber;
@@ -127,8 +103,8 @@ struct ScreenCapture::Backends
 
     PictureConverter converter;
     CardScaler scaler;
-    AVBufferRef *device = nullptr;
-    AVBufferRef *mappedPictures = nullptr;
+    Media::BufferPointer device;
+    Media::BufferPointer mappedPictures;
     FramePointer captured{ av_frame_alloc() };
     FramePointer onBlack{ av_frame_alloc() };
     FramePointer mapped{ av_frame_alloc() };
@@ -137,16 +113,19 @@ struct ScreenCapture::Backends
 bool ScreenCapture::Backends::mapOntoCard(const AVFrame *prime)
 {
     const auto *layout = reinterpret_cast<const AVDRMFrameDescriptor *>(prime->data[0]);
-    const AVPixelFormat format = layout && layout->nb_layers > 0 ? formatOfFourcc(layout->layers[0].format) : AV_PIX_FMT_NONE;
+    const AVPixelFormat format = layout && layout->nb_layers > 0 ? PortalCapture::formatOfFourcc(layout->layers[0].format) : AV_PIX_FMT_NONE;
     if (format == AV_PIX_FMT_NONE)
         return false;
-    if (!device && (!Media::hardwareDeviceCanBeAskedFor(AV_HWDEVICE_TYPE_VAAPI) || av_hwdevice_ctx_create(&device, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) < 0))
-        return false;
+    if (!device) {
+        AVBufferRef *made = nullptr;
+        if (!Media::hardwareDeviceCanBeAskedFor(AV_HWDEVICE_TYPE_VAAPI) || av_hwdevice_ctx_create(&made, AV_HWDEVICE_TYPE_VAAPI, nullptr, nullptr, 0) < 0)
+            return false;
+        device.reset(made);
+    }
 
     auto *pictures = mappedPictures ? reinterpret_cast<AVHWFramesContext *>(mappedPictures->data) : nullptr;
     if (!pictures || pictures->sw_format != format || pictures->width != prime->width || pictures->height != prime->height) {
-        av_buffer_unref(&mappedPictures);
-        mappedPictures = av_hwframe_ctx_alloc(device);
+        mappedPictures.reset(av_hwframe_ctx_alloc(device.get()));
         if (!mappedPictures)
             return false;
         pictures = reinterpret_cast<AVHWFramesContext *>(mappedPictures->data);
@@ -154,15 +133,15 @@ bool ScreenCapture::Backends::mapOntoCard(const AVFrame *prime)
         pictures->sw_format = format;
         pictures->width = prime->width;
         pictures->height = prime->height;
-        if (av_hwframe_ctx_init(mappedPictures) < 0) {
-            av_buffer_unref(&mappedPictures);
+        if (av_hwframe_ctx_init(mappedPictures.get()) < 0) {
+            mappedPictures.reset();
             return false;
         }
     }
 
     av_frame_unref(mapped.get());
     mapped->format = AV_PIX_FMT_VAAPI;
-    mapped->hw_frames_ctx = av_buffer_ref(mappedPictures);
+    mapped->hw_frames_ctx = av_buffer_ref(mappedPictures.get());
     if (!mapped->hw_frames_ctx || av_hwframe_map(mapped.get(), prime, AV_HWFRAME_MAP_READ) < 0)
         return false;
     av_frame_copy_props(mapped.get(), prime);
@@ -314,7 +293,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         if (waitedForRetry(retryAt))
             return Status::Stalled;
         state.grabbedOnCard = scalesOnCard();
-        state.grabber = isFromPipeWire(request.sourceId) ? PortalCapture::open(request.sourceId, request.framerate, state.grabbedOnCard) : X11Capture::open(request.sourceId, request.framerate);
+        state.grabber = isFromPipeWire(request.sourceId) ? PortalCapture::open(request.sourceId, request.framerate, state.grabbedOnCard ? PortalCapture::PictureMemory::CardOrMemory : PortalCapture::PictureMemory::MemoryOnly) : X11Capture::open(request.sourceId, request.framerate);
         state.announced = QSize();
         state.openedAt = Clock::now();
         if (!state.grabber)
@@ -333,7 +312,6 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         return Status::NoFrame;
     case LinuxGrabber::Result::Hidden:
         failingSince.reset();
-        std::this_thread::sleep_for(std::chrono::milliseconds(STALLED_WAIT_MS));
         return Status::Hidden;
     case LinuxGrabber::Result::Closed:
         qCInfo(LogVideo) << "The source being captured was closed";
@@ -358,7 +336,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
     const QSize ownSize = visibleArea(captured).size();
     const QSize pictureSize = windowPictureSize(ownSize);
     const QSize size = encodeSizeFor(pictureSize, request.maxHeight);
-    const bool bt601 = Media::encodesAsBt601(size.height(), request.bt601Only);
+    const ColourMatrix matrix = matrixFor(size);
     const bool fillsItsPicture = ownSize.width() >= pictureSize.width() && ownSize.height() >= pictureSize.height();
 
     if (std::exchange(state.announced, size) != size)
@@ -366,7 +344,7 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
 
     av_frame_unref(into);
     if (onCard) {
-        const bool scaled = fillsItsPicture && state.mapOntoCard(captured) && state.scaler.scale(state.mapped.get(), CardScaler::Output{ size, bt601, false }, into);
+        const bool scaled = fillsItsPicture && state.mapOntoCard(captured) && state.scaler.scale(state.mapped.get(), CardScaler::Output{ .size = size, .matrix = matrix }, into);
         av_frame_unref(state.mapped.get());
         av_frame_unref(captured);
         if (!scaled) {
@@ -392,11 +370,11 @@ ScreenCapture::Status ScreenCapture::read(AVFrame *into)
         return afterFailure(AVERROR(ENOMEM));
     }
 
-    const int converted = state.converter.convert(picture, size, request.softwareFormat, bt601, into);
+    const int converted = state.converter.convert(picture, size, request.softwareFormat, matrix, into);
     av_frame_unref(captured);
     if (converted < 0)
         return afterFailure(converted);
-    markColours(into, bt601);
+    markColours(into, matrix);
     delivered();
     return Status::Frame;
 }

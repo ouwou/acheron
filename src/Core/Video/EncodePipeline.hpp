@@ -28,8 +28,8 @@ struct PipelineStats
     quint64 framesDropped = 0;
 };
 
-// emits from its own thread. connected in the pipeline's own context, whatever it still had on the way
-// goes with it when it is released
+// emits from its own thread. connected with the pipeline itself as context, a signal still queued is
+// dropped with the pipeline
 class EncodePipeline : public QObject
 {
     Q_OBJECT

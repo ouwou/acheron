@@ -1,7 +1,6 @@
 #pragma once
 
-// none of this uses the code under test: H264, H265 and VP8 go through ffmpeg's RTP muxer, and AV1 is
-// packetized by hand from its RTP specification because the muxer doesnt handle it
+// independent of the code under test: ffmpeg's RTP muxer, and AV1 by hand from its RTP specification, which older muxers lack
 
 #include "Discord/Voice/RtpPacket.hpp"
 
@@ -107,6 +106,9 @@ inline RtpPayloads packetizeAv1ByHand(const Bytes &frame, bool newSequence)
 {
     constexpr uint8_t OBU_HAS_SIZE = 0x02;
     constexpr uint8_t OBU_TEMPORAL_DELIMITER = 2;
+    constexpr uint8_t CONTINUES_PREVIOUS = 0x80;
+    constexpr uint8_t CONTINUES_IN_NEXT = 0x40;
+    constexpr uint8_t NEW_SEQUENCE = 0x08;
 
     std::vector<Bytes> elements;
     size_t offset = 0;
@@ -133,7 +135,7 @@ inline RtpPayloads packetizeAv1ByHand(const Bytes &frame, bool newSequence)
     }
 
     RtpPayloads out;
-    Bytes packet = { static_cast<uint8_t>(newSequence ? 0x08 : 0x00) };
+    Bytes packet = { static_cast<uint8_t>(newSequence ? NEW_SEQUENCE : 0x00) };
     for (const Bytes &element : elements) {
         size_t sent = 0;
         while (sent < element.size()) {
@@ -148,10 +150,10 @@ inline RtpPayloads packetizeAv1ByHand(const Bytes &frame, bool newSequence)
             packet.insert(packet.end(), element.begin() + static_cast<std::ptrdiff_t>(sent), element.begin() + static_cast<std::ptrdiff_t>(sent + chunk));
             sent += chunk;
             if (sent < element.size()) {
-                packet[0] |= 0x40;
+                packet[0] |= CONTINUES_IN_NEXT;
                 out.payloads.push_back(packet);
                 out.markers.push_back(false);
-                packet = { 0x80 };
+                packet = { CONTINUES_PREVIOUS };
             }
         }
     }

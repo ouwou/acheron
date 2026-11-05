@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace Acheron {
 namespace Core {
@@ -40,7 +41,8 @@ constexpr std::array<CameraRow, 9> CAMERA_LADDER{ { { 100, 1280, 720 }, { 90, 89
 
 bool encodeAlike(int want, int other)
 {
-    return cameraLayerFor(want) == cameraLayerFor(other) && cameraFramerate(want, true) == cameraFramerate(other, true);
+    constexpr bool MUTED = true;
+    return cameraLayerFor(want) == cameraLayerFor(other) && cameraFramerate(want, MUTED) == cameraFramerate(other, MUTED);
 }
 
 template <typename Values>
@@ -120,12 +122,12 @@ BitrateLimits bitrateLimits(const SendQuality &quality)
     return { MIN_BITRATE, TARGET_BITRATE, standard ? STANDARD_MAX_BITRATE : HIGH_MAX_BITRATE };
 }
 
-BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &quality, qint64 encodedPixels, int framerate, qint64 viewerPixels)
+BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &quality, qint64 encodedPixels, int framerate, std::optional<qint64> viewerPixels)
 {
-    if (quality.isSource() || viewerPixels <= 0 || viewerPixels >= encodedPixels)
+    if (quality.isSource() || !viewerPixels || *viewerPixels <= 0 || *viewerPixels >= encodedPixels)
         return full;
 
-    const double share = static_cast<double>(viewerPixels) / static_cast<double>(encodedPixels);
+    const double share = static_cast<double>(*viewerPixels) / static_cast<double>(encodedPixels);
     const qint64 leastMax = std::min<qint64>(encodedPixels * framerate / PIXEL_FRAMES_PER_BIT, full.maxBps);
 
     BitrateLimits scaled;
@@ -135,10 +137,10 @@ BitrateLimits limitsForViewerSize(const BitrateLimits &full, const SendQuality &
     return scaled;
 }
 
-bool ViewerSize::offer(qint64 pixelCount)
+bool ViewerSize::offer(std::optional<qint64> pixelCount)
 {
-    const qint64 difference = pixelCount > adopted ? pixelCount - adopted : adopted - pixelCount;
-    if (difference * 20 <= adopted)
+    const bool unchanged = pixelCount && adopted ? std::abs(*pixelCount - *adopted) * 20 <= *adopted : pixelCount == adopted;
+    if (unchanged)
         return false;
     adopted = pixelCount;
     return true;

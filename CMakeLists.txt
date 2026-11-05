@@ -163,7 +163,7 @@ endif()
 include(rnnoise.cmake)
 
 include(ffmpeg.cmake)
-# Core/Media/HardwareDevices.hpp looks for libva with dlopen, which older C libraries keep apart
+# HardwareDevices.hpp dlopens libva, and older glibc keeps dlopen in libdl
 if(TARGET ffmpeg AND UNIX AND CMAKE_DL_LIBS)
     target_link_libraries(ffmpeg INTERFACE ${CMAKE_DL_LIBS})
 endif()
@@ -171,14 +171,11 @@ include(linuxcapture.cmake)
 
 include(lottie.cmake)
 
-# cameras and screen shares in calls. they need the RTC connection and ffmpeg, which are
-# there for other things as well, and bring in what nothing else uses: Qt's OpenGL module,
-# which the video surface draws through where it can (Qt 5 has it in Gui and Widgets), and
-# ffmpeg's avfilter and avdevice, which ffmpeg.cmake takes where it finds them
 set(ACHERON_HAVE_VIDEO OFF)
 set(QT_OPENGL_LIBRARIES "")
 if(ENABLE_VIDEO AND ENABLE_VOICE AND TARGET ffmpeg)
     set(ACHERON_HAVE_VIDEO ON)
+    # Qt 5 keeps OpenGL in Gui and Widgets
     if(QT_VERSION_MAJOR GREATER_EQUAL 6)
         find_package(Qt6 QUIET COMPONENTS OpenGL)
         if(NOT TARGET Qt6::OpenGL)
@@ -405,9 +402,7 @@ if(ACHERON_HAVE_VIDEO)
     )
 endif()
 
-# the RTC connection and, where the build has it, everything video needs below the program:
-# codecs, capture, the encode pipelines and the surface video is drawn on, with the few parts of
-# the program they stand on. the program and the tests take all of these from here
+# the RTC connection and the video engine, for the program and the tests, with the few program files they stand on
 if(ENABLE_VOICE)
     set(MEDIA_ENGINE_SOURCES
         src/Core/Logging.cpp
@@ -598,7 +593,6 @@ if(BUILD_TESTS)
     add_test(NAME CallTests COMMAND TestCalls)
 
     if(ENABLE_VOICE)
-        # a test of the media engine, with what it takes of the program beside it
         function(add_media_test name ctest_name)
             qt_add_executable(${name} ${ARGN})
             target_link_libraries(${name} PRIVATE acheron_media Qt::Test)
@@ -685,55 +679,24 @@ if(TARGET acheron_media)
 endif()
 qt_add_translations(${PROJECT_NAME} SOURCE_TARGETS ${_translated_targets})
 
-if(NOT MSVC AND QT_VERSION_MAJOR LESS 6)
-    get_property(_qt5_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(_qt5_target ${_qt5_targets})
-        get_target_property(_qt5_target_type ${_qt5_target} TYPE)
-        if(_qt5_target_type STREQUAL "EXECUTABLE" OR _qt5_target STREQUAL "acheron_media")
-            target_compile_options(${_qt5_target} PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
-        endif()
-    endforeach()
-endif()
-
-if (MSVC)
-    target_link_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
-    target_compile_options(${PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
-
-    if(QT_VERSION_MAJOR LESS 6)
-        target_compile_options(${PROJECT_NAME} PRIVATE
-            "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+get_property(_acheron_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_acheron_target ${_acheron_targets})
+    get_target_property(_acheron_target_type ${_acheron_target} TYPE)
+    if(NOT _acheron_target_type STREQUAL "EXECUTABLE" AND NOT _acheron_target STREQUAL "acheron_media")
+        continue()
     endif()
-
-    if(TARGET acheron_media)
-        target_compile_options(acheron_media PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi> /utf-8)
+    if(MSVC)
+        target_compile_options(${_acheron_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi> /utf-8)
+        if(_acheron_target_type STREQUAL "EXECUTABLE")
+            target_link_options(${_acheron_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
+        endif()
         if(QT_VERSION_MAJOR LESS 6)
-            target_compile_options(acheron_media PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
+            target_compile_options(${_acheron_target} PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
         endif()
+    elseif(QT_VERSION_MAJOR LESS 6)
+        target_compile_options(${_acheron_target} PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
     endif()
-
-    if(BUILD_TESTS)
-        set(_msvc_test_targets TestMarkdown TestUnicodeEmoji TestOrderedJson TestFrecency TestProto TestProxy TestEmojiGrid TestCdnUrls TestEmbeds TestFavoriteGifs TestVoicePayloads TestStreams TestCalls TestDecodeDemand TestCallTiles TestSendQuality)
-        if(TARGET TestApng)
-            list(APPEND _msvc_test_targets TestApng TestClips TestMediaInput)
-        endif()
-        if(TARGET TestRtp)
-            list(APPEND _msvc_test_targets TestRtp TestOpusEncoder TestUdpTransport TestSinkWants TestVoiceClient)
-        endif()
-        if(TARGET TestRtpVideo)
-            list(APPEND _msvc_test_targets TestRtpVideo TestVideoDecode TestVideoSurface TestVideoSend TestSendSideEstimator TestVideoEncode TestCameraCapture TestLoopbackCapture TestPlayedSoundRemover TestH264Sps)
-        endif()
-        foreach(test_target ${_msvc_test_targets})
-            target_link_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/INCREMENTAL>)
-            target_compile_options(${test_target} PRIVATE $<$<CONFIG:Debug>:/ZI> $<$<NOT:$<CONFIG:Debug>>:/Zi>)
-            target_compile_options(${test_target} PRIVATE /utf-8)
-            if(QT_VERSION_MAJOR LESS 6)
-                target_compile_options(${test_target} PRIVATE
-                    "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/qt5_compat.h")
-            endif()
-        endforeach()
-    endif()
-endif()
+endforeach()
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -761,8 +724,7 @@ target_link_libraries(${PROJECT_NAME}
         qt${QT_VERSION_MAJOR}keychain
         OpenSSL::Crypto
 )
-# a static OpenSSL must not be what the system's libssl finds when Qt or another library loads
-# it: the linker would otherwise export it from the program, ahead of the libcrypto libssl needs
+# exported from the program, a static OpenSSL is what the system libssl Qt loads would bind to, not its own libcrypto
 if(UNIX AND NOT APPLE AND OPENSSL_CRYPTO_LIBRARY MATCHES "\\.a$")
     target_link_options(${PROJECT_NAME} PRIVATE "LINKER:--exclude-libs,libcrypto.a:libssl.a")
 endif()

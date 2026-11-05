@@ -10,8 +10,7 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-// HEADROOM spare bytes before the content let a SOCKS5 relay header be written in front, and the
-// cipher's tag and nonce behind, without moving the payload
+// room on both sides, so a socks5 relay header goes in front and the cipher's trailer behind without moving the payload
 class PacketBuffer
 {
 public:
@@ -108,7 +107,7 @@ struct PacketPool::Recycler::Idle
     std::vector<std::unique_ptr<PacketBuffer>> buffers;
 };
 
-inline PacketPool::PacketPool() : idle(std::make_shared<Recycler::Idle>()) { }
+inline PacketPool::PacketPool() : idle(std::make_shared<Recycler::Idle>()) {}
 
 inline PacketPool::Handle PacketPool::acquire()
 {

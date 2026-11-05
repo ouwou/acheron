@@ -38,7 +38,6 @@ public:
 
     bool flag() { return bits(1) != 0; }
 
-    // Exp-Golomb, as H264 and H265 code them
     uint32_t ue()
     {
         int zeros = 0;

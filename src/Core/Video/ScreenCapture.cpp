@@ -1,6 +1,7 @@
 #include "Core/Video/ScreenCapture.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/RgbScaler.hpp"
 #include "Core/Video/CaptureCommon.hpp"
 #include "Core/Video/CardScaler.hpp"
 
@@ -9,13 +10,6 @@
 #include <algorithm>
 #include <array>
 
-#if defined(Q_OS_WIN) && defined(ACHERON_HAVE_AVFILTER)
-#define ACHERON_WINDOWS_SCREEN_CAPTURE
-#endif
-#if defined(Q_OS_UNIX) && !defined(Q_OS_DARWIN) && defined(ACHERON_HAVE_AVFILTER)
-#define ACHERON_LINUX_SCREEN_CAPTURE
-#endif
-
 namespace Acheron {
 namespace Core {
 namespace Video {
@@ -23,6 +17,7 @@ namespace Video {
 namespace {
 
 const char *const CAPTURE_METHOD_KEY = "video/capture_method";
+constexpr int CARD_SCALING_RETRY_MS = 30'000;
 
 struct StoredMethod
 {
@@ -79,11 +74,6 @@ void releaseSource(const CaptureSource &)
 {
 }
 #endif
-
-bool stillPictureIsDue(qint64 msSinceLastPicture, bool keyFrameWaitedFor, int framerate)
-{
-    return msSinceLastPicture >= STILL_PICTURE_INTERVAL_MS || (keyFrameWaitedFor && msSinceLastPicture >= 1000 / std::max(1, framerate));
-}
 
 bool windowIsCovered(const QList<StackedWindow> &topDown, int target)
 {
@@ -160,6 +150,11 @@ void ScreenCapture::delivered()
 bool ScreenCapture::scalesOnCard() const
 {
     return request.keepOnCard && !cardScalingSuspended() && CardScaler::usable();
+}
+
+ColourMatrix ScreenCapture::matrixFor(const QSize &size) const
+{
+    return Media::encodesAsBt601(size.height(), request.bt601Only) ? ColourMatrix::Bt601 : ColourMatrix::Bt709;
 }
 
 #endif

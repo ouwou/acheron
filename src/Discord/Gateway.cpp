@@ -816,7 +816,7 @@ void Gateway::sendCallConnect(Core::Snowflake channelId)
     sendPayload(msg.toJson());
 }
 
-void Gateway::sendStreamCreate(const StreamKey &channel, const QString &preferredRegion)
+void Gateway::sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion)
 {
     CreateStream msg;
     msg.type = channel.typeName();
@@ -825,10 +825,10 @@ void Gateway::sendStreamCreate(const StreamKey &channel, const QString &preferre
     else
         msg.guildId = nullptr;
     msg.channelId = channel.channelId;
-    if (preferredRegion.isEmpty())
-        msg.preferredRegion = nullptr;
+    if (preferredRegion)
+        msg.preferredRegion = *preferredRegion;
     else
-        msg.preferredRegion = preferredRegion;
+        msg.preferredRegion = nullptr;
 
     sendPayload(msg.toJson());
 }

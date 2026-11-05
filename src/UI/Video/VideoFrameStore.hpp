@@ -7,10 +7,11 @@
 #include <memory>
 #include <mutex>
 
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Media/RgbScaler.hpp"
 #include "Core/Media/VideoDecoder.hpp"
+#include "DmabufGlBridge.hpp"
 
-struct AVFrame;
 struct SwsContext;
 
 namespace Acheron {
@@ -20,10 +21,7 @@ class CardPicture;
 class VideoSurface;
 
 [[nodiscard]] QSize fitted(QSize content, QSize bounds);
-[[nodiscard]] bool isUploadable(int format);
 
-// the decoder's thread converts into `back` and swaps it with `front` under the lock, so nothing is
-// shared or allocated per frame
 class VideoFrameStore : public Core::Media::VideoFrameSink, public std::enable_shared_from_this<VideoFrameStore>
 {
 public:
@@ -39,14 +37,14 @@ public:
 
 #ifdef ACHERON_HAVE_DMABUF
     void setCardUsable(bool usable);
-    [[nodiscard]] const AVFrame *exportedFrame() const { return exported; }
+    // from inside withFrame(), whose lock they need
+    [[nodiscard]] const AVFrame *exportedFrame() const { return exported.get(); }
     void readBack();
 #endif
 
     void setShown(bool value);
     void detach();
     [[nodiscard]] bool hasPicture();
-    // a picture left on the card holds one of its decoder's surfaces
     void keepInMemory();
     void setTarget(QSize devicePixels, qreal devicePixelRatio);
     void rescale();
@@ -58,7 +56,7 @@ public:
     {
         std::lock_guard lock(mutex);
         updatePending = false;
-        paint(front);
+        paint(turned.isNull() ? front : turned);
     }
 
     template <typename Reader>
@@ -66,7 +64,7 @@ public:
     {
         std::lock_guard lock(mutex);
         updatePending = false;
-        read(last, serial, displaySize());
+        read(last.get(), serial, displaySize());
     }
 
 private:
@@ -91,10 +89,10 @@ private:
 #ifdef Q_OS_WIN
     std::shared_ptr<CardPicture> card;
     bool handOverPending = false;
+    const Core::Media::FramePointer handing{ av_frame_alloc() };
 #endif
-    AVFrame *last;
-    AVFrame *handing;
-    AVFrame *exported = nullptr;
+    const Core::Media::FramePointer last{ av_frame_alloc() };
+    Core::Media::FramePointer exported;
     quint64 serial = 0;
     Core::Media::RgbScaler scaler;
     SwsContext *normalizer = nullptr;
@@ -102,6 +100,7 @@ private:
     qreal pixelRatio = 1.0;
     QImage front;
     QImage back;
+    QImage turned;
     bool updatePending = false;
 };
 

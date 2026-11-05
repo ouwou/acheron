@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <vector>
 
 namespace Acheron {
 namespace Discord {
@@ -11,20 +10,17 @@ namespace Voice {
 
 namespace {
 
-// bitrate_estimator.cc
 constexpr int INITIAL_WINDOW_MS = 500;
 constexpr int WINDOW_MS = 150;
 constexpr float UNCERTAINTY_SCALE = 10;
 constexpr float VARIANCE_GROWTH = 5;
 
-// inter_arrival_delta.cc
 constexpr qint64 GROUP_LENGTH_US = 5000;
 constexpr qint64 BURST_DELTA_US = 5000;
 constexpr qint64 MAX_BURST_US = 100'000;
 constexpr qint64 ARRIVAL_OFFSET_LIMIT_US = 3'000'000;
 constexpr int REORDERED_BEFORE_RESET = 3;
 
-// trendline_estimator.cc
 constexpr size_t TREND_WINDOW = 20;
 constexpr double SMOOTHING = 0.9;
 constexpr double THRESHOLD_GAIN = 4.0;
@@ -38,7 +34,6 @@ constexpr double MAX_THRESHOLD = 600;
 constexpr int DELTAS_COUNTED = 60;
 constexpr int MAX_DELTAS = 1000;
 
-// aimd_rate_control.cc
 constexpr double BACK_OFF = 0.85;
 constexpr double MIN_BITRATE = 5000;
 constexpr double INCREASE_PER_SECOND = 1.08;
@@ -52,17 +47,9 @@ constexpr qint64 DETECTOR_DELAY_US = 100'000;
 constexpr double FRAMES_PER_SECOND = 30;
 constexpr double PACKET_BYTES = 1200;
 
-// link_capacity_estimator.cc
 constexpr double OVERUSE_WEIGHT = 0.05;
 constexpr double MIN_DEVIATION = 0.4;
 constexpr double MAX_DEVIATION = 2.5;
-
-struct Arrived
-{
-    qint64 sendUs = 0;
-    qint64 arrivalUs = 0;
-    int bytes = 0;
-};
 
 } // namespace
 
@@ -112,7 +99,7 @@ bool SendSideEstimator::onReport(const ReceivedRtcp::TransportReport &report, qi
     const qint64 newest = nextNumber - 1;
     const qint64 base = newest - static_cast<uint16_t>(static_cast<uint16_t>(newest) - report.baseSequence);
 
-    std::vector<Arrived> arrived;
+    arrived.clear();
     qint64 arrivalUs = referenceOffsetUs;
     for (size_t i = 0; i < report.packets.size(); i++) {
         if (!report.packets[i].received)

@@ -6,7 +6,6 @@
 namespace Acheron {
 namespace UI {
 
-// a heading that shows or hides `section`, which starts hidden
 inline QToolButton *makeAdvancedToggle(QWidget *section, QWidget *parent)
 {
     auto *toggle = new QToolButton(parent);

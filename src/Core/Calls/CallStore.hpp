@@ -23,21 +23,18 @@ struct CallRecord
     [[nodiscard]] bool isActive() const { return !unavailable && region.has_value(); }
 };
 
-// kept as the official client's CallStore keeps them. calls are never in READY: they arrive as
-// CALL_CREATE, on connect and in answer to CALL_CONNECT (opcode 13)
 enum class CallConnect {
     OncePerChannel,
-    // a fresh or resumed session asks again
     Always,
 };
 
+// as the official client's CallStore. calls are never in READY: they come as CALL_CREATE, on connect and in answer to CALL_CONNECT (op 13)
 class CallStore : public QObject
 {
     Q_OBJECT
 public:
     explicit CallStore(QObject *parent = nullptr);
 
-    // remembers each channel it says yes to
     [[nodiscard]] bool claimConnect(Snowflake channelId, CallConnect rule);
 
     void handleCallCreate(const Discord::CallCreate &event);

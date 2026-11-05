@@ -23,7 +23,10 @@ namespace Acheron {
 namespace Core {
 namespace Video {
 
+constexpr int STATS_INTERVAL_MS = 1000;
+
 [[nodiscard]] int usableBitrate(std::optional<int> wanted, std::optional<int> most);
+[[nodiscard]] QString noEncoderFor(Discord::Voice::VideoCodec codec);
 
 class PreviewMaker
 {
@@ -42,8 +45,7 @@ private:
 class EncodeCounters
 {
 public:
-    // a picture that came out as nothing counts as dropped
-    void deliver(std::vector<Discord::Voice::EncodedVideoFrame> &encoded, EncodePipeline *pipeline, int layer);
+    void deliver(std::vector<Discord::Voice::EncodedVideoFrame> &fromOnePicture, EncodePipeline *pipeline, int layer);
     [[nodiscard]] PipelineStats takeStats(double seconds, const Media::VideoEncoder::Stats &encoder, const QString &encoderName, const QString &source, const QSize &encodedSize, int capturedLately);
 
 private:
@@ -71,7 +73,7 @@ class CaptureThread
 {
 public:
     using Capture = std::function<void(const Settings &settings, quint64 session)>;
-    // runs under change()'s lock
+    // runs under the lock change() takes
     using Taken = std::function<void(const Settings &settings)>;
 
     explicit CaptureThread(Capture capture, Taken taken = {})
@@ -112,7 +114,7 @@ public:
 
     [[nodiscard]] bool isCurrent(quint64 session) const { return generation == session; }
 
-    // under the lock a capture also takes to read its owner's requests
+    // the one lock for the pending settings and anything else a capture shares with its owner
     template <typename Change>
     void change(Change &&change)
     {

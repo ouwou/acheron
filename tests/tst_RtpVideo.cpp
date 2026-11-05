@@ -1,6 +1,3 @@
-// packets for the depacketizers come from ffmpeg's RTP muxer, so the reference isnt this code's own
-// idea of the formats. AV1 is also packetized by hand, since the muxer only learnt it recently
-
 #include "Discord/Voice/Rtcp.hpp"
 #include "Discord/Voice/RtpPacket.hpp"
 #include "Discord/Voice/TransportFeedback.hpp"
@@ -72,13 +69,6 @@ Bytes h265DeltaFrame()
     return frame;
 }
 
-Bytes vp8Frame(bool keyframe, size_t size, uint32_t seed)
-{
-    Bytes frame = filler(size, seed);
-    frame[0] = static_cast<uint8_t>(keyframe ? (frame[0] & ~1) : (frame[0] | 1));
-    return frame;
-}
-
 void appendObu(Bytes &frame, uint8_t type, const Bytes &payload, bool withSize = true)
 {
     frame.push_back(static_cast<uint8_t>((type << 3) | (withSize ? 0x02 : 0)));
@@ -101,6 +91,13 @@ Bytes av1Frame(bool withDelimiter)
     return frame;
 }
 
+void insertPacket(VideoReceiver &receiver, PacketPool &pool, uint16_t sequence, uint32_t timestamp, bool marker, const Bytes &bytes, qint64 nowMs = 0, VideoReceiver::Arrival arrival = VideoReceiver::Arrival::FirstTime)
+{
+    PacketPool::Handle packet = pool.acquire();
+    packet->append(bytes);
+    receiver.insert(sequence, timestamp, marker, std::move(packet), nowMs, arrival);
+}
+
 struct Feed
 {
     PacketPool pool;
@@ -113,12 +110,9 @@ struct Feed
         return bytes;
     }
 
-    void send(uint16_t sequence, uint32_t timestamp, bool first, bool last, bool keyframe, bool retransmission = false)
+    void send(uint16_t sequence, uint32_t timestamp, bool first, bool last, bool keyframe, VideoReceiver::Arrival arrival = VideoReceiver::Arrival::FirstTime)
     {
-        PacketPool::Handle packet = pool.acquire();
-        const Bytes bytes = payload(first, keyframe, static_cast<uint8_t>(sequence));
-        packet->append(bytes);
-        receiver.insert(sequence, timestamp, last, std::move(packet), now, retransmission ? VideoReceiver::Arrival::Retransmitted : VideoReceiver::Arrival::FirstTime);
+        insertPacket(receiver, pool, sequence, timestamp, last, payload(first, keyframe, static_cast<uint8_t>(sequence)), now, arrival);
     }
 
     void sendFrame(int index, uint16_t base, bool keyframe, int skip = -1)
@@ -175,6 +169,7 @@ private slots:
     void transportFeedbackReportsEachPacketOnce();
     void transportFeedbackAcrossTheSequenceWrap();
     void transportFeedbackLeavesOutALateArrival();
+    void transportFeedbackPutsAReorderedPacketInPlaceAndKeepsItsFirstArrival();
 };
 
 void TestRtpVideo::h264AgainstFfmpeg()
@@ -358,11 +353,8 @@ void TestRtpVideo::keyframeKeepsWhatPrecedesItsParameterSets()
 
     PacketPool pool;
     VideoReceiver receiver(SSRC, VideoCodec::H264);
-    for (size_t i = 0; i < packets.size(); i++) {
-        PacketPool::Handle packet = pool.acquire();
-        packet->append(packets[i]);
-        receiver.insert(static_cast<uint16_t>(500 + i), timestamps[i], i == 0 || i + 1 == packets.size(), std::move(packet), 0);
-    }
+    for (size_t i = 0; i < packets.size(); i++)
+        insertPacket(receiver, pool, static_cast<uint16_t>(500 + i), timestamps[i], i == 0 || i + 1 == packets.size(), packets[i]);
 
     const std::vector<EncodedVideoFrame> frames = receiver.takeFrames();
     QCOMPARE(frames.size(), size_t(1));
@@ -380,25 +372,20 @@ void TestRtpVideo::pictureWithoutItsParameterSetsIsNotAStart()
     const Bytes parameterSets = { 0x18, 0x00, 0x03, 0x67, 0x42, 0x00, 0x00, 0x02, 0x68, 0xCE };
     const Bytes picture = { 0x65, 0x88, 0x84 };
     const Bytes delta = { 0x41, 0x80, 0x11 };
-    const auto send = [](VideoReceiver &receiver, PacketPool &pool, uint16_t sequence, uint32_t timestamp, bool marker, const Bytes &bytes) {
-        PacketPool::Handle packet = pool.acquire();
-        packet->append(bytes);
-        receiver.insert(sequence, timestamp, marker, std::move(packet), 0);
-    };
 
     PacketPool pool;
     VideoReceiver late(SSRC, VideoCodec::H264);
-    send(late, pool, 501, 6000, true, picture);
+    insertPacket(late, pool, 501, 6000, true, picture);
     QVERIFY(late.takeFrames().empty());
     QVERIFY(late.poll(0).keyframeRequest);
 
-    send(late, pool, 510, 9000, false, parameterSets);
-    send(late, pool, 511, 9000, true, picture);
+    insertPacket(late, pool, 510, 9000, false, parameterSets);
+    insertPacket(late, pool, 511, 9000, true, picture);
     QCOMPARE(late.takeFrames().size(), size_t(1));
 
     VideoReceiver bare(SSRC, VideoCodec::H264);
-    send(bare, pool, 700, 3000, true, delta);
-    send(bare, pool, 701, 6000, true, picture);
+    insertPacket(bare, pool, 700, 3000, true, delta);
+    insertPacket(bare, pool, 701, 6000, true, picture);
     const std::vector<EncodedVideoFrame> frames = bare.takeFrames();
     QCOMPARE(frames.size(), size_t(1));
     QVERIFY(frames[0].keyframe);
@@ -508,7 +495,7 @@ void TestRtpVideo::lostPacketIsRequestedAndAccepted()
     feed.now += VideoReceiver::NACK_RETRY_MS;
     QCOMPARE(feed.receiver.poll(feed.now).nacks, std::vector<uint16_t>{ 104 });
 
-    feed.send(104, 1000, false, false, false, true);
+    feed.send(104, 1000, false, false, false, VideoReceiver::Arrival::Retransmitted);
     QCOMPARE(feed.receiver.takeFrames().size(), size_t(2));
     QCOMPARE(feed.receiver.stats().retransmitted, quint64(1));
     QVERIFY(feed.receiver.poll(feed.now + 5000).nacks.empty());
@@ -634,7 +621,6 @@ void TestRtpVideo::receptionReportCountsLoss()
     QCOMPARE(report.ssrc, SSRC);
     QCOMPARE(report.highestSequence & 0xFFFFu, 110u);
     QCOMPARE(report.cumulativeLost, 1);
-    // one of the eleven packets expected so far, as a fraction of 256
     QCOMPARE(int(report.fractionLost), 256 / 11);
 
     feed.sendFrame(4, 100, false);
@@ -650,24 +636,38 @@ void TestRtpVideo::receivedRtcpIsRead()
         return Bytes(raw.begin(), raw.end());
     };
 
-    // the NTP time is ee73cd84.7cbccc93
-    ReceivedRtcp received = parseRtcp(bytes("80c800060000008aee73cd847cbccc930512806400000053000129f0"));
+    ReceivedRtcp received = parseRtcp(bytes("80c80006"
+                                            "0000008a"
+                                            "ee73cd84"
+                                            "7cbccc93"
+                                            "05128064"
+                                            "00000053"
+                                            "000129f0"));
     QCOMPARE(received.senderReports.size(), size_t(1));
     QCOMPARE(received.senderReports[0].ssrc, 0x8Au);
     QCOMPARE(received.senderReports[0].compactNtp, 0xCD847CBCu);
     QVERIFY(!received.inboundEstimate);
 
-    // Discord's estimate: mantissa 0x22560 under exponent 6
-    received = parseRtcp(bytes("81c90007000003b1000003b100000000000000000000003b0000000000000000" "81cc00050000008a3153494401020304050607081a256000"));
+    received = parseRtcp(bytes("81c90007000003b1000003b100000000000000000000003b0000000000000000"
+                               "81cc0005"
+                               "0000008a"
+                               "31534944"
+                               "0102030405060708"
+                               "1a2560"
+                               "00"));
     QVERIFY(received.senderReports.empty());
     QVERIFY(received.inboundEstimate);
-    QCOMPARE(received.inboundEstimate->bps, quint64(9000960));
+    QCOMPARE(received.inboundEstimate->bps, quint64(0x22560) << 6);
     QCOMPARE(received.inboundEstimate->lossFraction, 0.0);
 
-    // exponent 7, and a quarter of the packets lost
-    received = parseRtcp(bytes("81cc00050000008a3153494401020304050607081efaf040"));
-    QCOMPARE(received.inboundEstimate->bps, quint64(24999936));
-    QCOMPARE(received.inboundEstimate->lossFraction, 0.25);
+    received = parseRtcp(bytes("81cc0005"
+                               "0000008a"
+                               "31534944"
+                               "0102030405060708"
+                               "1efaf0"
+                               "40"));
+    QCOMPARE(received.inboundEstimate->bps, quint64(0x2FAF0) << 7);
+    QCOMPARE(received.inboundEstimate->lossFraction, 0x40 / 256.0);
 
     QVERIFY(!parseRtcp(bytes("81cc00050000008a5853494401020304050607081efaf040")).inboundEstimate);
     QVERIFY(!parseRtcp(bytes("81cc00050000008a31534944010203")).inboundEstimate);
@@ -722,11 +722,16 @@ void TestRtpVideo::nackBytes()
 {
     uint8_t buffer[64];
 
-    // 100 and the two after it share an entry; 200 is too far away and gets its own
     const std::vector<uint16_t> lost = { 100, 101, 116, 200 };
     const int size = writeNack(buffer, 0x01020304, 0x0A0B0C0D, lost);
     QCOMPARE(size, 20);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("81cd0004010203040a0b0c0d0064800100c80000"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("81cd0004"
+                                                                                          "01020304"
+                                                                                          "0a0b0c0d"
+                                                                                          "0064"
+                                                                                          "8001"
+                                                                                          "00c8"
+                                                                                          "0000"));
 
     const std::vector<uint16_t> wrapping = { 65535, 0, 2 };
     QCOMPARE(writeNack(buffer, 1, 2, wrapping), 16);
@@ -750,8 +755,6 @@ void TestRtpVideo::transportFeedbackForPacketsInARow()
     QVERIFY(!feedback.hasPending());
     QCOMPARE(feedback.write(buffer, 1, 2), 0);
 
-    // a millisecond apart, the first 2 ms after a 64 ms boundary: one run of "received", and deltas of
-    // 8, 4 and 4 quarter-milliseconds
     feedback.onPacket(100, 322000);
     feedback.onPacket(101, 323000);
     feedback.onPacket(102, 324000);
@@ -759,13 +762,27 @@ void TestRtpVideo::transportFeedbackForPacketsInARow()
 
     const int size = feedback.write(buffer, 0x01020304, 0x0A0B0C0D);
     QCOMPARE(size, 28);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("afcd0006010203040a0b0c0d006400030000050020030804040000" "03"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("afcd0006"
+                                                                                          "01020304"
+                                                                                          "0a0b0c0d"
+                                                                                          "0064"
+                                                                                          "0003"
+                                                                                          "000005"
+                                                                                          "00"
+                                                                                          "2003"
+                                                                                          "080404"
+                                                                                          "0000"
+                                                                                          "03"));
     QVERIFY(!feedback.hasPending());
 
     for (uint16_t i = 0; i < 20; i++)
         feedback.onPacket(static_cast<uint16_t>(200 + i), 640000 + i * 250);
     QCOMPARE(feedback.write(buffer, 1, 2), 44);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 10).toHex(), QByteArray("00c8001400000a012014"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 10).toHex(), QByteArray("00c8"
+                                                                                             "0014"
+                                                                                             "00000a"
+                                                                                             "01"
+                                                                                             "2014"));
 }
 
 void TestRtpVideo::transportFeedbackMarksWhatDidNotArrive()
@@ -775,25 +792,38 @@ void TestRtpVideo::transportFeedbackMarksWhatDidNotArrive()
     feedback.onPacket(10, 640000);
     feedback.onPacket(12, 641000);
 
-    // received, missing, received: spelled out two bits each, and only two deltas
     const int size = feedback.write(buffer, 0x01020304, 0x0A0B0C0D);
     QCOMPARE(size, 24);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("8fcd0005010203040a0b0c0d000a000300000a00d1000004"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer), size).toHex(), QByteArray("8fcd0005"
+                                                                                          "01020304"
+                                                                                          "0a0b0c0d"
+                                                                                          "000a"
+                                                                                          "0003"
+                                                                                          "00000a"
+                                                                                          "00"
+                                                                                          "d100"
+                                                                                          "0004"));
 }
 
 void TestRtpVideo::transportFeedbackCarriesLongAndBackwardGaps()
 {
     uint8_t buffer[128];
     TransportFeedback feedback;
-    // the second packet 100 ms behind the first, the third arriving before the second
     feedback.onPacket(1, 0);
     feedback.onPacket(2, 100000);
     feedback.onPacket(3, 99000);
 
     const int size = feedback.write(buffer, 1, 2);
     QCOMPARE(size, 28);
-    // small, large, large; then 0, +400 and -4 quarter-milliseconds
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 16).toHex(), QByteArray("0001000300000000da00000190fffc01"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 16).toHex(), QByteArray("0001"
+                                                                                             "0003"
+                                                                                             "000000"
+                                                                                             "00"
+                                                                                             "da00"
+                                                                                             "00"
+                                                                                             "0190"
+                                                                                             "fffc"
+                                                                                             "01"));
 }
 
 void TestRtpVideo::transportFeedbackReportsEachPacketOnce()
@@ -807,7 +837,13 @@ void TestRtpVideo::transportFeedbackReportsEachPacketOnce()
     feedback.onPacket(6, 128000);
     feedback.onPacket(7, 128250);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 12).toHex(), QByteArray("000600020000020120020001"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 12).toHex(), QByteArray("0006"
+                                                                                             "0002"
+                                                                                             "000002"
+                                                                                             "01"
+                                                                                             "2002"
+                                                                                             "00"
+                                                                                             "01"));
     QCOMPARE(feedback.write(buffer, 1, 2), 0);
 
     feedback.onPacket(8, 192000);
@@ -825,7 +861,8 @@ void TestRtpVideo::transportFeedbackAcrossTheSequenceWrap()
     feedback.onPacket(1, 64500);
 
     QCOMPARE(feedback.write(buffer, 1, 2), 28);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("ffff0003"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("ffff"
+                                                                                            "0003"));
 }
 
 void TestRtpVideo::transportFeedbackLeavesOutALateArrival()
@@ -836,12 +873,37 @@ void TestRtpVideo::transportFeedbackLeavesOutALateArrival()
     feedback.onPacket(102, 64250);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
 
-    // the next report is of 103 alone, not of 101 with 102 missing
     feedback.onPacket(101, 64500);
     feedback.onPacket(103, 64750);
     QCOMPARE(feedback.write(buffer, 1, 2), 24);
-    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("00670001"));
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(buffer) + 12, 4).toHex(), QByteArray("0067"
+                                                                                            "0001"));
     QVERIFY(!feedback.hasPending());
+}
+
+void TestRtpVideo::transportFeedbackPutsAReorderedPacketInPlaceAndKeepsItsFirstArrival()
+{
+    TransportFeedback feedback;
+    feedback.onPacket(10, 64000);
+    feedback.onPacket(12, 65000);
+    feedback.onPacket(11, 66000);
+    feedback.onPacket(11, 67000);
+
+    std::vector<uint8_t> packet(128);
+    const int size = feedback.write(packet, 1, 2);
+    QVERIFY(size > 0);
+    packet.resize(static_cast<size_t>(size));
+
+    const ReceivedRtcp received = parseRtcp(packet);
+    QCOMPARE(received.transportReports.size(), size_t(1));
+    const ReceivedRtcp::TransportReport &report = received.transportReports.front();
+    QCOMPARE(report.baseSequence, uint16_t(10));
+    const std::vector<std::pair<bool, int>> expected = { { true, 0 }, { true, 8 }, { true, -4 } };
+    QCOMPARE(report.packets.size(), expected.size());
+    for (size_t i = 0; i < expected.size(); i++) {
+        QCOMPARE(report.packets[i].received, expected[i].first);
+        QCOMPARE(report.packets[i].delta, expected[i].second);
+    }
 }
 
 QTEST_GUILESS_MAIN(TestRtpVideo)

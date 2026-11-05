@@ -186,7 +186,6 @@ struct SelectProtocolData : Core::JsonUtils::JsonObject
     }
 };
 
-// opcode 14; any of these may change mid-session
 struct SessionUpdate : Core::JsonUtils::JsonObject
 {
     Field<QString, true> audioCodec;
@@ -252,8 +251,7 @@ struct MediaSinkWants
     QMap<quint32, int> bySsrc;
     QMap<quint32, int> pixelCounts;
 
-    // the official client builds this as a JS object, which serializes integer-like keys first in
-    // ascending order, so the SSRC entries precede `any`
+    // the official client's js object puts integer-like keys first and ascending, so the ssrcs precede `any`
     Core::OrderedJson toJson() const
     {
         Core::OrderedJson obj;
@@ -318,16 +316,16 @@ struct SpeakingData : Core::JsonUtils::JsonObject
     }
 };
 
-struct ClientConnectData : Core::JsonUtils::JsonObject
+struct RemoteVideoState : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> userId;
     Field<quint32> audioSsrc;
     Field<quint32> videoSsrc;
     Field<QList<StreamDescription>, true> streams;
 
-    static ClientConnectData fromJson(const QJsonObject &obj)
+    static RemoteVideoState fromJson(const QJsonObject &obj)
     {
-        ClientConnectData data;
+        RemoteVideoState data;
         get(obj, "user_id", data.userId);
         get(obj, "audio_ssrc", data.audioSsrc);
         get(obj, "video_ssrc", data.videoSsrc);
@@ -373,12 +371,9 @@ struct ConnectionParams
     QString sessionId;
     Core::ProxyConfig proxy;
 
-    // off, identify leaves video out and the server treats the connection as audio-only
     bool video = false;
     QList<StreamDescription> streams;
-    // payload types are positional, after Opus
     QList<Codec> videoCodecs;
-    // a stream viewer sends no audio at all, not even the silence a voice connection opens with
     bool sendsAudio = true;
     bool streamContext = false;
 };

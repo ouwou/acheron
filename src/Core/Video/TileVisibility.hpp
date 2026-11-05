@@ -8,8 +8,7 @@
 namespace Acheron {
 namespace Core {
 
-// as the official client: a tile that leaves the screen keeps its video for a while in case it comes
-// straight back, but only the few most recently hidden do
+// as the official client: a hidden tile keeps its video for a while in case it comes straight back, but only the few most recently hidden do
 class TileVisibility
 {
 public:

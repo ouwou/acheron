@@ -146,8 +146,8 @@ void TestDecodeDemand::aDecoderBusyMostOfTheTimeIsNoticed()
 {
     DecodeStrain strain;
     qint64 nowMs = 0;
-    const int windows = DecodeStrain::WINDOWS_IN_A_ROW * DecodeStrain::WINDOW_MS / 1000;
-    QCOMPARE(strainFoundIn(strain, nowMs, windows - 2, 15.0), 0);
+    const int seconds = DecodeStrain::WINDOWS_IN_A_ROW * DecodeStrain::WINDOW_MS / 1000;
+    QCOMPARE(strainFoundIn(strain, nowMs, seconds - 2, 15.0), 0);
     QCOMPARE(strainFoundIn(strain, nowMs, 4, 15.0), 1);
 }
 

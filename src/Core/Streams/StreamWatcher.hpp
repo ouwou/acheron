@@ -23,7 +23,6 @@ namespace Audio {
 class VoiceManager;
 }
 
-// follows the official client's rules for when watching one stream ends another
 class StreamWatcher : public QObject
 {
     Q_OBJECT
@@ -66,7 +65,6 @@ private:
     std::optional<Discord::StreamKey> pendingWatch;
     QSet<QString> fullStreams;
     QString lastAutoWatched;
-    quint32 nextAudioSource = 1;
 };
 
 } // namespace Core

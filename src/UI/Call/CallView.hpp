@@ -12,7 +12,7 @@
 #include <optional>
 
 #include "Core/Snowflake.hpp"
-#include "Core/Streams/StreamSession.hpp"
+#include "Discord/StreamKey.hpp"
 #include "UI/AvatarRequestTracker.hpp"
 #include "UI/Call/CallTileModel.hpp"
 
@@ -21,6 +21,7 @@ namespace Core {
 class CallVideo;
 class CameraSender;
 class StreamBroadcaster;
+class StreamSession;
 class StreamWatcher;
 namespace Audio {
 class VoiceManager;
@@ -43,8 +44,6 @@ public:
     ~CallView() override;
 
     [[nodiscard]] Core::Snowflake channelId() const { return channel; }
-
-    [[nodiscard]] bool hasVideo() const { return videoPresent; }
 
     [[nodiscard]] bool isPoppedOut() const { return poppedOut; }
     void setPoppedOut(bool out);

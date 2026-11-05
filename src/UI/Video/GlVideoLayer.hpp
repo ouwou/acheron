@@ -9,6 +9,8 @@
 #include <array>
 #include <memory>
 
+#include "DmabufGlBridge.hpp"
+
 class QOpenGLShaderProgram;
 struct AVFrame;
 
@@ -16,7 +18,6 @@ namespace Acheron {
 namespace UI {
 
 class CardPicture;
-class DmabufGlBridge;
 class VideoFrameStore;
 class VideoSurface;
 

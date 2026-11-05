@@ -30,14 +30,20 @@ public:
     // as KWin: it would rather make three, and no fewer than two
     static constexpr int BUFFERS = 4;
     static constexpr uint64_t LINEAR_MODIFIER = 0;
-    // SPA_DATA_SyncObj came with PipeWire 1.2
     static constexpr bool HAS_SYNC_OBJECTS = PW_CHECK_VERSION(1, 2, 0);
+    static constexpr int SYNC_OBJECTS_A_BUFFER = 2;
 
     enum class Spoiling {
         None,
         MarkedInHeader,
         MarkedInChunk,
         Empty,
+    };
+    enum class Buffers {
+        InMemory,
+        OnTheCard,
+        // as KWin gives a consumer that keeps to its sync timeline
+        OnTheCardWithSyncObjects,
     };
     using Painter = std::function<void(void *into, const QSize &size, int stride, quint32 number, bool again)>;
 
@@ -49,9 +55,8 @@ public:
         return device >= 0;
     }
 
-    // two sync objects per card buffer, as KWin gives a consumer that keeps to its sync timeline
-    PipeWireTestSource(const QSize &size, Painter paint, spa_video_format format = SPA_VIDEO_FORMAT_BGRx, bool offersCard = false, bool syncObjects = false)
-        : size(size), paint(std::move(paint)), format(format), offersCard(offersCard), syncObjects(syncObjects)
+    PipeWireTestSource(const QSize &size, Painter paint, spa_video_format format = SPA_VIDEO_FORMAT_BGRx, Buffers buffers = Buffers::InMemory)
+        : size(size), paint(std::move(paint)), format(format), offersCard(buffers != Buffers::InMemory), syncObjects(buffers == Buffers::OnTheCardWithSyncObjects)
     {
         pw_init(nullptr, nullptr);
         loop = pw_thread_loop_new("acheron-test-source", nullptr);
@@ -235,7 +240,7 @@ private:
         spa_pod_builder builder;
         spa_pod_builder_init(&builder, space, sizeof(space));
         const spa_pod *params[] = {
-            static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(3, 2, BUFFERS), SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(modifier && source->syncObjects && HAS_SYNC_OBJECTS ? 3 : 1), SPA_PARAM_BUFFERS_size, SPA_POD_Int(stride * source->agreedHeight), SPA_PARAM_BUFFERS_stride, SPA_POD_Int(stride), SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(1 << (modifier ? SPA_DATA_DmaBuf : SPA_DATA_MemFd)))),
+            static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamBuffers, SPA_PARAM_Buffers, SPA_PARAM_BUFFERS_buffers, SPA_POD_CHOICE_RANGE_Int(3, 2, BUFFERS), SPA_PARAM_BUFFERS_blocks, SPA_POD_Int(modifier && source->syncObjects && HAS_SYNC_OBJECTS ? 1 + SYNC_OBJECTS_A_BUFFER : 1), SPA_PARAM_BUFFERS_size, SPA_POD_Int(stride * source->agreedHeight), SPA_PARAM_BUFFERS_stride, SPA_POD_Int(stride), SPA_PARAM_BUFFERS_dataType, SPA_POD_CHOICE_FLAGS_Int(1 << (modifier ? SPA_DATA_DmaBuf : SPA_DATA_MemFd)))),
             static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta, SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Header), SPA_PARAM_META_size, SPA_POD_Int(sizeof(spa_meta_header)))),
             static_cast<const spa_pod *>(spa_pod_builder_add_object(&builder, SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta, SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoCrop), SPA_PARAM_META_size, SPA_POD_Int(sizeof(spa_meta_region)))),
         };
@@ -332,8 +337,7 @@ private:
     spa_hook listener = {};
 };
 
-// the screen the machine's owner approved once for the tests, without the dialog. the approval is at
-// ~/.config/acheron-tests/portal.conf
+// a screen approved once for the tests and restored without the dialog; the approval is in ~/.config/acheron-tests/portal.conf
 struct ApprovedScreen
 {
     enum class State {
@@ -374,8 +378,7 @@ struct ApprovedScreen
                 screen.answeredAfterMs = waited.elapsed();
                 answered = true;
             });
-            while (!answered && waited.elapsed() < 4000)
-                QTest::qWait(20);
+            (void)QTest::qWaitFor([&answered] { return answered; }, 4000);
         }
         if (screen.source.id.isEmpty()) {
             remember(QString());

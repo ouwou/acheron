@@ -31,8 +31,7 @@ int addressFieldSize(const QHostAddress &address)
     return address.protocol() == QAbstractSocket::IPv6Protocol ? Socks5UdpAssociation::IPV6_ADDRESS_FIELD_SIZE : Socks5UdpAssociation::IPV4_ADDRESS_FIELD_SIZE;
 }
 
-// ATYP, ADDR and PORT
-void writeAddress(uint8_t *out, const QHostAddress &address, quint16 port)
+void writeAddressField(uint8_t *out, const QHostAddress &address, quint16 port)
 {
     if (address.protocol() == QAbstractSocket::IPv6Protocol) {
         *out++ = ATYP_IPV6;
@@ -51,7 +50,7 @@ void appendAddress(QByteArray &out, const QHostAddress &address, quint16 port)
 {
     const auto at = out.size();
     out.resize(at + addressFieldSize(address));
-    writeAddress(reinterpret_cast<uint8_t *>(out.data()) + at, address, port);
+    writeAddressField(reinterpret_cast<uint8_t *>(out.data()) + at, address, port);
 }
 
 // Length of the ATYP+ADDR+PORT tail starting at `offset`, or -1 if incomplete or unknown.
@@ -342,7 +341,7 @@ int Socks5UdpAssociation::writeRelayHeader(std::span<uint8_t> out, const QHostAd
         return -1;
 
     std::memset(out.data(), 0, DATAGRAM_PREFIX_SIZE);
-    writeAddress(out.data() + DATAGRAM_PREFIX_SIZE, destination, destinationPort);
+    writeAddressField(out.data() + DATAGRAM_PREFIX_SIZE, destination, destinationPort);
     return size;
 }
 

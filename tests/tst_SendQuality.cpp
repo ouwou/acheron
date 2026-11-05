@@ -1,5 +1,3 @@
-// the quality rules are the official client's (docs/video-re/re-voice-gateway-video.md)
-
 #include "Core/Video/SendQuality.hpp"
 #include "Core/Video/SendRateController.hpp"
 
@@ -16,6 +14,7 @@ namespace {
 
 constexpr int SOURCE = SendQuality::SOURCE_HEIGHT;
 constexpr qint64 PIXELS_720P = 1280 * 720;
+constexpr qint64 PIXEL_FRAMES_PER_BIT = 50;
 
 const BitrateLimits FULL_720P{ 500'000, 600'000, 3'500'000 };
 const BitrateLimits FULL_1080P{ 500'000, 600'000, 9'000'000 };
@@ -225,7 +224,7 @@ void TestSendQuality::maxBitrateFollowsHeightAndFramerate()
 void TestSendQuality::bitratesAreNotScaledWithoutASmallerViewer()
 {
     const SendQuality quality{ 720, 30 };
-    QCOMPARE(limitsForViewerSize(FULL_720P, quality, PIXELS_720P, 30, 0), FULL_720P);
+    QCOMPARE(limitsForViewerSize(FULL_720P, quality, PIXELS_720P, 30, std::nullopt), FULL_720P);
     QCOMPARE(limitsForViewerSize(FULL_720P, quality, PIXELS_720P, 30, PIXELS_720P), FULL_720P);
     QCOMPARE(limitsForViewerSize(FULL_720P, quality, PIXELS_720P, 30, PIXELS_720P * 4), FULL_720P);
     QVERIFY(limitsForViewerSize(FULL_720P, quality, PIXELS_720P, 30, PIXELS_720P - 1) != FULL_720P);
@@ -239,7 +238,6 @@ void TestSendQuality::sourceQualityIsNeverScaled()
 
 void TestSendQuality::scaledBitratesAreRoundedUp()
 {
-    // a third of the picture: 166,666.67, 200,000 and 1,166,666.67 before rounding
     const BitrateLimits scaled = limitsForViewerSize(FULL_720P, { 720, 30 }, 900'000, 30, 300'000);
     QCOMPARE(scaled.minBps, 166'667);
     QCOMPARE(scaled.targetBps, 200'000);
@@ -248,7 +246,6 @@ void TestSendQuality::scaledBitratesAreRoundedUp()
 
 void TestSendQuality::scaledMinimumAndTargetStopAtTheFloor()
 {
-    // a quarter of the picture would put the minimum at 125,000 and leaves the target at exactly 150,000
     const BitrateLimits quarter = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 4);
     QCOMPARE(quarter.minBps, 150'000);
     QCOMPARE(quarter.targetBps, 150'000);
@@ -264,9 +261,8 @@ void TestSendQuality::scaledMinimumAndTargetStopAtTheFloor()
 
 void TestSendQuality::scaledMaximumKeepsRoomForThePicture()
 {
-    // 0.02 x 921,600 pixels x 30 frames = 552,960, above a tenth of 3,500,000
     const BitrateLimits tenth = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 10);
-    QCOMPARE(tenth.maxBps, 552'960);
+    QCOMPARE(tenth.maxBps, int(PIXELS_720P * 30 / PIXEL_FRAMES_PER_BIT));
 
     const BitrateLimits half = limitsForViewerSize(FULL_720P, { 720, 30 }, PIXELS_720P, 30, PIXELS_720P / 2);
     QCOMPARE(half.maxBps, 1'750'000);
@@ -274,22 +270,21 @@ void TestSendQuality::scaledMaximumKeepsRoomForThePicture()
 
 void TestSendQuality::scaledMaximumNeverPassesTheFullMaximum()
 {
-    // 0.02 x 3,686,400 pixels x 60 frames = 4,423,680, more than this picture may use at all
     const qint64 pixels = 2560 * 1440;
     const BitrateLimits scaled = limitsForViewerSize(FULL_720P, { 1440, 60 }, pixels, 60, pixels / 100);
-    QCOMPARE(scaled.maxBps, 3'500'000);
+    QCOMPARE(scaled.maxBps, FULL_720P.maxBps);
 
     const BitrateLimits roomy = limitsForViewerSize(FULL_1080P, { 1440, 60 }, pixels, 60, pixels / 100);
-    QCOMPARE(roomy.maxBps, 4'423'680);
+    QCOMPARE(roomy.maxBps, int(pixels * 60 / PIXEL_FRAMES_PER_BIT));
 }
 
 void TestSendQuality::firstViewerSizeIsTakenUp()
 {
     ViewerSize size;
-    QCOMPARE(size.pixelCount(), qint64(0));
-    QVERIFY(!size.offer(0));
+    QCOMPARE(size.pixelCount(), std::optional<qint64>());
+    QVERIFY(!size.offer(std::nullopt));
     QVERIFY(size.offer(1));
-    QCOMPARE(size.pixelCount(), qint64(1));
+    QCOMPARE(size.pixelCount(), std::optional<qint64>(1));
 }
 
 void TestSendQuality::viewerSizeWithinFivePercentIsIgnored()
@@ -300,15 +295,15 @@ void TestSendQuality::viewerSizeWithinFivePercentIsIgnored()
     QVERIFY(!size.offer(100'000));
     QVERIFY(!size.offer(105'000));
     QVERIFY(!size.offer(95'000));
-    QCOMPARE(size.pixelCount(), qint64(100'000));
+    QCOMPARE(size.pixelCount(), std::optional<qint64>(100'000));
 
     QVERIFY(size.offer(105'001));
-    QCOMPARE(size.pixelCount(), qint64(105'001));
+    QCOMPARE(size.pixelCount(), std::optional<qint64>(105'001));
 
     ViewerSize shrinking;
     QVERIFY(shrinking.offer(100'000));
     QVERIFY(shrinking.offer(94'999));
-    QCOMPARE(shrinking.pixelCount(), qint64(94'999));
+    QCOMPARE(shrinking.pixelCount(), std::optional<qint64>(94'999));
 }
 
 void TestSendQuality::viewerSizeIsComparedWithTheOneInUse()
@@ -325,8 +320,8 @@ void TestSendQuality::viewersGoingAwayClearsTheSize()
 {
     ViewerSize size;
     QVERIFY(size.offer(100'000));
-    QVERIFY(size.offer(0));
-    QCOMPARE(size.pixelCount(), qint64(0));
+    QVERIFY(size.offer(std::nullopt));
+    QCOMPARE(size.pixelCount(), std::optional<qint64>());
 }
 
 void TestSendQuality::controllerIgnoresReportsBeforeTheServerHasSaid()

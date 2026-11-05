@@ -17,10 +17,15 @@ constexpr qint64 RETRANSMISSION_WINDOW_US = qint64(VideoSendStream::RETRANSMISSI
 constexpr size_t REMEMBERED_REPORTS = 8;
 constexpr qint64 LEAST_DRAIN_US = 1000;
 
+uint32_t absSendTime6Point18(qint64 nowUs)
+{
+    return static_cast<uint32_t>(((static_cast<quint64>(nowUs) << 18) + 500000) / 1000000) & 0xFFFFFF;
+}
+
 } // namespace
 
-VideoSendStream::VideoSendStream(uint32_t ssrc, uint32_t rtxSsrc, const Numbering &first)
-    : mediaSsrc(ssrc), retransmissionSsrc(rtxSsrc), nextSequence(first.sequence), nextRtxSequence(first.rtxSequence), nextTransportSequence(first.transportSequence), firstPictureId(first.pictureId)
+VideoSendStream::VideoSendStream(uint32_t ssrc, uint32_t rtxSsrc, const Numbering &first, SendSideEstimator &estimator)
+    : mediaSsrc(ssrc), retransmissionSsrc(rtxSsrc), nextSequence(first.sequence), nextRtxSequence(first.rtxSequence), estimator(estimator), firstPictureId(first.pictureId)
 {
 }
 
@@ -194,15 +199,13 @@ bool VideoSendStream::write(PacketBuffer &out, const Packet &packet, Transmissio
     header.timestamp = packet.timestamp;
     header.ssrc = retransmission ? retransmissionSsrc : mediaSsrc;
 
-    // abs-send-time: seconds as 6.18 fixed point, low 24 bits
-    const quint64 sendTime = ((static_cast<quint64>(nowUs) << 18) + 500000) / 1000000;
     uint8_t sendTimeBytes[3];
-    writeBigEndian24(static_cast<uint32_t>(sendTime), sendTimeBytes);
+    writeBigEndian24(absSendTime6Point18(nowUs), sendTimeBytes);
     // always zero, as the official client sends it
     const uint8_t noOffset[3] = {};
     const int size = CLEAR_SIZE + EXTENSIONS_SIZE + (retransmission ? RTX_HEADER_SIZE : 0) + static_cast<int>(packet.payload.size());
     uint8_t transportSequence[2];
-    qToBigEndian(transport ? transport->numberPacket(nowUs, size) : nextTransportSequence, transportSequence);
+    qToBigEndian(estimator.numberPacket(nowUs, size), transportSequence);
     // WebRTC's order, not the ids' order
     const RtpExtension elements[] = { { ABS_SEND_TIME_EXTENSION, sendTimeBytes }, { TRANSMISSION_OFFSET_EXTENSION, noOffset }, { TRANSPORT_SEQUENCE_EXTENSION, transportSequence } };
     uint8_t extensions[EXTENSIONS_SIZE];
@@ -222,7 +225,6 @@ bool VideoSendStream::write(PacketBuffer &out, const Packet &packet, Transmissio
     if (!out.append(packet.payload))
         return false;
 
-    nextTransportSequence++;
     if (retransmission)
         nextRtxSequence++;
     counters.bytesWritten += static_cast<quint64>(out.size());
@@ -284,7 +286,6 @@ void VideoSendStream::onReceptionReport(const ReceptionReport &report, qint64 no
 {
     counters.lossFraction = report.fractionLost / 256.0;
 
-    // zero: no sender report received yet
     if (report.lastSenderReport == 0)
         return;
     const auto answered = std::find_if(sentReports.begin(), sentReports.end(), [&report](const SentReport &sent) { return sent.compactNtp == report.lastSenderReport; });

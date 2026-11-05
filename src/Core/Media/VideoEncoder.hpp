@@ -10,13 +10,8 @@
 #include <optional>
 #include <vector>
 
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Discord/Voice/VideoFrame.hpp"
-
-struct AVBSFContext;
-struct AVBufferRef;
-struct AVCodecContext;
-struct AVFrame;
-struct AVPacket;
 
 namespace Acheron {
 namespace Core {
@@ -24,16 +19,16 @@ namespace Media {
 
 struct VideoEncoderCandidate;
 
-// the first call runs the encoder trials and can take seconds. thread safe
+// thread safe. the first call runs every encoder's trial, which can take seconds; an encoder that never
+// answers counts as broken
 [[nodiscard]] QList<Discord::Voice::VideoCodec> encodableVideoCodecs();
 
 [[nodiscard]] QList<QString> videoEncoderNames(Discord::Voice::VideoCodec codec);
-// an encoder that never answers counts as broken
 [[nodiscard]] bool videoEncoderWorks(const QString &name);
 [[nodiscard]] QString videoEncoderFor(Discord::Voice::VideoCodec codec);
 
-// AMD's AV1 encoder codes some cards' pictures in 64x16 blocks, padding with black. av1_amf is assumed
-// to; av1_vaapi is checked in its trial
+// AMD's AV1 encoder codes some cards' pictures in 64x16 blocks, padding with black, which every viewer
+// sees. av1_amf is assumed to; av1_vaapi is checked in its trial
 [[nodiscard]] QSize codedSize(const QString &encoderName, const QSize &size);
 
 [[nodiscard]] QSize av1CodedSize(const std::vector<uint8_t> &keyFrame);
@@ -46,11 +41,8 @@ struct Av1SizeProbe
 [[nodiscard]] bool codesEverySizeAsItIs(const QList<Av1SizeProbe> &probes);
 
 inline constexpr int MOST_ROWS_ADDED = 8;
-// padding shows black to every viewer: a few rows at the bottom are tolerated, columns arent
 [[nodiscard]] bool paddingIsAcceptable(const QSize &size, const QSize &coded);
 
-// H264 SPSs are left in a form the official client doesnt rewrite, since a rewritten one fails DAVE
-// decryption (H264Sps.hpp)
 class EncodedFrameFinisher
 {
 public:
@@ -68,7 +60,6 @@ private:
     std::vector<uint8_t> sequenceHeader;
 };
 
-// not thread safe
 class VideoEncoder
 {
 public:
@@ -104,7 +95,6 @@ public:
     };
 
     explicit VideoEncoder(const Settings &settings);
-    ~VideoEncoder();
 
     VideoEncoder(const VideoEncoder &) = delete;
     VideoEncoder &operator=(const VideoEncoder &) = delete;
@@ -131,7 +121,7 @@ public:
 private:
     bool encodeWithOpenEncoder(AVFrame *frame, int64_t timestamp, std::vector<Discord::Voice::EncodedVideoFrame> &out);
     bool open(const AVFrame *frame);
-    AVCodecContext *configured(const AVFrame *frame, int h264Profile) const;
+    [[nodiscard]] CodecContextPointer configured(const AVFrame *frame, int h264Profile) const;
     void openColourDescriber(const AVFrame *frame);
     void describeColours();
     bool prepareUpload(const AVFrame *frame);
@@ -143,15 +133,21 @@ private:
 
     Settings settings;
     const VideoEncoderCandidate *candidate = nullptr;
-    AVCodecContext *context = nullptr;
-    AVBufferRef *uploadFrames = nullptr;
-    AVFrame *uploaded = nullptr;
-    AVPacket *packet = nullptr;
-    AVBSFContext *colourDescriber = nullptr;
-    AVPacket *asEncoded = nullptr;
+    CodecContextPointer context;
+    BufferPointer uploadFrames;
+    const FramePointer uploaded{ av_frame_alloc() };
+    const PacketPointer packet{ av_packet_alloc() };
+    BitstreamFilterPointer colourDescriber;
+    const PacketPointer asEncoded{ av_packet_alloc() };
 
     // forever when it never took a card picture
     std::optional<std::chrono::steady_clock::time_point> cardFramesRefusedUntil;
+    struct RefusedSize
+    {
+        QSize size;
+        std::chrono::steady_clock::time_point until;
+    };
+    std::optional<RefusedSize> refusedSize;
     quint64 cardFramesByThisEncoder = 0;
     bool keyframeWanted = false;
     bool reopenWanted = false;

@@ -1,5 +1,6 @@
 #include "UI/Call/CallTile.hpp"
 
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Streams/StreamSession.hpp"
 #include "Core/Video/CallVideo.hpp"
 #include "UI/Video/VideoSurface.hpp"
@@ -10,10 +11,6 @@
 #include <QVBoxLayout>
 
 #include <cstring>
-
-extern "C" {
-#include <libavutil/frame.h>
-}
 
 namespace Acheron {
 namespace UI {
@@ -91,7 +88,6 @@ CallTile::~CallTile()
         video->removeTile(tileKey.userId);
     if (watched)
         watched->setSurface(0, false);
-    // deleting hides the surface, which it would announce to whoever still listens
     drawnOn->disconnect();
     delete drawnOn;
     delete window.data();
@@ -132,7 +128,7 @@ void CallTile::announceGeometry(int pixelCount, bool visible)
 void CallTile::present(const QImage &picture)
 {
     const QImage pixels = picture.convertToFormat(QImage::Format_RGB32);
-    AVFrame *frame = av_frame_alloc();
+    const Core::Media::FramePointer frame(av_frame_alloc());
     if (!frame)
         return;
 
@@ -142,13 +138,12 @@ void CallTile::present(const QImage &picture)
     // what swscale assumes when it makes YUV of this for the shader
     frame->colorspace = AVCOL_SPC_SMPTE170M;
     frame->color_range = AVCOL_RANGE_MPEG;
-    if (av_frame_get_buffer(frame, 0) == 0) {
-        const size_t rowBytes = static_cast<size_t>(pixels.width()) * 4;
-        for (int row = 0; row < pixels.height(); row++)
-            std::memcpy(frame->data[0] + static_cast<qptrdiff>(row) * frame->linesize[0], pixels.constScanLine(row), rowBytes);
-        drawnOn->sink()->present(frame);
-    }
-    av_frame_free(&frame);
+    if (av_frame_get_buffer(frame.get(), 0) < 0)
+        return;
+    const size_t rowBytes = static_cast<size_t>(pixels.width()) * 4;
+    for (int row = 0; row < pixels.height(); row++)
+        std::memcpy(frame->data[0] + static_cast<qptrdiff>(row) * frame->linesize[0], pixels.constScanLine(row), rowBytes);
+    drawnOn->sink()->present(frame.get());
 }
 
 void CallTile::popOut(const QString &title, std::function<void()> closed)

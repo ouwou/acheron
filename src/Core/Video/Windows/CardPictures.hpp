@@ -8,19 +8,17 @@
 #include <QRect>
 #include <QSize>
 
-struct AVBufferRef;
-struct AVFrame;
+#include "Core/Media/FfmpegPointers.hpp"
 
 namespace Acheron {
 namespace Core {
 namespace Video {
 namespace Win {
 
-[[nodiscard]] AVBufferRef *cardPictures(AVBufferRef *device, const QSize &size);
+[[nodiscard]] Media::BufferPointer cardPictures(AVBufferRef *device, const QSize &size);
 
 [[nodiscard]] bool prepareBgra(AVFrame *bgra, const QSize &size);
 [[nodiscard]] int readBack(const AVFrame *onCard, AVFrame *memory);
-// no picture of a window that has drawn itself is transparent everywhere sampled
 [[nodiscard]] bool isEmptyPicture(const AVFrame *onCard, AVFrame *scratch);
 
 // ddagrab hands the last picture over again while the screen shows nothing new. holding a reference to

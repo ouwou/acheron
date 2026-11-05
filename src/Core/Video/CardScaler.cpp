@@ -1,6 +1,7 @@
 #include "Core/Video/CardScaler.hpp"
 
 #include "Core/Logging.hpp"
+#include "Core/Media/FfmpegPointers.hpp"
 #include "Core/Video/CaptureCommon.hpp"
 
 #include <QString>
@@ -26,21 +27,6 @@ extern "C" {
 namespace Acheron {
 namespace Core {
 namespace Video {
-
-#if defined(Q_OS_WIN) || defined(ACHERON_HAVE_AVFILTER)
-
-namespace {
-
-enum class Verdict {
-    Untried,
-    Works,
-    RuledOut,
-};
-std::atomic<Verdict> verdict{ Verdict::Untried };
-
-} // namespace
-
-#endif
 
 #ifdef Q_OS_WIN
 
@@ -69,32 +55,58 @@ struct CardScaler::Card
 
     ~Card() { release(); }
 
+    [[nodiscard]] static bool takes(const AVFrame *from, const Output &output, const QRect &placed);
+    [[nodiscard]] static bool wasTakenAway(const AVFrame *from);
+    [[nodiscard]] QString refusal() const;
+
     bool scale(const AVFrame *from, const QRect &area, const Output &wanted, const QRect &placed, AVFrame *into);
     const Processor *processorFor(ID3D11Texture2D *texture);
     bool choosePictures(const Processor &processor);
-    AVBufferRef *picturesOf(AVPixelFormat format, UINT bindFlags, const Processor &processor);
+    Media::BufferPointer picturesOf(AVPixelFormat format, UINT bindFlags, const Processor &processor);
     void setUp(const Processor &processor);
+    void dropProcessors();
     void release();
 
-    AVBufferRef *device = nullptr;
+    Media::BufferPointer device;
     Output output;
     // an encoder relies on these staying the same while the card and output do
-    AVBufferRef *pictures = nullptr;
+    Media::BufferPointer pictures;
     AVPixelFormat pictureFormat = AV_PIX_FMT_NONE;
     std::vector<Processor> processors;
     const char *refused = "";
     HRESULT refusedWith = S_OK;
 };
 
-void CardScaler::Card::release()
+bool CardScaler::Card::takes(const AVFrame *from, const Output &output, const QRect &)
+{
+    return from->format == AV_PIX_FMT_D3D11 && from->hw_frames_ctx && !output.size.isEmpty();
+}
+
+// a card Windows just took away (driver or mode change) has said nothing about what it can do
+bool CardScaler::Card::wasTakenAway(const AVFrame *from)
+{
+    return FAILED(deviceOf(from)->device->GetDeviceRemovedReason());
+}
+
+QString CardScaler::Card::refusal() const
+{
+    return QStringLiteral("%1 (%2)").arg(QLatin1String(refused), QString::number(static_cast<quint32>(refusedWith), 16));
+}
+
+void CardScaler::Card::dropProcessors()
 {
     for (Processor &each : processors) {
         drop(each.processor);
         drop(each.enumerator);
     }
     processors.clear();
-    av_buffer_unref(&pictures);
-    av_buffer_unref(&device);
+}
+
+void CardScaler::Card::release()
+{
+    dropProcessors();
+    pictures.reset();
+    device.reset();
     pictureFormat = AV_PIX_FMT_NONE;
 }
 
@@ -103,28 +115,28 @@ bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Outpu
     const auto *source = reinterpret_cast<const AVHWFramesContext *>(from->hw_frames_ctx->data);
     if (!device || device->data != source->device_ref->data || !(wanted == output)) {
         release();
-        device = av_buffer_ref(source->device_ref);
+        device.reset(av_buffer_ref(source->device_ref));
         output = wanted;
     }
     refusedWith = S_OK;
     refused = "it has no video processor";
-    AVD3D11VADeviceContext *d3d = device ? direct3d(device) : nullptr;
+    AVD3D11VADeviceContext *d3d = device ? direct3d(device.get()) : nullptr;
     if (!d3d || !d3d->video_device || !d3d->video_context)
         return false;
 
-    auto *texture = reinterpret_cast<ID3D11Texture2D *>(from->data[0]);
+    ID3D11Texture2D *texture = textureOf(from);
     const Processor *processor = processorFor(texture);
     if (!processor)
         return false;
 
     av_frame_unref(into);
     refused = "it made no texture for a scaled picture";
-    if (av_hwframe_get_buffer(pictures, into, 0) < 0)
+    if (av_hwframe_get_buffer(pictures.get(), into, 0) < 0)
         return false;
 
     D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC sourceView = {};
     sourceView.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
-    sourceView.Texture2D.ArraySlice = static_cast<UINT>(reinterpret_cast<quintptr>(from->data[1]));
+    sourceView.Texture2D.ArraySlice = sliceOf(from);
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC targetView = {};
     targetView.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
     ID3D11VideoProcessorInputView *input = nullptr;
@@ -134,7 +146,7 @@ bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Outpu
     refusedWith = d3d->video_device->CreateVideoProcessorInputView(texture, processor->enumerator, &sourceView, &input);
     if (SUCCEEDED(refusedWith)) {
         refused = "its video processor does not draw into the scaled picture";
-        refusedWith = d3d->video_device->CreateVideoProcessorOutputView(reinterpret_cast<ID3D11Texture2D *>(into->data[0]), processor->enumerator, &targetView, &target);
+        refusedWith = d3d->video_device->CreateVideoProcessorOutputView(textureOf(into), processor->enumerator, &targetView, &target);
     }
     if (SUCCEEDED(refusedWith)) {
         D3D11_VIDEO_PROCESSOR_STREAM stream = {};
@@ -156,8 +168,7 @@ bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Outpu
         return false;
     }
 
-    into->colorspace = pictureFormat == AV_PIX_FMT_NV12 && output.bt601 ? AVCOL_SPC_SMPTE170M : AVCOL_SPC_BT709;
-    into->color_range = AVCOL_RANGE_MPEG;
+    markColours(into, pictureFormat == AV_PIX_FMT_NV12 ? output.matrix : ColourMatrix::Bt709);
     return true;
 }
 
@@ -170,21 +181,16 @@ const CardScaler::Card::Processor *CardScaler::Card::processorFor(ID3D11Texture2
         if (each.textureSize == textureSize && each.textureFormat == description.Format)
             return &each;
     }
-    if (processors.size() >= MOST_PROCESSORS) {
-        for (Processor &each : processors) {
-            drop(each.processor);
-            drop(each.enumerator);
-        }
-        processors.clear();
-    }
+    if (processors.size() >= MOST_PROCESSORS)
+        dropProcessors();
 
     Processor made;
     made.textureSize = textureSize;
     made.textureFormat = description.Format;
 
-    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = processorContent(QSize(static_cast<int>(description.Width), static_cast<int>(description.Height)), output.size);
+    D3D11_VIDEO_PROCESSOR_CONTENT_DESC content = processorContent(textureSize, output.size);
 
-    ID3D11VideoDevice *video = direct3d(device)->video_device;
+    ID3D11VideoDevice *video = direct3d(device.get())->video_device;
     refused = "it made no video processor";
     refusedWith = video->CreateVideoProcessorEnumerator(&content, &made.enumerator);
     if (SUCCEEDED(refusedWith)) {
@@ -233,9 +239,9 @@ bool CardScaler::Card::choosePictures(const Processor &processor)
     return false;
 }
 
-AVBufferRef *CardScaler::Card::picturesOf(AVPixelFormat format, UINT bindFlags, const Processor &processor)
+Media::BufferPointer CardScaler::Card::picturesOf(AVPixelFormat format, UINT bindFlags, const Processor &processor)
 {
-    AVBufferRef *made = av_hwframe_ctx_alloc(device);
+    Media::BufferPointer made(av_hwframe_ctx_alloc(device.get()));
     if (!made)
         return nullptr;
     auto *frames = reinterpret_cast<AVHWFramesContext *>(made->data);
@@ -247,24 +253,22 @@ AVBufferRef *CardScaler::Card::picturesOf(AVPixelFormat format, UINT bindFlags, 
     frames->initial_pool_size = 0;
     static_cast<AVD3D11VAFramesContext *>(frames->hwctx)->BindFlags = bindFlags;
 
-    AVFrame *first = av_frame_alloc();
-    bool usable = av_hwframe_ctx_init(made) >= 0 && av_hwframe_get_buffer(made, first, 0) >= 0;
-    if (usable) {
-        D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC description = {};
-        description.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
-        ID3D11VideoProcessorOutputView *view = nullptr;
-        usable = SUCCEEDED(direct3d(device)->video_device->CreateVideoProcessorOutputView(reinterpret_cast<ID3D11Texture2D *>(first->data[0]), processor.enumerator, &description, &view));
-        drop(view);
-    }
-    av_frame_free(&first);
-    if (!usable)
-        av_buffer_unref(&made);
+    const Media::FramePointer first(av_frame_alloc());
+    if (!first || av_hwframe_ctx_init(made.get()) < 0 || av_hwframe_get_buffer(made.get(), first.get(), 0) < 0)
+        return nullptr;
+    D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC description = {};
+    description.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D;
+    ID3D11VideoProcessorOutputView *view = nullptr;
+    const bool drawable = SUCCEEDED(direct3d(device.get())->video_device->CreateVideoProcessorOutputView(textureOf(first.get()), processor.enumerator, &description, &view));
+    drop(view);
+    if (!drawable)
+        return nullptr;
     return made;
 }
 
 void CardScaler::Card::setUp(const Processor &processor)
 {
-    AVD3D11VADeviceContext *d3d = direct3d(device);
+    AVD3D11VADeviceContext *d3d = direct3d(device.get());
     ID3D11VideoContext *context = d3d->video_context;
     const RECT whole = native(QRect(QPoint(0, 0), output.size));
     D3D11_VIDEO_COLOR black = {};
@@ -276,83 +280,61 @@ void CardScaler::Card::setUp(const Processor &processor)
     context->VideoProcessorSetStreamAutoProcessingMode(processor.processor, 0, FALSE);
     context->VideoProcessorSetOutputTargetRect(processor.processor, TRUE, &whole);
     context->VideoProcessorSetOutputBackgroundColor(processor.processor, FALSE, &black);
-    const bool toYuv = pictureFormat == AV_PIX_FMT_NV12;
-    setColourSpaces(context, processor.processor, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, toYuv ? yuvColourSpace(!output.bt601, false) : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
-}
-
-CardScaler::CardScaler() : card(std::make_unique<Card>()) {}
-
-CardScaler::~CardScaler() = default;
-
-bool CardScaler::usable()
-{
-    return verdict != Verdict::RuledOut;
-}
-
-bool CardScaler::scale(const AVFrame *from, const QRect &area, const Output &output, const QRect &placed, AVFrame *into)
-{
-    if (from->format != AV_PIX_FMT_D3D11 || !from->hw_frames_ctx || output.size.isEmpty())
-        return false;
-
-    Verdict untried = Verdict::Untried;
-    if (card->scale(from, area, output, placed, into)) {
-        verdict.compare_exchange_strong(untried, Verdict::Works);
-        return true;
-    }
-
-    const QString reason = QStringLiteral("%1 (%2)").arg(QLatin1String(card->refused), QString::number(static_cast<quint32>(card->refusedWith), 16));
-    // a card Windows just took away (driver or mode change) has said nothing about what it can do
-    auto *lent = static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWFramesContext *>(from->hw_frames_ctx->data)->device_ctx->hwctx);
-    const bool cardTakenAway = FAILED(lent->device->GetDeviceRemovedReason());
-    if (!cardTakenAway && verdict.compare_exchange_strong(untried, Verdict::RuledOut))
-        qCInfo(LogVideo).noquote() << "The graphics card does not scale pictures:" << reason << "; they are read back and scaled in software";
-    else if (cardTakenAway || verdict == Verdict::Works)
-        qCWarning(LogVideo).noquote() << "The graphics card did not scale a picture:" << reason;
-    card->release();
-    return false;
+    const DXGI_COLOR_SPACE_TYPE yuv = output.matrix == ColourMatrix::Bt601 ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601 : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
+    setColourSpaces(context, processor.processor, DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, pictureFormat == AV_PIX_FMT_NV12 ? yuv : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
 }
 
 #elif defined(ACHERON_HAVE_AVFILTER)
 
 struct CardScaler::Card
 {
-    ~Card()
-    {
-        release();
-        av_frame_free(&cut);
-    }
+    ~Card() { release(); }
 
-    bool scale(const AVFrame *from, const QRect &area, const Output &wanted, AVFrame *into);
+    [[nodiscard]] static bool takes(const AVFrame *from, const Output &output, const QRect &placed);
+    [[nodiscard]] static bool wasTakenAway(const AVFrame *) { return false; }
+    [[nodiscard]] QString refusal() const;
+
+    bool scale(const AVFrame *from, const QRect &area, const Output &wanted, const QRect &placed, AVFrame *into);
     bool build(const AVFrame *from);
     void release();
 
-    AVBufferRef *device = nullptr;
+    Media::BufferPointer device;
     Output output;
     QSize sourceSize;
     AVPixelFormat sourceFormat = AV_PIX_FMT_NONE;
     AVFilterGraph *graph = nullptr;
     AVFilterContext *source = nullptr;
     AVFilterContext *sink = nullptr;
-    AVFrame *cut = av_frame_alloc();
+    const Media::FramePointer cut{ av_frame_alloc() };
     const char *refused = "";
     int refusedWith = 0;
 };
+
+bool CardScaler::Card::takes(const AVFrame *from, const Output &output, const QRect &placed)
+{
+    return from->format == AV_PIX_FMT_VAAPI && from->hw_frames_ctx && !output.size.isEmpty() && placed == QRect(QPoint(0, 0), output.size);
+}
+
+QString CardScaler::Card::refusal() const
+{
+    return QStringLiteral("%1 (%2)").arg(QLatin1String(refused)).arg(refusedWith);
+}
 
 void CardScaler::Card::release()
 {
     avfilter_graph_free(&graph);
     source = nullptr;
     sink = nullptr;
-    av_buffer_unref(&device);
+    device.reset();
 }
 
-bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Output &wanted, AVFrame *into)
+bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Output &wanted, const QRect &, AVFrame *into)
 {
     const auto *frames = reinterpret_cast<const AVHWFramesContext *>(from->hw_frames_ctx->data);
     const QSize size(from->width, from->height);
     if (!graph || device->data != frames->device_ref->data || !(wanted == output) || size != sourceSize || frames->sw_format != sourceFormat) {
         release();
-        device = av_buffer_ref(frames->device_ref);
+        device.reset(av_buffer_ref(frames->device_ref));
         output = wanted;
         sourceSize = size;
         sourceFormat = frames->sw_format;
@@ -361,15 +343,15 @@ bool CardScaler::Card::scale(const AVFrame *from, const QRect &area, const Outpu
     }
 
     const QRect taken = area & QRect(QPoint(0, 0), size);
-    av_frame_unref(cut);
+    av_frame_unref(cut.get());
     refused = "it would not take the picture";
-    refusedWith = av_frame_ref(cut, from);
+    refusedWith = av_frame_ref(cut.get(), from);
     if (refusedWith < 0)
         return false;
-    cropTo(cut, taken);
+    cropTo(cut.get(), taken);
     cut->color_range = AVCOL_RANGE_JPEG;
 
-    refusedWith = av_buffersrc_add_frame_flags(source, cut, AV_BUFFERSRC_FLAG_PUSH | AV_BUFFERSRC_FLAG_NO_CHECK_FORMAT);
+    refusedWith = av_buffersrc_add_frame_flags(source, cut.get(), AV_BUFFERSRC_FLAG_PUSH | AV_BUFFERSRC_FLAG_NO_CHECK_FORMAT);
     if (refusedWith < 0)
         return false;
     av_frame_unref(into);
@@ -402,7 +384,7 @@ bool CardScaler::Card::build(const AVFrame *from)
     if (refusedWith >= 0)
         refusedWith = avfilter_init_dict(source, nullptr);
 
-    const QByteArray settings = QStringLiteral("w=%1:h=%2:format=nv12:out_color_matrix=%3:out_range=limited").arg(output.size.width()).arg(output.size.height()).arg(QLatin1String(output.bt601 ? "smpte170m" : "bt709")).toLatin1();
+    const QByteArray settings = QStringLiteral("w=%1:h=%2:format=nv12:out_color_matrix=%3:out_range=limited").arg(output.size.width()).arg(output.size.height()).arg(QLatin1String(output.matrix == ColourMatrix::Bt601 ? "smpte170m" : "bt709")).toLatin1();
     AVFilterContext *scale = nullptr;
     if (refusedWith >= 0)
         refusedWith = avfilter_graph_create_filter(&scale, scaler, "scale", settings.constData(), nullptr, graph);
@@ -417,6 +399,21 @@ bool CardScaler::Card::build(const AVFrame *from)
     return refusedWith >= 0;
 }
 
+#endif
+
+#if defined(Q_OS_WIN) || defined(ACHERON_HAVE_AVFILTER)
+
+namespace {
+
+enum class Verdict {
+    Untried,
+    Works,
+    RuledOut,
+};
+std::atomic<Verdict> verdict{ Verdict::Untried };
+
+} // namespace
+
 CardScaler::CardScaler() : card(std::make_unique<Card>()) {}
 
 CardScaler::~CardScaler() = default;
@@ -428,20 +425,20 @@ bool CardScaler::usable()
 
 bool CardScaler::scale(const AVFrame *from, const QRect &area, const Output &output, const QRect &placed, AVFrame *into)
 {
-    if (from->format != AV_PIX_FMT_VAAPI || !from->hw_frames_ctx || output.size.isEmpty() || placed != QRect(QPoint(0, 0), output.size))
+    if (!Card::takes(from, output, placed))
         return false;
 
     Verdict untried = Verdict::Untried;
-    if (card->scale(from, area, output, into)) {
+    if (card->scale(from, area, output, placed, into)) {
         verdict.compare_exchange_strong(untried, Verdict::Works);
         return true;
     }
 
-    const QString reason = QStringLiteral("%1 (%2)").arg(QLatin1String(card->refused)).arg(card->refusedWith);
-    if (verdict.compare_exchange_strong(untried, Verdict::RuledOut))
-        qCInfo(LogVideo).noquote() << "The graphics card does not scale pictures:" << reason << "; they are read back and scaled in software";
-    else if (verdict == Verdict::Works)
-        qCWarning(LogVideo).noquote() << "The graphics card did not scale a picture:" << reason;
+    const bool cardTakenAway = Card::wasTakenAway(from);
+    if (!cardTakenAway && verdict.compare_exchange_strong(untried, Verdict::RuledOut))
+        qCInfo(LogVideo).noquote() << "The graphics card does not scale pictures:" << card->refusal() << "; they are read back and scaled in software";
+    else if (cardTakenAway || verdict == Verdict::Works)
+        qCWarning(LogVideo).noquote() << "The graphics card did not scale a picture:" << card->refusal();
     card->release();
     return false;
 }
@@ -466,7 +463,7 @@ bool CardScaler::scale(const AVFrame *, const QRect &, const Output &, const QRe
     return false;
 }
 
-#endif // Q_OS_WIN
+#endif
 
 bool CardScaler::scale(const AVFrame *from, const Output &output, AVFrame *into)
 {

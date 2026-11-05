@@ -5,9 +5,9 @@
 #include "Core/Streams/StreamPreviews.hpp"
 #include "Core/Video/CallVideo.hpp"
 #include "Core/Video/CameraPipeline.hpp"
-#include "Core/Video/ScreenCapture.hpp"
+#include "Core/Video/CaptureSources.hpp"
 #include "Core/Video/SendQuality.hpp"
-#include "Discord/Voice/VideoDepacketizer.hpp"
+#include "Discord/Voice/VideoFrame.hpp"
 #include "UI/AdvancedToggle.hpp"
 #include "UI/CaptureMethodCombo.hpp"
 #include "UI/Video/VideoSurface.hpp"
@@ -17,7 +17,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSpinBox>
-#include <QStandardItemModel>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -42,7 +41,6 @@ QHBoxLayout *labelledRow(QVBoxLayout *layout, const QString &label, QWidget *con
     return row;
 }
 
-// at least one stays ticked
 void addCodecRow(QVBoxLayout *layout, QWidget *page, const QString &label, const QList<VideoCodec> &choices, QList<QCheckBox *> &checks, bool (*isAllowed)(VideoCodec), void (*setAllowed)(VideoCodec, bool))
 {
     auto *row = new QHBoxLayout();
@@ -80,7 +78,6 @@ VideoPage::VideoPage(QWidget *parent)
     layout->addWidget(previews);
     connect(previews, &QCheckBox::toggled, this, [](bool enabled) { Core::StreamPreviewUploader::setEnabled(enabled); });
 
-    // both fall back by themselves when the machine cant; these are for when it can but should not
     auto *hardwareDecode = new QCheckBox(tr("Decode video with the graphics card"), advanced);
     hardwareDecode->setChecked(Core::Media::hardwareDecodingEnabled());
     advancedLayout->addWidget(hardwareDecode);

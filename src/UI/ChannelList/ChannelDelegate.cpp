@@ -5,7 +5,6 @@
 #include "ChannelFilterProxyModel.hpp"
 
 #include "Core/Theme/Icons.hpp"
-#include "Core/Theme/Manager.hpp"
 #include "UI/LivePill.hpp"
 #include "UI/StatusIndicator.hpp"
 
@@ -494,9 +493,8 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                                     Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Video, statusIconSize, iconColor, dpr));
                 iconX -= (statusIconSize + markerSpacing);
             }
-            if (isLive) {
+            if (isLive)
                 paintLivePill(painter, QRect(iconX + statusIconSize - pillWidth, iconY, pillWidth, statusIconSize));
-            }
         }
 
         painter->restore();

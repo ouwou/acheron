@@ -11,8 +11,6 @@ namespace Audio {
 
 namespace {
 
-constexpr qint64 TICKS_PER_SECOND = 10'000'000;
-
 std::mutex registryMutex;
 std::vector<std::weak_ptr<PlayedSound>> registry;
 

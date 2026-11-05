@@ -1,4 +1,3 @@
-
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Core/Audio/LoopbackCapture.hpp"
 #include "Core/Audio/PlayedSound.hpp"
@@ -24,15 +23,10 @@
 #include "Core/Audio/Miniaudio.hpp"
 #endif
 
-#ifdef Q_OS_WIN
-#include <tlhelp32.h>
-#endif
-
 #include "ProcessUsage.hpp"
 
 #ifdef ACHERON_HAVE_PIPEWIRE
 #include <QProcess>
-#include <QScopeGuard>
 #include <QTemporaryDir>
 
 #include <mutex>
@@ -51,34 +45,50 @@ constexpr double TONE_HZ = 1375;
 constexpr float TONE_AMPLITUDE = 0.02f;
 constexpr int TONE_MS = 400;
 constexpr int TONE_FADE_MS = 15;
+constexpr int TONE_SAMPLE_FRAMES = TONE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
+constexpr int FRAMES_OF_TONE = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
 constexpr int CAPTURE_STARTS_MS = 250;
 constexpr int SOUND_ARRIVES_MS = 200;
+constexpr quint32 NOBODY = 0x7FFFFFF0;
 
 const char CANNOT_CAPTURE[] = "This machine cannot capture one program's sound.";
 const char CANNOT_PLAY[] = "This machine has no sound output to play a tone on.";
 
+quint32 thisProcess()
+{
+    return static_cast<quint32>(QCoreApplication::applicationPid());
+}
+
 #if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
 
-class Tone
+float toneAt(int sampleFrame)
+{
+    constexpr float FADE_SAMPLE_FRAMES = TONE_FADE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
+    if (sampleFrame >= TONE_SAMPLE_FRAMES)
+        return 0;
+    const float envelope = qMin(1.0f, qMin(sampleFrame, TONE_SAMPLE_FRAMES - sampleFrame) / FADE_SAMPLE_FRAMES);
+    return TONE_AMPLITUDE * envelope * static_cast<float>(std::sin(2 * std::numbers::pi * TONE_HZ * sampleFrame / Audio::AUDIO_SAMPLE_RATE));
+}
+
+class Playback
 {
 public:
-    Tone()
+    Playback(ma_format format, ma_device_data_proc fill, void *filler)
     {
         ma_device_config config = ma_device_config_init(ma_device_type_playback);
-        config.playback.format = ma_format_f32;
+        config.playback.format = format;
         config.playback.channels = Audio::AUDIO_CHANNELS;
         config.sampleRate = Audio::AUDIO_SAMPLE_RATE;
-        config.dataCallback = &Tone::fill;
-        config.pUserData = this;
-        // only WASAPI, where the capture listens. left to choose, miniaudio ends at a backend that plays to
-        // nowhere on a machine with no sound card
+        config.dataCallback = fill;
+        config.pUserData = filler;
+        // only WASAPI, where the capture listens: left to choose, miniaudio ends at its null backend where there is no sound card
         const ma_backend backends[] = { ma_backend_wasapi };
         hasContext = ma_context_init(backends, 1, nullptr, &context) == MA_SUCCESS;
         opened = hasContext && ma_device_init(&context, &config, &device) == MA_SUCCESS;
         playing = opened && ma_device_start(&device) == MA_SUCCESS;
     }
 
-    ~Tone()
+    ~Playback()
     {
         if (opened)
             ma_device_uninit(&device);
@@ -86,34 +96,39 @@ public:
             ma_context_uninit(&context);
     }
 
+    Playback(const Playback &) = delete;
+    Playback &operator=(const Playback &) = delete;
+
     [[nodiscard]] bool isPlaying() const { return playing; }
 
 private:
-    static void fill(ma_device *device, void *output, const void *, ma_uint32 sampleFrames)
-    {
-        constexpr int LENGTH = TONE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
-        constexpr float FADE = TONE_FADE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
-
-        auto *tone = static_cast<Tone *>(device->pUserData);
-        auto *samples = static_cast<float *>(output);
-        for (ma_uint32 i = 0; i < sampleFrames; i++) {
-            float sample = 0;
-            if (tone->position < LENGTH) {
-                const float envelope = qMin(1.0f, qMin(tone->position, LENGTH - tone->position) / FADE);
-                sample = TONE_AMPLITUDE * envelope * static_cast<float>(std::sin(2 * std::numbers::pi * TONE_HZ * tone->position / Audio::AUDIO_SAMPLE_RATE));
-                tone->position++;
-            }
-            samples[2 * i] = sample;
-            samples[2 * i + 1] = sample;
-        }
-    }
-
     ma_context context;
     bool hasContext = false;
     ma_device device;
     bool opened = false;
     bool playing = false;
+};
+
+class Tone
+{
+public:
+    [[nodiscard]] bool isPlaying() const { return playback.isPlaying(); }
+
+private:
+    static void fill(ma_device *device, void *output, const void *, ma_uint32 sampleFrames)
+    {
+        auto *tone = static_cast<Tone *>(device->pUserData);
+        auto *samples = static_cast<float *>(output);
+        for (ma_uint32 i = 0; i < sampleFrames; i++) {
+            const float sample = toneAt(tone->position);
+            tone->position = qMin(tone->position + 1, TONE_SAMPLE_FRAMES);
+            samples[2 * i] = sample;
+            samples[2 * i + 1] = sample;
+        }
+    }
+
     int position = 0;
+    Playback playback{ ma_format_f32, &Tone::fill, this };
 };
 
 #else
@@ -131,33 +146,10 @@ public:
 constexpr float OWN_SOUND_LEVEL = 0.02f;
 const char WHOLE_DEVICE_KEY[] = "audio/stream_sound_from_whole_device";
 
-// quiet noise in bursts, played and recorded as this program's own sound the way the voice backend does
 class OwnSound
 {
 public:
-    OwnSound()
-    {
-        ma_device_config config = ma_device_config_init(ma_device_type_playback);
-        config.playback.format = ma_format_s16;
-        config.playback.channels = Audio::AUDIO_CHANNELS;
-        config.sampleRate = Audio::AUDIO_SAMPLE_RATE;
-        config.dataCallback = &OwnSound::fill;
-        config.pUserData = this;
-        const ma_backend backends[] = { ma_backend_wasapi };
-        hasContext = ma_context_init(backends, 1, nullptr, &context) == MA_SUCCESS;
-        opened = hasContext && ma_device_init(&context, &config, &device) == MA_SUCCESS;
-        playing = opened && ma_device_start(&device) == MA_SUCCESS;
-    }
-
-    ~OwnSound()
-    {
-        if (opened)
-            ma_device_uninit(&device);
-        if (hasContext)
-            ma_context_uninit(&context);
-    }
-
-    [[nodiscard]] bool isPlaying() const { return playing; }
+    [[nodiscard]] bool isPlaying() const { return playback.isPlaying(); }
 
     static constexpr double MEAN_SQUARE_WHILE_ON = OWN_SOUND_LEVEL * 32768.0 * OWN_SOUND_LEVEL * 32768.0;
 
@@ -181,11 +173,7 @@ private:
     std::mt19937 random{ 7 };
     std::normal_distribution<float> noise{ 0.0f, OWN_SOUND_LEVEL * 32768.0f };
     qint64 position = 0;
-    ma_context context;
-    bool hasContext = false;
-    ma_device device;
-    bool opened = false;
-    bool playing = false;
+    Playback playback{ ma_format_s16, &OwnSound::fill, this };
 };
 
 double meanSquare(const QList<QByteArray> &frames)
@@ -252,6 +240,8 @@ struct Recording : QObject
         return joined;
     }
 
+    [[nodiscard]] int framesOfSound() const { return static_cast<int>(sound().size()) / Audio::AUDIO_FRAME_SIZE; }
+
     LoopbackCapture capture;
     QList<QByteArray> frames;
     QStringList failures;
@@ -283,6 +273,15 @@ bool hasTone(const QByteArray &pcm)
     return tone > 0.3 * TONE_AMPLITUDE * 32767 && tone > 4 * beside;
 }
 
+[[nodiscard]] bool playTheTone()
+{
+    Tone tone;
+    if (!tone.isPlaying())
+        return false;
+    QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
+    return true;
+}
+
 #ifdef ACHERON_HAVE_PIPEWIRE
 
 const char CANNOT_RUN[] = "This machine cannot run a PipeWire of the test's own.";
@@ -306,8 +305,7 @@ context.objects = [
 ]
 )";
 
-// a private PipeWire with a session manager that manages no devices; while it lives this process
-// captures from it
+// while it lives, this process connects to it instead of the desktop's PipeWire
 class OwnPipeWire
 {
 public:
@@ -376,14 +374,10 @@ private:
 
 QByteArray toneAsPcm(int channels, int onlyOn = -1)
 {
-    constexpr int LENGTH = TONE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
-    constexpr float FADE = TONE_FADE_MS * Audio::AUDIO_SAMPLE_RATE / 1000;
-
-    QByteArray pcm(LENGTH * channels * Audio::AUDIO_SAMPLE_BYTES, '\0');
+    QByteArray pcm(TONE_SAMPLE_FRAMES * channels * Audio::AUDIO_SAMPLE_BYTES, '\0');
     auto *samples = reinterpret_cast<qint16 *>(pcm.data());
-    for (int i = 0; i < LENGTH; i++) {
-        const float envelope = qMin(1.0f, qMin(i, LENGTH - i) / FADE);
-        const auto sample = static_cast<qint16>(32767 * TONE_AMPLITUDE * envelope * std::sin(2 * std::numbers::pi * TONE_HZ * i / Audio::AUDIO_SAMPLE_RATE));
+    for (int i = 0; i < TONE_SAMPLE_FRAMES; i++) {
+        const auto sample = static_cast<qint16>(32767 * toneAt(i));
         for (int channel = 0; channel < channels; channel++)
             samples[channels * i + channel] = onlyOn < 0 || onlyOn == channel ? sample : 0;
     }
@@ -455,26 +449,21 @@ void TestLoopbackCapture::whatThisProgramPlaysIsCaptured()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
     Recording own;
-    own.capture.start(self, LoopbackCapture::Scope::ProcessTree);
+    own.capture.start(thisProcess(), LoopbackCapture::Scope::ProcessTree);
     QTest::qWait(CAPTURE_STARTS_MS);
     own.capture.stop();
-    own.capture.start(self, LoopbackCapture::Scope::ProcessTree);
+    own.capture.start(thisProcess(), LoopbackCapture::Scope::ProcessTree);
     QTest::qWait(CAPTURE_STARTS_MS);
 
-    Tone tone;
-    if (!tone.isPlaying())
+    if (!playTheTone())
         QSKIP(CANNOT_PLAY);
-    QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
     own.capture.stop();
 
     QVERIFY2(own.failures.isEmpty(), qPrintable(own.failures.join(' ')));
     QVERIFY(own.everyFrameIsWhole());
-    const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
-    const int framesOfSound = static_cast<int>(own.sound().size()) / Audio::AUDIO_FRAME_SIZE;
-    QVERIFY2(framesOfSound >= framesOfTone - 2 && framesOfSound <= framesOfTone + 2, qPrintable(QString::number(framesOfSound)));
+    QVERIFY2(qAbs(own.framesOfSound() - FRAMES_OF_TONE) <= 2, qPrintable(QString::number(own.framesOfSound())));
     QVERIFY(hasTone(own.sound()));
 }
 
@@ -483,18 +472,15 @@ void TestLoopbackCapture::everythingButThisProgramLeavesItsToneOut()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
     Recording own;
     Recording others;
-    own.capture.start(self, LoopbackCapture::Scope::ProcessTree);
-    others.capture.start(self, LoopbackCapture::Scope::AllButProcessTree);
+    own.capture.start(thisProcess(), LoopbackCapture::Scope::ProcessTree);
+    others.capture.start(thisProcess(), LoopbackCapture::Scope::AllButProcessTree);
     QTest::qWait(CAPTURE_STARTS_MS);
 
-    Tone tone;
-    if (!tone.isPlaying())
+    if (!playTheTone())
         QSKIP(CANNOT_PLAY);
-    QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
     own.capture.stop();
     others.capture.stop();
 
@@ -521,17 +507,13 @@ void TestLoopbackCapture::theWholeDeviceLeavesOutWhatThisProgramPlays()
     if (!own.isPlaying())
         QSKIP(CANNOT_PLAY);
     Recording everything;
-    everything.capture.start(static_cast<quint32>(QCoreApplication::applicationPid()), LoopbackCapture::Scope::AllButProcessTree);
+    everything.capture.start(thisProcess(), LoopbackCapture::Scope::AllButProcessTree);
     QTest::qWait(ALIGNED_AFTER_MS);
     const qsizetype aligned = everything.frames.size();
     QTest::qWait(MEASURED_FOR_MS);
     const qsizetype measured = everything.frames.size();
-    {
-        Tone tone;
-        if (!tone.isPlaying())
-            QSKIP(CANNOT_PLAY);
-        QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
-    }
+    if (!playTheTone())
+        QSKIP(CANNOT_PLAY);
     everything.capture.stop();
 
     QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
@@ -552,24 +534,21 @@ void TestLoopbackCapture::aProcessThatDoesNotExistHasNoSound()
     SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    constexpr quint32 NOBODY = 0x7FFFFFF0;
     QVERIFY(!processExists(NOBODY));
 
     Recording nobody;
     nobody.capture.start(NOBODY, LoopbackCapture::Scope::ProcessTree);
     QTest::qWait(CAPTURE_STARTS_MS);
 
-    Tone tone;
-    if (!tone.isPlaying())
+    if (!playTheTone())
         QSKIP(CANNOT_PLAY);
-    QTest::qWait(TONE_MS + SOUND_ARRIVES_MS);
     nobody.capture.stop();
 
     QVERIFY2(nobody.failures.isEmpty(), qPrintable(nobody.failures.join(' ')));
     QVERIFY(nobody.everyFrameIsWhole());
     QVERIFY(nobody.sound().isEmpty());
 #ifndef Q_OS_WIN
-    QVERIFY2(nobody.frames.size() >= TONE_MS / Audio::AUDIO_FRAME_DURATION_MS - 2, qPrintable(QString::number(nobody.frames.size())));
+    QVERIFY2(nobody.frames.size() >= FRAMES_OF_TONE - 2, qPrintable(QString::number(nobody.frames.size())));
 #endif
 }
 
@@ -577,16 +556,15 @@ void TestLoopbackCapture::startingAndStoppingLeavesNoThreadBehind()
 {
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
-    const auto startAndStop = [self] {
+    const auto startAndStop = [] {
         LoopbackCapture capture;
         for (int wait = 0; wait <= 30; wait += 10) {
-            capture.start(self, LoopbackCapture::Scope::AllButProcessTree);
+            capture.start(thisProcess(), LoopbackCapture::Scope::AllButProcessTree);
             QTest::qWait(wait);
             capture.stop();
         }
-        capture.start(self, LoopbackCapture::Scope::ProcessTree);
+        capture.start(thisProcess(), LoopbackCapture::Scope::ProcessTree);
     };
 
     startAndStop();
@@ -603,9 +581,9 @@ void TestLoopbackCapture::startingAndStoppingLeavesNoThreadBehind()
 
 void TestLoopbackCapture::thisProgramIsNotAmongThePlayingPrograms()
 {
+    SKIP_UNLESS_HARDWARE_IS_ASKED_FOR();
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
 
     Tone tone;
     if (!tone.isPlaying())
@@ -620,7 +598,7 @@ void TestLoopbackCapture::thisProgramIsNotAmongThePlayingPrograms()
 
     QCOMPARE(again.size(), programs.size());
     for (int i = 0; i < programs.size(); i++) {
-        QVERIFY(programs[i].processId != self);
+        QVERIFY(programs[i].processId != thisProcess());
         QCOMPARE(again[i].processId, programs[i].processId);
         QCOMPARE(again[i].name, programs[i].name);
         QVERIFY(i == 0 || programs[i - 1].name <= programs[i].name);
@@ -633,7 +611,6 @@ void TestLoopbackCapture::whatALoopbackPlaysAgainIsLeftOut()
 {
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    constexpr quint32 NOBODY = 0x7FFFFFF0;
     constexpr int LOOPBACK_DELAY_MS = 100;
 
     OwnPipeWire own;
@@ -669,9 +646,7 @@ void TestLoopbackCapture::whatALoopbackPlaysAgainIsLeftOut()
     QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
     QVERIFY2(chain.failures.isEmpty(), qPrintable(chain.failures.join(' ')));
     QVERIFY(everything.everyFrameIsWhole());
-    const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
-    const int framesOfSound = static_cast<int>(everything.sound().size()) / Audio::AUDIO_FRAME_SIZE;
-    QVERIFY2(framesOfSound >= framesOfTone - 2 && framesOfSound <= framesOfTone + 2, qPrintable(QString::number(framesOfSound)));
+    QVERIFY2(qAbs(everything.framesOfSound() - FRAMES_OF_TONE) <= 2, qPrintable(QString::number(everything.framesOfSound())));
     QVERIFY(hasTone(everything.sound()));
     QVERIFY(chain.sound().isEmpty());
 }
@@ -680,14 +655,13 @@ void TestLoopbackCapture::framesComeEvenlyHoweverLongTheGraphsCycle()
 {
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    constexpr quint32 NOBODY = 0x7FFFFFF0;
+    const QString longestQuantum = QStringLiteral("8192");
 
     OwnPipeWire own;
     if (!own.running)
         QSKIP(CANNOT_RUN);
-    // PipeWire's longest cycle: 171 ms of sound at a time
-    own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings"), QStringLiteral("0"), QStringLiteral("clock.force-quantum"), QStringLiteral("8192") });
-    QVERIFY(own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings") }).contains("key:'clock.force-quantum' value:'8192'"));
+    own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings"), QStringLiteral("0"), QStringLiteral("clock.force-quantum"), longestQuantum });
+    QVERIFY(own.ask(QStringLiteral("pw-metadata"), { QStringLiteral("-n"), QStringLiteral("settings") }).contains(QStringLiteral("key:'clock.force-quantum' value:'%1'").arg(longestQuantum).toLatin1()));
 
     std::mutex mutex;
     QElapsedTimer clock;
@@ -713,17 +687,11 @@ void TestLoopbackCapture::framesComeEvenlyHoweverLongTheGraphsCycle()
 
     const std::lock_guard lock(mutex);
     QVERIFY2(everything.failures.isEmpty(), qPrintable(everything.failures.join(' ')));
-    const int framesOfTone = TONE_MS / Audio::AUDIO_FRAME_DURATION_MS;
-    QVERIFY2(soundSentAt.size() > framesOfTone / 2 && soundSentAt.size() <= framesOfTone + 2, qPrintable(QString::number(soundSentAt.size())));
+    QVERIFY2(soundSentAt.size() > FRAMES_OF_TONE / 2 && soundSentAt.size() <= FRAMES_OF_TONE + 2, qPrintable(QString::number(soundSentAt.size())));
     qint64 longestWait = 0;
     for (int i = 1; i < sentAt.size(); i++) {
         if (sentAt[i - 1] >= soundSentAt.first() && sentAt[i] <= soundSentAt.last())
             longestWait = qMax(longestWait, sentAt[i] - sentAt[i - 1]);
-    }
-    {
-        QString gaps;
-        for (int i = 1; i < sentAt.size(); i++)
-            gaps += QString::number(sentAt[i] - sentAt[i - 1]) + ' ';
     }
     QVERIFY2(longestWait < StreamAudio::SOUND_GONE_MS / 2, qPrintable(QString::number(longestWait)));
 }
@@ -732,7 +700,6 @@ void TestLoopbackCapture::surroundSoundIsMixedDownToBothSides()
 {
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    constexpr quint32 NOBODY = 0x7FFFFFF0;
     constexpr double FULL = TONE_AMPLITUDE * 32767;
     const QString surround = QStringLiteral("FL,FR,FC,LFE,RL,RR");
 
@@ -752,7 +719,7 @@ void TestLoopbackCapture::surroundSoundIsMixedDownToBothSides()
         return played && everything.failures.isEmpty() ? everything.sound() : QByteArray();
     };
 
-    // dialogue is on the centre, which stereo has on both sides at 0.71 of its level
+    // stereo carries the centre on both sides at 0.71 of its level
     const QByteArray centre = heard(toneAsPcm(6, surround.split(QLatin1Char(',')).indexOf(QStringLiteral("FC"))), surround);
     for (int side = 0; side < 2; side++) {
         QVERIFY(hasTone(oneSideOf(centre, side)));
@@ -768,7 +735,7 @@ void TestLoopbackCapture::startingWithNoFileLeftToOpenFails()
 {
     if (!Audio::processLoopbackAvailable())
         QSKIP(CANNOT_CAPTURE);
-    const auto self = static_cast<quint32>(QCoreApplication::applicationPid());
+    const quint32 self = thisProcess();
 
     rlimit files = {};
     QCOMPARE(getrlimit(RLIMIT_NOFILE, &files), 0);

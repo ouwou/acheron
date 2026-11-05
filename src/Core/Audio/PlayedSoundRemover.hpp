@@ -16,9 +16,7 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-// takes what this program played back out of a capture of the whole output device, which is all Windows
-// before 10 can capture. each playback stream is found in the capture by cross-correlation, then
-// subtracted at that delay with a fitted gain: exact while the device mixes at 48 kHz without effects
+// the subtraction is exact only while the device mixes at 48 kHz without effects
 class PlayedSoundRemover
 {
 public:
@@ -32,14 +30,9 @@ public:
 
     // `stereo` is 48 kHz interleaved, its first frame captured at `capturedAt` (PlayedSound::now's clock)
     void remove(float *stereo, int frames, qint64 capturedAt);
-    // the capture skipped, so every delay found is wrong
-    void startOver();
+    void forgetDelays();
 
-    // how many frames later a stream's sound shows up in the capture, once found
-    [[nodiscard]] std::optional<qint64> delayOf(const std::shared_ptr<PlayedSound> &sound) const;
-
-    static constexpr int WINDOW_FRAMES = 9600;
-    static constexpr qint64 LONGEST_DELAY_MS = 500;
+    [[nodiscard]] std::optional<qint64> framesLateOf(const std::shared_ptr<PlayedSound> &sound) const;
 
 private:
     struct Tracked
@@ -52,12 +45,13 @@ private:
     };
 
     void follow();
-    void align(Tracked &tracked);
+    void align(Tracked &stream);
     [[nodiscard]] float capturedAt(qint64 frame, int channel) const;
 
     Sources sources;
     std::vector<Tracked> tracked;
     std::vector<float> captured;
+    std::vector<float> playedBlock;
     qint64 capturedEnd = 0;
     qint64 capturedEndTime = 0;
     qint64 framesSinceAlignment = 0;

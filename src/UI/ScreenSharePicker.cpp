@@ -2,7 +2,6 @@
 
 #include "Core/Audio/LoopbackCapture.hpp"
 #include "Core/Media/CodecSupport.hpp"
-#include "Core/Video/ScreenCapture.hpp"
 #include "UI/CaptureMethodCombo.hpp"
 
 #include <QCheckBox>
@@ -37,6 +36,7 @@ const char *const HEIGHT_KEY = "video/share_height";
 const char *const FRAMERATE_KEY = "video/share_framerate";
 const char *const AUDIO_KEY = "video/share_audio";
 
+constexpr QSize THUMBNAIL_SIZE(168, 94);
 constexpr int SOURCE_COLUMNS = 3;
 constexpr int SOURCE_GAP = 12;
 constexpr int SOURCE_LABEL_HEIGHT = 22;

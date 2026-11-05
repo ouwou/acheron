@@ -22,6 +22,8 @@ constexpr int LARGEST_NONCE_SIZE = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
 static_assert(crypto_aead_aes256gcm_ABYTES == TAG_SIZE);
 static_assert(crypto_aead_xchacha20poly1305_ietf_ABYTES == TAG_SIZE);
 static_assert(crypto_aead_aes256gcm_NPUBBYTES <= LARGEST_NONCE_SIZE);
+static_assert(crypto_aead_aes256gcm_KEYBYTES == VoiceEncryption::KEY_SIZE);
+static_assert(crypto_aead_xchacha20poly1305_ietf_KEYBYTES == VoiceEncryption::KEY_SIZE);
 
 } // namespace
 
@@ -57,7 +59,7 @@ bool VoiceEncryption::isModeAvailable(EncryptionMode mode)
 
 bool VoiceEncryption::seal(PacketBuffer &packet, int clearSize)
 {
-    if (clearSize < 0 || clearSize > packet.size() || packet.tailroom() < TRAILER_SIZE)
+    if (m_key.size() != KEY_SIZE || clearSize < 0 || clearSize > packet.size() || packet.tailroom() < TRAILER_SIZE)
         return false;
 
     uint8_t nonce[LARGEST_NONCE_SIZE] = {};
@@ -92,7 +94,7 @@ bool VoiceEncryption::seal(PacketBuffer &packet, int clearSize)
 
 bool VoiceEncryption::open(PacketBuffer &packet, int clearSize)
 {
-    if (clearSize < 0 || packet.size() < clearSize + TRAILER_SIZE)
+    if (m_key.size() != KEY_SIZE || clearSize < 0 || packet.size() < clearSize + TRAILER_SIZE)
         return false;
 
     uint8_t nonce[LARGEST_NONCE_SIZE] = {};

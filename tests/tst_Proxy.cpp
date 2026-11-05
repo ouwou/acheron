@@ -20,6 +20,7 @@
 #include "Core/Snowflake.hpp"
 #include "Discord/Voice/PacketBuffer.hpp"
 #include "Discord/Voice/Socks5UdpAssociation.hpp"
+#include "PacketBytes.hpp"
 
 #include <QHostAddress>
 #include <QNetworkAccessManager>
@@ -35,6 +36,8 @@ using Acheron::Core::ProxyConfig;
 using Acheron::Core::Snowflake;
 using Acheron::Discord::Voice::PacketBuffer;
 using Acheron::Discord::Voice::Socks5UdpAssociation;
+using PacketBytes::bytesOf;
+using PacketBytes::contentsOf;
 
 Q_DECLARE_METATYPE(ProxyConfig)
 
@@ -116,16 +119,6 @@ QByteArray buildDatagram(quint8 fragment, quint8 addressType, const QByteArray &
     datagram.append(reinterpret_cast<const char *>(&portRaw), 2);
     datagram.append(payload);
     return datagram;
-}
-
-std::span<const uint8_t> bytesOf(const QByteArray &bytes)
-{
-    return { reinterpret_cast<const uint8_t *>(bytes.constData()), static_cast<size_t>(bytes.size()) };
-}
-
-QByteArray contentsOf(const PacketBuffer &packet)
-{
-    return QByteArray(reinterpret_cast<const char *>(packet.data()), packet.size());
 }
 
 QByteArray encapsulate(const QByteArray &payload, const QHostAddress &destination, quint16 port)
@@ -932,9 +925,7 @@ void TestProxy::encapsulateRefusesUnknownDestination()
 
     const Header header = decodeHeader(datagram);
     QVERIFY(header.valid);
-    QVERIFY(header.destination.isNull()
-            || header.destination == QHostAddress(QHostAddress::AnyIPv4)
-            || header.destination == QHostAddress(QHostAddress::AnyIPv6));
+    QVERIFY(header.destination.isNull() || header.destination == QHostAddress(QHostAddress::AnyIPv4) || header.destination == QHostAddress(QHostAddress::AnyIPv6));
 }
 
 void TestProxy::wrapWritesIntoHeadroomWithoutMovingPayload_data()

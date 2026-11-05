@@ -24,13 +24,11 @@ namespace Core {
 namespace Video {
 namespace Win {
 
-// Windows 10 1903 and ffmpeg 8.1
 [[nodiscard]] bool graphicsCaptureUsable();
 void ruleOutGraphicsCapture();
 
-// a read doesnt return until the source shows something new, which a minimised window never does,
-// and ffmpeg cant cancel it. so an unwanted capture is abandoned, and its thread frees it when the
-// read returns
+// a read doesnt return until the source shows something new, which a minimised window never does, and
+// ffmpeg cant cancel it. so an unwanted capture is abandoned, and its thread frees it when the read returns
 class GraphicsCaptureSession
 {
 public:
@@ -40,7 +38,7 @@ public:
         Ended,
     };
 
-    static std::shared_ptr<GraphicsCaptureSession> start(const QByteArray &chain, const QByteArray &adapter, int *error);
+    static std::shared_ptr<GraphicsCaptureSession> start(const QByteArray &chain, std::optional<int> adapter, int *error);
     ~GraphicsCaptureSession();
 
     void abandon();

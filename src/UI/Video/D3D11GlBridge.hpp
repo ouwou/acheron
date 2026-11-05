@@ -9,8 +9,8 @@
 #include <memory>
 #include <utility>
 
-struct AVBufferRef;
-struct AVFrame;
+#include "Core/Media/FfmpegPointers.hpp"
+
 struct ID3D11Fence;
 struct ID3D11Texture2D;
 struct ID3D11VideoProcessor;
@@ -51,7 +51,7 @@ private:
     void releaseTarget();
 
     std::unique_ptr<Wgl> wgl;
-    AVBufferRef *hardwareDevice = nullptr;
+    Core::Media::BufferPointer hardwareDevice;
     void *interopDevice = nullptr;
     // Windows 10 and later
     ID3D11Fence *fence = nullptr;

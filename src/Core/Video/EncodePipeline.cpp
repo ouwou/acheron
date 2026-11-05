@@ -34,6 +34,11 @@ int usableBitrate(std::optional<int> wanted, std::optional<int> most)
     return std::max(most ? std::min(bitrate, *most) : bitrate, MIN_BITRATE);
 }
 
+QString noEncoderFor(Discord::Voice::VideoCodec codec)
+{
+    return EncodePipeline::tr("No %1 encoder works on this machine.").arg(Discord::Voice::videoCodecName(codec));
+}
+
 QImage PreviewMaker::make(const AVFrame *frame)
 {
     const AVFrame *picture = frame;
@@ -53,10 +58,10 @@ QImage PreviewMaker::make(const AVFrame *frame)
     return scaled ? image : QImage();
 }
 
-void EncodeCounters::deliver(std::vector<Discord::Voice::EncodedVideoFrame> &encoded, EncodePipeline *pipeline, int layer)
+void EncodeCounters::deliver(std::vector<Discord::Voice::EncodedVideoFrame> &fromOnePicture, EncodePipeline *pipeline, int layer)
 {
-    framesDropped += encoded.empty() ? 1 : 0;
-    for (Discord::Voice::EncodedVideoFrame &each : encoded) {
+    framesDropped += fromOnePicture.empty() ? 1 : 0;
+    for (Discord::Voice::EncodedVideoFrame &each : fromOnePicture) {
         framesEncoded++;
         encodedLately++;
         bytesLately += each.data.size();

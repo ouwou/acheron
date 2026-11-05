@@ -92,7 +92,7 @@ public:
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
 
-    // as the official client does, once per private channel
+    // sends CALL_CONNECT once per private channel, as the official client does
     void noteChannelSelected(Snowflake channelId);
 
     [[nodiscard]] QList<Discord::Ban> observedBans(Snowflake guildId) const;

@@ -18,6 +18,25 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
+namespace {
+
+quint64 speakerKey(quint32 source, quint32 ssrc)
+{
+    return (quint64(source) << 32) | ssrc;
+}
+
+quint32 speakerSource(quint64 key)
+{
+    return static_cast<quint32>(key >> 32);
+}
+
+quint32 speakerSsrc(quint64 key)
+{
+    return static_cast<quint32>(key);
+}
+
+} // namespace
+
 AudioPipeline::AudioPipeline(QObject *parent)
     : QObject(parent)
 {
@@ -111,7 +130,7 @@ void AudioPipeline::stopCapture()
 
 void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData)
 {
-    onSourceAudioReceived(0, ssrc, sequence, timestamp, opusData);
+    onSourceAudioReceived(VOICE_CONNECTION_SOURCE, ssrc, sequence, timestamp, opusData);
 }
 
 void AudioPipeline::setSourceVolume(quint32 source, float volume)
@@ -122,12 +141,12 @@ void AudioPipeline::setSourceVolume(quint32 source, float volume)
 void AudioPipeline::removeSource(quint32 source)
 {
     sourceVolumes.remove(source);
-    std::erase_if(speakers, [source](const auto &entry) { return (entry.first >> 32) == source; });
+    std::erase_if(speakers, [source](const auto &entry) { return speakerSource(entry.first) == source; });
 }
 
 void AudioPipeline::onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t /*timestamp*/, const QByteArray &opusData)
 {
-    const quint64 key = (quint64(source) << 32) | ssrc;
+    const quint64 key = speakerKey(source, ssrc);
     auto it = speakers.find(key);
     if (it == speakers.end()) {
         SpeakerState state;
@@ -159,7 +178,7 @@ void AudioPipeline::removeUser(Snowflake userId)
 {
     for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
         if (it.value() == userId) {
-            speakers.erase(it.key());
+            speakers.erase(speakerKey(VOICE_CONNECTION_SOURCE, it.key()));
             it = ssrcToUser.erase(it);
         } else {
             ++it;
@@ -349,8 +368,8 @@ void AudioPipeline::onMixTick()
     QVector<std::pair<QByteArray, float>> streams;
 
     for (auto it = speakers.begin(); it != speakers.end(); ++it) {
-        const quint32 source = static_cast<quint32>(it->first >> 32);
-        const quint32 ssrc = static_cast<quint32>(it->first);
+        const quint32 source = speakerSource(it->first);
+        const quint32 ssrc = speakerSsrc(it->first);
         SpeakerState &state = it->second;
 
         QByteArray pcm;
@@ -379,7 +398,7 @@ void AudioPipeline::onMixTick()
             continue;
 
         // rms before gain
-        auto userIt = source == 0 ? ssrcToUser.constFind(ssrc) : ssrcToUser.constEnd();
+        auto userIt = source == VOICE_CONNECTION_SOURCE ? ssrcToUser.constFind(ssrc) : ssrcToUser.constEnd();
         Snowflake userId;
         if (userIt != ssrcToUser.constEnd())
             userId = userIt.value();
@@ -401,7 +420,7 @@ void AudioPipeline::onMixTick()
         float gain = 1.0f;
         if (userId.isValid())
             gain = userVolumes.value(userId, 1.0f);
-        else if (source != 0)
+        else if (source != VOICE_CONNECTION_SOURCE)
             gain = sourceVolumes.value(source, 1.0f);
 
         streams.append({ pcm, gain });

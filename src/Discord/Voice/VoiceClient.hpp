@@ -55,6 +55,8 @@ struct LocalVideoDescription
     int maxFramerate = 30;
     int maxBitrateBps = 0;
     std::optional<int> secondLayerMaxBitrateBps;
+
+    bool operator==(const LocalVideoDescription &other) const = default;
 };
 
 struct VideoSendStats
@@ -76,7 +78,7 @@ struct VideoSendStats
     std::optional<quint64> acknowledgedBps;
 };
 
-// as the official client declares with simulcast on. a viewer of a single camera receives the second
+// as the official client declares them with simulcast on; a viewer of a single camera receives the second
 [[nodiscard]] QList<StreamDescription> cameraStreams(bool withSecondLayer);
 
 class VoiceClient : public QObject
@@ -127,9 +129,9 @@ public:
     void setVideoPlan(const MediaSinkWants &wants, const QSet<quint32> &deliver);
 
     void requestVideoKeyframeFrom(Core::Snowflake userId);
-    void requestVideoKeyframeFromEveryone();
-
     void withdrawVideoCodec(VideoCodec codec);
+    // for other threads, as long as the client lives
+    [[nodiscard]] std::function<void()> queuedKeyframeRequestFrom(Core::Snowflake userId);
     [[nodiscard]] std::function<void(VideoCodec)> queuedCodecWithdrawal();
 
     void offerVideoEncoding(const QList<VideoCodec> &encodable);
@@ -148,8 +150,7 @@ signals:
     void disconnected();
     void reconnecting();
 
-    // zero where the sender doesnt say
-    void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, int maxWidth, int maxHeight, int maxFramerate);
+    void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, std::optional<QSize> maxSize, std::optional<int> maxFramerate);
     void remoteVideoLayersChanged(Acheron::Core::Snowflake userId, const QList<Acheron::Discord::Voice::VideoLayer> &layers);
     void videoStatsUpdated(const Acheron::Discord::Voice::VideoReceiveStats &stats);
 
@@ -158,12 +159,11 @@ signals:
     void videoSendLayersKnown(const QList<int> &qualities);
     void videoKeyframeRequested(int quality);
     void videoReceiversChanged(int receivers, int quality);
-    // `pixelCount` is zero when not said
-    void videoWantsReceived(int want, int pixelCount, int quality);
+    void videoWantsReceived(int want, std::optional<int> pixelCount, int quality);
     void videoSendStatsUpdated(const Acheron::Discord::Voice::VideoSendStats &stats);
 
     void speakingReceived(const Acheron::Discord::Voice::SpeakingData &data);
-    void clientConnected(const Acheron::Discord::Voice::ClientConnectData &data);
+    void videoStateReceived(const Acheron::Discord::Voice::RemoteVideoState &remote);
     void clientReachedServer(Acheron::Core::Snowflake userId);
     void clientDisconnected(Acheron::Core::Snowflake userId);
 
@@ -180,7 +180,7 @@ private slots:
     void onMediaSinkWants(const Acheron::Discord::Voice::MediaSinkWants &wants);
     void onSpeaking(const Acheron::Discord::Voice::SpeakingData &data);
     void onClientsConnect(const QStringList &userIds);
-    void onClientConnect(const Acheron::Discord::Voice::ClientConnectData &data);
+    void onVideoState(const Acheron::Discord::Voice::RemoteVideoState &remote);
     void onClientDisconnect(Acheron::Core::Snowflake userId);
     void onGatewayResumed();
     void onIpDiscovered(const QString &ip, int port);
@@ -199,9 +199,10 @@ private:
     void onPacket(PacketPool::Handle packet);
     void receiveRtcp(PacketPool::Handle packet);
     void receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet);
-    [[nodiscard]] bool openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet);
+    // the extension elements, valid as long as `packet` is
+    [[nodiscard]] std::optional<std::span<const uint8_t>> openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet);
     [[nodiscard]] bool canSendMedia() const { return currentState == State::Connected && encryption && udpTransport; }
-    void noteRtpExtensions(std::span<const uint8_t> extensions);
+    bool sealAndSend(PacketBuffer &packet, int clearSize);
     bool daveDecryptAudio(quint32 ssrc, PacketPool::Handle &packet);
 
     // as the official client, a codec neither encoded nor decoded any more is left out
@@ -260,3 +261,5 @@ private:
 Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoReceiveStats)
 Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoSendStats)
 Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoCodec)
+Q_DECLARE_METATYPE(std::optional<QSize>)
+Q_DECLARE_METATYPE(std::optional<int>)

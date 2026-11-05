@@ -11,14 +11,13 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-// the last few seconds one playback stream of this program played, so they can be taken back out of a
-// capture of the whole output device
 class PlayedSound
 {
 public:
     static constexpr int KEPT_FRAMES = 1 << 17;
+    static constexpr qint64 TICKS_PER_SECOND = 10'000'000;
 
-    // in 100 ns of the steady clock, which on Windows is the performance counter WASAPI stamps captures with
+    // the steady clock, which on Windows is the performance counter WASAPI stamps captures with
     [[nodiscard]] static qint64 now();
 
     // the frames that follow the last ones recorded, handed to the device at `handedOverAt`
@@ -27,8 +26,7 @@ public:
     // index of the frame handed to the device at `time`, going by the latest recording
     [[nodiscard]] qint64 frameAt(qint64 time) const;
     [[nodiscard]] qint64 recordedEnd() const;
-    // false unless every frame in [first, first + frames) is still kept
-    bool read(qint64 first, int frames, float *stereo) const;
+    [[nodiscard]] bool read(qint64 first, int frames, float *stereo) const;
 
 private:
     mutable std::mutex mutex;
@@ -37,7 +35,6 @@ private:
     qint64 lastHandedOverAt = 0;
 };
 
-// what each playback stream of this program is playing now
 class PlayedSounds
 {
 public:

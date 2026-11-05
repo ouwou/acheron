@@ -103,8 +103,7 @@ private:
     void confirmAndLeaveGuild(Core::Snowflake accountId, Core::Snowflake guildId);
     [[nodiscard]] QList<GuildSettingsSection> guildSettingsSections(Core::Snowflake accountId, Core::Snowflake guildId);
     void openGuildSettings(Core::Snowflake accountId, Core::Snowflake guildId, GuildSettingsSection section);
-    // `extend` may put entries of its own ahead of the usual ones
-    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos, const std::function<void(QMenu &)> &extend = {});
+    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos, const std::function<void(QMenu &)> &addLeadingEntries = {});
     void selectChannelInTree(Core::Snowflake accountId, Core::Snowflake channelId);
 
 public:

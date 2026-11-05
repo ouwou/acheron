@@ -5,6 +5,8 @@
 
 #include <cstring>
 
+#include "Core/Video/ColourMatrix.hpp"
+
 extern "C" {
 #include <libavfilter/avfilter.h>
 #include <libavfilter/buffersink.h>
@@ -17,17 +19,20 @@ namespace Acheron {
 namespace Core {
 namespace Video {
 
-inline QByteArray softwareScaling(const QSize &size, bool bt601, int format)
+inline QByteArray softwareScaling(const QSize &size, ColourMatrix matrix, int format)
 {
     QByteArray scaling = "scale=w=" + QByteArray::number(size.width()) + ":h=" + QByteArray::number(size.height()) + ":flags=bilinear";
     if (format != AV_PIX_FMT_BGRA)
-        scaling += QByteArray(":out_range=tv:out_color_matrix=") + (bt601 ? "bt601" : "bt709");
+        scaling += QByteArray(":out_range=tv:out_color_matrix=") + (matrix == ColourMatrix::Bt601 ? "bt601" : "bt709");
     return scaling + ",format=" + av_get_pix_fmt_name(static_cast<AVPixelFormat>(format));
 }
 
 inline int assemble(const QByteArray &chain, AVBufferRef *device, AVFilterGraph **graph, AVFilterContext **sink)
 {
     *graph = avfilter_graph_alloc();
+    *sink = nullptr;
+    if (!*graph)
+        return AVERROR(ENOMEM);
     int result = avfilter_graph_create_filter(sink, avfilter_get_by_name("buffersink"), "sink", nullptr, nullptr, *graph);
     if (result >= 0) {
         AVFilterInOut *inputs = nullptr;
@@ -65,13 +70,13 @@ public:
     PictureConverter(const PictureConverter &) = delete;
     PictureConverter &operator=(const PictureConverter &) = delete;
 
-    int convert(AVFrame *picture, const QSize &size, int format, bool bt601, AVFrame *into)
+    int convert(AVFrame *picture, const QSize &size, int format, ColourMatrix matrix, AVFrame *into)
     {
         const QSize from(picture->width, picture->height);
-        if (!graph || from != builtFrom || picture->format != builtFromFormat || size != builtSize || format != builtFormat || bt601 != builtBt601) {
+        if (!graph || from != builtFrom || picture->format != builtFromFormat || size != builtSize || format != builtFormat || matrix != builtMatrix) {
             avfilter_graph_free(&graph);
             source = nullptr;
-            const QByteArray chain = "buffer=video_size=" + QByteArray::number(from.width()) + "x" + QByteArray::number(from.height()) + ":pix_fmt=" + av_get_pix_fmt_name(static_cast<AVPixelFormat>(picture->format)) + ":time_base=1/90000:pixel_aspect=1/1," + softwareScaling(size, bt601, format);
+            const QByteArray chain = "buffer=video_size=" + QByteArray::number(from.width()) + "x" + QByteArray::number(from.height()) + ":pix_fmt=" + av_get_pix_fmt_name(static_cast<AVPixelFormat>(picture->format)) + ":time_base=1/90000:pixel_aspect=1/1," + softwareScaling(size, matrix, format);
             const int built = assemble(chain, nullptr, &graph, &sink);
             if (built < 0)
                 return built;
@@ -83,13 +88,15 @@ public:
             builtFromFormat = picture->format;
             builtSize = size;
             builtFormat = format;
-            builtBt601 = bt601;
+            builtMatrix = matrix;
         }
 
         picture->pts = converted++;
         const int added = av_buffersrc_add_frame_flags(source, picture, AV_BUFFERSRC_FLAG_KEEP_REF);
         return added < 0 ? added : av_buffersink_get_frame(sink, into);
     }
+
+    int scaleBgra(AVFrame *bgra, const QSize &size, AVFrame *into) { return convert(bgra, size, AV_PIX_FMT_BGRA, ColourMatrix::Bt709, into); }
 
 private:
     AVFilterGraph *graph = nullptr;
@@ -99,7 +106,7 @@ private:
     int builtFromFormat = -1;
     QSize builtSize;
     int builtFormat = -1;
-    bool builtBt601 = false;
+    ColourMatrix builtMatrix = ColourMatrix::Bt709;
     int64_t converted = 0;
 };
 

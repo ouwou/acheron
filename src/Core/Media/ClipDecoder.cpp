@@ -279,8 +279,7 @@ private:
         const bool hasAlpha = layout && (layout->flags & AV_PIX_FMT_FLAG_ALPHA);
         const QImage::Format wanted = hasAlpha ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32;
 
-        const bool reusable = frame.size() == frameSize && frame.format() == wanted && frame.isDetached();
-        if (!reusable)
+        if (frame.size() != frameSize || frame.format() != wanted)
             frame = RgbScaler::allocate(frameSize, wanted);
         if (!scaler.scale(decoded, frame))
             return false;

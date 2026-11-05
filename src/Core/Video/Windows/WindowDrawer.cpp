@@ -113,14 +113,14 @@ bool WindowDrawer::draw(std::chrono::milliseconds limit, const std::function<boo
     return !drawing && drew;
 }
 
-void PointerPainter::paint(HDC onto, const QSize &size, const QRect &area, HWND onlyOver)
+void PointerPainter::paint(HDC picture, const QSize &pictureSize, const QRect &screenArea, HWND onlyOver)
 {
     CURSORINFO cursor = {};
     cursor.cbSize = sizeof(cursor);
     if (!GetCursorInfo(&cursor) || !(cursor.flags & CURSOR_SHOWING))
         return;
     const QPoint at(cursor.ptScreenPos.x, cursor.ptScreenPos.y);
-    if (!area.contains(at))
+    if (!screenArea.contains(at))
         return;
     if (onlyOver) {
         const HWND under = WindowFromPoint(cursor.ptScreenPos);
@@ -139,7 +139,7 @@ void PointerPainter::paint(HDC onto, const QSize &size, const QRect &area, HWND 
         }
         hotspotOf = cursor.hCursor;
     }
-    DrawIconEx(onto, (at.x() - area.x()) * size.width() / area.width() - hotspot.x(), (at.y() - area.y()) * size.height() / area.height() - hotspot.y(), cursor.hCursor, 0, 0, 0, nullptr, DI_NORMAL);
+    DrawIconEx(picture, (at.x() - screenArea.x()) * pictureSize.width() / screenArea.width() - hotspot.x(), (at.y() - screenArea.y()) * pictureSize.height() / screenArea.height() - hotspot.y(), cursor.hCursor, 0, 0, 0, nullptr, DI_NORMAL);
     GdiFlush();
 }
 
@@ -191,7 +191,6 @@ QImage windowThumbnail(HWND window, const QSize &bound)
     if (!drew)
         return {};
 
-    // a scaled program may draw smaller than it shows
     const QRect outer = fromNative(whole);
     const QRect shown = visibleBounds(window).translated(-outer.topLeft()) & QRect(QPoint(0, 0), outer.size());
     const QSize drawn = drawer->drawn().size();
@@ -209,7 +208,7 @@ bool showsTopLeftOf(const Bitmap &from, const AVFrame *bgra)
     const int columns = std::min(from.size().width(), bgra->width);
     const int rows = std::min(from.size().height(), bgra->height);
     for (int y = 0; y < rows; y++) {
-        if (memcmp(bgra->data[0] + static_cast<qsizetype>(y) * bgra->linesize[0], from.row(y), static_cast<size_t>(columns) * 4) != 0)
+        if (memcmp(bgra->data[0] + static_cast<qsizetype>(y) * bgra->linesize[0], from.row(y), static_cast<size_t>(columns) * RGB32_BYTES_PER_PIXEL) != 0)
             return false;
     }
     return true;

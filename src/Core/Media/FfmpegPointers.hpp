@@ -7,7 +7,9 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavcodec/bsf.h>
 #include <libavformat/avformat.h>
+#include <libavutil/buffer.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 }
@@ -40,7 +42,18 @@ struct InputCloser
 };
 using InputPointer = std::unique_ptr<AVFormatContext, InputCloser>;
 
-// keeps the frame's own buffer when it already holds a writable picture of this format and size
+struct BufferDeleter
+{
+    void operator()(AVBufferRef *buffer) const { av_buffer_unref(&buffer); }
+};
+using BufferPointer = std::unique_ptr<AVBufferRef, BufferDeleter>;
+
+struct BitstreamFilterDeleter
+{
+    void operator()(AVBSFContext *filter) const { av_bsf_free(&filter); }
+};
+using BitstreamFilterPointer = std::unique_ptr<AVBSFContext, BitstreamFilterDeleter>;
+
 [[nodiscard]] inline int prepareWritable(AVFrame *frame, int format, const QSize &size)
 {
     if (frame->buf[0] && frame->format == format && frame->width == size.width() && frame->height == size.height() && av_frame_make_writable(frame) >= 0)

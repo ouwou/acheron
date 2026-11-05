@@ -16,7 +16,7 @@ namespace {
 using Bytes = std::span<const uint8_t>;
 using Payloads = std::vector<std::vector<uint8_t>>;
 
-// as WebRTC: pieces of about equal size, the longer ones last
+// as WebRTC, the longer pieces last
 std::vector<size_t> aboutEqualSizes(size_t total, size_t room)
 {
     const size_t count = (total + room - 1) / room;
@@ -165,7 +165,6 @@ Payloads packetizeVp8(Bytes frame, size_t maxPayloadSize, uint16_t pictureId)
     return payloads;
 }
 
-// laid out as WebRTC's rtp_packetizer_av1.cc does
 constexpr size_t AV1_MOST_COUNTED_ELEMENTS = 3;
 constexpr size_t AV1_AGGREGATION_HEADER_SIZE = 1;
 using namespace Av1;
@@ -313,8 +312,7 @@ Payloads packetizeAv1(Bytes frame, bool keyframe, size_t maxPayloadSize)
     const size_t room = maxPayloadSize - AV1_AGGREGATION_HEADER_SIZE;
     std::vector<Av1Packet> packets = layOutAv1(obus, room);
     if (packets.size() > 1) {
-        // WebRTC evens the packets out by laying the frame out again with packets smaller by a share of the
-        // unused room
+        // as WebRTC, laid out again in packets smaller by a share of the room left unused, to even them out
         size_t unused = 0;
         for (const Av1Packet &packet : packets)
             unused += room - packet.size;

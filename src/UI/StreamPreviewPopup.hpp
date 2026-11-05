@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QFrame>
-#include <QPointer>
 #include <QUrl>
 
 #include "Core/Snowflake.hpp"
@@ -31,7 +30,6 @@ private:
     void placeBeside(const QRect &rowOnScreen);
 
     Core::ImageManager *imageManager;
-    QPointer<Core::StreamPreviews> previews;
     QMetaObject::Connection previewChangedConnection;
     Core::Snowflake accountId;
     QString streamKey;
