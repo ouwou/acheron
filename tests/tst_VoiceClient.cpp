@@ -1075,10 +1075,13 @@ void TestVoiceClient::eachLayerIsAStreamOfItsOwnUnderOneNumbering()
     QCOMPARE(sent.frames, quint64(2));
     QCOMPARE(sent.retransmitted, quint64(1));
     QVERIFY(!sent.receivers);
-    QSet<quint32> reportedOn;
-    for (const ReceivedRtcp::SenderReport &report : std::as_const(call.server.senderReports))
-        reportedOn.insert(report.ssrc);
-    QCOMPARE(reportedOn, QSet<quint32>({ 5000, SECOND_SSRC }));
+    const auto reportedOn = [&call] {
+        QSet<quint32> ssrcs;
+        for (const ReceivedRtcp::SenderReport &report : std::as_const(call.server.senderReports))
+            ssrcs.insert(report.ssrc);
+        return ssrcs;
+    };
+    QTRY_COMPARE(reportedOn(), QSet<quint32>({ 5000, SECOND_SSRC }));
 }
 
 void TestVoiceClient::withoutStreamsFromTheServerTheSsrcsFollowTheAudioOne()
