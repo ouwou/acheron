@@ -39,6 +39,7 @@ public:
     void apply(const Chrome &chrome);
     void setSummary(const QString &text);
     void setOthersToggle(bool available, bool othersHidden);
+    void setUserListShown(bool shown);
 
     [[nodiscard]] bool nonVideoShown() const;
     [[nodiscard]] bool statsShown() const;
@@ -47,6 +48,7 @@ signals:
     void collapseClicked();
     void nonVideoShownChanged(bool shown);
     void othersHiddenChanged(bool hidden);
+    void userListShownChanged(bool shown);
     void statsShownChanged(bool shown);
     void popOutClicked();
     void fullScreenClicked();
@@ -80,6 +82,8 @@ private:
     QPushButton *othersButton;
     bool othersToggleAvailable = false;
     bool barOnly = false;
+    QPushButton *userListButton;
+    bool userListShown = true;
     QPushButton *statsButton;
     QPushButton *popOutButton;
     QPushButton *fullScreenButton;

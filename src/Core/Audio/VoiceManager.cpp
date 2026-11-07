@@ -367,6 +367,7 @@ void VoiceManager::setUserVolume(Snowflake userId, int percent)
         userVolumes.insert(userId, percent);
     saveUserVolume(userId, percent);
     applyUserVolume(userId);
+    emit userPlaybackChanged(userId);
 }
 
 int VoiceManager::userVolume(Snowflake userId) const
@@ -421,6 +422,7 @@ void VoiceManager::setUserMuted(Snowflake userId, bool muted)
         mutedUsers.remove(userId);
     saveUserMuted(userId, muted);
     applyUserVolume(userId);
+    emit userPlaybackChanged(userId);
 }
 
 bool VoiceManager::isUserMuted(Snowflake userId) const
@@ -610,19 +612,12 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                 }
             });
 
-    connect(voiceConnection, &VoiceConnection::speakingReceived,
-            this, [this](const Discord::Voice::SpeakingData &data) {
-                if (!data.userId.hasValue() || !data.userId->isValid())
-                    return;
-                Snowflake userId = data.userId.get();
-                auto it = participants.find(userId);
-                if (it == participants.end())
-                    return;
-                bool wasSpeaking = it->speaking;
-                it->speaking = (data.speaking.get() != 0);
-                if (it->speaking != wasSpeaking)
-                    emit participantSpeakingChanged(userId, it->speaking);
-            });
+    connect(audioPipeline, &AudioPipeline::userSpeakingChanged, this, [this](Snowflake userId, bool speaking) {
+        auto it = participants.find(userId);
+        if (it == participants.end() || std::exchange(it->speaking, speaking) == speaking)
+            return;
+        emit participantSpeakingChanged(userId, speaking);
+    });
 
     connect(audioPipeline, &AudioPipeline::userAudioLevelChanged, this, &VoiceManager::userAudioLevelChanged);
 
@@ -662,7 +657,7 @@ void VoiceManager::feedAudioSourceToPipeline(quint32 source)
         return;
 
     connect(attached.client, &Discord::Voice::VoiceClient::audioReceived, audioPipeline,
-            [ap = audioPipeline, source](quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData) {
+            [ap = audioPipeline, source](quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData, std::optional<int>) {
                 ap->onSourceAudioReceived(source, ssrc, sequence, timestamp, opusData);
             });
     QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, source, volume = attached.volume]() { p->setSourceVolume(source, volume); });

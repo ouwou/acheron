@@ -41,7 +41,6 @@ extern "C" {
 
 using Acheron::Core::Media::BufferPointer;
 using Acheron::Core::Media::FramePointer;
-using Acheron::UI::SPEAKING_RING;
 using Acheron::UI::VideoSurface;
 using namespace TestPictures;
 
@@ -876,7 +875,7 @@ void TestVideoSurface::speakingRingIsDrawn()
     const int right = image.width() - 1;
     const int bottom = image.height() - 1;
     for (const QPoint &onTheRing : { QPoint(0, bottom / 2), QPoint(right, bottom / 2), QPoint(right / 2, 0), QPoint(right / 2, bottom) })
-        QVERIFY2(isNear(image.pixel(onTheRing), SPEAKING_RING), qPrintable(QStringLiteral("%1,%2").arg(onTheRing.x()).arg(onTheRing.y())));
+        QVERIFY2(isNear(image.pixel(onTheRing), surface.speakingRingColor()), qPrintable(QStringLiteral("%1,%2").arg(onTheRing.x()).arg(onTheRing.y())));
     const int inside = qRound(4 * image.devicePixelRatio());
     for (const QPoint &offIt : { QPoint(inside, bottom / 2), QPoint(right - inside, bottom / 2), QPoint(right / 2, inside), QPoint(right / 2, bottom - inside), QPoint(right / 2, bottom / 2) })
         QVERIFY2(isNear(image.pixel(offIt), 255, 255, 255), qPrintable(QStringLiteral("%1,%2").arg(offIt.x()).arg(offIt.y())));
@@ -901,13 +900,13 @@ void TestVideoSurface::aSurfaceHasItsLayerOnlyWhileItHasAPicture()
     surface.setSpeaking(true);
     QImage image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 0, 200, 0));
-    QVERIFY(isNear(image.pixel(1, image.height() / 2), SPEAKING_RING));
+    QVERIFY(isNear(image.pixel(1, image.height() / 2), surface.speakingRingColor()));
     QCOMPARE(layersOf(surface).size(), 0);
 
     present(surface, solidFrame(WHITE, 640, 360));
     image = shot(surface);
     QVERIFY(isNear(image.pixel(image.width() / 2, image.height() / 2), 255, 255, 255));
-    QVERIFY(isNear(image.pixel(1, image.height() / 2), SPEAKING_RING));
+    QVERIFY(isNear(image.pixel(1, image.height() / 2), surface.speakingRingColor()));
     QCOMPARE(layersOf(surface).size(), 1);
 
     surface.clear();

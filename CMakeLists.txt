@@ -400,7 +400,7 @@ if(ACHERON_HAVE_VIDEO)
         src/UI/Call/CallStats.cpp
         src/UI/Call/CallTile.cpp
         src/UI/Call/CallTileModel.cpp
-        src/UI/Call/CallPeopleList.cpp
+        src/UI/Call/CallParticipantList.cpp
         src/UI/Settings/VideoPage.cpp
         src/UI/ScreenSharePicker.cpp
     )

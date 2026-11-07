@@ -167,7 +167,7 @@ signals:
     void clientReachedServer(Acheron::Core::Snowflake userId);
     void clientDisconnected(Acheron::Core::Snowflake userId);
 
-    void audioReceived(quint32 ssrc, quint16 sequence, quint32 timestamp, const QByteArray &opusData);
+    void audioReceived(quint32 ssrc, quint16 sequence, quint32 timestamp, const QByteArray &opusData, std::optional<int> speakingFlags);
 
     void privacyCodeChanged(const QString &code);
 

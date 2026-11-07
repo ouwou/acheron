@@ -24,7 +24,6 @@ VoiceConnection::VoiceConnection(const Discord::Voice::ConnectionParams &params,
     relay(&VoiceClient::disconnected, &VoiceConnection::disconnected);
     relay(&VoiceClient::clientReachedServer, &VoiceConnection::clientReachedServer);
     relay(&VoiceClient::clientDisconnected, &VoiceConnection::clientDisconnected);
-    relay(&VoiceClient::speakingReceived, &VoiceConnection::speakingReceived);
     relay(&VoiceClient::privacyCodeChanged, &VoiceConnection::privacyCodeChanged);
     relay(&VoiceClient::remoteVideoChanged, &VoiceConnection::remoteVideoChanged);
     relay(&VoiceClient::remoteVideoLayersChanged, &VoiceConnection::remoteVideoLayersChanged);

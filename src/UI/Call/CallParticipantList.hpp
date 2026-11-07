@@ -22,17 +22,17 @@ class VoiceManager;
 
 namespace UI {
 
-class CallPersonRow;
+class CallParticipantRow;
 
-class CallPeopleList : public QScrollArea
+class CallParticipantList : public QScrollArea
 {
     Q_OBJECT
 public:
     using NameResolver = std::function<QString(Core::Snowflake)>;
     using AvatarResolver = std::function<QUrl(Core::Snowflake)>;
 
-    CallPeopleList(Core::Audio::VoiceManager *voice, Core::ImageManager *images, Core::Snowflake accountId, NameResolver names, AvatarResolver avatars, QWidget *parent);
-    ~CallPeopleList() override;
+    CallParticipantList(Core::Audio::VoiceManager *voice, Core::ImageManager *images, Core::Snowflake accountId, NameResolver names, AvatarResolver avatars, QWidget *parent);
+    ~CallParticipantList() override;
 
     void refresh();
     [[nodiscard]] int wantedHeight() const;
@@ -44,7 +44,7 @@ signals:
 
 private:
     void onImageFetched(const QUrl &url, const QSize &size, const QPixmap &pixmap);
-    [[nodiscard]] CallPersonRow *rowOf(Core::Snowflake userId) const;
+    [[nodiscard]] CallParticipantRow *rowOf(Core::Snowflake userId) const;
 
     QPointer<Core::Audio::VoiceManager> voice;
     Core::ImageManager *images;
@@ -53,7 +53,7 @@ private:
     AvatarResolver avatars;
     AvatarRequestTracker<Core::Snowflake> avatarTracker;
     QVBoxLayout *rowsLayout;
-    std::map<Core::Snowflake, CallPersonRow *> rows;
+    std::map<Core::Snowflake, CallParticipantRow *> rows;
 };
 
 } // namespace UI

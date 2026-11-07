@@ -18,9 +18,6 @@ namespace UI {
 class GlVideoLayer;
 class VideoFrameStore;
 
-// drawn over video, so it doesnt follow the theme
-inline const QColor SPEAKING_RING(0x23, 0xA5, 0x5A);
-
 class VideoSurface : public QWidget
 {
     Q_OBJECT
@@ -41,6 +38,7 @@ public:
     [[nodiscard]] QString caption() const { return captionText; }
     void setPlaceholder(const QPixmap &avatar);
     void setSpeaking(bool speaking);
+    [[nodiscard]] QColor speakingRingColor() const { return palette().color(QPalette::Highlight); }
 
     void announceGeometry();
 

@@ -149,6 +149,11 @@ CallControlsBar::CallControlsBar(Core::Audio::VoiceManager *voice, StreamBroadca
     bar->addWidget(othersButton);
     connect(othersButton, &QPushButton::clicked, this, &CallControlsBar::othersHiddenChanged);
 
+    userListButton = new QPushButton(this);
+    userListButton->setToolTip(tr("Everyone in the call beside the video, with their volume and mute"));
+    bar->addWidget(userListButton);
+    connect(userListButton, &QPushButton::clicked, this, [this] { emit userListShownChanged(!userListShown); });
+
     statsButton = new QPushButton(tr("Stats"), this);
     statsButton->setCheckable(true);
     bar->addWidget(statsButton);
@@ -174,6 +179,12 @@ void CallControlsBar::setOthersToggle(bool available, bool othersHidden)
     othersButton->setVisible(available && !barOnly);
     othersButton->setChecked(othersHidden);
     othersButton->setText(othersHidden ? tr("Show Others") : tr("Hide Others"));
+}
+
+void CallControlsBar::setUserListShown(bool shown)
+{
+    userListShown = shown;
+    userListButton->setText(shown ? tr("Hide User List") : tr("Show User List"));
 }
 
 bool CallControlsBar::nonVideoShown() const
@@ -211,6 +222,7 @@ void CallControlsBar::apply(const Chrome &chrome)
 
     nonVideoCheck->setVisible(chrome.videoPresent && !barOnly);
     othersButton->setVisible(othersToggleAvailable && !barOnly);
+    userListButton->setVisible(chrome.videoPresent && !barOnly);
     statsButton->setVisible(chrome.videoPresent && !barOnly);
     popOutButton->setVisible(chrome.videoPresent || chrome.poppedOut);
     fullScreenButton->setVisible(chrome.videoPresent || chrome.poppedOut);

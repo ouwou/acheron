@@ -627,14 +627,15 @@ void VoiceClient::receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet)
         return;
     }
 
-    if (!openRtpPayload(rtp, *packet) || packet->size() == 0)
+    const std::optional<std::span<const uint8_t>> extensions = openRtpPayload(rtp, *packet);
+    if (!extensions || packet->size() == 0)
         return;
+    const std::span<const uint8_t> speaker = findRtpExtension(*extensions, SPEAKER_EXTENSION);
+    const std::optional<int> speakingFlags = speaker.empty() ? std::nullopt : std::optional<int>(speaker[0] >> 1);
 
     if (daveSession) {
         // https://daveprotocol.com/#silence-packets
-        const bool isSilence = packet->size() == sizeof(Core::Audio::OPUS_SILENCE) && memcmp(packet->data(), Core::Audio::OPUS_SILENCE, sizeof(Core::Audio::OPUS_SILENCE)) == 0;
-
-        if (!isSilence) {
+        if (!Core::Audio::isOpusSilence(packet->bytes())) {
             if (daveSession->isDaveEnabled()) {
                 if (!daveDecryptAudio(header.ssrc, packet))
                     return;
@@ -644,7 +645,7 @@ void VoiceClient::receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet)
         }
     }
 
-    emit audioReceived(header.ssrc, header.sequence, header.timestamp, QByteArray(reinterpret_cast<const char *>(packet->data()), packet->size()));
+    emit audioReceived(header.ssrc, header.sequence, header.timestamp, QByteArray(reinterpret_cast<const char *>(packet->data()), packet->size()), speakingFlags);
 }
 
 std::optional<std::span<const uint8_t>> VoiceClient::openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet)

@@ -7,6 +7,7 @@
 #include <QVector>
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include <opus.h>
@@ -41,14 +42,14 @@ public:
     explicit AudioPipeline(QObject *parent = nullptr);
     ~AudioPipeline() override;
 
+    void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData, std::optional<int> speakingFlags);
+
 public slots:
     void start(IAudioBackend *backend, bool capturing);
     void stop();
 
     void startCapture();
     void stopCapture();
-
-    void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
 
     void onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
     void setSourceVolume(quint32 source, float volume);
@@ -78,6 +79,7 @@ signals:
     void speakingChanged(bool speaking);
     void audioLevelChanged(float rms);
     void userAudioLevelChanged(Snowflake userId, float rms);
+    void userSpeakingChanged(Snowflake userId, bool speaking);
 
 private slots:
     void onAudioCaptured(const QByteArray &pcmData);
@@ -86,6 +88,9 @@ private slots:
 private:
     bool detectVoiceActivity(const QByteArray &pcmFrame, float &outRms) const;
     void sendTrailingSilence();
+    void noteSpeakingOf(quint32 ssrc, const QByteArray &opusData, std::optional<int> speakingFlags);
+    void expireRemoteSpeaking();
+    void stopSpeaking(Snowflake userId);
     void initializeEncoder();
     void reconfigureNoiseSuppressorChannels();
 
@@ -123,8 +128,12 @@ private:
     QElapsedTimer rmsThrottleTimer;
     QElapsedTimer userRmsThrottleTimer;
     QHash<Snowflake, float> pendingUserRms;
+    QElapsedTimer speakingClock;
+    QHash<Snowflake, qint64> lastVoiceMs;
 
     static constexpr int TRAILING_SILENCE_FRAMES = 5;
+    // packets come every 20 ms while someone talks, so this long without one means they vanished without the closing silence
+    static constexpr qint64 REMOTE_SPEAKING_HOLD_MS = 500;
     static constexpr qint64 RMS_EMIT_INTERVAL_MS = 60;
 };
 
