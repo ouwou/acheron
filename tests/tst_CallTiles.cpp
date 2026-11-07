@@ -50,11 +50,11 @@ private slots:
     void withVideoTheOthersFollowTheCheckbox()
     {
         CallFacts facts = callWith({ { .userId = ALICE, .cameraSending = true }, { BOB } });
-        QVERIFY(planTiles(facts).tiles.contains(TileKey::personOf(BOB)));
+        QVERIFY(planTiles(facts).tiles.contains(TileKey::participantOf(BOB)));
 
         facts.nonVideoShown = false;
         const TilePlan plan = planTiles(facts);
-        QCOMPARE(plan.tiles, QList<TileKey>{ TileKey::personOf(ALICE) });
+        QCOMPARE(plan.tiles, QList<TileKey>{ TileKey::participantOf(ALICE) });
     }
 
     void aDisabledCameraLeavesTheCallWithoutVideo()
@@ -74,7 +74,7 @@ private slots:
         facts.ownCameraShown = true;
         const TilePlan plan = planTiles(facts);
         QCOMPARE(plan.videoCount, 2);
-        QCOMPARE(plan.tiles, (QList<TileKey>{ TileKey::streamOf(SELF), TileKey::personOf(SELF) }));
+        QCOMPARE(plan.tiles, (QList<TileKey>{ TileKey::streamOf(SELF), TileKey::participantOf(SELF) }));
     }
 
     void tilesFillAGrid()

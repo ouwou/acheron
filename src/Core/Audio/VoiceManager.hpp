@@ -140,6 +140,7 @@ signals:
     void participantVoiceStateChanged(Snowflake channelId, Snowflake userId);
     void participantsCleared();
     void userAudioLevelChanged(Snowflake userId, float rms);
+    void userPlaybackChanged(Snowflake userId);
     void privacyCodeChanged(const QString &code);
     void selfAudioChanged();
     void selfAudioToggled();

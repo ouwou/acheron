@@ -39,6 +39,8 @@ VoiceStatusBar::VoiceStatusBar(QWidget *parent) : QWidget(parent)
     setStyleSheet("QWidget { background-color: #1a1a2e; }"
                   "QLabel { background: transparent; }"
                   "QToolButton { background: transparent; border: none; border-radius: 4px; padding: 2px; }"
+                  "QToolButton[popupMode=\"1\"] { padding-right: 12px; }"
+                  "QToolButton::menu-button { border: none; width: 10px; }"
                   "QToolButton:hover { background: rgba(255, 255, 255, 20); }");
 
     auto *layout = new QHBoxLayout(this);

@@ -58,6 +58,8 @@ inline constexpr uint8_t TRANSMISSION_OFFSET_EXTENSION = 2;
 inline constexpr uint8_t ABS_SEND_TIME_EXTENSION = 3;
 inline constexpr uint8_t VIDEO_ORIENTATION_EXTENSION = 4;
 inline constexpr uint8_t TRANSPORT_SEQUENCE_EXTENSION = 5;
+// discord.com/#rtp-hdrext/2018-07-29/speaker on audio: one byte, the sender's SpeakingFlags shifted left by one (measured: 02 talking, 00 on the closing silence, 04 for stream sound)
+inline constexpr uint8_t SPEAKER_EXTENSION = 9;
 
 inline constexpr int VIDEO_CLOCK_KHZ = 90;
 

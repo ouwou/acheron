@@ -31,7 +31,7 @@ class VoiceManager;
 namespace UI {
 
 class CallControlsBar;
-class CallPeopleList;
+class CallParticipantList;
 class CallTile;
 
 class CallView : public QWidget
@@ -89,8 +89,8 @@ private:
     void refreshStats();
     [[nodiscard]] QStringList statsOf(const CallTile &tile) const;
     void showTileMenu(const TileKey &key, const QPoint &globalPos);
-    void showPersonMenu(Core::Snowflake userId, const QPoint &globalPos);
-    void addPersonActions(QMenu *menu, Core::Snowflake userId);
+    void showParticipantMenu(Core::Snowflake userId, const QPoint &globalPos);
+    void addParticipantActions(QMenu *menu, Core::Snowflake userId);
     void onTileClicked(const TileKey &key);
     void onTileDoubleClicked(const TileKey &key);
     void setTilePoppedOut(const TileKey &key, bool out);
@@ -100,6 +100,7 @@ private:
     void applyChrome();
     void toggleCollapsedByHand();
     void setOthersHidden(bool hidden);
+    void setUserListBesideVideo(bool shown);
     void onNonVideoShownChanged(bool shown);
     void updatePresence();
     void requestAvatar(CallTile &tile);
@@ -109,7 +110,7 @@ private:
     [[nodiscard]] QString callSummary(const QStringList &participantNames, int videoCount) const;
     [[nodiscard]] Discord::StreamKey streamKeyFor(Core::Snowflake userId) const;
     [[nodiscard]] bool isOwnShare(const TileKey &key) const { return key == TileKey::streamOf(accountId); }
-    [[nodiscard]] bool isOwnCamera(const TileKey &key) const { return key == TileKey::personOf(accountId); }
+    [[nodiscard]] bool isOwnCamera(const TileKey &key) const { return key == TileKey::participantOf(accountId); }
     [[nodiscard]] bool ownShareShown() const;
     [[nodiscard]] bool ownCameraShown() const;
     [[nodiscard]] int rank(const CallTile &tile) const;
@@ -140,11 +141,12 @@ private:
     bool collapsed = false;
     bool collapsedByHand = false;
     bool othersHidden = false;
+    bool userListBesideVideo = true;
     bool dockAfterFullScreen = false;
 
     CallControlsBar *controls;
     QWidget *stage;
-    CallPeopleList *people;
+    CallParticipantList *participantList;
     QTimer statsTimer;
 };
 

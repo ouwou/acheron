@@ -448,7 +448,8 @@ void GlVideoLayer::drawSpeakingRing()
     const QSize area = size() * devicePixelRatio();
     const int thickness = qMax(1, qRound(2 * devicePixelRatio()));
     glEnable(GL_SCISSOR_TEST);
-    glClearColor(static_cast<GLfloat>(SPEAKING_RING.redF()), static_cast<GLfloat>(SPEAKING_RING.greenF()), static_cast<GLfloat>(SPEAKING_RING.blueF()), 1.0f);
+    const QColor ring = owner->speakingRingColor();
+    glClearColor(static_cast<GLfloat>(ring.redF()), static_cast<GLfloat>(ring.greenF()), static_cast<GLfloat>(ring.blueF()), 1.0f);
     for (const QRect &edge : { QRect(0, 0, area.width(), thickness), QRect(0, area.height() - thickness, area.width(), thickness), QRect(0, 0, thickness, area.height()), QRect(area.width() - thickness, 0, thickness, area.height()) }) {
         glScissor(edge.x(), edge.y(), edge.width(), edge.height());
         glClear(GL_COLOR_BUFFER_BIT);

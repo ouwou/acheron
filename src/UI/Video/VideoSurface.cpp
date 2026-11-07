@@ -440,7 +440,7 @@ void VideoSurface::paintOverlays(QPainter &painter, bool hasPicture, bool withSp
     if (speaking && withSpeakingRing) {
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setBrush(Qt::NoBrush);
-        painter.setPen(QPen(SPEAKING_RING, 2));
+        painter.setPen(QPen(speakingRingColor(), 2));
         painter.drawRect(rect().adjusted(1, 1, -1, -1));
     }
 

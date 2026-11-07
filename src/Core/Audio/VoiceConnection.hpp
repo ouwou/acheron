@@ -48,7 +48,6 @@ signals:
 
     void clientReachedServer(Acheron::Core::Snowflake userId);
     void clientDisconnected(Acheron::Core::Snowflake userId);
-    void speakingReceived(const Acheron::Discord::Voice::SpeakingData &data);
     void privacyCodeChanged(const QString &code);
 
     void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, std::optional<QSize> maxSize, std::optional<int> maxFramerate);

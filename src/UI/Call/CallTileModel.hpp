@@ -14,14 +14,14 @@ namespace UI {
 struct TileKey
 {
     enum class Kind {
-        Person,
+        Participant,
         Stream,
     };
 
-    Kind kind = Kind::Person;
+    Kind kind = Kind::Participant;
     Core::Snowflake userId;
 
-    static TileKey personOf(Core::Snowflake userId) { return { Kind::Person, userId }; }
+    static TileKey participantOf(Core::Snowflake userId) { return { Kind::Participant, userId }; }
     static TileKey streamOf(Core::Snowflake userId) { return { Kind::Stream, userId }; }
     [[nodiscard]] bool isStream() const { return kind == Kind::Stream; }
 

@@ -6,7 +6,7 @@
 #include "Core/Video/CallVideo.hpp"
 #include "Core/Video/CameraSender.hpp"
 #include "UI/Call/CallControlsBar.hpp"
-#include "UI/Call/CallPeopleList.hpp"
+#include "UI/Call/CallParticipantList.hpp"
 #include "UI/Call/CallStats.hpp"
 #include "UI/Call/CallTile.hpp"
 #include "UI/Call/CallVideoMenu.hpp"
@@ -17,6 +17,7 @@
 #include <QCloseEvent>
 #include <QKeyEvent>
 #include <QMenu>
+#include <QHBoxLayout>
 #include <QSettings>
 #include <QVBoxLayout>
 
@@ -38,6 +39,8 @@ constexpr QSize POPPED_OUT_SIZE(960, 600);
 const char *const COLLAPSED_WITHOUT_VIDEO_KEY = "video/call_view_collapsed_without_video";
 const char *const GEOMETRY_KEY = "video/call_view_geometry";
 const char *const OTHERS_HIDDEN_KEY = "video/call_view_others_hidden";
+const char *const USER_LIST_BESIDE_VIDEO_KEY = "video/call_view_user_list_beside_video";
+constexpr int USER_LIST_WIDTH = 300;
 
 // the official client mirrors the camera for its owner alone
 QImage mirrored(const QImage &picture)
@@ -62,6 +65,7 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     setWindowTitle(title);
     collapsed = QSettings().value(COLLAPSED_WITHOUT_VIDEO_KEY, false).toBool();
     othersHidden = QSettings().value(OTHERS_HIDDEN_KEY, false).toBool();
+    userListBesideVideo = QSettings().value(USER_LIST_BESIDE_VIDEO_KEY, true).toBool();
 
     controls = new CallControlsBar(voice, broadcaster, camera, QSettings().value(nonVideoSettingsKey(), true).toBool(), this);
     connect(controls, &CallControlsBar::leaveClicked, this, &CallView::leaveRequested);
@@ -69,6 +73,8 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     connect(controls, &CallControlsBar::collapseClicked, this, &CallView::toggleCollapsedByHand);
     connect(controls, &CallControlsBar::nonVideoShownChanged, this, &CallView::onNonVideoShownChanged);
     connect(controls, &CallControlsBar::othersHiddenChanged, this, &CallView::setOthersHidden);
+    controls->setUserListShown(userListBesideVideo);
+    connect(controls, &CallControlsBar::userListShownChanged, this, &CallView::setUserListBesideVideo);
     connect(controls, &CallControlsBar::statsShownChanged, this, &CallView::onStatsShownChanged);
     connect(controls, &CallControlsBar::popOutClicked, this, [this] { setPoppedOut(!poppedOut); });
     connect(controls, &CallControlsBar::fullScreenClicked, this, &CallView::toggleFullScreen);
@@ -78,15 +84,19 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     stage->setMinimumHeight(MIN_STAGE_HEIGHT);
     stage->installEventFilter(this);
 
-    people = new CallPeopleList(voice, images, accountId, this->names, this->avatars, this);
-    connect(people, &CallPeopleList::menuRequested, this, &CallView::showPersonMenu);
+    participantList = new CallParticipantList(voice, images, accountId, this->names, this->avatars, this);
+    connect(participantList, &CallParticipantList::menuRequested, this, &CallView::showParticipantMenu);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(controls);
-    layout->addWidget(stage, 1);
-    layout->addWidget(people, 1);
+    auto *body = new QHBoxLayout;
+    body->setContentsMargins(0, 0, 0, 0);
+    body->setSpacing(0);
+    body->addWidget(stage, 1);
+    body->addWidget(participantList, 1);
+    layout->addLayout(body, 1);
 
     if (dock && dock->layout())
         dock->layout()->addWidget(this);
@@ -100,7 +110,7 @@ CallView::CallView(Core::Audio::VoiceManager *voice, Core::StreamWatcher *watche
     connect(voice, &Core::Audio::VoiceManager::participantsCleared, this, &CallView::rebuild);
     connect(voice, &Core::Audio::VoiceManager::voiceStateChanged, this, &CallView::applyChrome);
     connect(voice, &Core::Audio::VoiceManager::participantSpeakingChanged, this, [this](Snowflake userId, bool speaking) {
-        if (CallTile *tile = tileAt(TileKey::personOf(userId)))
+        if (CallTile *tile = tileAt(TileKey::participantOf(userId)))
             tile->surface()->setSpeaking(speaking);
     });
     connect(video, &Core::CallVideo::sendersChanged, this, &CallView::rebuild);
@@ -205,7 +215,7 @@ void CallView::rebuild()
     videoPresent = anyVideo;
     if (videoStarted && !collapsedByHand)
         collapsed = false;
-    people->refresh();
+    participantList->refresh();
     applyChrome();
 
     for (auto it = tiles.begin(); it != tiles.end();) {
@@ -411,7 +421,7 @@ void CallView::applyOwnCameraState(CallTile &tile)
 
 void CallView::showOwnCameraPreview(const QImage &preview)
 {
-    CallTile *tile = tileAt(TileKey::personOf(accountId));
+    CallTile *tile = tileAt(TileKey::participantOf(accountId));
     if (tile && !preview.isNull() && tile->surface()->isVisible())
         tile->present(mirrored(preview));
 }
@@ -567,7 +577,7 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
     }
     if (!key.isStream() && !isOwnCamera(key)) {
         menu->addSeparator();
-        addPersonActions(menu, key.userId);
+        addParticipantActions(menu, key.userId);
     }
 
     if (!tile->isPoppedOut()) {
@@ -592,15 +602,15 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
     menu->popup(globalPos);
 }
 
-void CallView::showPersonMenu(Snowflake userId, const QPoint &globalPos)
+void CallView::showParticipantMenu(Snowflake userId, const QPoint &globalPos)
 {
     auto *menu = new QMenu(this);
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    addPersonActions(menu, userId);
+    addParticipantActions(menu, userId);
     menu->popup(globalPos);
 }
 
-void CallView::addPersonActions(QMenu *menu, Snowflake userId)
+void CallView::addParticipantActions(QMenu *menu, Snowflake userId)
 {
     if (voice && userId != accountId)
         VoiceActions::addUserActions(menu, voice, userId, nameOf(userId));
@@ -722,6 +732,14 @@ void CallView::setOthersHidden(bool hidden)
     layoutTiles();
 }
 
+void CallView::setUserListBesideVideo(bool shown)
+{
+    userListBesideVideo = shown;
+    QSettings().setValue(USER_LIST_BESIDE_VIDEO_KEY, shown);
+    controls->setUserListShown(shown);
+    applyChrome();
+}
+
 void CallView::onNonVideoShownChanged(bool shown)
 {
     QSettings().setValue(nonVideoSettingsKey(), shown);
@@ -744,11 +762,14 @@ void CallView::reveal()
 void CallView::applyChrome()
 {
     const bool barOnly = !poppedOut && collapsed;
+    const bool fullScreen = poppedOut && isFullScreen();
     const bool listed = !videoPresent && !barOnly;
-    controls->apply({ .poppedOut = poppedOut, .fullScreen = poppedOut && isFullScreen(), .collapsed = collapsed, .videoPresent = videoPresent });
+    controls->apply({ .poppedOut = poppedOut, .fullScreen = fullScreen, .collapsed = collapsed, .videoPresent = videoPresent });
     stage->setVisible(videoPresent && !barOnly);
-    people->setVisible(listed);
-    setMaximumHeight(isCompact() ? controls->sizeHint().height() + (listed ? people->wantedHeight() : 0) : QWIDGETSIZE_MAX);
+    participantList->setMinimumWidth(videoPresent ? USER_LIST_WIDTH : 0);
+    participantList->setMaximumWidth(videoPresent ? USER_LIST_WIDTH : QWIDGETSIZE_MAX);
+    participantList->setVisible(listed || (videoPresent && !barOnly && !fullScreen && userListBesideVideo));
+    setMaximumHeight(isCompact() ? controls->sizeHint().height() + (listed ? participantList->wantedHeight() : 0) : QWIDGETSIZE_MAX);
 }
 
 void CallView::toggleFullScreen()
