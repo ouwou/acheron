@@ -154,7 +154,20 @@ public:
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
     void ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished);
 
-    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
+    // every update must say whether the camera is on
+    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
+
+    void sendCallConnect(Snowflake channelId);
+
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
+    void sendStreamDelete(const QString &streamKey);
+    void sendStreamWatch(const QString &streamKey);
+    void sendStreamPing(const QString &streamKey);
+    void sendStreamSetPaused(const QString &streamKey, bool paused);
+
+    using StreamPreviewCallback = std::function<void(const StreamPreviewLookup &)>;
+    void fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback);
+    void uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback);
     void setVoiceConnected(bool connected);
 
     void restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored);
@@ -310,6 +323,13 @@ signals:
     void guildMemberListUpdate(const GuildMemberListUpdate &event);
     void voiceStateUpdated(const VoiceState &event);
     void voiceServerUpdated(const VoiceServerUpdate &event);
+    void callCreated(const CallCreate &event);
+    void callUpdated(const CallUpdate &event);
+    void callDeleted(const CallDelete &event);
+    void streamCreated(const StreamCreate &event);
+    void streamServerUpdated(const StreamServerUpdate &event);
+    void streamUpdated(const StreamUpdate &event);
+    void streamDeleted(const StreamDelete &event);
     void relationshipAdded(const Relationship &event);
     void relationshipUpdated(const RelationshipPartial &event);
     void relationshipRemoved(const RelationshipPartial &event);

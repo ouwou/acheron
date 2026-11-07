@@ -1,79 +1,53 @@
 #pragma once
 
-#include <QWidget>
-#include <QLabel>
 #include <QPointer>
-#include <QPushButton>
-#include <QTimer>
-#include <QUrl>
+#include <QWidget>
 
-#include <functional>
-
-#include "Core/Snowflake.hpp"
-#include "Discord/Voice/VoiceClient.hpp"
-#include "Core/Presence/PresenceBadge.hpp"
+class QLabel;
+class QMenu;
+class QToolButton;
 
 namespace Acheron {
 namespace Core {
-class ImageManager;
 namespace Audio {
 class VoiceManager;
 }
 } // namespace Core
-namespace UI {
 
-class VoiceWindow;
+namespace UI {
 
 class VoiceStatusBar : public QWidget
 {
     Q_OBJECT
 public:
-    using NameResolver = std::function<QString(Core::Snowflake)>;
-    using AvatarResolver = std::function<QUrl(Core::Snowflake)>;
-    using StatusResolver = std::function<Core::PresenceBadge(Core::Snowflake)>;
-
     explicit VoiceStatusBar(QWidget *parent = nullptr);
-    ~VoiceStatusBar() override;
 
     void setVoiceManager(Core::Audio::VoiceManager *manager);
-    void setNameResolver(NameResolver resolver);
-    void setAvatarResolver(AvatarResolver resolver);
-    void setStatusResolver(StatusResolver resolver);
-    void refreshPresences(const QList<Core::Snowflake> &userIds);
-    void setImageManager(Core::ImageManager *manager);
-    void setAccount(Core::Snowflake accountId);
     void setChannelName(const QString &name);
-    void updateConnectionState();
 
 signals:
     void disconnectRequested();
-    void userProfileRequested(Core::Snowflake accountId, Core::Snowflake userId);
+    void callRevealRequested();
+    void voiceSettingsRequested();
 
 protected:
     void mousePressEvent(QMouseEvent *event) override;
 
 private:
-    void setupUi();
-    void disconnectManager();
-    void toggleVoiceWindow();
-    void showVoiceWindow();
-    void configureVoiceWindow();
+    void updateConnectionState();
+    void updateSelfAudio();
+    void updatePrivacy();
 
-    Core::Audio::VoiceManager *voiceManager = nullptr;
-    Core::ImageManager *imageManager = nullptr;
-    Core::Snowflake accountId;
-    NameResolver nameResolver;
-    AvatarResolver avatarResolver;
-    StatusResolver statusResolver;
+    QPointer<Core::Audio::VoiceManager> voiceManager;
 
     QLabel *statusDot;
     QLabel *statusLabel;
     QLabel *channelLabel;
-    QPushButton *disconnectBtn;
-
-    QPointer<VoiceWindow> voiceWindow;
-    QTimer closeTimer;
-    bool wasDisconnected = true;
+    QToolButton *privacyButton;
+    QToolButton *micButton;
+    QMenu *deviceMenu;
+    QToolButton *deafenButton;
+    QToolButton *disconnectButton;
 };
 
 } // namespace UI

@@ -1,18 +1,27 @@
 #pragma once
 
+#include <QHash>
 #include <QObject>
+#include <QSet>
+#include <QSize>
 #include <QTimer>
 
 #include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
+#include <span>
 #include <string>
-#include <vector>
 
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
+#include "PacketBuffer.hpp"
+#include "Rtcp.hpp"
+#include "RtpPacket.hpp"
+#include "SinkWants.hpp"
+#include "VideoFrame.hpp"
 #include "VoiceEnums.hpp"
 #include "VoiceEntities.hpp"
 
@@ -24,6 +33,53 @@ class VoiceGateway;
 class UdpTransport;
 class VoiceEncryption;
 class DaveSession;
+
+struct VideoReceiveStats
+{
+    QString codec;
+    quint64 packets = 0;
+    quint64 bytes = 0;
+    quint64 frames = 0;
+    quint64 keyframes = 0;
+    quint64 retransmitted = 0;
+    quint64 nacked = 0;
+    quint64 keyframeRequests = 0;
+    quint64 decryptFailures = 0;
+    double lossFraction = 0;
+    std::optional<InboundEstimate> serverEstimate;
+};
+
+struct LocalVideoDescription
+{
+    std::optional<QSize> maxSize;
+    int maxFramerate = 30;
+    int maxBitrateBps = 0;
+    std::optional<int> secondLayerMaxBitrateBps;
+
+    bool operator==(const LocalVideoDescription &other) const = default;
+};
+
+struct VideoSendStats
+{
+    QString codec;
+    quint64 packets = 0;
+    quint64 bytes = 0;
+    quint64 frames = 0;
+    quint64 keyframes = 0;
+    quint64 retransmitted = 0;
+    quint64 nacksReceived = 0;
+    quint64 keyframeRequests = 0;
+    quint64 bitrateBps = 0;
+    std::optional<double> lossFraction;
+    std::optional<int> roundTripMs;
+    std::optional<int> receivers;
+    std::optional<quint64> receiverEstimateBps;
+    std::optional<quint64> delayEstimateBps;
+    std::optional<quint64> acknowledgedBps;
+};
+
+// as the official client declares them with simulcast on; a viewer of a single camera receives the second
+[[nodiscard]] QList<StreamDescription> cameraStreams(bool withSecondLayer);
 
 class VoiceClient : public QObject
 {
@@ -41,9 +97,7 @@ public:
     };
     Q_ENUM(State)
 
-    VoiceClient(const QString &endpoint, const QString &token, Core::Snowflake serverId,
-                Core::Snowflake channelId, Core::Snowflake userId, const QString &sessionId,
-                const Core::ProxyConfig &proxy, QObject *parent = nullptr);
+    explicit VoiceClient(const ConnectionParams &params, QObject *parent = nullptr);
     ~VoiceClient() override;
 
     void start();
@@ -60,55 +114,114 @@ public:
 
     void setSpeaking(bool speaking);
 
+    // as the official client, SOUNDSHARE is announced once a session, never per run
+    void beginSoundshare();
+
     bool isDaveEnabled() const;
     void requestVerificationCode(Core::Snowflake targetUserId, std::function<void(const QString &)> callback);
 
+    // on this client's thread. set before start()
+    using VideoFrameHandler = std::function<void(Core::Snowflake userId, VideoCodec codec, EncodedVideoFrame frame)>;
+    void setVideoFrameHandler(VideoFrameHandler handler);
+
+    void setVideoWants(int pixelCount, bool wanted);
+
+    void setVideoPlan(const MediaSinkWants &wants, const QSet<quint32> &deliver);
+
+    void requestVideoKeyframeFrom(Core::Snowflake userId);
+    void withdrawVideoCodec(VideoCodec codec);
+    // for other threads, as long as the client lives
+    [[nodiscard]] std::function<void()> queuedKeyframeRequestFrom(Core::Snowflake userId);
+    [[nodiscard]] std::function<void(VideoCodec)> queuedCodecWithdrawal();
+
+    void offerVideoEncoding(const QList<VideoCodec> &encodable);
+    [[nodiscard]] VideoCodec videoSendCodec() const;
+    // call from connected(), and again after a reconnect
+    void startVideo(const LocalVideoDescription &description);
+    void describeVideo(const LocalVideoDescription &description);
+    void setVideoBitrate(int bitsPerSecond, int quality = FULL_QUALITY);
+    void stopVideo();
+    // dropped while video isnt started, or while DAVE has no key for it
+    void sendVideoFrame(const EncodedVideoFrame &frame, int quality = FULL_QUALITY);
+
 signals:
-    void stateChanged(State newState);
+    void stateChanged(Acheron::Discord::Voice::VoiceClient::State newState);
     void connected();
     void disconnected();
+    void reconnecting();
 
-    void speakingReceived(const SpeakingData &data);
-    void clientConnected(const ClientConnectData &data);
-    void clientDisconnected(Core::Snowflake userId);
+    void remoteVideoChanged(Acheron::Core::Snowflake userId, bool active, std::optional<QSize> maxSize, std::optional<int> maxFramerate);
+    void remoteVideoLayersChanged(Acheron::Core::Snowflake userId, const QList<Acheron::Discord::Voice::VideoLayer> &layers);
+    void videoStatsUpdated(const Acheron::Discord::Voice::VideoReceiveStats &stats);
 
-    void audioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+    void videoSendCodecChanged(Acheron::Discord::Voice::VideoCodec codec);
+    // before connected()
+    void videoSendLayersKnown(const QList<int> &qualities);
+    void videoKeyframeRequested(int quality);
+    void videoReceiversChanged(int receivers, int quality);
+    void videoWantsReceived(int want, std::optional<int> pixelCount, int quality);
+    void videoSendStatsUpdated(const Acheron::Discord::Voice::VideoSendStats &stats);
+
+    void speakingReceived(const Acheron::Discord::Voice::SpeakingData &data);
+    void videoStateReceived(const Acheron::Discord::Voice::RemoteVideoState &remote);
+    void clientReachedServer(Acheron::Core::Snowflake userId);
+    void clientDisconnected(Acheron::Core::Snowflake userId);
+
+    void audioReceived(quint32 ssrc, quint16 sequence, quint32 timestamp, const QByteArray &opusData);
 
     void privacyCodeChanged(const QString &code);
 
 private slots:
     void onGatewayConnected();
-    void onGatewayDisconnected(VoiceCloseCode code, const QString &reason);
-    void onGatewayReady(const VoiceReady &data);
-    void onSessionDescription(const SessionDescription &desc);
-    void onSpeaking(const SpeakingData &data);
+    void onGatewayDisconnected(Acheron::Discord::Voice::VoiceCloseCode code, const QString &reason);
+    void onGatewayReady(const Acheron::Discord::Voice::VoiceReady &data);
+    void onSessionDescription(const Acheron::Discord::Voice::SessionDescription &desc);
+    void onSessionUpdated(const Acheron::Discord::Voice::SessionUpdate &update);
+    void onMediaSinkWants(const Acheron::Discord::Voice::MediaSinkWants &wants);
+    void onSpeaking(const Acheron::Discord::Voice::SpeakingData &data);
     void onClientsConnect(const QStringList &userIds);
-    void onClientConnect(const ClientConnectData &data);
-    void onClientDisconnect(Core::Snowflake userId);
+    void onVideoState(const Acheron::Discord::Voice::RemoteVideoState &remote);
+    void onClientDisconnect(Acheron::Core::Snowflake userId);
     void onGatewayResumed();
     void onIpDiscovered(const QString &ip, int port);
     void onIpDiscoveryFailed(const QString &error);
-    void onDatagram(const QByteArray &data);
+    void onRelayLost(const QString &error);
 
 private:
+    class VideoReceivePath;
+    class VideoSendPath;
+
     void setState(State state);
     void sendSilence();
     void cleanupTransport();
     void ensureDaveSession(uint16_t protocolVersion);
 
-private:
+    void onPacket(PacketPool::Handle packet);
+    void receiveRtcp(PacketPool::Handle packet);
+    void receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet);
+    // the extension elements, valid as long as `packet` is
+    [[nodiscard]] std::optional<std::span<const uint8_t>> openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet);
+    [[nodiscard]] bool canSendMedia() const { return currentState == State::Connected && encryption && udpTransport; }
+    bool sealAndSend(PacketBuffer &packet, int clearSize);
+    bool daveDecryptAudio(quint32 ssrc, PacketPool::Handle &packet);
+
+    // as the official client, a codec neither encoded nor decoded any more is left out
+    [[nodiscard]] QList<Codec> offeredCodecs() const;
+    void sendOfferedCodecs();
+
     VoiceGateway *gateway = nullptr;
     UdpTransport *udpTransport = nullptr;
 
-    QString endpoint;
-    QString token;
-    Core::ProxyConfig proxy;
-    Core::Snowflake serverId;
-    Core::Snowflake channelId;
-    Core::Snowflake userId;
-    QString sessionId;
+    ConnectionParams params;
 
     std::atomic<State> currentState{ State::Disconnected };
+
+    struct UnroutedCounters
+    {
+        quint64 rtcp = 0;
+        quint64 rtp = 0;
+    };
+    UnroutedCounters unrouted;
 
     // ready
     quint32 localSsrc = 0;
@@ -119,6 +232,7 @@ private:
     // protocol selection
     QString selectedMode;
     QByteArray sessionKey;
+    bool codecsChangedSinceOffered = false;
 
     std::unique_ptr<VoiceEncryption> encryption;
     QTimer *keepaliveTimer = nullptr;
@@ -128,10 +242,14 @@ private:
     std::chrono::steady_clock::time_point rtpEpoch;
     std::chrono::steady_clock::time_point lastAudioSendTime;
     bool newTalkspurt = false;
+    bool soundshareAnnounced = false;
 
     std::unique_ptr<DaveSession> daveSession;
     std::set<std::string> connectedUserIds;
     QHash<quint32, uint64_t> ssrcToUserIdMap;
+
+    std::unique_ptr<VideoReceivePath> receivedVideo;
+    std::unique_ptr<VideoSendPath> sentVideo;
 
     static constexpr int KEEPALIVE_INTERVAL_MS = 10000;
 };
@@ -139,3 +257,9 @@ private:
 } // namespace Voice
 } // namespace Discord
 } // namespace Acheron
+
+Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoReceiveStats)
+Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoSendStats)
+Q_DECLARE_METATYPE(Acheron::Discord::Voice::VideoCodec)
+Q_DECLARE_METATYPE(std::optional<QSize>)
+Q_DECLARE_METATYPE(std::optional<int>)

@@ -1,5 +1,7 @@
 #include "VoiceEncryption.hpp"
 
+#include "PacketBuffer.hpp"
+
 #include "Core/Logging.hpp"
 
 #include <sodium.h>
@@ -11,7 +13,19 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-static constexpr int SUPPLEMENTAL_NONCE_SIZE = 4;
+namespace {
+
+constexpr int SUPPLEMENTAL_NONCE_SIZE = 4;
+constexpr int TAG_SIZE = VoiceEncryption::TRAILER_SIZE - SUPPLEMENTAL_NONCE_SIZE;
+constexpr int LARGEST_NONCE_SIZE = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+static_assert(crypto_aead_aes256gcm_ABYTES == TAG_SIZE);
+static_assert(crypto_aead_xchacha20poly1305_ietf_ABYTES == TAG_SIZE);
+static_assert(crypto_aead_aes256gcm_NPUBBYTES <= LARGEST_NONCE_SIZE);
+static_assert(crypto_aead_aes256gcm_KEYBYTES == VoiceEncryption::KEY_SIZE);
+static_assert(crypto_aead_xchacha20poly1305_ietf_KEYBYTES == VoiceEncryption::KEY_SIZE);
+
+} // namespace
 
 VoiceEncryption::VoiceEncryption(EncryptionMode mode, const QByteArray &secretKey)
     : m_mode(mode), m_key(secretKey)
@@ -43,160 +57,70 @@ bool VoiceEncryption::isModeAvailable(EncryptionMode mode)
     }
 }
 
-QByteArray VoiceEncryption::encrypt(const QByteArray &rtpHeader, const QByteArray &audioPayload)
+bool VoiceEncryption::seal(PacketBuffer &packet, int clearSize)
 {
+    if (m_key.size() != KEY_SIZE || clearSize < 0 || clearSize > packet.size() || packet.tailroom() < TRAILER_SIZE)
+        return false;
+
+    uint8_t nonce[LARGEST_NONCE_SIZE] = {};
+    const uint32_t counter = qToBigEndian(m_nonce);
+    std::memcpy(nonce, &counter, SUPPLEMENTAL_NONCE_SIZE);
+
+    const auto *key = reinterpret_cast<const unsigned char *>(m_key.constData());
+    uint8_t *body = packet.data() + clearSize;
+    const int bodySize = packet.size() - clearSize;
+    unsigned long long sealedSize = 0;
+
+    int result = -1;
     switch (m_mode) {
     case EncryptionMode::AEAD_AES256_GCM_RTPSIZE:
-        return encryptAes256Gcm(rtpHeader, audioPayload);
+        result = crypto_aead_aes256gcm_encrypt(body, &sealedSize, body, bodySize, packet.data(), clearSize, nullptr, nonce, key);
+        break;
     case EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE:
-        return encryptXChacha20(rtpHeader, audioPayload);
+        result = crypto_aead_xchacha20poly1305_ietf_encrypt(body, &sealedSize, body, bodySize, packet.data(), clearSize, nullptr, nonce, key);
+        break;
     default:
-        qCWarning(LogVoice) << "Encrypt called with unknown encryption mode";
-        return {};
+        break;
     }
-}
+    if (result != 0)
+        return false;
 
-QByteArray VoiceEncryption::encryptAes256Gcm(const QByteArray &rtpHeader, const QByteArray &payload)
-{
-    // Nonce: 4-byte BE counter padded to 12 bytes
-    uint8_t nonce[crypto_aead_aes256gcm_NPUBBYTES] = {};
-    uint32_t nonceBE = qToBigEndian(m_nonce);
-    std::memcpy(nonce, &nonceBE, SUPPLEMENTAL_NONCE_SIZE);
-
-    // Ciphertext = payload + 16-byte auth tag
-    QByteArray ciphertext(payload.size() + crypto_aead_aes256gcm_ABYTES, '\0');
-    unsigned long long cipherLen = 0;
-
-    int ret = crypto_aead_aes256gcm_encrypt(
-            reinterpret_cast<unsigned char *>(ciphertext.data()), &cipherLen,
-            reinterpret_cast<const unsigned char *>(payload.constData()), payload.size(),
-            reinterpret_cast<const unsigned char *>(rtpHeader.constData()), rtpHeader.size(),
-            nullptr, nonce,
-            reinterpret_cast<const unsigned char *>(m_key.constData()));
-
-    if (ret != 0) {
-        qCWarning(LogVoice) << "AES-256-GCM encrypt failed";
-        return {};
-    }
-
-    ciphertext.resize(static_cast<int>(cipherLen));
-    ciphertext.append(reinterpret_cast<const char *>(&nonceBE), SUPPLEMENTAL_NONCE_SIZE);
+    packet.resize(clearSize + static_cast<int>(sealedSize));
+    packet.append({ nonce, SUPPLEMENTAL_NONCE_SIZE });
 
     m_nonce++;
-    return ciphertext;
+    return true;
 }
 
-QByteArray VoiceEncryption::encryptXChacha20(const QByteArray &rtpHeader, const QByteArray &payload)
+bool VoiceEncryption::open(PacketBuffer &packet, int clearSize)
 {
-    // Nonce: 4-byte BE counter padded to 24 bytes
-    uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES] = {};
-    uint32_t nonceBE = qToBigEndian(m_nonce);
-    std::memcpy(nonce, &nonceBE, SUPPLEMENTAL_NONCE_SIZE);
+    if (m_key.size() != KEY_SIZE || clearSize < 0 || packet.size() < clearSize + TRAILER_SIZE)
+        return false;
 
-    QByteArray ciphertext(payload.size() + crypto_aead_xchacha20poly1305_ietf_ABYTES, '\0');
-    unsigned long long cipherLen = 0;
+    uint8_t nonce[LARGEST_NONCE_SIZE] = {};
+    std::memcpy(nonce, packet.data() + packet.size() - SUPPLEMENTAL_NONCE_SIZE, SUPPLEMENTAL_NONCE_SIZE);
 
-    int ret = crypto_aead_xchacha20poly1305_ietf_encrypt(
-            reinterpret_cast<unsigned char *>(ciphertext.data()), &cipherLen,
-            reinterpret_cast<const unsigned char *>(payload.constData()), payload.size(),
-            reinterpret_cast<const unsigned char *>(rtpHeader.constData()), rtpHeader.size(),
-            nullptr, nonce,
-            reinterpret_cast<const unsigned char *>(m_key.constData()));
+    const auto *key = reinterpret_cast<const unsigned char *>(m_key.constData());
+    uint8_t *body = packet.data() + clearSize;
+    const int sealedSize = packet.size() - clearSize - SUPPLEMENTAL_NONCE_SIZE;
+    unsigned long long plainSize = 0;
 
-    if (ret != 0) {
-        qCWarning(LogVoice) << "XChaCha20-Poly1305 encrypt failed";
-        return {};
-    }
-
-    ciphertext.resize(static_cast<int>(cipherLen));
-    ciphertext.append(reinterpret_cast<const char *>(&nonceBE), SUPPLEMENTAL_NONCE_SIZE);
-
-    m_nonce++;
-    return ciphertext;
-}
-
-QByteArray VoiceEncryption::decrypt(const QByteArray &rtpHeader, const QByteArray &encryptedSection)
-{
+    int result = -1;
     switch (m_mode) {
     case EncryptionMode::AEAD_AES256_GCM_RTPSIZE:
-        return decryptAes256Gcm(rtpHeader, encryptedSection);
+        result = crypto_aead_aes256gcm_decrypt(body, &plainSize, nullptr, body, sealedSize, packet.data(), clearSize, nonce, key);
+        break;
     case EncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE:
-        return decryptXChacha20(rtpHeader, encryptedSection);
+        result = crypto_aead_xchacha20poly1305_ietf_decrypt(body, &plainSize, nullptr, body, sealedSize, packet.data(), clearSize, nonce, key);
+        break;
     default:
-        return {};
+        break;
     }
-}
+    if (result != 0)
+        return false;
 
-QByteArray VoiceEncryption::decryptAes256Gcm(const QByteArray &rtpHeader, const QByteArray &encrypted)
-{
-    int minSize = static_cast<int>(crypto_aead_aes256gcm_ABYTES) + SUPPLEMENTAL_NONCE_SIZE;
-    if (encrypted.size() < minSize) {
-        qCDebug(LogVoice) << "AES-GCM decrypt: too short, need" << minSize << "got" << encrypted.size();
-        return {};
-    }
-
-    // Extract 4-byte supplemental nonce from end of packet, place at start of 12-byte nonce
-    uint8_t nonce[crypto_aead_aes256gcm_NPUBBYTES] = {};
-    std::memcpy(nonce, encrypted.constData() + encrypted.size() - SUPPLEMENTAL_NONCE_SIZE,
-                SUPPLEMENTAL_NONCE_SIZE);
-
-    int cipherLen = encrypted.size() - SUPPLEMENTAL_NONCE_SIZE;
-    QByteArray plaintext(cipherLen - static_cast<int>(crypto_aead_aes256gcm_ABYTES), '\0');
-    unsigned long long plainLen = 0;
-
-    int ret = crypto_aead_aes256gcm_decrypt(
-            reinterpret_cast<unsigned char *>(plaintext.data()), &plainLen,
-            nullptr,
-            reinterpret_cast<const unsigned char *>(encrypted.constData()), cipherLen,
-            reinterpret_cast<const unsigned char *>(rtpHeader.constData()), rtpHeader.size(),
-            nonce,
-            reinterpret_cast<const unsigned char *>(m_key.constData()));
-
-    if (ret != 0) {
-        qCDebug(LogVoice) << "AES-GCM decrypt failed: cipherLen =" << cipherLen
-                          << "aadLen =" << rtpHeader.size()
-                          << "nonce =" << QByteArray(reinterpret_cast<const char *>(nonce), crypto_aead_aes256gcm_NPUBBYTES).toHex(' ');
-        return {};
-    }
-
-    plaintext.resize(static_cast<int>(plainLen));
-    return plaintext;
-}
-
-QByteArray VoiceEncryption::decryptXChacha20(const QByteArray &rtpHeader, const QByteArray &encrypted)
-{
-    int minSize = static_cast<int>(crypto_aead_xchacha20poly1305_ietf_ABYTES) + SUPPLEMENTAL_NONCE_SIZE;
-    if (encrypted.size() < minSize) {
-        qCDebug(LogVoice) << "XChaCha20 decrypt: too short, need" << minSize << "got" << encrypted.size();
-        return {};
-    }
-
-    // Extract 4-byte supplemental nonce from end of packet, place at start of 24-byte nonce
-    uint8_t nonce[crypto_aead_xchacha20poly1305_ietf_NPUBBYTES] = {};
-    std::memcpy(nonce, encrypted.constData() + encrypted.size() - SUPPLEMENTAL_NONCE_SIZE,
-                SUPPLEMENTAL_NONCE_SIZE);
-
-    int cipherLen = encrypted.size() - SUPPLEMENTAL_NONCE_SIZE;
-    QByteArray plaintext(cipherLen - static_cast<int>(crypto_aead_xchacha20poly1305_ietf_ABYTES), '\0');
-    unsigned long long plainLen = 0;
-
-    int ret = crypto_aead_xchacha20poly1305_ietf_decrypt(
-            reinterpret_cast<unsigned char *>(plaintext.data()), &plainLen,
-            nullptr,
-            reinterpret_cast<const unsigned char *>(encrypted.constData()), cipherLen,
-            reinterpret_cast<const unsigned char *>(rtpHeader.constData()), rtpHeader.size(),
-            nonce,
-            reinterpret_cast<const unsigned char *>(m_key.constData()));
-
-    if (ret != 0) {
-        qCDebug(LogVoice) << "XChaCha20 decrypt failed: cipherLen =" << cipherLen
-                          << "aadLen =" << rtpHeader.size()
-                          << "nonce =" << QByteArray(reinterpret_cast<const char *>(nonce), crypto_aead_xchacha20poly1305_ietf_NPUBBYTES).toHex(' ');
-        return {};
-    }
-
-    plaintext.resize(static_cast<int>(plainLen));
-    return plaintext;
+    packet.resize(clearSize + static_cast<int>(plainSize));
+    return true;
 }
 
 } // namespace Voice

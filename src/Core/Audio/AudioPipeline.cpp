@@ -18,6 +18,25 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
+namespace {
+
+quint64 speakerKey(quint32 source, quint32 ssrc)
+{
+    return (quint64(source) << 32) | ssrc;
+}
+
+quint32 speakerSource(quint64 key)
+{
+    return static_cast<quint32>(key >> 32);
+}
+
+quint32 speakerSsrc(quint64 key)
+{
+    return static_cast<quint32>(key);
+}
+
+} // namespace
+
 AudioPipeline::AudioPipeline(QObject *parent)
     : QObject(parent)
 {
@@ -109,9 +128,26 @@ void AudioPipeline::stopCapture()
     }
 }
 
-void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t /*timestamp*/, const QByteArray &opusData)
+void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData)
 {
-    auto it = speakers.find(ssrc);
+    onSourceAudioReceived(VOICE_CONNECTION_SOURCE, ssrc, sequence, timestamp, opusData);
+}
+
+void AudioPipeline::setSourceVolume(quint32 source, float volume)
+{
+    sourceVolumes.insert(source, volume);
+}
+
+void AudioPipeline::removeSource(quint32 source)
+{
+    sourceVolumes.remove(source);
+    std::erase_if(speakers, [source](const auto &entry) { return speakerSource(entry.first) == source; });
+}
+
+void AudioPipeline::onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t /*timestamp*/, const QByteArray &opusData)
+{
+    const quint64 key = speakerKey(source, ssrc);
+    auto it = speakers.find(key);
     if (it == speakers.end()) {
         SpeakerState state;
         state.decoder = std::make_unique<OpusDecoder>();
@@ -121,7 +157,7 @@ void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t /*
         }
         state.jitterBuffer = std::make_unique<JitterBuffer>();
 
-        auto [inserted, _] = speakers.emplace(ssrc, std::move(state));
+        auto [inserted, _] = speakers.emplace(key, std::move(state));
         it = inserted;
     }
 
@@ -142,13 +178,12 @@ void AudioPipeline::removeUser(Snowflake userId)
 {
     for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
         if (it.value() == userId) {
-            speakers.erase(it.key());
+            speakers.erase(speakerKey(VOICE_CONNECTION_SOURCE, it.key()));
             it = ssrcToUser.erase(it);
         } else {
             ++it;
         }
     }
-    userVolumes.remove(userId);
     pendingUserRms.remove(userId);
 }
 
@@ -332,7 +367,8 @@ void AudioPipeline::onMixTick()
     QVector<std::pair<QByteArray, float>> streams;
 
     for (auto it = speakers.begin(); it != speakers.end(); ++it) {
-        quint32 ssrc = it->first;
+        const quint32 source = speakerSource(it->first);
+        const quint32 ssrc = speakerSsrc(it->first);
         SpeakerState &state = it->second;
 
         QByteArray pcm;
@@ -361,7 +397,7 @@ void AudioPipeline::onMixTick()
             continue;
 
         // rms before gain
-        auto userIt = ssrcToUser.constFind(ssrc);
+        auto userIt = source == VOICE_CONNECTION_SOURCE ? ssrcToUser.constFind(ssrc) : ssrcToUser.constEnd();
         Snowflake userId;
         if (userIt != ssrcToUser.constEnd())
             userId = userIt.value();
@@ -370,7 +406,7 @@ void AudioPipeline::onMixTick()
             const auto *samples = reinterpret_cast<const int16_t *>(pcm.constData());
             int count = pcm.size() / static_cast<int>(sizeof(int16_t));
             if (count > 0) {
-                float rms = computeRms(samples, count);
+                float rms = rmsOf(samples, count);
 
                 auto rmsIt = pendingUserRms.find(userId);
                 if (rmsIt == pendingUserRms.end())
@@ -383,6 +419,8 @@ void AudioPipeline::onMixTick()
         float gain = 1.0f;
         if (userId.isValid())
             gain = userVolumes.value(userId, 1.0f);
+        else if (source != VOICE_CONNECTION_SOURCE)
+            gain = sourceVolumes.value(source, 1.0f);
 
         streams.append({ pcm, gain });
     }
@@ -414,16 +452,8 @@ bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRm
         return false;
     }
 
-    outRms = computeRms(samples, count);
+    outRms = rmsOf(samples, count);
     return outRms > vadThreshold;
-}
-
-float AudioPipeline::computeRms(const int16_t *samples, int count)
-{
-    double sum = 0;
-    for (int i = 0; i < count; i++)
-        sum += static_cast<double>(samples[i]) * samples[i];
-    return static_cast<float>(std::sqrt(sum / count));
 }
 
 void AudioPipeline::sendTrailingSilence()

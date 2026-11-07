@@ -63,6 +63,11 @@ struct ChannelNode
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;
 
+    [[nodiscard]] bool listsVoiceParticipants() const
+    {
+        return type == Type::VoiceChannel || type == Type::DMChannel;
+    }
+
     [[nodiscard]] bool opensChat() const
     {
         return type == Type::Channel ||

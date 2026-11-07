@@ -1,6 +1,7 @@
 #include "Core/Media/ClipDecoder.hpp"
 
 #include "Core/AnimationTiming.hpp"
+#include "Core/Media/RgbScaler.hpp"
 
 #include <QFile>
 #include <QImageReader>
@@ -16,7 +17,6 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/pixdesc.h>
-#include <libswscale/swscale.h>
 }
 
 #endif // ACHERON_HAVE_FFMPEG
@@ -114,18 +114,8 @@ private:
 
 #ifdef ACHERON_HAVE_FFMPEG
 
-constexpr int SwscaleOverrunBytes = 64;
 constexpr qint64 UnknownLastFrameMs = 100;
 constexpr int FramesReadAheadToGuessFrameRate = 0;
-
-QImage imageWithSwscaleOverrunRoom(const QSize &size, QImage::Format format)
-{
-    const int stride = size.width() * 4;
-    auto *pixels = static_cast<uchar *>(av_malloc(size_t(stride) * size_t(size.height()) + SwscaleOverrunBytes));
-    if (!pixels)
-        return {};
-    return QImage(pixels, size.width(), size.height(), stride, format, [](void *owned) { av_free(owned); }, pixels);
-}
 
 void premultiply(QImage &straightAlpha)
 {
@@ -150,7 +140,6 @@ public:
     ~FfmpegClipDecoder() override
     {
         closeInput();
-        sws_freeContext(scaler);
         av_frame_free(&decoded);
         av_packet_free(&packet);
     }
@@ -290,20 +279,10 @@ private:
         const bool hasAlpha = layout && (layout->flags & AV_PIX_FMT_FLAG_ALPHA);
         const QImage::Format wanted = hasAlpha ? QImage::Format_ARGB32_Premultiplied : QImage::Format_RGB32;
 
-        const bool reusable = frame.size() == frameSize && frame.format() == wanted && frame.isDetached();
-        if (!reusable)
-            frame = imageWithSwscaleOverrunRoom(frameSize, wanted);
-        if (frame.isNull())
+        if (frame.size() != frameSize || frame.format() != wanted)
+            frame = RgbScaler::allocate(frameSize, wanted);
+        if (!scaler.scale(decoded, frame))
             return false;
-
-        scaler = sws_getCachedContext(scaler, decoded->width, decoded->height, AVPixelFormat(decoded->format), frameSize.width(),
-                                      frameSize.height(), AV_PIX_FMT_RGB32, SWS_BILINEAR, nullptr, nullptr, nullptr);
-        if (!scaler)
-            return false;
-
-        uint8_t *planes[4] = { frame.bits(), nullptr, nullptr, nullptr };
-        int strides[4] = { int(frame.bytesPerLine()), 0, 0, 0 };
-        sws_scale(scaler, decoded->data, decoded->linesize, 0, decoded->height, planes, strides);
 
         if (hasAlpha)
             premultiply(frame);
@@ -315,7 +294,7 @@ private:
 
     AVFormatContext *format = nullptr;
     AVCodecContext *codec = nullptr;
-    SwsContext *scaler = nullptr;
+    RgbScaler scaler;
     AVFrame *decoded;
     AVPacket *packet;
     int videoStream = -1;

@@ -11,6 +11,14 @@
 
 #include "Core/Logging.hpp"
 #include "ForumManager.hpp"
+#include "Calls/CallStore.hpp"
+#include "Streams/StreamManager.hpp"
+#include "Streams/StreamPreviews.hpp"
+#ifdef ACHERON_HAVE_VIDEO
+#include "Streams/StreamBroadcaster.hpp"
+#include "Streams/StreamWatcher.hpp"
+#include "Video/CameraSender.hpp"
+#endif
 #include "Discord/Enums.hpp"
 #include "Storage/DatabaseManager.hpp"
 #include "Storage/GuildRepository.hpp"
@@ -74,10 +82,32 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     emojiManager = new EmojiManager(client, this, this);
     favoriteGifManager = new FavoriteGifs(client, this);
     messageManager->setEmojiManager(emojiManager);
+
+    callStore = new CallStore(this);
+    connect(client, &Discord::Client::callCreated, this, &ClientInstance::onCallCreated);
+    connect(client, &Discord::Client::callUpdated, callStore, &CallStore::handleCallUpdate);
+    connect(client, &Discord::Client::callDeleted, this, &ClientInstance::onCallDeleted);
+
+    streamManager = new StreamManager(this);
+    connect(client, &Discord::Client::streamCreated, streamManager, &StreamManager::handleStreamCreate);
+    connect(client, &Discord::Client::streamServerUpdated, streamManager, &StreamManager::handleStreamServerUpdate);
+    connect(client, &Discord::Client::streamUpdated, streamManager, &StreamManager::handleStreamUpdate);
+    connect(client, &Discord::Client::streamDeleted, streamManager, &StreamManager::handleStreamDelete);
+    streamPreviewCache = new StreamPreviews(
+            [this](const QString &streamKey, std::function<void(const Discord::StreamPreviewLookup &)> done) {
+                client->fetchStreamPreview(streamKey, std::move(done));
+            },
+            this);
 #ifndef ACHERON_NO_VOICE
     voiceManager = new Audio::VoiceManager(info.id, info.proxy, this);
     connect(voiceManager, &Audio::VoiceManager::voiceConnected, this, &ClientInstance::onVoiceConnected);
     connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
+    connect(voiceManager, &Audio::VoiceManager::selfAudioToggled, this, &ClientInstance::onSelfAudioToggled);
+#endif
+#ifdef ACHERON_HAVE_VIDEO
+    streamWatch = new StreamWatcher(client, streamManager, voiceManager, this);
+    streamBroadcast = new StreamBroadcaster(client, streamManager, voiceManager, [this] { return screenShareTerms(); }, this);
+    cameraSend = new CameraSender(client, voiceManager, streamBroadcast, [this] { return screenShareTerms().allowed; }, this);
 #endif
 
     connect(client, &Discord::Client::stateChanged, this, &ClientInstance::stateChanged);
@@ -86,6 +116,20 @@ ClientInstance::ClientInstance(const AccountInfo &info,
             [this]() { emit authenticationFailed(account); });
 
     connect(client, &Discord::Client::ready, this, [this](const Discord::Ready &ready) {
+        gatewaySessionId = ready.sessionId;
+#ifndef ACHERON_NO_VOICE
+        voiceManager->setGatewaySessionId(gatewaySessionId);
+#endif
+        callStore->reset();
+#ifdef ACHERON_HAVE_VIDEO
+        streamWatch->reset();
+        streamBroadcast->reset();
+        cameraSend->reset();
+#endif
+        streamManager->reset();
+        streamPreviewCache->clear();
+        connectSelectedCall(CallConnect::Always);
+
         QString connName = Storage::DatabaseManager::instance().getCacheConnectionName(account.id);
         QSqlDatabase db = QSqlDatabase::database(connName);
 
@@ -291,30 +335,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(readStateManager, &ReadStateManager::ackRequested, this, &ClientInstance::handleAckRequest);
     connect(readStateManager, &ReadStateManager::bulkAckRequested, this, &ClientInstance::handleBulkAckRequest);
 
-    connect(client, &Discord::Client::voiceStateUpdated, this,
-            [this](const Discord::VoiceState &event) {
-                qCInfo(LogVoice) << "VOICE_STATE_UPDATE: user" << event.userId.get()
-                                 << "channel" << (event.channelId.isNull() ? 0 : static_cast<quint64>(event.channelId.get()))
-                                 << "session" << event.sessionId.get()
-                                 << "mute" << event.selfMute.get()
-                                 << "deaf" << event.selfDeaf.get();
-
-                // track our own voice state
-                if (event.userId.get() == account.id) {
-                    if (event.channelId.isNull() || !event.channelId.get().isValid()) {
-                        currentVoiceChannelId = Snowflake::Invalid;
-                        currentVoiceGuildId = Snowflake::Invalid;
-                    } else {
-                        currentVoiceChannelId = event.channelId.get();
-                        currentVoiceGuildId = event.guildId.hasValue() ? event.guildId.get() : Snowflake::Invalid;
-                    }
-                    emit voiceStateChanged(currentVoiceChannelId, currentVoiceGuildId);
-                }
-
-#ifndef ACHERON_NO_VOICE
-                voiceManager->handleVoiceStateUpdate(event);
-#endif
-            });
+    connect(client, &Discord::Client::voiceStateUpdated, this, &ClientInstance::onVoiceStateUpdated);
 
 #ifndef ACHERON_NO_VOICE
     connect(client, &Discord::Client::voiceServerUpdated, this,
@@ -328,6 +349,81 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 #endif
 }
 
+void ClientInstance::onVoiceStateUpdated(const Discord::VoiceState &event)
+{
+    qCInfo(LogVoice) << "VOICE_STATE_UPDATE: user" << event.userId.get()
+                     << "channel" << (event.channelId.isNull() ? 0 : static_cast<quint64>(event.channelId.get()))
+                     << "session" << event.sessionId.get()
+                     << "mute" << event.selfMute.get()
+                     << "deaf" << event.selfDeaf.get();
+
+    if (event.userId.get() == account.id) {
+        const bool left = !event.channel().isValid();
+        const bool heldByThisSession = event.isHeldBy(gatewaySessionId);
+
+        // only a voice state this gateway session holds puts this client in voice
+        const bool takenByAnotherSession = !heldByThisSession && !left && currentVoiceChannelId.isValid();
+
+        if (heldByThisSession && !left) {
+            currentVoiceChannelId = event.channelId.get();
+            currentVoiceGuildId = event.guildId.hasValue() ? event.guildId.get() : Snowflake::Invalid;
+            emit voiceStateChanged(currentVoiceChannelId, currentVoiceGuildId);
+        } else if (heldByThisSession || takenByAnotherSession) {
+            currentVoiceChannelId = Snowflake::Invalid;
+            currentVoiceGuildId = Snowflake::Invalid;
+            emit voiceStateChanged(currentVoiceChannelId, currentVoiceGuildId);
+        }
+    }
+
+    if (!event.selfStream.valueOr(false))
+        streamPreviewCache->forgetOwner(event.userId.get());
+
+#ifndef ACHERON_NO_VOICE
+    voiceManager->handleVoiceStateUpdate(event);
+#endif
+}
+
+void ClientInstance::onCallCreated(const Discord::CallCreate &event)
+{
+    callStore->handleCallCreate(event);
+
+    if (!event.voiceStates.hasValue())
+        return;
+
+    for (Discord::VoiceState state : event.voiceStates.get()) {
+        if (!state.channel().isValid())
+            state.channelId = event.channelId.get();
+        onVoiceStateUpdated(state);
+    }
+}
+
+void ClientInstance::onCallDeleted(const Discord::CallDelete &event)
+{
+    callStore->handleCallDelete(event);
+#ifndef ACHERON_NO_VOICE
+    voiceManager->forgetChannelVoiceStates(event.channelId.get());
+#endif
+}
+
+void ClientInstance::noteChannelSelected(Snowflake channelId)
+{
+    selectedChannelId = channelId;
+    connectSelectedCall(CallConnect::OncePerChannel);
+}
+
+void ClientInstance::connectSelectedCall(CallConnect rule)
+{
+    if (!selectedChannelId.isValid() || gatewaySessionId.isEmpty())
+        return;
+
+    const auto channel = getChannel(selectedChannelId);
+    if (!channel || (channel->type != Discord::ChannelType::DM && channel->type != Discord::ChannelType::GROUP_DM))
+        return;
+
+    if (callStore->claimConnect(selectedChannelId, rule))
+        client->sendCallConnect(selectedChannelId);
+}
+
 void ClientInstance::onVoiceConnected()
 {
     client->setVoiceConnected(true);
@@ -336,6 +432,12 @@ void ClientInstance::onVoiceConnected()
 void ClientInstance::onVoiceDisconnected()
 {
     client->setVoiceConnected(false);
+}
+
+void ClientInstance::onSelfAudioToggled()
+{
+    if (isInVoice())
+        sendOwnVoiceState(currentVoiceGuildId, currentVoiceChannelId);
 }
 
 void ClientInstance::onHeartbeatSessionChanged(const Discord::HeartbeatSession &session)
@@ -593,6 +695,7 @@ void ClientInstance::onChannelDeleted(const Discord::ChannelDelete &event)
         return;
 
     Core::Snowflake channelId = event.id.get();
+    callStore->forget(channelId);
 
     qCDebug(LogCore) << "Channel deleted:" << channelId;
 
@@ -1364,6 +1467,15 @@ void ClientInstance::markCategoryAsRead(Snowflake guildId, Snowflake categoryId)
 
 ClientInstance::~ClientInstance()
 {
+#ifdef ACHERON_HAVE_VIDEO
+    // these still use the voice manager as they go, which QObject would delete first
+    delete cameraSend;
+    cameraSend = nullptr;
+    delete streamWatch;
+    streamWatch = nullptr;
+    delete streamBroadcast;
+    streamBroadcast = nullptr;
+#endif
     Storage::DatabaseManager::instance().closeCacheDatabase(account.id);
 }
 
@@ -1377,7 +1489,7 @@ void ClientInstance::stop()
     emojiManager->savePendingUsage();
 
     if (isInVoice()) {
-        discord()->sendVoiceStateUpdate(currentVoiceGuildId, Snowflake::Invalid, false, false);
+        leaveVoice();
 #ifndef ACHERON_NO_VOICE
         voiceManager->disconnect();
 #endif
@@ -1438,6 +1550,98 @@ EmojiManager *ClientInstance::emojis() const
 FavoriteGifs *ClientInstance::favoriteGifs() const
 {
     return favoriteGifManager;
+}
+
+CallStore *ClientInstance::calls() const
+{
+    return callStore;
+}
+
+StreamManager *ClientInstance::streams() const
+{
+    return streamManager;
+}
+
+StreamPreviews *ClientInstance::streamPreviews() const
+{
+    return streamPreviewCache;
+}
+
+#ifdef ACHERON_HAVE_VIDEO
+StreamWatcher *ClientInstance::streamWatcher() const
+{
+    return streamWatch;
+}
+
+StreamBroadcaster *ClientInstance::streamBroadcaster() const
+{
+    return streamBroadcast;
+}
+
+CameraSender *ClientInstance::cameraSender() const
+{
+    return cameraSend;
+}
+
+ShareTerms ClientInstance::screenShareTerms()
+{
+    ShareTerms shareTerms;
+    if (!currentVoiceChannelId.isValid())
+        return shareTerms;
+
+    const Discord::User &me = client->getMe();
+    if (me.premiumType.hasValue())
+        shareTerms.tier.premiumType = static_cast<int>(me.premiumType.get());
+
+    if (!currentVoiceGuildId.isValid()) {
+        shareTerms.allowed = true;
+        if (const auto call = callStore->call(currentVoiceChannelId))
+            shareTerms.preferredRegion = call->region;
+        return shareTerms;
+    }
+
+    shareTerms.tier.guildBoostTier = static_cast<int>(client->getGuildPremiumTier(currentVoiceGuildId));
+
+    // stage channels have rules of their own, not followed yet
+    const auto channel = getChannel(currentVoiceChannelId);
+    if (!channel || channel->type.get() != Discord::ChannelType::GUILD_VOICE)
+        return shareTerms;
+    const auto guild = getGuild(currentVoiceGuildId);
+    if (guild && guild->afkChannelId.hasValue() && guild->afkChannelId.get() == currentVoiceChannelId)
+        return shareTerms;
+
+    shareTerms.allowed = permissionManager->hasChannelPermission(account.id, currentVoiceChannelId, Discord::Permission::STREAM | Discord::Permission::VIEW_CHANNEL | Discord::Permission::CONNECT);
+    return shareTerms;
+}
+#endif
+
+void ClientInstance::joinVoice(Snowflake guildId, Snowflake channelId)
+{
+#ifndef ACHERON_NO_VOICE
+    // as the official client, a private call is joined unmuted and undeafened
+    if (!guildId.isValid())
+        voiceManager->resetSelfAudio();
+#endif
+    sendOwnVoiceState(guildId, channelId);
+}
+
+void ClientInstance::leaveVoice()
+{
+    sendOwnVoiceState(currentVoiceGuildId, Snowflake::Invalid);
+}
+
+void ClientInstance::sendOwnVoiceState(Snowflake guildId, Snowflake channelId)
+{
+#ifdef ACHERON_HAVE_VIDEO
+    const bool cameraOn = cameraSend && cameraSend->isOnIn(channelId);
+#else
+    const bool cameraOn = false;
+#endif
+#ifndef ACHERON_NO_VOICE
+    discord()->sendVoiceStateUpdate(guildId, channelId, voiceManager->isSelfMuted(), voiceManager->isSelfDeafened(), cameraOn);
+#else
+    discord()->sendVoiceStateUpdate(guildId, channelId, false, false, cameraOn);
+#endif
 }
 
 #ifndef ACHERON_NO_VOICE

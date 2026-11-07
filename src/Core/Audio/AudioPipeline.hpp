@@ -36,6 +36,8 @@ class AudioPipeline : public QObject
 {
     Q_OBJECT
 public:
+    static constexpr quint32 VOICE_CONNECTION_SOURCE = 0;
+
     explicit AudioPipeline(QObject *parent = nullptr);
     ~AudioPipeline() override;
 
@@ -47,6 +49,10 @@ public slots:
     void stopCapture();
 
     void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+
+    void onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+    void setSourceVolume(quint32 source, float volume);
+    void removeSource(quint32 source);
 
     void setSsrcUserId(quint32 ssrc, Snowflake userId);
     void removeUser(Snowflake userId);
@@ -82,13 +88,13 @@ private:
     void sendTrailingSilence();
     void initializeEncoder();
     void reconfigureNoiseSuppressorChannels();
-    static float computeRms(const int16_t *samples, int count);
 
     IAudioBackend *audioBackend = nullptr;
     QTimer *mixTimer = nullptr;
     std::unique_ptr<OpusEncoder> encoder;
     std::unique_ptr<NoiseSuppressor> noiseSuppressor;
-    std::unordered_map<quint32, SpeakerState> speakers;
+    std::unordered_map<quint64, SpeakerState> speakers;
+    QHash<quint32, float> sourceVolumes;
 
     QHash<quint32, Snowflake> ssrcToUser;
     QHash<Snowflake, float> userVolumes;

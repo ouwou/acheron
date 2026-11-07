@@ -302,6 +302,27 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::VOICE_SERVER_UPDATE:
         handleVoiceServerUpdate(data);
         break;
+    case GatewayEvent::CALL_CREATE:
+        handleCallCreate(data);
+        break;
+    case GatewayEvent::CALL_UPDATE:
+        handleCallUpdate(data);
+        break;
+    case GatewayEvent::CALL_DELETE:
+        handleCallDelete(data);
+        break;
+    case GatewayEvent::STREAM_CREATE:
+        handleStreamCreate(data);
+        break;
+    case GatewayEvent::STREAM_SERVER_UPDATE:
+        handleStreamServerUpdate(data);
+        break;
+    case GatewayEvent::STREAM_UPDATE:
+        handleStreamUpdate(data);
+        break;
+    case GatewayEvent::STREAM_DELETE:
+        handleStreamDelete(data);
+        break;
     case GatewayEvent::RELATIONSHIP_ADD:
         handleRelationshipAdd(data);
         break;
@@ -663,6 +684,41 @@ void Gateway::handleVoiceServerUpdate(const Inbound &data)
     emit gatewayVoiceServerUpdate(event);
 }
 
+void Gateway::handleCallCreate(const Inbound &data)
+{
+    emit gatewayCallCreate(data.getData<CallCreate>());
+}
+
+void Gateway::handleCallUpdate(const Inbound &data)
+{
+    emit gatewayCallUpdate(data.getData<CallUpdate>());
+}
+
+void Gateway::handleCallDelete(const Inbound &data)
+{
+    emit gatewayCallDelete(data.getData<CallDelete>());
+}
+
+void Gateway::handleStreamCreate(const Inbound &data)
+{
+    emit gatewayStreamCreate(data.getData<StreamCreate>());
+}
+
+void Gateway::handleStreamServerUpdate(const Inbound &data)
+{
+    emit gatewayStreamServerUpdate(data.getData<StreamServerUpdate>());
+}
+
+void Gateway::handleStreamUpdate(const Inbound &data)
+{
+    emit gatewayStreamUpdate(data.getData<StreamUpdate>());
+}
+
+void Gateway::handleStreamDelete(const Inbound &data)
+{
+    emit gatewayStreamDelete(data.getData<StreamDelete>());
+}
+
 void Gateway::handleRelationshipAdd(const Inbound &data)
 {
     Relationship event = data.getData<Relationship>();
@@ -748,20 +804,61 @@ void Gateway::queryGuildMembers(Core::Snowflake guildId, const QString &query, i
     sendPayload(request.toJson());
 }
 
-void Gateway::sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf)
+void Gateway::sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo)
 {
-    UpdateVoiceState msg;
-    if (guildId.isValid())
-        msg.guildId = guildId;
+    sendPayload(voiceStateUpdate(guildId, channelId, selfMute, selfDeaf, selfVideo).toJson());
+}
+
+void Gateway::sendCallConnect(Core::Snowflake channelId)
+{
+    ConnectCall msg;
+    msg.channelId = channelId;
+    sendPayload(msg.toJson());
+}
+
+void Gateway::sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion)
+{
+    CreateStream msg;
+    msg.type = channel.typeName();
+    if (channel.type == StreamKey::Type::Guild)
+        msg.guildId = channel.guildId;
     else
         msg.guildId = nullptr;
-    if (channelId.isValid())
-        msg.channelId = channelId;
+    msg.channelId = channel.channelId;
+    if (preferredRegion)
+        msg.preferredRegion = *preferredRegion;
     else
-        msg.channelId = nullptr;
-    msg.selfMute = selfMute;
-    msg.selfDeaf = selfDeaf;
+        msg.preferredRegion = nullptr;
 
+    sendPayload(msg.toJson());
+}
+
+void Gateway::sendStreamDelete(const QString &streamKey)
+{
+    DeleteStream msg;
+    msg.streamKey = streamKey;
+    sendPayload(msg.toJson());
+}
+
+void Gateway::sendStreamWatch(const QString &streamKey)
+{
+    WatchStream msg;
+    msg.streamKey = streamKey;
+    sendPayload(msg.toJson());
+}
+
+void Gateway::sendStreamPing(const QString &streamKey)
+{
+    PingStream msg;
+    msg.streamKey = streamKey;
+    sendPayload(msg.toJson());
+}
+
+void Gateway::sendStreamSetPaused(const QString &streamKey, bool paused)
+{
+    SetStreamPaused msg;
+    msg.streamKey = streamKey;
+    msg.paused = paused;
     sendPayload(msg.toJson());
 }
 
