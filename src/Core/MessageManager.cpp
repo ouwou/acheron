@@ -125,6 +125,11 @@ QString MessageManager::channelTopicHtml(const QString &topic, Snowflake channel
     return parser->toHtml(parser->parse(topic, state));
 }
 
+QString MessageManager::messageContentHtml(const QString &content, Snowflake channelId) const
+{
+    return parser->toHtml(parser->parse(content, inlineParseState(channelId)));
+}
+
 QString MessageManager::profileBioHtml(const QString &bio) const
 {
     Markdown::ParseState state = inlineParseState(Snowflake::Invalid);
