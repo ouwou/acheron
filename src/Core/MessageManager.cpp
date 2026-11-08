@@ -69,7 +69,7 @@ static QString resolveSystemMessageContent(const Discord::Message &msg, const st
 
 MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
                                UserManager *userManager, QObject *parent)
-    : QObject(parent), client(client), userManager(userManager), reactorStore(new MessageReactors(client, userManager, this)), repo(accountId), parser(std::make_unique<Markdown::Parser>())
+    : QObject(parent), client(client), userManager(userManager), reactorStore(new MessageReactors(client, userManager, this)), pinStore(new ChannelPins(client, [this](Discord::Message &msg) { parseMessageContent(msg); }, this)), repo(accountId), parser(std::make_unique<Markdown::Parser>())
 {
     messageCache.setMaxCost(1'000);
 
@@ -123,11 +123,6 @@ QString MessageManager::channelTopicHtml(const QString &topic, Snowflake channel
     Markdown::ParseState state = inlineParseState(channelId);
     state.excludedRules = OfficialTopicExcludedRules;
     return parser->toHtml(parser->parse(topic, state));
-}
-
-QString MessageManager::messageContentHtml(const QString &content, Snowflake channelId) const
-{
-    return parser->toHtml(parser->parse(content, inlineParseState(channelId)));
 }
 
 QString MessageManager::profileBioHtml(const QString &bio) const
@@ -371,6 +366,7 @@ void MessageManager::onMessageCreated(const Discord::Message &message)
 void MessageManager::onMessageUpdated(const Discord::Message &message)
 {
     cacheGatewayMembers(message);
+    pinStore->applyMessageUpdate(message);
 
     Discord::Message merged;
     bool haveBaseline = false;
@@ -409,6 +405,7 @@ void MessageManager::onMessageDeleted(const Discord::MessageDelete &event)
     Snowflake messageId = event.id.get();
 
     messageCache.remove(messageId);
+    pinStore->forgetMessage(channelId, messageId);
 
     if (segments.contains(channelId))
         segments[channelId].remove(messageId);

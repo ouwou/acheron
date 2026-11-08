@@ -7,6 +7,7 @@
 #include <QPair>
 #include <QSet>
 
+#include "ChannelPins.hpp"
 #include "MessageReactors.hpp"
 #include "MessageSegments.hpp"
 #include "PendingAttachment.hpp"
@@ -48,8 +49,6 @@ public:
 
     [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;
     [[nodiscard]] QString profileBioHtml(const QString &bio) const;
-    // same markdown rendering as message bodies in the chat view
-    [[nodiscard]] QString messageContentHtml(const QString &content, Snowflake channelId) const;
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
@@ -66,6 +65,7 @@ public:
     void removeReactionOf(Snowflake reactorId, Snowflake channelId, const ReactionRef &reaction);
 
     [[nodiscard]] MessageReactors *reactors() const { return reactorStore; }
+    [[nodiscard]] ChannelPins *pins() const { return pinStore; }
     [[nodiscard]] QList<Discord::Reaction> reactionsOf(Snowflake messageId);
 
     enum class ReactionRejection {
@@ -138,6 +138,7 @@ private:
     Discord::Client *client;
     UserManager *userManager;
     MessageReactors *reactorStore;
+    ChannelPins *pinStore;
     EmojiManager *emojiManager = nullptr;
     std::unique_ptr<Markdown::Parser> parser;
 

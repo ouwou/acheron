@@ -222,6 +222,7 @@ void DatabaseManager::setupCacheTables(const QString &connName)
 	        "reference_guild_id" INTEGER,
 	        "snapshot" TEXT,
 	        "context_only" INTEGER NOT NULL DEFAULT 0,
+	        "pinned" INTEGER NOT NULL DEFAULT 0,
 	        PRIMARY KEY("id")
         );
     )");

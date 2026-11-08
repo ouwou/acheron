@@ -395,6 +395,15 @@ void ChatView::openLink(const QString &url)
         return;
     }
 
+    const QLatin1String pinsLink("acheron://pins/");
+    if (url.startsWith(pinsLink)) {
+        bool ok = false;
+        quint64 id = url.mid(pinsLink.size()).toULongLong(&ok);
+        if (ok)
+            emit pinsLinkClicked(Core::Snowflake(id));
+        return;
+    }
+
     if (auto link = Discord::ChannelLink::parse(url)) {
         if (link->messageId.isValid())
             emit messageLinkClicked(link->channelId, link->messageId);
@@ -1307,7 +1316,12 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
-    if (canPinMessages) {
+    if (canPinMessages && index.data(ChatModel::IsPinnedRole).toBool()) {
+        QAction *unpinAction = menu.addAction(tr("Unpin Message"));
+        connect(unpinAction, &QAction::triggered, this, [this, channelId, messageId]() {
+            emit unpinMessageRequested(channelId, messageId);
+        });
+    } else if (canPinMessages) {
         QAction *pinAction = menu.addAction(tr("Pin Message"));
         connect(pinAction, &QAction::triggered, this, [this, channelId, messageId]() {
             emit pinMessageRequested(channelId, messageId);

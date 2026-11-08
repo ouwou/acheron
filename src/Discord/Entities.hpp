@@ -1299,6 +1299,7 @@ struct Message : Core::JsonUtils::JsonObject
     Field<bool, true> mentionEveryone;
     Field<QList<Reaction>, true> reactions;
     Field<QList<StickerItem>, true> stickerItems;
+    Field<bool, true> pinned;
 
     Field<MessageReference, true> messageReference;
 
@@ -1328,6 +1329,8 @@ struct Message : Core::JsonUtils::JsonObject
 
     // track for MESSAGE_UPDATE
     QSet<QString> presentKeys;
+
+    [[nodiscard]] bool isPinned() const { return pinned.hasValue() && pinned.get(); }
 
     [[nodiscard]] bool isForwarded() const
     {
@@ -1384,6 +1387,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "mention_everyone", message.mentionEveryone);
         get(obj, "reactions", message.reactions);
         get(obj, "sticker_items", message.stickerItems);
+        get(obj, "pinned", message.pinned);
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
@@ -1436,6 +1440,8 @@ struct Message : Core::JsonUtils::JsonObject
             attachments = update.attachments;
         if (present.contains(QStringLiteral("message_reference")))
             messageReference = update.messageReference;
+        if (present.contains(QStringLiteral("pinned")))
+            pinned = update.pinned;
 
         if (present.contains(QStringLiteral("message_snapshots"))) {
             snapshotMessage = update.snapshotMessage;
@@ -1456,6 +1462,20 @@ struct Message : Core::JsonUtils::JsonObject
             stickerItems = update.stickerItems;
             stickersJson = update.stickersJson;
         }
+    }
+};
+
+struct MessagePin : Core::JsonUtils::JsonObject
+{
+    Field<QDateTime> pinnedAt;
+    Field<Message> message;
+
+    static MessagePin fromJson(const QJsonObject &obj)
+    {
+        MessagePin pin;
+        get(obj, "pinned_at", pin.pinnedAt);
+        get(obj, "message", pin.message);
+        return pin;
     }
 };
 

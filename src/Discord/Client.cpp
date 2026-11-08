@@ -501,32 +501,27 @@ void Client::searchThreads(Snowflake channelId, bool archived, int offset, Threa
             });
 }
 
-void Client::fetchMessagePins(Snowflake channelId, const QDateTime &before, MessagePinsCallback callback)
+void Client::fetchMessagePins(Snowflake channelId, int limit, std::optional<QDateTime> pinnedBefore, MessagePinsCallback callback)
 {
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages/pins";
     QUrlQuery query;
-    query.addQueryItem("limit", "50");
-    if (before.isValid())
-        query.addQueryItem("before", before.toUTC().toString(Qt::ISODateWithMs));
+    query.addQueryItem("limit", QString::number(limit));
+    if (pinnedBefore)
+        query.addQueryItem("before", pinnedBefore->toUTC().toString(Qt::ISODateWithMs));
 
     httpClient->get(endpoint, query, [channelId, callback](const HttpResponse &response) {
         if (!response.success) {
             qCWarning(LogDiscord) << "Failed to fetch pins for channel" << channelId << ":" << response.error;
-            callback(Core::Result<MessagePinsResult>::makeError(response.error));
+            callback(Core::Result<MessagePinsPage>::makeError(response.error));
             return;
         }
 
         const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
-        MessagePinsResult result;
-        for (const QJsonValue &val : obj.value("items").toArray()) {
-            const QJsonObject item = val.toObject();
-            MessagePin pin;
-            pin.pinnedAt = QDateTime::fromString(item.value("pinned_at").toString(), Qt::ISODateWithMs);
-            pin.message = Message::fromJson(item.value("message").toObject());
-            result.items.append(pin);
-        }
-        result.hasMore = obj.value("has_more").toBool();
-        callback(Core::Result<MessagePinsResult>::makeOk(result));
+        MessagePinsPage page;
+        for (const QJsonValue &val : obj.value("items").toArray())
+            page.newestFirst.append(MessagePin::fromJson(val.toObject()));
+        page.hasMore = obj.value("has_more").toBool();
+        callback(Core::Result<MessagePinsPage>::makeOk(page));
     });
 }
 
@@ -1097,31 +1092,40 @@ void Client::deleteMessage(Snowflake channelId, Snowflake messageId)
     });
 }
 
-void Client::pinMessage(Snowflake channelId, Snowflake messageId)
+static QString pinEndpoint(Snowflake channelId, Snowflake messageId)
 {
-    QString endpoint = "/channels/" + QString::number(channelId) + "/pins/" +
-                       QString::number(messageId);
+    return "/channels/" + QString::number(channelId) + "/messages/pins/" + QString::number(messageId);
+}
 
-    httpClient->put(endpoint, QJsonObject{}, [this, channelId, messageId](const HttpResponse &response) {
+static Core::Result<void> pinResult(const HttpResponse &response)
+{
+    if (response.success)
+        return Core::Result<void>::makeOk();
+    const ApiError error = ApiError::fromResponse(response);
+    return Core::Result<void>::makeError(error.message, error.code);
+}
+
+void Client::pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback)
+{
+    httpClient->put(pinEndpoint(channelId, messageId), QJsonObject{}, [channelId, messageId, callback](const HttpResponse &response) {
         if (!response.success)
             qCWarning(LogDiscord) << "Failed to pin message" << messageId << "in channel"
                                   << channelId << ":" << response.error;
         else
             qCInfo(LogDiscord) << "Message" << messageId << "pinned in channel" << channelId;
+        callback(pinResult(response));
     });
 }
 
-void Client::unpinMessage(Snowflake channelId, Snowflake messageId)
+void Client::unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback)
 {
-    QString endpoint = "/channels/" + QString::number(channelId) + "/pins/" +
-                       QString::number(messageId);
-
-    httpClient->delete_(endpoint, [this, channelId, messageId](const HttpResponse &response) {
+    httpClient->delete_(pinEndpoint(channelId, messageId), [channelId, messageId, callback](const HttpResponse &response) {
         if (!response.success)
             qCWarning(LogDiscord) << "Failed to unpin message" << messageId << "in channel"
                                   << channelId << ":" << response.error;
         else
             qCInfo(LogDiscord) << "Message" << messageId << "unpinned from channel" << channelId;
+        callback(pinResult(response));
     });
 }
 

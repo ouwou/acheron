@@ -251,6 +251,7 @@ public:
         IsForwardedRole,
         ForwardOriginRole,
         StickersRole,
+        IsPinnedRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -318,6 +319,7 @@ private:
     void setAtLatest(bool value);
     QString resolveAuthorName(const Discord::User &author) const;
     QColor resolveAuthorColor(const Discord::User &author) const;
+    QString authorHtml(const Discord::User &author) const;
     ForwardOriginData forwardOrigin(const Discord::Message &msg) const;
     QPixmap localPixmap(const QUrl &url, const QSize &displaySize) const;
     QPixmap pixmapOrNullWhileLoading(const QUrl &url, const QSize &displaySize) const;

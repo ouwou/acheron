@@ -36,6 +36,7 @@
 #include "GuildSettings/MemberModeration.hpp"
 #include "Accounts/AccountsModel.hpp"
 #include "Core/ClientInstance.hpp"
+#include "Discord/ApiError.hpp"
 #include "Core/AccountInfo.hpp"
 #include "Core/Emoji/EmojiManager.hpp"
 #include "Core/UserManager.hpp"
@@ -121,6 +122,16 @@ ReactionsPopup::RemovableReactors removableReactorsIn(Core::ClientInstance *inst
 
     const bool canManageMessages = guildId.isValid() && hasPermissionIn(instance, channel, channelId, Discord::Permission::MANAGE_MESSAGES);
     return canManageMessages ? ReactionsPopup::RemovableReactors::Anyone : ReactionsPopup::RemovableReactors::OwnOnly;
+}
+
+bool isPrivateChannel(Core::ClientInstance *instance, Core::Snowflake channelId)
+{
+    return !instance->discord()->getGuildIdForChannel(channelId).isValid();
+}
+
+bool canPinMessagesIn(Core::ClientInstance *instance, Core::Snowflake channelId)
+{
+    return isPrivateChannel(instance, channelId) || hasPermissionIn(instance, instance->getChannel(channelId), channelId, Discord::Permission::PIN_MESSAGES);
 }
 
 void showReactionRejection(QWidget *parent, MessageManager::ReactionRejection reason)
@@ -405,8 +416,8 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
     }
     bool isThread = threadParentId.isValid();
 
-    // voice channels cannot hold threads
-    setChannelToolbarTargets(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId), channelId);
+    // voice channels cannot hold threads, and the official header has no pins button for them
+    setChannelToolbarTargets(isDm || isVoice ? Snowflake::Invalid : (isThread ? threadParentId : channelId), isVoice ? Snowflake::Invalid : channelId);
     showChannelTopic(instance, channelId);
 
     if (isDm) {
@@ -426,7 +437,7 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
 
     bool voiceLocked = voiceChatLocked(instance, channelId);
     bool canSend = !voiceLocked && instance->permissions()->hasChannelPermission(userId, permChannel, sendPerm);
-    bool canPin = instance->permissions()->hasChannelPermission(userId, permChannel, Discord::Permission::PIN_MESSAGES);
+    bool canPin = canPinMessagesIn(instance, channelId);
     bool canManage = instance->permissions()->hasChannelPermission(userId, permChannel, Discord::Permission::MANAGE_MESSAGES);
 
     int rateLimit = instance->getChannelRateLimit(channelId);
@@ -519,6 +530,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(msgs, nullptr, this, nullptr);
         disconnect(msgs, nullptr, chatView, nullptr);
         disconnect(msgs->reactors(), nullptr, chatView, nullptr);
+        disconnect(msgs->pins(), nullptr, this, nullptr);
         disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
@@ -568,6 +580,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs, &MessageManager::messageDeleted, chatModel, &ChatModel::handleMessageDeleted);
     connect(msgs, &MessageManager::attachmentUploadProgress, chatModel, &ChatModel::handleUploadProgress);
     connect(msgs, &MessageManager::reactionRejected, this, [this](MessageManager::ReactionRejection reason) { showReactionRejection(this, reason); }, Qt::QueuedConnection);
+    connect(msgs->pins(), &Core::ChannelPins::pinFailed, this, &MainWindow::showPinFailure);
+    connect(msgs->pins(), &Core::ChannelPins::unpinFailed, this, &MainWindow::offerUnpinRetry);
     connect(msgs->reactors(), &Core::MessageReactors::reactorsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::reactionsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::messagesReceived, this,
@@ -1461,7 +1475,13 @@ void MainWindow::setupUi()
     connect(chatView, &ChatView::pinMessageRequested, this,
             [this](Snowflake channelId, Snowflake messageId) {
                 if (currentInstance)
-                    currentInstance->discord()->pinMessage(channelId, messageId);
+                    currentInstance->messages()->pins()->pin(channelId, messageId);
+            });
+
+    connect(chatView, &ChatView::unpinMessageRequested, this,
+            [this](Snowflake channelId, Snowflake messageId) {
+                if (currentInstance)
+                    PinnedMessagesPopup::confirmUnpin(this, currentInstance->messages()->pins(), channelId, messageId);
             });
 
     connect(chatView, &ChatView::editMessageRequested, this,
@@ -1513,6 +1533,7 @@ void MainWindow::setupUi()
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
     connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
+    connect(chatView, &ChatView::pinsLinkClicked, this, &MainWindow::openPinnedMessagesOf);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
         if (currentInstance)
             currentInstance->readState()->setActiveChannelAtBottom(atBottom);
@@ -2975,6 +2996,14 @@ void MainWindow::setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, 
     channelToolbar->setVisible(threadBrowserChannel.isValid() || pinsChannel.isValid());
 }
 
+void MainWindow::openPinnedMessagesOf(Core::Snowflake channelId)
+{
+    if (channelId != chatModel->getActiveChannelId())
+        navigateToChannel(channelId);
+    if (channelId == pinsChannelId)
+        openPinnedMessages();
+}
+
 void MainWindow::openPinnedMessages()
 {
     if (!currentInstance || !pinsChannelId.isValid())
@@ -2990,9 +3019,64 @@ void MainWindow::openPinnedMessages()
     if (auto ch = currentInstance->getChannel(pinsChannelId); ch && ch->name.hasValue())
         name = ch->name.get();
 
-    pinnedMessages->configure(currentInstance, pinsChannelId, name);
+    pinnedMessages->configure(currentInstance, pinsChannelId, name, canPinMessagesIn(currentInstance, pinsChannelId));
     pinnedMessages->show();
     pinnedMessages->raise();
+}
+
+void MainWindow::showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage)
+{
+    if (!currentInstance)
+        return;
+    const auto channel = currentInstance->getChannel(channelId);
+    const bool isPrivate = isPrivateChannel(currentInstance, channelId);
+
+    QString title = tr("The Pin Broke");
+    QString text = errorMessage.isEmpty() ? tr("An error occurred, please try again.") : errorMessage;
+    switch (errorCode) {
+    case Discord::ApiError::TooManyPinsInChannel:
+        text = isPrivate ? tr("Discord is unable to pin that message. You may have hit the limit of %1 pins in this channel.").arg(Core::ChannelPins::MaxPerChannel)
+                         : tr("Discord is unable to pin that message. You may have hit the limit of %1 pins in channel #%2.").arg(Core::ChannelPins::MaxPerChannel).arg(channel ? channel->name.valueOr(QString()) : QString());
+        break;
+    case Discord::ApiError::InvalidAccess:
+        title = tr("No Access");
+        text = tr("You do not have permission to pin messages in this channel.");
+        break;
+    case Discord::ApiError::InvalidPinMessageChannel:
+        title = tr("Invalid Channel Type");
+        text = tr("This message cannot be pinned in this channel.");
+        break;
+    case Discord::ApiError::InvalidThreadArchiveState:
+        title = tr("Invalid Thread Archive State");
+        text = tr("This message cannot be pinned in an archived thread.");
+        break;
+    case Discord::ApiError::InvalidActionSystemMessage:
+        title = tr("Invalid Message Type");
+        text = tr("This message is a system message and cannot be pinned.");
+        break;
+    case Discord::ApiError::UnknownMessage:
+        title = tr("Unknown Message");
+        text = tr("The message you are trying to pin does not exist.");
+        break;
+    }
+
+    auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok, this);
+    box->setTextFormat(Qt::PlainText);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
+}
+
+void MainWindow::offerUnpinRetry(Core::Snowflake channelId, Core::Snowflake messageId)
+{
+    auto *box = new QMessageBox(QMessageBox::Warning, tr("The Pin Is Stuck!"), tr("Discord failed to unpin that message for some reason. Sorry about that."), QMessageBox::Cancel, this);
+    QPushButton *retry = box->addButton(tr("Try Again"), QMessageBox::AcceptRole);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    const QPointer<Core::ChannelPins> pins(currentInstance ? currentInstance->messages()->pins() : nullptr);
+    connect(box, &QMessageBox::buttonClicked, this, [retry, pins, channelId, messageId](QAbstractButton *clicked) {
+        if (clicked == retry && pins)
+            pins->unpin(channelId, messageId);
+    });
+    box->open();
 }
 
 void MainWindow::openThreadBrowser()

@@ -112,19 +112,13 @@ public:
     using ThreadListCallback = std::function<void(const Core::Result<ThreadListResult> &)>;
     void searchThreads(Snowflake channelId, bool archived, int offset, ThreadListCallback callback);
 
-    struct MessagePin
+    struct MessagePinsPage
     {
-        QDateTime pinnedAt;
-        Message message;
-    };
-    struct MessagePinsResult
-    {
-        QList<MessagePin> items; // newest pin first
+        QList<MessagePin> newestFirst;
         bool hasMore = false;
     };
-    using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsResult> &)>;
-    // before: only pins made before this time, invalid for the newest page
-    void fetchMessagePins(Snowflake channelId, const QDateTime &before, MessagePinsCallback callback);
+    using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsPage> &)>;
+    void fetchMessagePins(Snowflake channelId, int limit, std::optional<QDateTime> pinnedBefore, MessagePinsCallback callback);
 
     using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
@@ -135,8 +129,9 @@ public:
     bool cancelMessageSend(const QString &nonce);
     void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
-    void pinMessage(Snowflake channelId, Snowflake messageId);
-    void unpinMessage(Snowflake channelId, Snowflake messageId);
+    using PinCallback = std::function<void(const Core::Result<void> &)>;
+    void pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
+    void unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
 
     enum class ReactionLocation {
         HoverBar,

@@ -32,9 +32,9 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
     qMsg.prepare(R"(
         INSERT OR REPLACE INTO messages
 		(id, channel_id, author_id, content, timestamp, edited_timestamp, type, flags, embeds, reactions, stickers, deleted,
-		 referenced_message_id, reference_type, reference_channel_id, reference_guild_id, snapshot, context_only)
+		 referenced_message_id, reference_type, reference_channel_id, reference_guild_id, snapshot, context_only, pinned)
 		VALUES (:id, :channel_id, :author_id, :content, :timestamp, :edited_timestamp, :type, :flags, :embeds, :reactions, :stickers, 0,
-		        :ref_msg_id, :ref_type, :ref_channel_id, :ref_guild_id, :snapshot, 0)
+		        :ref_msg_id, :ref_type, :ref_channel_id, :ref_guild_id, :snapshot, 0, :pinned)
     )");
 
     QSqlQuery qAtt(db);
@@ -59,6 +59,7 @@ void MessageRepository::saveMessages(const QList<Discord::Message> &messages, QS
         qMsg.bindValue(":embeds", message.embedsJson.isEmpty() ? QVariant() : message.embedsJson);
         qMsg.bindValue(":reactions", message.reactionsJson.isEmpty() ? QVariant() : message.reactionsJson);
         qMsg.bindValue(":stickers", message.stickersJson.isEmpty() ? QVariant() : message.stickersJson);
+        qMsg.bindValue(":pinned", message.isPinned());
 
         if (message.referencedMessage) {
             qMsg.bindValue(":ref_msg_id", static_cast<qint64>(message.referencedMessage->id.get()));
@@ -160,7 +161,7 @@ void MessageRepository::updateMessageContent(const Discord::Message &message)
     QSqlQuery q(db);
     q.prepare(R"(
         UPDATE messages
-        SET content = :content, edited_timestamp = :edited_timestamp, embeds = :embeds, flags = :flags, snapshot = :snapshot
+        SET content = :content, edited_timestamp = :edited_timestamp, embeds = :embeds, flags = :flags, snapshot = :snapshot, pinned = :pinned
         WHERE id = :id
     )");
     q.bindValue(":content", message.content);
@@ -168,6 +169,7 @@ void MessageRepository::updateMessageContent(const Discord::Message &message)
     q.bindValue(":embeds", message.embedsJson.isEmpty() ? QVariant() : message.embedsJson);
     q.bindValue(":flags", static_cast<qint64>(message.flags.get()));
     q.bindValue(":snapshot", message.snapshotJson.isEmpty() ? QVariant() : message.snapshotJson);
+    q.bindValue(":pinned", message.isPinned());
     q.bindValue(":id", static_cast<qint64>(message.id.get()));
 
     execLogged(q, "MessageRepository: Update message content");
@@ -212,7 +214,7 @@ std::optional<Discord::Message> MessageRepository::getMessage(Core::Snowflake me
 			   rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds,
 			   ru.id, ru.username, ru.global_name, ru.avatar, ru.bot,
 			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot,
-			   m.stickers, rm.stickers
+			   m.stickers, rm.stickers, m.pinned
 		FROM messages m
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
@@ -242,7 +244,7 @@ QList<Discord::Message> MessageRepository::getMessagesInRange(Core::Snowflake ch
 			   rm.id, rm.channel_id, rm.author_id, rm.content, rm.timestamp, rm.edited_timestamp, rm.type, rm.flags, rm.embeds,
 			   ru.id, ru.username, ru.global_name, ru.avatar, ru.bot,
 			   m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot,
-			   m.stickers, rm.stickers
+			   m.stickers, rm.stickers, m.pinned
 		FROM messages m
 		INNER JOIN users u ON m.author_id = u.id
 		LEFT JOIN messages rm ON m.referenced_message_id = rm.id
@@ -311,6 +313,7 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
     // Columns 25-29: ru.id, ru.username, ru.global_name, ru.avatar, ru.bot
     // Columns 30-35: m.reference_type, m.reference_channel_id, m.reference_guild_id, m.snapshot, rm.reference_type, rm.snapshot
     // Columns 36-37: m.stickers, rm.stickers
+    // Column 38: m.pinned
 
     Discord::Message message;
     message.id = static_cast<Core::Snowflake>(q.value(0).toLongLong());
@@ -324,6 +327,7 @@ Discord::Message MessageRepository::readMessageFromQuery(const QSqlQuery &q)
     readEmbeds(message, q.value(8).toString());
     readReactions(message, q.value(9).toString());
     readStickers(message, q.value(36).toString());
+    message.pinned = q.value(38).toBool();
 
     message.author->id = static_cast<Core::Snowflake>(q.value(10).toLongLong());
     message.author->username = q.value(11).toString();

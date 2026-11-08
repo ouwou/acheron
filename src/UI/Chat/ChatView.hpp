@@ -132,6 +132,7 @@ signals:
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
+    void unpinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void replyToMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void reactionPickerRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void cancelUploadRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -140,6 +141,7 @@ signals:
     void reactorsRequested(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Acheron::Core::ReactionRef> &selected);
     void channelMentionClicked(Core::Snowflake channelId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
+    void pinsLinkClicked(Core::Snowflake channelId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
     void inlineEditFinished();
 

@@ -368,15 +368,17 @@ void VoiceWindow::setupUi()
     outputDevRow->addWidget(outputDeviceCombo, 1);
     layout->addLayout(outputDevRow);
 
+    const int sliderValueWidth = fontMetrics().horizontalAdvance("1000%");
+
     auto *inputRow = new QHBoxLayout;
     inputRow->setSpacing(4);
     auto *inputLabel = new QLabel(tr("Input"), this);
     inputLabel->setFixedWidth(44);
     inputGainSlider = new QSlider(Qt::Horizontal, this);
-    inputGainSlider->setRange(0, 200);
+    inputGainSlider->setRange(0, 1000);
     inputGainSlider->setValue(100);
     inputGainValue = new QLabel("100%", this);
-    inputGainValue->setFixedWidth(36);
+    inputGainValue->setFixedWidth(sliderValueWidth);
     inputGainValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     inputRow->addWidget(inputLabel);
     inputRow->addWidget(inputGainSlider, 1);
@@ -391,7 +393,7 @@ void VoiceWindow::setupUi()
     outputVolumeSlider->setRange(0, 200);
     outputVolumeSlider->setValue(100);
     outputVolumeValue = new QLabel("100%", this);
-    outputVolumeValue->setFixedWidth(36);
+    outputVolumeValue->setFixedWidth(sliderValueWidth);
     outputVolumeValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     outputRow->addWidget(outputLabel);
     outputRow->addWidget(outputVolumeSlider, 1);
@@ -406,7 +408,7 @@ void VoiceWindow::setupUi()
     vadThresholdSlider->setRange(0, 2000);
     vadThresholdSlider->setValue(100);
     vadThresholdValue = new QLabel("100", this);
-    vadThresholdValue->setFixedWidth(36);
+    vadThresholdValue->setFixedWidth(sliderValueWidth);
     vadThresholdValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     vadRow->addWidget(vadLabel);
     vadRow->addWidget(vadThresholdSlider, 1);

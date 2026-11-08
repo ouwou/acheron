@@ -167,6 +167,7 @@ set(PROJECT_SOURCES
     src/Core/Logging.cpp
     src/Core/MessageManager.cpp
     src/Core/MessageReactors.cpp
+    src/Core/ChannelPins.cpp
     src/Core/MessageSegments.cpp
     src/Core/ForumManager.cpp
     src/Core/ImageManager.cpp

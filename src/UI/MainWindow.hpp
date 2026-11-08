@@ -160,6 +160,9 @@ private:
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
     void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
     void openPinnedMessages();
+    void openPinnedMessagesOf(Core::Snowflake channelId);
+    void showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage);
+    void offerUnpinRetry(Core::Snowflake channelId, Core::Snowflake messageId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void openReactors(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Core::ReactionRef> &selected);
