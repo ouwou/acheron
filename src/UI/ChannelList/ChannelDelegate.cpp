@@ -67,14 +67,37 @@ static void drawBranchIndicator(QPainter *painter, const QStyleOptionViewItem &o
 
 static constexpr int categoryTopGap = 8;
 
-static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option)
+enum class ChatRowMode {
+    Read,
+    Selected,
+    Connected,
+    Muted,
+    Unread,
+    QuietUnread,
+};
+
+// the official channel row takes the first mode that applies, in this order; a row's own unread state counts, not its threads'
+static ChatRowMode chatRowMode(const ChannelNode *node, bool selected, bool connected)
+{
+    if (selected)
+        return ChatRowMode::Selected;
+    if (connected)
+        return ChatRowMode::Connected;
+    if (node->isMuted)
+        return ChatRowMode::Muted;
+    if (!node->self.isUnread)
+        return ChatRowMode::Read;
+    return node->self.unreadIsImportant ? ChatRowMode::Unread : ChatRowMode::QuietUnread;
+}
+
+static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option, const QColor &color)
 {
     int pillWidth = 4;
     int pillHeight = 8;
     int pillX = option.rect.left() - pillWidth;
     int pillY = option.rect.top() + (option.rect.height() - pillHeight) / 2;
 
-    painter->setBrush(option.palette.text().color());
+    painter->setBrush(color);
     painter->setPen(Qt::NoPen);
     painter->drawRoundedRect(QRect(pillX, pillY, pillWidth * 2, pillHeight), pillWidth, pillWidth);
 }
@@ -425,9 +448,14 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         if (node->isMuted)
             color.setAlphaF(color.alphaF() / 2);
 
+        // the official header is text-sm/medium next to text-md/medium channel names: 14px against 16px
+        constexpr qreal categoryNameScale = 14.0 / 16.0;
         QFont font = painter->font();
-        font.setPointSizeF(font.pointSizeF() * 0.85);
-        font.setWeight(QFont::DemiBold);
+        if (font.pointSizeF() > 0)
+            font.setPointSizeF(font.pointSizeF() * categoryNameScale);
+        else
+            font.setPixelSize(qRound(font.pixelSize() * categoryNameScale));
+        font.setWeight(QFont::Medium);
         painter->setFont(font);
         painter->setPen(color);
 
@@ -507,7 +535,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         int markersWidth = iconCount * (statusIconSize + markerSpacing) + (isLive ? pillWidth + markerSpacing : 0);
         int rightReserve = markersWidth + 4;
 
-        QColor textColor = option.palette.text().color();
+        QColor textColor = option.palette.placeholderText().color();
         QRect textRect =
                 contentOpt.rect.adjusted(participantIndent + avatarSize + 6, 0, -rightReserve, 0);
         painter->setPen(textColor);
@@ -561,7 +589,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         drawBranchIndicator(painter, contentOpt, option.state & QStyle::State_Open);
 
         if (node->isUnread && !node->isMuted)
-            drawUnreadPill(painter, option);
+            drawUnreadPill(painter, option, option.palette.text().color());
 
         if (node->mentionCount > 0)
             drawMentionBadge(painter, contentOpt, node->mentionCount);
@@ -588,15 +616,23 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         }
     }
 
-    // determine text color
     QColor textColor = option.palette.text().color();
     const QColor readColor = option.palette.placeholderText().color();
+    const bool isConnected = index.data(ChannelTreeModel::IsConnectedVoiceChannelRole).toBool();
     if (node->opensChat()) {
-        if (node->isMuted) {
+        switch (chatRowMode(node, isSelected, isConnected)) {
+        case ChatRowMode::Muted:
             textColor = readColor;
             textColor.setAlphaF(readColor.alphaF() / 2);
-        } else if (!isSelected && !node->isUnread) {
+            break;
+        case ChatRowMode::Read:
+        case ChatRowMode::QuietUnread:
             textColor = readColor;
+            break;
+        case ChatRowMode::Selected:
+        case ChatRowMode::Connected:
+        case ChatRowMode::Unread:
+            break;
         }
     } else if (node->type == ChannelNode::Type::Server) {
         if (!node->isUnread || node->isMuted)
@@ -651,10 +687,13 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
             index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName);
 
-    // unread pill for channels and servers (draws in the left margin)
-    if ((node->opensChat() || node->type == ChannelNode::Type::Server) && node->isUnread &&
-        !node->isMuted)
-        drawUnreadPill(painter, option);
+    // unread pill in the left margin; a selected thread hides it while a selected channel keeps it
+    if (node->opensChat()) {
+        if (node->self.isUnread && !node->isMuted && !(isSelected && node->type == ChannelNode::Type::Thread))
+            drawUnreadPill(painter, option, node->self.unreadIsImportant ? option.palette.text().color() : readColor);
+    } else if (node->type == ChannelNode::Type::Server && node->isUnread && !node->isMuted) {
+        drawUnreadPill(painter, option, option.palette.text().color());
+    }
 
     if (showUserLimit) {
         QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
