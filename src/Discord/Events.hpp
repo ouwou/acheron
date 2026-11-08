@@ -3,6 +3,8 @@
 #include <QHash>
 #include <QString>
 
+#include <optional>
+
 #include "Core/JsonUtils.hpp"
 #include "Core/Snowflake.hpp"
 #include "Entities.hpp"
@@ -747,6 +749,142 @@ struct VoiceServerUpdate : Core::JsonUtils::JsonObject
         get(obj, "token", event.token);
         get(obj, "guild_id", event.guildId);
         get(obj, "endpoint", event.endpoint);
+        return event;
+    }
+};
+
+struct CallDescription : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake, true, true> messageId;
+    // null and absent both mean no voice region yet
+    std::optional<QString> region;
+    QHash<Core::Snowflake, Core::Snowflake> ongoingRings;
+
+protected:
+    void read(const QJsonObject &obj)
+    {
+        get(obj, "channel_id", channelId);
+        get(obj, "message_id", messageId);
+
+        const QJsonValue regionValue = obj.value(QLatin1String("region"));
+        if (regionValue.isString())
+            region = regionValue.toString();
+
+        const QJsonObject rings = obj.value(QLatin1String("ongoing_rings")).toObject();
+        for (auto it = rings.constBegin(); it != rings.constEnd(); ++it) {
+            const quint64 ringer = it.value().toString().toULongLong();
+            ongoingRings.insert(Core::Snowflake(it.key().toULongLong()), ringer != 0 ? Core::Snowflake(ringer) : Core::Snowflake::Invalid);
+        }
+    }
+};
+
+struct CallCreate : CallDescription
+{
+    // these never carry a guild id
+    Field<QList<VoiceState>, true> voiceStates;
+
+    static CallCreate fromJson(const QJsonObject &obj)
+    {
+        CallCreate event;
+        event.read(obj);
+        get(obj, "voice_states", event.voiceStates);
+        return event;
+    }
+};
+
+struct CallUpdate : CallDescription
+{
+    static CallUpdate fromJson(const QJsonObject &obj)
+    {
+        CallUpdate event;
+        event.read(obj);
+        return event;
+    }
+};
+
+struct CallDelete : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<bool, true> unavailable;
+
+    static CallDelete fromJson(const QJsonObject &obj)
+    {
+        CallDelete event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "unavailable", event.unavailable);
+        return event;
+    }
+};
+
+// sent only to a stream's owner and viewers
+struct StreamUpdate : Core::JsonUtils::JsonObject
+{
+    Field<QString> streamKey;
+    Field<QString, true, true> region;
+    Field<QList<Core::Snowflake>> viewerIds;
+    Field<bool> paused;
+
+    static StreamUpdate fromJson(const QJsonObject &obj)
+    {
+        StreamUpdate event;
+        event.read(obj);
+        return event;
+    }
+
+protected:
+    void read(const QJsonObject &obj)
+    {
+        get(obj, "stream_key", streamKey);
+        get(obj, "region", region);
+        get(obj, "viewer_ids", viewerIds);
+        get(obj, "paused", paused);
+    }
+};
+
+struct StreamCreate : StreamUpdate
+{
+    Field<Core::Snowflake, true, true> rtcServerId;
+    Field<Core::Snowflake, true, true> rtcChannelId;
+
+    static StreamCreate fromJson(const QJsonObject &obj)
+    {
+        StreamCreate event;
+        event.read(obj);
+        get(obj, "rtc_server_id", event.rtcServerId);
+        get(obj, "rtc_channel_id", event.rtcChannelId);
+        return event;
+    }
+};
+
+struct StreamServerUpdate : Core::JsonUtils::JsonObject
+{
+    Field<QString> streamKey;
+    Field<QString, false, true> endpoint;
+    Field<QString> token;
+
+    static StreamServerUpdate fromJson(const QJsonObject &obj)
+    {
+        StreamServerUpdate event;
+        get(obj, "stream_key", event.streamKey);
+        get(obj, "endpoint", event.endpoint);
+        get(obj, "token", event.token);
+        return event;
+    }
+};
+
+struct StreamDelete : Core::JsonUtils::JsonObject
+{
+    Field<QString> streamKey;
+    Field<bool, true> unavailable;
+    Field<QString, true, true> reason;
+
+    static StreamDelete fromJson(const QJsonObject &obj)
+    {
+        StreamDelete event;
+        get(obj, "stream_key", event.streamKey);
+        get(obj, "unavailable", event.unavailable);
+        get(obj, "reason", event.reason);
         return event;
     }
 };

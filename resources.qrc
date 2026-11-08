@@ -27,6 +27,8 @@
         <file>resources/icons/lucide/hand.svg</file>
         <file>resources/icons/lucide/handshake.svg</file>
         <file>resources/icons/lucide/hash.svg</file>
+        <file>resources/icons/lucide/headphone-off.svg</file>
+        <file>resources/icons/lucide/headphones.svg</file>
         <file>resources/icons/lucide/heart.svg</file>
         <file>resources/icons/lucide/id-card.svg</file>
         <file>resources/icons/lucide/image.svg</file>
@@ -40,17 +42,21 @@
         <file>resources/icons/lucide/message-circle.svg</file>
         <file>resources/icons/lucide/messages-square.svg</file>
         <file>resources/icons/lucide/mic.svg</file>
+        <file>resources/icons/lucide/mic-off.svg</file>
         <file>resources/icons/lucide/minimize.svg</file>
         <file>resources/icons/lucide/monitor.svg</file>
         <file>resources/icons/lucide/music.svg</file>
         <file>resources/icons/lucide/pause.svg</file>
         <file>resources/icons/lucide/pencil.svg</file>
         <file>resources/icons/lucide/phone.svg</file>
+        <file>resources/icons/lucide/phone-off.svg</file>
         <file>resources/icons/lucide/pin.svg</file>
         <file>resources/icons/lucide/play.svg</file>
         <file>resources/icons/lucide/radio.svg</file>
         <file>resources/icons/lucide/reply.svg</file>
         <file>resources/icons/lucide/rss.svg</file>
+        <file>resources/icons/lucide/screen-share.svg</file>
+        <file>resources/icons/lucide/screen-share-off.svg</file>
         <file>resources/icons/lucide/search.svg</file>
         <file>resources/icons/lucide/shield-alert.svg</file>
         <file>resources/icons/lucide/smile.svg</file>
@@ -63,6 +69,8 @@
         <file>resources/icons/lucide/user-minus.svg</file>
         <file>resources/icons/lucide/user-plus.svg</file>
         <file>resources/icons/lucide/utensils.svg</file>
+        <file>resources/icons/lucide/video.svg</file>
+        <file>resources/icons/lucide/video-off.svg</file>
         <file>resources/icons/lucide/volume-2.svg</file>
         <file>resources/icons/lucide/volume-x.svg</file>
         <file>resources/icons/lucide/x.svg</file>

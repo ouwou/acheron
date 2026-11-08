@@ -7,6 +7,7 @@
 #include "NoiseSuppressor.hpp"
 
 #include "Core/Logging.hpp"
+#include "Discord/Voice/VoiceEnums.hpp"
 
 #include <QTimer>
 
@@ -17,6 +18,25 @@
 namespace Acheron {
 namespace Core {
 namespace Audio {
+
+namespace {
+
+quint64 speakerKey(quint32 source, quint32 ssrc)
+{
+    return (quint64(source) << 32) | ssrc;
+}
+
+quint32 speakerSource(quint64 key)
+{
+    return static_cast<quint32>(key >> 32);
+}
+
+quint32 speakerSsrc(quint64 key)
+{
+    return static_cast<quint32>(key);
+}
+
+} // namespace
 
 AudioPipeline::AudioPipeline(QObject *parent)
     : QObject(parent)
@@ -43,6 +63,7 @@ void AudioPipeline::start(IAudioBackend *backend, bool capturing)
 
     rmsThrottleTimer.start();
     userRmsThrottleTimer.start();
+    speakingClock.start();
 
     if (capturing)
         audioBackend->startCapture();
@@ -73,6 +94,8 @@ void AudioPipeline::stop()
     speakers.clear();
     ssrcToUser.clear();
     pendingUserRms.clear();
+    for (const Snowflake userId : lastVoiceMs.keys())
+        stopSpeaking(userId);
 
     encoder.reset();
     noiseSuppressor.reset();
@@ -109,9 +132,27 @@ void AudioPipeline::stopCapture()
     }
 }
 
-void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t /*timestamp*/, const QByteArray &opusData)
+void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData, std::optional<int> speakingFlags)
 {
-    auto it = speakers.find(ssrc);
+    onSourceAudioReceived(VOICE_CONNECTION_SOURCE, ssrc, sequence, timestamp, opusData);
+    noteSpeakingOf(ssrc, opusData, speakingFlags);
+}
+
+void AudioPipeline::setSourceVolume(quint32 source, float volume)
+{
+    sourceVolumes.insert(source, volume);
+}
+
+void AudioPipeline::removeSource(quint32 source)
+{
+    sourceVolumes.remove(source);
+    std::erase_if(speakers, [source](const auto &entry) { return speakerSource(entry.first) == source; });
+}
+
+void AudioPipeline::onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t /*timestamp*/, const QByteArray &opusData)
+{
+    const quint64 key = speakerKey(source, ssrc);
+    auto it = speakers.find(key);
     if (it == speakers.end()) {
         SpeakerState state;
         state.decoder = std::make_unique<OpusDecoder>();
@@ -121,11 +162,46 @@ void AudioPipeline::onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t /*
         }
         state.jitterBuffer = std::make_unique<JitterBuffer>();
 
-        auto [inserted, _] = speakers.emplace(ssrc, std::move(state));
+        auto [inserted, _] = speakers.emplace(key, std::move(state));
         it = inserted;
     }
 
     it->second.jitterBuffer->push(sequence, opusData);
+}
+
+// like the official media engine: the speaking flags each audio packet carries, not those of opcode 5, which only maps the ssrc
+void AudioPipeline::noteSpeakingOf(quint32 ssrc, const QByteArray &opusData, std::optional<int> speakingFlags)
+{
+    const auto user = ssrcToUser.constFind(ssrc);
+    if (user == ssrcToUser.constEnd())
+        return;
+    const bool talking = speakingFlags ? (*speakingFlags & static_cast<int>(Discord::Voice::SpeakingFlag::MICROPHONE)) != 0 : !isOpusSilence(opusData);
+    if (!talking) {
+        stopSpeaking(user.value());
+        return;
+    }
+    const bool wasSpeaking = lastVoiceMs.contains(user.value());
+    lastVoiceMs.insert(user.value(), speakingClock.elapsed());
+    if (!wasSpeaking)
+        emit userSpeakingChanged(user.value(), true);
+}
+
+void AudioPipeline::expireRemoteSpeaking()
+{
+    const qint64 now = speakingClock.elapsed();
+    QList<Snowflake> quiet;
+    for (auto it = lastVoiceMs.constBegin(); it != lastVoiceMs.constEnd(); ++it) {
+        if (now - it.value() > REMOTE_SPEAKING_HOLD_MS)
+            quiet.append(it.key());
+    }
+    for (const Snowflake userId : std::as_const(quiet))
+        stopSpeaking(userId);
+}
+
+void AudioPipeline::stopSpeaking(Snowflake userId)
+{
+    if (lastVoiceMs.remove(userId))
+        emit userSpeakingChanged(userId, false);
 }
 
 void AudioPipeline::setDeafened(bool deafened)
@@ -142,14 +218,14 @@ void AudioPipeline::removeUser(Snowflake userId)
 {
     for (auto it = ssrcToUser.begin(); it != ssrcToUser.end();) {
         if (it.value() == userId) {
-            speakers.erase(it.key());
+            speakers.erase(speakerKey(VOICE_CONNECTION_SOURCE, it.key()));
             it = ssrcToUser.erase(it);
         } else {
             ++it;
         }
     }
-    userVolumes.remove(userId);
     pendingUserRms.remove(userId);
+    stopSpeaking(userId);
 }
 
 void AudioPipeline::setUserVolume(Snowflake userId, float volume)
@@ -326,13 +402,15 @@ void AudioPipeline::onAudioCaptured(const QByteArray &pcmData)
 
 void AudioPipeline::onMixTick()
 {
+    expireRemoteSpeaking();
     if (deafened || !audioBackend)
         return;
 
     QVector<std::pair<QByteArray, float>> streams;
 
     for (auto it = speakers.begin(); it != speakers.end(); ++it) {
-        quint32 ssrc = it->first;
+        const quint32 source = speakerSource(it->first);
+        const quint32 ssrc = speakerSsrc(it->first);
         SpeakerState &state = it->second;
 
         QByteArray pcm;
@@ -361,7 +439,7 @@ void AudioPipeline::onMixTick()
             continue;
 
         // rms before gain
-        auto userIt = ssrcToUser.constFind(ssrc);
+        auto userIt = source == VOICE_CONNECTION_SOURCE ? ssrcToUser.constFind(ssrc) : ssrcToUser.constEnd();
         Snowflake userId;
         if (userIt != ssrcToUser.constEnd())
             userId = userIt.value();
@@ -370,7 +448,7 @@ void AudioPipeline::onMixTick()
             const auto *samples = reinterpret_cast<const int16_t *>(pcm.constData());
             int count = pcm.size() / static_cast<int>(sizeof(int16_t));
             if (count > 0) {
-                float rms = computeRms(samples, count);
+                float rms = rmsOf(samples, count);
 
                 auto rmsIt = pendingUserRms.find(userId);
                 if (rmsIt == pendingUserRms.end())
@@ -383,6 +461,8 @@ void AudioPipeline::onMixTick()
         float gain = 1.0f;
         if (userId.isValid())
             gain = userVolumes.value(userId, 1.0f);
+        else if (source != VOICE_CONNECTION_SOURCE)
+            gain = sourceVolumes.value(source, 1.0f);
 
         streams.append({ pcm, gain });
     }
@@ -414,16 +494,8 @@ bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRm
         return false;
     }
 
-    outRms = computeRms(samples, count);
+    outRms = rmsOf(samples, count);
     return outRms > vadThreshold;
-}
-
-float AudioPipeline::computeRms(const int16_t *samples, int count)
-{
-    double sum = 0;
-    for (int i = 0; i < count; i++)
-        sum += static_cast<double>(samples[i]) * samples[i];
-    return static_cast<float>(std::sqrt(sum / count));
 }
 
 void AudioPipeline::sendTrailingSilence()

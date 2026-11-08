@@ -5,6 +5,7 @@
 #include "ChannelFilterProxyModel.hpp"
 
 #include "Core/Theme/Icons.hpp"
+#include "UI/LivePill.hpp"
 #include "UI/StatusIndicator.hpp"
 
 namespace Acheron {
@@ -495,9 +496,16 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
 
         bool muted = index.data(ChannelTreeModel::IsVoiceMutedRole).toBool();
         bool deafened = index.data(ChannelTreeModel::IsVoiceDeafenedRole).toBool();
+        bool hasVideo = index.data(ChannelTreeModel::IsVoiceVideoRole).toBool();
+        bool isLive = index.data(ChannelTreeModel::IsVoiceLiveRole).toBool();
         constexpr int statusIconSize = 14;
-        int iconCount = (muted ? 1 : 0) + (deafened ? 1 : 0);
-        int rightReserve = iconCount > 0 ? (iconCount * (statusIconSize + 4) + 4) : 4;
+        constexpr int markerSpacing = 4;
+
+        const int pillWidth = isLive ? livePillWidth(painter->font()) : 0;
+
+        int iconCount = (muted ? 1 : 0) + (deafened ? 1 : 0) + (hasVideo ? 1 : 0);
+        int markersWidth = iconCount * (statusIconSize + markerSpacing) + (isLive ? pillWidth + markerSpacing : 0);
+        int rightReserve = markersWidth + 4;
 
         QColor textColor = option.palette.text().color();
         QRect textRect =
@@ -507,7 +515,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                 index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
         painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName);
 
-        if (muted || deafened) {
+        if (markersWidth > 0) {
             QColor iconColor = option.palette.text().color();
             iconColor.setAlphaF(0.7f);
             QColor bgColor = option.palette.base().color();
@@ -517,13 +525,22 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
                 drawDeafenedIcon(painter,
                                  QRectF(iconX, iconY, statusIconSize, statusIconSize), iconColor,
                                  bgColor);
-                iconX -= (statusIconSize + 4);
+                iconX -= (statusIconSize + markerSpacing);
             }
             if (muted) {
                 drawMutedMicIcon(painter,
                                  QRectF(iconX, iconY, statusIconSize, statusIconSize), iconColor,
                                  bgColor);
+                iconX -= (statusIconSize + markerSpacing);
             }
+            if (hasVideo) {
+                const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+                painter->drawPixmap(QRect(iconX, iconY, statusIconSize, statusIconSize),
+                                    Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::Video, statusIconSize, iconColor, dpr));
+                iconX -= (statusIconSize + markerSpacing);
+            }
+            if (isLive)
+                paintLivePill(painter, QRect(iconX + statusIconSize - pillWidth, iconY, pillWidth, statusIconSize));
         }
 
         painter->restore();

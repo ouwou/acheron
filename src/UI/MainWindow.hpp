@@ -51,6 +51,8 @@ class GuildSettingsWindow;
 class TrayIcon;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
+class StreamPreviewPopup;
+class CallView;
 #endif
 } // namespace UI
 } // namespace Acheron
@@ -101,7 +103,7 @@ private:
     void confirmAndLeaveGuild(Core::Snowflake accountId, Core::Snowflake guildId);
     [[nodiscard]] QList<GuildSettingsSection> guildSettingsSections(Core::Snowflake accountId, Core::Snowflake guildId);
     void openGuildSettings(Core::Snowflake accountId, Core::Snowflake guildId, GuildSettingsSection section);
-    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos);
+    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos, const std::function<void(QMenu &)> &addLeadingEntries = {});
     void selectChannelInTree(Core::Snowflake accountId, Core::Snowflake channelId);
 
 public:
@@ -131,7 +133,22 @@ private:
     void recordLastViewedChannel(Core::Snowflake accountId, Core::Snowflake guildId, Core::Snowflake channelId);
 #ifndef ACHERON_NO_VOICE
     void updateVoiceStatusLabel();
+    [[nodiscard]] Core::ClientInstance *instanceInVoice() const;
+    void revealCall();
+    void openVoiceSettings();
 #endif
+    void onLiveParticipantHoverChanged(const QModelIndex &proxyIndex);
+    void onWatchStreamRequested(const QModelIndex &proxyIndex);
+    void onShowCallVideoRequested(const QModelIndex &proxyIndex);
+
+    struct ParticipantRow
+    {
+        Core::ClientInstance *instance = nullptr;
+        Core::Snowflake userId;
+        Core::Snowflake channelId;
+        Core::Snowflake guildId;
+    };
+    [[nodiscard]] std::optional<ParticipantRow> participantRowAt(const QModelIndex &proxyIndex) const;
 
 private:
     void setupUi();
@@ -185,6 +202,9 @@ private:
     ViewMode viewMode = ViewMode::TextChannel;
     bool memberListWanted = false;
     QSplitter *centerSplitter = nullptr;
+    QSplitter *callSplitter = nullptr;
+    QWidget *callHost = nullptr;
+    void updateCallHost();
     QWidget *threadPane = nullptr;
     QWidget *threadHeader = nullptr;
     QPushButton *popOutButton = nullptr;
@@ -231,6 +251,10 @@ private:
 
 #ifndef ACHERON_NO_VOICE
     VoiceStatusBar *voiceStatusBar;
+    StreamPreviewPopup *streamPreviewPopup = nullptr;
+    QHash<Core::Snowflake, QPointer<CallView>> callViews;
+    CallView *ensureCallView(Core::ClientInstance *instance);
+    void removeCallView(Core::Snowflake accountId);
 #endif
     AccountsWindow *accountsWindow = nullptr;
     SettingsWindow *settingsWindow = nullptr;

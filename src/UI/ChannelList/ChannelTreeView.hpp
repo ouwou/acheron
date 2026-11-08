@@ -2,6 +2,8 @@
 
 #include <QTreeView>
 #include <QHash>
+#include <QPersistentModelIndex>
+#include <QTimer>
 
 #include "Core/Snowflake.hpp"
 #include "UI/GuildSettings/GuildSettingsSection.hpp"
@@ -35,6 +37,10 @@ signals:
     void leaveGuildRequested(Core::Snowflake accountId, Core::Snowflake guildId);
     void guildSettingsRequested(Core::Snowflake accountId, Core::Snowflake guildId, GuildSettingsSection section);
     void voiceParticipantContextMenuRequested(const QModelIndex &proxyIndex, QPoint globalPos);
+    void liveParticipantHoverChanged(const QModelIndex &proxyIndex);
+    // as in the official client
+    void watchStreamRequested(const QModelIndex &proxyIndex);
+    void showCallVideoRequested(const QModelIndex &proxyIndex);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -42,6 +48,11 @@ protected:
 private:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+
+    void setHoveredLiveParticipant(const QModelIndex &proxyIndex);
+    void hideLiveHover();
 
     bool handleMouseEventForExpansion(QMouseEvent *event);
 
@@ -53,6 +64,10 @@ private:
 
     QHash<Core::Snowflake, Core::Snowflake> accountVoiceChannels; // accountId -> channelId
     MentionJumpIndicator *mentionJump = nullptr;
+
+    QTimer liveHoverDelay;
+    QPersistentModelIndex pendingLiveHover;
+    QPersistentModelIndex shownLiveHover;
     GuildSettingsAccess::SectionsProvider guildSettingsProvider;
 };
 
