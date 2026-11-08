@@ -112,6 +112,20 @@ public:
     using ThreadListCallback = std::function<void(const Core::Result<ThreadListResult> &)>;
     void searchThreads(Snowflake channelId, bool archived, int offset, ThreadListCallback callback);
 
+    struct MessagePin
+    {
+        QDateTime pinnedAt;
+        Message message;
+    };
+    struct MessagePinsResult
+    {
+        QList<MessagePin> items; // newest pin first
+        bool hasMore = false;
+    };
+    using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsResult> &)>;
+    // before: only pins made before this time, invalid for the newest page
+    void fetchMessagePins(Snowflake channelId, const QDateTime &before, MessagePinsCallback callback);
+
     using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 

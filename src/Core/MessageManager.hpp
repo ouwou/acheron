@@ -48,6 +48,8 @@ public:
 
     [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;
     [[nodiscard]] QString profileBioHtml(const QString &bio) const;
+    // same markdown rendering as message bodies in the chat view
+    [[nodiscard]] QString messageContentHtml(const QString &content, Snowflake channelId) const;
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
