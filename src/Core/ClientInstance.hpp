@@ -34,6 +34,14 @@ class VoiceManager;
 
 class ReadStateManager;
 class ForumManager;
+class CallStore;
+enum class CallConnect;
+class StreamManager;
+class StreamPreviews;
+class StreamWatcher;
+class StreamBroadcaster;
+class CameraSender;
+struct ShareTerms;
 
 class ClientInstance : public QObject
 {
@@ -58,9 +66,19 @@ public:
     [[nodiscard]] PresenceManager *presences() const;
     [[nodiscard]] EmojiManager *emojis() const;
     [[nodiscard]] FavoriteGifs *favoriteGifs() const;
+    [[nodiscard]] CallStore *calls() const;
+    [[nodiscard]] StreamManager *streams() const;
+    [[nodiscard]] StreamPreviews *streamPreviews() const;
 #ifndef ACHERON_NO_VOICE
     [[nodiscard]] Audio::VoiceManager *voice() const;
 #endif
+#ifdef ACHERON_HAVE_VIDEO
+    [[nodiscard]] StreamWatcher *streamWatcher() const;
+    [[nodiscard]] StreamBroadcaster *streamBroadcaster() const;
+    [[nodiscard]] CameraSender *cameraSender() const;
+#endif
+    void joinVoice(Snowflake guildId, Snowflake channelId);
+    void leaveVoice();
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
     [[nodiscard]] QList<Discord::Role> getMemberRolesSorted(Snowflake guildId, Snowflake userId);
@@ -74,6 +92,9 @@ public:
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
     [[nodiscard]] bool messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const;
+
+    // sends CALL_CONNECT once per private channel, as the official client does
+    void noteChannelSelected(Snowflake channelId);
 
     [[nodiscard]] QList<Discord::Ban> observedBans(Snowflake guildId) const;
     [[nodiscard]] QList<Discord::Invite> createdInvites(Snowflake guildId) const;
@@ -160,6 +181,11 @@ private slots:
     void handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs);
     void onVoiceConnected();
     void onVoiceDisconnected();
+    void onSelfAudioToggled();
+    void sendOwnVoiceState(Snowflake guildId, Snowflake channelId);
+    void onVoiceStateUpdated(const Discord::VoiceState &event);
+    void onCallCreated(const Discord::CallCreate &event);
+    void onCallDeleted(const Discord::CallDelete &event);
     void onHeartbeatSessionChanged(const Discord::HeartbeatSession &session);
     bool isMessageMentioningMe(const Discord::Message &msg) const;
 
@@ -191,8 +217,17 @@ private:
     PresenceManager *presenceManager;
     EmojiManager *emojiManager;
     FavoriteGifs *favoriteGifManager;
+    CallStore *callStore;
+    StreamManager *streamManager;
+    StreamPreviews *streamPreviewCache;
 #ifndef ACHERON_NO_VOICE
     Audio::VoiceManager *voiceManager;
+#endif
+#ifdef ACHERON_HAVE_VIDEO
+    StreamWatcher *streamWatch = nullptr;
+    StreamBroadcaster *streamBroadcast = nullptr;
+    CameraSender *cameraSend = nullptr;
+    [[nodiscard]] ShareTerms screenShareTerms();
 #endif
 
     Storage::RoleRepository roleRepo;
@@ -205,6 +240,11 @@ private:
 
     Snowflake currentVoiceChannelId;
     Snowflake currentVoiceGuildId;
+
+    // voice states and calls belong to the gateway session they came from
+    QString gatewaySessionId;
+    Snowflake selectedChannelId;
+    void connectSelectedCall(CallConnect rule);
 
     // notFound members are kept in here so we dont ask for them again
     QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;

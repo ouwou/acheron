@@ -12,18 +12,17 @@ namespace Acheron {
 namespace Discord {
 namespace Voice {
 
-VoiceGateway::VoiceGateway(const QString &endpoint, Core::Snowflake serverId,
-                           Core::Snowflake channelId, Core::Snowflake userId,
-                           const QString &sessionId, const QString &token,
-                           const Core::ProxyConfig &proxy, QObject *parent)
-    : QObject(parent),
-      endpoint(endpoint),
-      serverId(serverId),
-      channelId(channelId),
-      userId(userId),
-      sessionId(sessionId),
-      token(token),
-      proxy(proxy)
+namespace {
+
+int abortOnceStopped(void *gateway, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    return static_cast<const VoiceGateway *>(gateway)->isStopping() ? 1 : 0;
+}
+
+} // namespace
+
+VoiceGateway::VoiceGateway(const ConnectionParams &params, QObject *parent)
+    : QObject(parent), params(params)
 {
     connect(this, &VoiceGateway::payloadReceived, this, &VoiceGateway::onPayloadReceived);
 }
@@ -54,7 +53,10 @@ void VoiceGateway::stop()
 void VoiceGateway::hardStop()
 {
     shouldReconnect = false;
-    running = false;
+    {
+        std::lock_guard lock(heartbeatMutex);
+        running = false;
+    }
 
     heartbeatCv.notify_all();
     if (networkThread.joinable())
@@ -63,21 +65,35 @@ void VoiceGateway::hardStop()
         heartbeatThread.join();
 }
 
-void VoiceGateway::sendSelectProtocol(const QString &address, int port, const QString &mode)
+void VoiceGateway::sendSelectProtocol(const SelectProtocolData &data)
 {
-    Codec opus;
-    opus.name = "opus";
-    opus.payloadType = 120;
-    opus.priority = 1000;
-    opus.type = "audio";
-
-    SelectProtocolData data;
-    data.address = address;
-    data.port = port;
-    data.mode = mode;
-    data.codecs = { opus };
-
     sendPayload(VoiceOpCode::SELECT_PROTOCOL, data.toJson());
+}
+
+void VoiceGateway::sendVideo(const LocalVideoState &state)
+{
+    sendPayload(VoiceOpCode::VIDEO, state.toJson());
+}
+
+void VoiceGateway::sendSessionUpdate(const QList<Codec> &codecs)
+{
+    Core::OrderedJson::Array array;
+    for (const Codec &codec : codecs)
+        array.append(codec.toJson());
+
+    Core::OrderedJson d;
+    d.insert("codecs", array);
+    sendPayload(VoiceOpCode::SESSION_UPDATE, d);
+}
+
+void VoiceGateway::sendMediaSinkWants(const MediaSinkWants &wants)
+{
+    sendPayload(VoiceOpCode::MEDIA_SINK_WANTS, wants.toJson());
+}
+
+void VoiceGateway::sendVoiceBackendVersion()
+{
+    sendPayload(VoiceOpCode::VOICE_BACKEND_VERSION, Core::OrderedJson());
 }
 
 void VoiceGateway::sendSpeaking(int flags, int delay, quint32 ssrc)
@@ -163,8 +179,14 @@ void VoiceGateway::onPayloadReceived(const QJsonObject &root)
     case VoiceOpCode::CLIENT_CONNECT:
         handleClientsConnected(d.toObject());
         break;
+    case VoiceOpCode::VIDEO:
+        handleVideo(d.toObject());
+        break;
     case VoiceOpCode::SESSION_UPDATE:
-        handleClientConnect(d.toObject());
+        emit sessionUpdated(SessionUpdate::fromJson(d.toObject()));
+        break;
+    case VoiceOpCode::MEDIA_SINK_WANTS:
+        emit mediaSinkWantsReceived(MediaSinkWants::fromJson(d.toObject()));
         break;
     case VoiceOpCode::CLIENT_DISCONNECT:
         handleClientDisconnect(d.toObject());
@@ -245,15 +267,15 @@ void VoiceGateway::handleResumed()
     emit resumed();
 }
 
-void VoiceGateway::handleClientConnect(const QJsonObject &data)
+void VoiceGateway::handleVideo(const QJsonObject &data)
 {
-    ClientConnectData client = ClientConnectData::fromJson(data);
+    const RemoteVideoState remote = RemoteVideoState::fromJson(data);
 
-    qCInfo(LogVoice) << "Client connected: user =" << client.userId.get()
-                     << "audio_ssrc =" << client.audioSsrc
-                     << "video_ssrc =" << client.videoSsrc;
+    qCInfo(LogVoice) << "Video state: user =" << remote.userId.get()
+                     << "audio_ssrc =" << remote.audioSsrc
+                     << "video_ssrc =" << remote.videoSsrc;
 
-    emit clientConnected(client);
+    emit videoStateReceived(remote);
 }
 
 void VoiceGateway::handleClientDisconnect(const QJsonObject &data)
@@ -293,14 +315,18 @@ void VoiceGateway::handleDavePrepareEpoch(const QJsonObject &data)
 
 void VoiceGateway::identify()
 {
-    qCInfo(LogVoice) << "Sending voice Identify for server" << serverId;
+    qCInfo(LogVoice) << "Sending voice Identify for server" << params.serverId;
 
     VoiceIdentifyData id;
-    id.channelId = channelId;
-    id.serverId = serverId;
-    id.userId = userId;
-    id.sessionId = sessionId;
-    id.token = token;
+    id.channelId = params.channelId;
+    id.serverId = params.serverId;
+    id.userId = params.userId;
+    id.sessionId = params.sessionId;
+    id.token = params.token;
+    if (params.video) {
+        id.video = true;
+        id.streams = params.streams;
+    }
     sendPayload(VoiceOpCode::IDENTIFY, id.toJson());
 }
 
@@ -309,10 +335,10 @@ void VoiceGateway::resume()
     qCInfo(LogVoice) << "Sending voice Resume";
 
     VoiceResumeData data;
-    data.token = token;
-    data.sessionId = sessionId;
-    data.serverId = serverId;
-    data.channelId = channelId;
+    data.token = params.token;
+    data.sessionId = params.sessionId;
+    data.serverId = params.serverId;
+    data.channelId = params.channelId;
     data.seqAck = lastReceivedSeq.load();
     sendPayload(VoiceOpCode::RESUME, data.toJson());
 }
@@ -339,8 +365,8 @@ void VoiceGateway::networkLoop()
     do {
         shouldReconnect = false;
 
-        QString connectUrl = QStringLiteral("wss://%1/?v=%2")
-                                     .arg(endpoint)
+        QString connectUrl = QStringLiteral("%1://%2/?v=%3")
+                                     .arg(params.gatewayScheme, params.endpoint)
                                      .arg(VOICE_GATEWAY_VERSION);
 
         curl = curl_easy_init();
@@ -351,8 +377,11 @@ void VoiceGateway::networkLoop()
 
         curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortOnceStopped);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, this);
         CurlUtils::applyCommonOptions(curl);
-        CurlUtils::applyProxy(curl, proxy);
+        CurlUtils::applyProxy(curl, params.proxy);
 
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
@@ -368,7 +397,7 @@ void VoiceGateway::networkLoop()
                 int delay = 1000 + (std::rand() % 4000);
                 qCInfo(LogVoice) << "Voice reconnect attempt" << reconnectAttempts
                                  << "in" << delay << "ms";
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+                waitUnlessStopped(std::chrono::milliseconds(delay));
                 shouldReconnect = true;
                 continue;
             }
@@ -378,7 +407,7 @@ void VoiceGateway::networkLoop()
             return;
         }
 
-        qCInfo(LogVoice) << "Voice WebSocket connected to" << endpoint;
+        qCInfo(LogVoice) << "Voice WebSocket connected to" << params.endpoint;
         generation++;
         emit connected();
 
@@ -508,7 +537,7 @@ void VoiceGateway::networkLoop()
             qCInfo(LogVoice) << "Voice reconnecting in" << delay << "ms (attempt"
                              << reconnectAttempts << ")";
             emit reconnecting(reconnectAttempts, maxReconnectAttempts);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            waitUnlessStopped(std::chrono::milliseconds(delay));
         }
 
     } while (shouldReconnect && running && reconnectAttempts < maxReconnectAttempts);
@@ -520,6 +549,12 @@ void VoiceGateway::networkLoop()
     heartbeatCv.notify_all();
     if (heartbeatThread.joinable())
         heartbeatThread.join();
+}
+
+void VoiceGateway::waitUnlessStopped(std::chrono::milliseconds delay)
+{
+    std::unique_lock lock(heartbeatMutex);
+    heartbeatCv.wait_for(lock, delay, [this] { return !running; });
 }
 
 void VoiceGateway::heartbeatLoop()

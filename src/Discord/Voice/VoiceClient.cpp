@@ -3,13 +3,19 @@
 #include "UdpTransport.hpp"
 #include "VoiceEncryption.hpp"
 #include "RtpPacket.hpp"
+#include "Rtcp.hpp"
+#include "VideoReceivePath.hpp"
+#include "VideoSendPath.hpp"
 
 #include "DaveSession.hpp"
 
 #include "Core/Audio/IAudioBackend.hpp"
 #include "Core/Logging.hpp"
 
+#include <QUuid>
+
 #include <array>
+#include <utility>
 
 namespace Acheron {
 namespace Discord {
@@ -42,19 +48,40 @@ static QString formatDisplayableCode(const std::vector<uint8_t> &data, int bytes
     return result;
 }
 
-VoiceClient::VoiceClient(const QString &endpoint, const QString &token,
-                         Core::Snowflake serverId, Core::Snowflake channelId,
-                         Core::Snowflake userId, const QString &sessionId,
-                         const Core::ProxyConfig &proxy, QObject *parent)
-    : QObject(parent),
-      endpoint(endpoint),
-      token(token),
-      proxy(proxy),
-      serverId(serverId),
-      channelId(channelId),
-      userId(userId),
-      sessionId(sessionId)
+QList<StreamDescription> cameraStreams(bool withSecondLayer)
 {
+    StreamDescription full;
+    full.type = QStringLiteral("video");
+    full.rid = QStringLiteral("100");
+    full.quality = FULL_QUALITY;
+    if (!withSecondLayer)
+        return { full };
+
+    StreamDescription second = full;
+    second.rid = QStringLiteral("50");
+    second.quality = SECOND_LAYER_QUALITY;
+    return { full, second };
+}
+
+VoiceClient::VoiceClient(const ConnectionParams &params, QObject *parent)
+    : QObject(parent), params(params)
+{
+    // emitted across threads. Qt 6 registers these itself; Qt 5 drops them unregistered
+    qRegisterMetaType<VoiceCloseCode>();
+    qRegisterMetaType<VoiceClient::State>();
+    qRegisterMetaType<Core::Snowflake>();
+    qRegisterMetaType<SpeakingData>();
+    qRegisterMetaType<VideoReceiveStats>();
+    qRegisterMetaType<VideoSendStats>();
+    qRegisterMetaType<VideoCodec>();
+    qRegisterMetaType<QList<VideoLayer>>();
+    qRegisterMetaType<std::optional<QSize>>();
+    qRegisterMetaType<std::optional<int>>();
+
+    if (params.video) {
+        receivedVideo = std::make_unique<VideoReceivePath>(*this);
+        sentVideo = std::make_unique<VideoSendPath>(*this);
+    }
 }
 
 VoiceClient::~VoiceClient()
@@ -79,17 +106,20 @@ void VoiceClient::start()
 
     setState(State::Connecting);
 
-    gateway = new VoiceGateway(endpoint, serverId, channelId, userId, sessionId, token, proxy, this);
+    gateway = new VoiceGateway(params, this);
 
     connect(gateway, &VoiceGateway::connected, this, &VoiceClient::onGatewayConnected);
     connect(gateway, &VoiceGateway::disconnected, this, &VoiceClient::onGatewayDisconnected);
     connect(gateway, &VoiceGateway::readyReceived, this, &VoiceClient::onGatewayReady);
     connect(gateway, &VoiceGateway::sessionDescriptionReceived, this, &VoiceClient::onSessionDescription);
+    connect(gateway, &VoiceGateway::sessionUpdated, this, &VoiceClient::onSessionUpdated);
+    connect(gateway, &VoiceGateway::mediaSinkWantsReceived, this, &VoiceClient::onMediaSinkWants);
     connect(gateway, &VoiceGateway::speakingReceived, this, &VoiceClient::onSpeaking);
-    connect(gateway, &VoiceGateway::clientConnected, this, &VoiceClient::onClientConnect);
+    connect(gateway, &VoiceGateway::videoStateReceived, this, &VoiceClient::onVideoState);
     connect(gateway, &VoiceGateway::clientsConnected, this, &VoiceClient::onClientsConnect);
     connect(gateway, &VoiceGateway::clientDisconnected, this, &VoiceClient::onClientDisconnect);
     connect(gateway, &VoiceGateway::resumed, this, &VoiceClient::onGatewayResumed);
+    connect(gateway, &VoiceGateway::reconnecting, this, &VoiceClient::reconnecting);
 
     connect(gateway, &VoiceGateway::binaryPayloadReceived,
             this, [this](int opcode, const QByteArray &payload) {
@@ -150,7 +180,13 @@ void VoiceClient::stop()
 
     cleanupTransport();
 
+    if (unrouted.rtcp != 0 || unrouted.rtp != 0)
+        qCDebug(LogVoice) << "Packets received with no consumer: RTCP" << unrouted.rtcp << "RTP" << unrouted.rtp;
+    unrouted = {};
+
     localSsrc = 0;
+    if (sentVideo)
+        sentVideo = std::make_unique<VideoSendPath>(*this);
     selectedMode.clear();
     sessionKey.clear();
 
@@ -168,6 +204,11 @@ void VoiceClient::cleanupTransport()
         keepaliveTimer = nullptr;
     }
 
+    if (receivedVideo)
+        receivedVideo->reset();
+    if (sentVideo)
+        sentVideo->reset();
+
     encryption.reset();
 
     daveSession.reset();
@@ -178,6 +219,7 @@ void VoiceClient::cleanupTransport()
     rtpSequence = 0;
     rtpTimestamp = 0;
     rtpEpoch = {};
+    soundshareAnnounced = false;
 }
 
 void VoiceClient::onGatewayConnected()
@@ -206,6 +248,8 @@ void VoiceClient::onGatewayReady(const VoiceReady &data)
                      << "modes =" << data.modes.get();
 
     localSsrc = data.ssrc;
+    if (sentVideo)
+        sentVideo->takeStreams(data);
     serverIp = data.ip;
     serverPort = data.port;
     serverModes = data.modes;
@@ -233,12 +277,16 @@ void VoiceClient::onGatewayReady(const VoiceReady &data)
 
     setState(State::DiscoveringIP);
 
+    if (params.video)
+        gateway->sendVoiceBackendVersion();
+
     cleanupTransport();
 
-    udpTransport = new UdpTransport(proxy, this);
+    udpTransport = new UdpTransport(params.proxy, this);
     connect(udpTransport, &UdpTransport::ipDiscovered, this, &VoiceClient::onIpDiscovered);
     connect(udpTransport, &UdpTransport::ipDiscoveryFailed, this, &VoiceClient::onIpDiscoveryFailed);
-    connect(udpTransport, &UdpTransport::datagramReceived, this, &VoiceClient::onDatagram);
+    connect(udpTransport, &UdpTransport::relayLost, this, &VoiceClient::onRelayLost);
+    udpTransport->setPacketHandler([this](PacketPool::Handle packet) { onPacket(std::move(packet)); });
 
     udpTransport->startIpDiscovery(serverIp, serverPort, localSsrc);
 }
@@ -262,8 +310,17 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
 
     rtpEpoch = std::chrono::steady_clock::now();
 
+    if (sentVideo)
+        sentVideo->setServerCodec(desc.videoCodec.valueOr(QString()));
+
     setState(State::Connected);
     emit connected();
+
+    if (std::exchange(codecsChangedSinceOffered, false))
+        sendOfferedCodecs();
+
+    if (receivedVideo)
+        receivedVideo->onConnected();
 
     // send silence so discord sends us audio immediately
     sendSilence();
@@ -277,7 +334,7 @@ void VoiceClient::onSessionDescription(const SessionDescription &desc)
 
 void VoiceClient::sendAudio(const QByteArray &opusData)
 {
-    if (currentState != State::Connected || !encryption || !udpTransport)
+    if (!canSendMedia() || !params.sendsAudio)
         return;
 
     // snap rtp timestamp back to wall clock after a period of silence
@@ -291,7 +348,7 @@ void VoiceClient::sendAudio(const QByteArray &opusData)
     }
 
     RtpHeader header;
-    header.payloadType = 120;
+    header.payloadType = Codec::OPUS_PAYLOAD_TYPE;
     header.marker = newTalkspurt;
     header.sequence = rtpSequence++;
     header.timestamp = rtpTimestamp;
@@ -299,39 +356,35 @@ void VoiceClient::sendAudio(const QByteArray &opusData)
 
     newTalkspurt = false;
 
-    QByteArray payloadForTransport = opusData;
+    PacketPool::Handle packet = udpTransport->acquirePacket();
+    const int headerSize = writeRtpHeader(header, packet->writable());
+    packet->resize(headerSize);
+
+    const std::span<const uint8_t> opus(reinterpret_cast<const uint8_t *>(opusData.constData()), static_cast<size_t>(opusData.size()));
 
     if (isDaveEnabled()) {
-        auto *enc = daveSession->encryptor();
-        auto maxSize = enc->GetMaxCiphertextByteSize(discord::dave::MediaType::Audio, payloadForTransport.size());
-        std::vector<uint8_t> daveEncrypted(maxSize);
-        size_t bytesWritten = 0;
-        auto result = enc->Encrypt(
-                discord::dave::MediaType::Audio,
-                localSsrc,
-                discord::dave::ArrayView<const uint8_t>(
-                        reinterpret_cast<const uint8_t *>(payloadForTransport.constData()),
-                        payloadForTransport.size()),
-                discord::dave::ArrayView<uint8_t>(daveEncrypted.data(), daveEncrypted.size()),
-                &bytesWritten);
-
-        if (result == discord::dave::IEncryptor::Success) {
-            payloadForTransport = QByteArray(reinterpret_cast<const char *>(daveEncrypted.data()), bytesWritten);
-        } else {
-            qCWarning(LogVoice) << "DAVE encrypt failed: result =" << static_cast<int>(result);
+        const size_t maxSize = daveSession->maxCiphertextSize(discord::dave::MediaType::Audio, opus.size());
+        if (static_cast<int>(maxSize) > packet->tailroom() - VoiceEncryption::TRAILER_SIZE)
             return;
-        }
+
+        const std::optional<size_t> written = daveSession->encrypt(discord::dave::MediaType::Audio, localSsrc, opus, { packet->data() + headerSize, maxSize });
+        if (!written)
+            return;
+        packet->resize(headerSize + static_cast<int>(*written));
+    } else if (!packet->append(opus)) {
+        return;
     }
 
-    QByteArray headerBytes = header.serialize();
-    QByteArray encryptedSection = encryption->encrypt(headerBytes, payloadForTransport);
-    if (encryptedSection.isEmpty())
-        return;
+    if (sealAndSend(*packet, headerSize))
+        lastAudioSendTime = now;
+}
 
-    QByteArray packet = headerBytes + encryptedSection;
+bool VoiceClient::sealAndSend(PacketBuffer &packet, int clearSize)
+{
+    if (!encryption->seal(packet, clearSize))
+        return false;
     udpTransport->send(packet);
-
-    lastAudioSendTime = now;
+    return true;
 }
 
 void VoiceClient::setSpeaking(bool speaking)
@@ -346,9 +399,24 @@ void VoiceClient::setSpeaking(bool speaking)
     gateway->sendSpeaking(flags, 0, localSsrc);
 }
 
+void VoiceClient::beginSoundshare()
+{
+    if (currentState != State::Connected || !gateway || !params.sendsAudio)
+        return;
+
+    newTalkspurt = true;
+    if (std::exchange(soundshareAnnounced, true))
+        return;
+    gateway->sendSpeaking(static_cast<int>(SpeakingFlag::SOUNDSHARE), 0, localSsrc);
+}
+
 void VoiceClient::sendSilence()
 {
-    if (currentState != State::Connected || !encryption || !udpTransport)
+    if (!canSendMedia())
+        return;
+
+    // a stream connection has no microphone, so it sends no silence
+    if (params.streamContext)
         return;
 
     // no need to keepalive by sending silence if we spoke recently
@@ -363,119 +431,259 @@ void VoiceClient::sendSilence()
     qCDebug(LogVoice) << "Sent keepalive silence frame";
 }
 
-void VoiceClient::onDatagram(const QByteArray &data)
+void VoiceClient::onPacket(PacketPool::Handle packet)
 {
-    if (data.size() < RtpHeader::FIXED_SIZE)
+    switch (classifyPacket(packet->bytes())) {
+    case PacketKind::Rtcp:
+        receiveRtcp(std::move(packet));
+        return;
+    case PacketKind::Unknown:
+        return;
+    case PacketKind::Rtp:
+        break;
+    }
+
+    const std::optional<ParsedRtp> rtp = parseRtp(packet->bytes());
+    if (!rtp)
         return;
 
-    const auto *p = reinterpret_cast<const uint8_t *>(data.constData());
+    const int payloadType = rtp->header.payloadType;
+    if (payloadType == Codec::OPUS_PAYLOAD_TYPE) {
+        receiveAudio(*rtp, std::move(packet));
+        return;
+    }
 
-    // rtp version = 2
-    if (((p[0] >> 6) & 0x03) != 2)
+    if (receivedVideo && receivedVideo->receive(*rtp, packet))
         return;
 
-    // ignore all non-opus packets. theres rtcp and other stuff
-    uint8_t payloadType = p[1] & 0x7F;
-    if (payloadType != 120)
+    // the server numbers its link-probing padding too, and an unreported packet counts as lost
+    (void)openRtpPayload(*rtp, *packet);
+    unrouted.rtp++;
+}
+
+void VoiceClient::receiveRtcp(PacketPool::Handle packet)
+{
+    if (!encryption || !encryption->open(*packet, RTCP_CLEAR_SIZE)) {
+        unrouted.rtcp++;
+        return;
+    }
+
+    const ReceivedRtcp received = parseRtcp(packet->bytes());
+    if (sentVideo)
+        sentVideo->receiveRtcp(received);
+    if (receivedVideo)
+        receivedVideo->receiveRtcp(received);
+    for (const ReceptionReport &report : received.receptionReports) {
+        if (report.ssrc == localSsrc)
+            qCDebug(LogVoice) << "Server's report on our audio: has up to sequence" << (report.highestSequence & 0xFFFF) << "of" << static_cast<uint16_t>(rtpSequence - 1) << "sent, lost in all" << report.cumulativeLost << "lost lately" << report.fractionLost / 256.0;
+    }
+}
+
+QList<Codec> VoiceClient::offeredCodecs() const
+{
+    QList<Codec> codecs = { Codec::opus() };
+    for (const Codec &video : params.videoCodecs) {
+        if (video.encode.valueOr(false) || video.decode.valueOr(false))
+            codecs.append(video);
+    }
+    return codecs;
+}
+
+void VoiceClient::sendOfferedCodecs()
+{
+    gateway->sendSessionUpdate(offeredCodecs());
+}
+
+void VoiceClient::offerVideoEncoding(const QList<VideoCodec> &encodable)
+{
+    bool changed = false;
+    for (Codec &offered : params.videoCodecs) {
+        const bool encoded = encodable.contains(videoCodecFromName(offered.name));
+        if (offered.encode.valueOr(false) == encoded)
+            continue;
+        offered.encode = encoded;
+        changed = true;
+    }
+    if (!changed)
         return;
 
-    // too small to contain meaningful audio after encryption overhead
-    if (data.size() < 44)
+    if (currentState == State::WaitingForSession)
+        codecsChangedSinceOffered = true;
+    if (currentState != State::Connected)
         return;
 
-    // rtp header and extension header are unencrypted and used for aad in rtpsize.
-    // account for CSRC entries between fixed header and extension header.
-    int csrcCount = p[0] & 0x0F;
-    bool hasExtension = (p[0] >> 4) & 1;
-    int headerSize = RtpHeader::FIXED_SIZE + csrcCount * 4 + (hasExtension ? 4 : 0);
+    sendOfferedCodecs();
+    if (sentVideo)
+        sentVideo->retakeServerCodec();
+}
 
-    if (data.size() <= headerSize + 4)
+std::function<void()> VoiceClient::queuedKeyframeRequestFrom(Core::Snowflake userId)
+{
+    return [this, userId] { QMetaObject::invokeMethod(this, [this, userId] { requestVideoKeyframeFrom(userId); }, Qt::QueuedConnection); };
+}
+
+std::function<void(VideoCodec)> VoiceClient::queuedCodecWithdrawal()
+{
+    return [this](VideoCodec codec) { QMetaObject::invokeMethod(this, [this, codec] { withdrawVideoCodec(codec); }, Qt::QueuedConnection); };
+}
+
+void VoiceClient::withdrawVideoCodec(VideoCodec codec)
+{
+    bool changed = false;
+    for (Codec &offered : params.videoCodecs) {
+        if (videoCodecFromName(offered.name) != codec || !offered.decode.valueOr(false))
+            continue;
+        offered.decode = false;
+        changed = true;
+    }
+    if (!changed || !gateway || currentState != State::Connected)
         return;
 
-    RtpHeader header = RtpHeader::parse(data);
+    qCWarning(LogVoice) << "Withdrawing" << videoCodecName(codec) << "from the codecs this client decodes";
+    sendOfferedCodecs();
+}
+
+void VoiceClient::setVideoFrameHandler(VideoFrameHandler handler)
+{
+    if (receivedVideo)
+        receivedVideo->setFrameHandler(std::move(handler));
+}
+
+void VoiceClient::setVideoWants(int pixelCount, bool wanted)
+{
+    if (receivedVideo)
+        receivedVideo->setWants(pixelCount, wanted);
+}
+
+void VoiceClient::setVideoPlan(const MediaSinkWants &wants, const QSet<quint32> &deliver)
+{
+    if (receivedVideo)
+        receivedVideo->setPlan(wants, deliver);
+}
+
+void VoiceClient::requestVideoKeyframeFrom(Core::Snowflake userId)
+{
+    if (receivedVideo)
+        receivedVideo->requestKeyframeFrom(userId);
+}
+
+VideoCodec VoiceClient::videoSendCodec() const
+{
+    return sentVideo ? sentVideo->codec() : VideoCodec::Unknown;
+}
+
+void VoiceClient::startVideo(const LocalVideoDescription &description)
+{
+    if (sentVideo)
+        sentVideo->start(description);
+}
+
+void VoiceClient::describeVideo(const LocalVideoDescription &description)
+{
+    if (sentVideo)
+        sentVideo->describe(description);
+}
+
+void VoiceClient::setVideoBitrate(int bitsPerSecond, int quality)
+{
+    if (sentVideo)
+        sentVideo->setBitrate(bitsPerSecond, quality);
+}
+
+void VoiceClient::stopVideo()
+{
+    if (sentVideo)
+        sentVideo->stop();
+}
+
+void VoiceClient::sendVideoFrame(const EncodedVideoFrame &frame, int quality)
+{
+    if (sentVideo)
+        sentVideo->sendFrame(frame, quality);
+}
+
+void VoiceClient::onSessionUpdated(const SessionUpdate &update)
+{
+    if (sentVideo && update.videoCodec.hasValue())
+        sentVideo->setServerCodec(update.videoCodec.get());
+}
+
+void VoiceClient::onMediaSinkWants(const MediaSinkWants &wants)
+{
+    if (sentVideo)
+        sentVideo->onMediaSinkWants(wants);
+}
+
+void VoiceClient::receiveAudio(const ParsedRtp &rtp, PacketPool::Handle packet)
+{
+    const RtpHeader &header = rtp.header;
 
     // ignore our own packets
     if (header.ssrc == localSsrc)
         return;
-
-    QByteArray rtpHeaderBytes = data.left(headerSize);
-    QByteArray encryptedSection = data.mid(headerSize);
 
     if (!encryption) {
         qCDebug(LogVoice) << "Received RTP but no encryption context, SSRC =" << header.ssrc;
         return;
     }
 
-    QByteArray decrypted = encryption->decrypt(rtpHeaderBytes, encryptedSection);
-    if (decrypted.isEmpty()) {
-        qCDebug(LogVoice) << "Decrypt failed: SSRC =" << header.ssrc
-                          << "seq =" << header.sequence
-                          << "pktSize =" << data.size()
-                          << "hdrSize =" << headerSize
-                          << "ext =" << hasExtension
-                          << "encSize =" << encryptedSection.size();
+    const std::optional<std::span<const uint8_t>> extensions = openRtpPayload(rtp, *packet);
+    if (!extensions || packet->size() == 0)
         return;
-    }
-
-    if (hasExtension) {
-        int extOffset = RtpHeader::FIXED_SIZE + csrcCount * 4;
-        if (data.size() < extOffset + 4)
-            return;
-        uint16_t extWords = (p[extOffset + 2] << 8) | p[extOffset + 3];
-        int extBytes = extWords * 4;
-        if (decrypted.size() <= extBytes)
-            return;
-        decrypted = decrypted.mid(extBytes);
-    }
+    const std::span<const uint8_t> speaker = findRtpExtension(*extensions, SPEAKER_EXTENSION);
+    const std::optional<int> speakingFlags = speaker.empty() ? std::nullopt : std::optional<int>(speaker[0] >> 1);
 
     if (daveSession) {
         // https://daveprotocol.com/#silence-packets
-        if (decrypted.size() == sizeof(Core::Audio::OPUS_SILENCE) && memcmp(decrypted.constData(), Core::Audio::OPUS_SILENCE, sizeof(Core::Audio::OPUS_SILENCE)) == 0) {
-            emit audioReceived(header.ssrc, header.sequence, header.timestamp, decrypted);
-            return;
-        }
-
-        if (daveSession->isDaveEnabled()) {
-            uint64_t ssrcUid = ssrcToUserIdMap.value(header.ssrc, 0);
-            auto *dec = daveSession->getOrCreateDecryptor(header.ssrc, ssrcUid);
-            auto maxSize = dec->GetMaxPlaintextByteSize(discord::dave::MediaType::Audio, decrypted.size());
-            std::vector<uint8_t> davePlaintext(maxSize);
-            size_t bytesWritten = 0;
-            auto result = dec->Decrypt(
-                    discord::dave::MediaType::Audio,
-                    discord::dave::ArrayView<const uint8_t>(
-                            reinterpret_cast<const uint8_t *>(decrypted.constData()),
-                            decrypted.size()),
-                    discord::dave::ArrayView<uint8_t>(davePlaintext.data(), davePlaintext.size()),
-                    &bytesWritten);
-
-            if (result == discord::dave::IDecryptor::Success) {
-                decrypted = QByteArray(reinterpret_cast<const char *>(davePlaintext.data()), bytesWritten);
-            } else {
-                static constexpr const char *kResultNames[] = {
-                    "Success",
-                    "DecryptionFailure",
-                    "MissingKeyRatchet",
-                    "InvalidNonce",
-                    "MissingCryptor",
-                };
-                int ri = static_cast<int>(result);
-                const char *rn = (ri >= 0 && ri < 5) ? kResultNames[ri] : "Unknown";
-                bool hasMagic = decrypted.size() >= 2 && static_cast<uint8_t>(decrypted[decrypted.size() - 2]) == 0xFA && static_cast<uint8_t>(decrypted[decrypted.size() - 1]) == 0xFA;
-                qCDebug(LogDave) << "DAVE decrypt failed: SSRC =" << header.ssrc
-                                 << "result =" << rn
-                                 << "frameSize =" << decrypted.size()
-                                 << "hasMagicMarker =" << hasMagic;
+        if (!Core::Audio::isOpusSilence(packet->bytes())) {
+            if (daveSession->isDaveEnabled()) {
+                if (!daveDecryptAudio(header.ssrc, packet))
+                    return;
+            } else if (daveSession->awaitsKeys()) {
                 return;
             }
-        } else if (daveSession->isDowngraded()) {
-            // fallthrough
-        } else {
-            return;
         }
     }
 
-    emit audioReceived(header.ssrc, header.sequence, header.timestamp, decrypted);
+    emit audioReceived(header.ssrc, header.sequence, header.timestamp, QByteArray(reinterpret_cast<const char *>(packet->data()), packet->size()), speakingFlags);
+}
+
+std::optional<std::span<const uint8_t>> VoiceClient::openRtpPayload(const ParsedRtp &rtp, PacketBuffer &packet)
+{
+    if (!encryption || !encryption->open(packet, rtp.clearSize)) {
+        qCDebug(LogVoice) << "Decrypt failed: SSRC =" << rtp.header.ssrc << "seq =" << rtp.header.sequence << "hdrSize =" << rtp.clearSize << "ext =" << rtp.header.extension;
+        return std::nullopt;
+    }
+
+    // the extension elements are encrypted with the payload and come out in front of it
+    packet.dropFront(rtp.clearSize);
+    if (packet.size() < rtp.extensionSize)
+        return std::nullopt;
+    const std::span<const uint8_t> extensions = packet.bytes().first(static_cast<size_t>(rtp.extensionSize));
+    packet.dropFront(rtp.extensionSize);
+    if (receivedVideo)
+        receivedVideo->noteTransportSequence(extensions);
+
+    if (rtp.header.padding) {
+        const std::optional<int> padding = rtpPaddingSize(packet.bytes());
+        if (!padding || !packet.resize(packet.size() - *padding))
+            return std::nullopt;
+    }
+    return extensions;
+}
+
+bool VoiceClient::daveDecryptAudio(quint32 ssrc, PacketPool::Handle &packet)
+{
+    PacketPool::Handle plaintext = udpTransport->acquirePacket();
+    if (!plaintext->resize(static_cast<int>(daveSession->maxPlaintextSize(discord::dave::MediaType::Audio, ssrc, packet->size()))))
+        return false;
+
+    const std::optional<size_t> written = daveSession->decrypt(discord::dave::MediaType::Audio, ssrc, packet->bytes(), plaintext->bytes());
+    if (!written)
+        return false;
+    plaintext->resize(static_cast<int>(*written));
+    packet = std::move(plaintext);
+    return true;
 }
 
 bool VoiceClient::isDaveEnabled() const
@@ -524,20 +732,23 @@ void VoiceClient::onClientsConnect(const QStringList &userIds)
         connectedUserIds.insert(uid);
         if (daveSession)
             daveSession->addConnectedUser(uid);
+        emit clientReachedServer(Core::Snowflake(id.toULongLong()));
     }
 }
 
-void VoiceClient::onClientConnect(const ClientConnectData &data)
+void VoiceClient::onVideoState(const RemoteVideoState &remote)
 {
-    if (data.userId.hasValue() && data.userId->isValid()) {
-        std::string uid = std::to_string(data.userId.get());
+    if (remote.userId.hasValue() && remote.userId->isValid()) {
+        std::string uid = std::to_string(remote.userId.get());
         connectedUserIds.insert(uid);
-        if (data.audioSsrc.get() != 0)
-            ssrcToUserIdMap.insert(data.audioSsrc, data.userId.get());
+        if (remote.audioSsrc.get() != 0)
+            ssrcToUserIdMap.insert(remote.audioSsrc, remote.userId.get());
         if (daveSession)
             daveSession->addConnectedUser(uid);
     }
-    emit clientConnected(data);
+    if (receivedVideo)
+        receivedVideo->onVideoState(remote);
+    emit videoStateReceived(remote);
 }
 
 void VoiceClient::onClientDisconnect(Core::Snowflake uid)
@@ -548,11 +759,14 @@ void VoiceClient::onClientDisconnect(Core::Snowflake uid)
     if (daveSession)
         daveSession->removeConnectedUser(uidStr);
 
-    for (auto it = ssrcToUserIdMap.begin(); it != ssrcToUserIdMap.end(); ++it) {
-        if (it.value() == static_cast<quint64>(uid)) {
-            ssrcToUserIdMap.erase(it);
-            break;
-        }
+    if (receivedVideo)
+        receivedVideo->onClientDisconnect(uid);
+
+    for (auto it = ssrcToUserIdMap.begin(); it != ssrcToUserIdMap.end();) {
+        if (it.value() == static_cast<quint64>(uid))
+            it = ssrcToUserIdMap.erase(it);
+        else
+            ++it;
     }
 
     emit clientDisconnected(uid);
@@ -589,7 +803,15 @@ void VoiceClient::onIpDiscovered(const QString &ip, int port)
 
     setState(State::SelectingProtocol);
 
-    gateway->sendSelectProtocol(ip, port, selectedMode);
+    SelectProtocolData protocol;
+    protocol.address = ip;
+    protocol.port = port;
+    protocol.mode = selectedMode;
+    protocol.codecs = offeredCodecs();
+    codecsChangedSinceOffered = false;
+    if (params.video)
+        protocol.rtcConnectionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    gateway->sendSelectProtocol(protocol);
 
     setState(State::WaitingForSession);
 }
@@ -600,6 +822,13 @@ void VoiceClient::onIpDiscoveryFailed(const QString &error)
     stop();
 }
 
+void VoiceClient::onRelayLost(const QString &error)
+{
+    qCWarning(LogVoice) << "SOCKS5 relay lost, ending the connection:" << error;
+    stop();
+    emit disconnected();
+}
+
 void VoiceClient::ensureDaveSession(uint16_t protocolVersion)
 {
     if (daveSession)
@@ -607,8 +836,10 @@ void VoiceClient::ensureDaveSession(uint16_t protocolVersion)
 
     qCInfo(LogVoice) << "Creating DAVE session, protocol version =" << protocolVersion;
 
-    daveSession = std::make_unique<DaveSession>(channelId, userId, ssrcToUserIdMap, this);
+    daveSession = std::make_unique<DaveSession>(params.channelId, params.userId, ssrcToUserIdMap, this);
     daveSession->setLocalSsrc(localSsrc);
+    if (sentVideo)
+        sentVideo->registerWithDave();
 
     for (const auto &uid : connectedUserIds)
         daveSession->addConnectedUser(uid);
@@ -625,8 +856,17 @@ void VoiceClient::ensureDaveSession(uint16_t protocolVersion)
     connect(daveSession.get(), &DaveSession::sendInvalidCommitWelcome,
             gateway, &VoiceGateway::sendDaveInvalidCommitWelcome);
 
+    connect(daveSession.get(), &DaveSession::newKeysNeedKeyframe, this, [this] {
+        if (sentVideo)
+            sentVideo->askEveryLayerForKeyframe();
+    });
+
     connect(daveSession.get(), &DaveSession::daveStateChanged,
             this, [this](bool enabled) {
+                if (receivedVideo)
+                    receivedVideo->onDaveStateChanged();
+                if (sentVideo)
+                    sentVideo->askAwaitingLayersForKeyframe();
                 if (enabled) {
                     auto auth = daveSession->lastEpochAuthenticator();
                     if (!auth.empty())

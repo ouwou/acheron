@@ -5,6 +5,7 @@
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
 #include <QSettings>
 #include <QSystemTrayIcon>
 
@@ -55,6 +56,14 @@
 #include "Dialogs/ReactionsPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
+#include "StreamPreviewPopup.hpp"
+#ifdef ACHERON_HAVE_VIDEO
+#include "Call/CallVideoMenu.hpp"
+#include "Call/CallView.hpp"
+#include "Core/Streams/StreamWatcher.hpp"
+#include "Core/Video/CallVideo.hpp"
+#endif
+#include "Core/Streams/StreamPreviews.hpp"
 #include "Chat/ReactionTooltip.hpp"
 #include "Discord/CdnUrls.hpp"
 #include "Core/ImageManager.hpp"
@@ -64,6 +73,7 @@
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
 #include "Core/Audio/VoiceManager.hpp"
+#include "VoiceActions.hpp"
 #include "VoiceStatusBar.hpp"
 #endif
 
@@ -83,6 +93,7 @@ constexpr int MentionRoleLimit = 5;
 constexpr int MentionChannelLimit = 10;
 constexpr int MentionAvatarPx = 32;
 constexpr int MemberQueryDebounceMs = 300;
+const QString CALL_VIEW_HEIGHT_KEY = QStringLiteral("video/call_view_height");
 
 QString guildChannelKey(Core::Snowflake accountId, Core::Snowflake guildId)
 {
@@ -391,6 +402,11 @@ MainWindow::~MainWindow()
 {
     for (const QPointer<GuildSettingsWindow> &window : std::as_const(guildSettingsWindows))
         delete window.data();
+#ifdef ACHERON_HAVE_VIDEO
+    // a popped-out view isnt a child of this one
+    for (const QPointer<CallView> &view : std::as_const(callViews))
+        delete view.data();
+#endif
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -476,6 +492,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
     }
 
     selectedInstance->readState()->setActiveChannel(node->id);
+    selectedInstance->noteChannelSelected(node->id);
     setViewMode(ViewMode::TextChannel);
 
     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
@@ -1119,10 +1136,6 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
     connect(instance->presences(), &Core::PresenceManager::presencesChanged, this,
             [this, instance](const QList<Core::Snowflake> &userIds) {
                 channelTreeModel->updatePresence(instance->accountId(), userIds);
-#ifndef ACHERON_NO_VOICE
-                if (voiceStatusBar)
-                    voiceStatusBar->refreshPresences(userIds);
-#endif
             });
 
     connect(instance, &Core::ClientInstance::forumBadgeChanged, this,
@@ -1203,6 +1216,220 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                 channelTreeModel->updateVoiceParticipantState(channelId, userId,
                                                               instance->accountId());
             });
+
+    connect(instance->voice(), &Core::Audio::VoiceManager::takenOverByAnotherSession,
+            this, [this, instance = QPointer<ClientInstance>(instance)](Core::Snowflake channelId, Core::Snowflake guildId) {
+                auto *box = new QMessageBox(QMessageBox::Information, tr("Voice Disconnected"),
+                                            tr("Your voice has been disconnected because you connected at another location."),
+                                            QMessageBox::Close, this);
+                box->setAttribute(Qt::WA_DeleteOnClose);
+                QPushButton *reconnect = box->addButton(tr("Reconnect"), QMessageBox::AcceptRole);
+                connect(reconnect, &QPushButton::clicked, box, [instance, channelId, guildId]() {
+                    if (instance)
+                        instance->joinVoice(guildId, channelId);
+                });
+                box->open();
+            });
+#endif
+
+#ifdef ACHERON_HAVE_VIDEO
+    const Snowflake accountId = instance->accountId();
+    connect(instance->voice(), &Core::Audio::VoiceManager::voiceConnected, this,
+            [this, accountId, instance = QPointer<ClientInstance>(instance)] {
+                if (!instance)
+                    return;
+                const CallView *existing = callViews.value(accountId);
+                if (existing && existing->channelId() == instance->voiceChannelId())
+                    return;
+                removeCallView(accountId);
+                ensureCallView(instance);
+            });
+    connect(instance->voice(), &Core::Audio::VoiceManager::voiceDisconnected, this, [this, accountId] { removeCallView(accountId); });
+    connect(instance, &QObject::destroyed, this, [this, accountId] { removeCallView(accountId); });
+    if (instance->isInVoice())
+        ensureCallView(instance);
+
+    connect(instance->streamWatcher(), &Core::StreamWatcher::sessionOpened, this,
+            [this, instance = QPointer<ClientInstance>(instance)] {
+                if (!instance)
+                    return;
+                if (CallView *view = ensureCallView(instance))
+                    view->reveal();
+            });
+#endif
+}
+
+void MainWindow::updateCallHost()
+{
+#ifdef ACHERON_HAVE_VIDEO
+    static constexpr int MIN_HEIGHT = 120;
+
+    bool docked = false;
+    bool open = false;
+    int compactHeight = 0;
+    for (auto it = callViews.constBegin(); it != callViews.constEnd(); ++it) {
+        const CallView *view = it.value();
+        if (!view || view->isPoppedOut())
+            continue;
+        docked = true;
+        if (view->isCompact())
+            compactHeight += view->maximumHeight();
+        else
+            open = true;
+    }
+    callHost->setVisible(docked);
+    callHost->setMaximumHeight(docked && !open ? compactHeight : QWIDGETSIZE_MAX);
+    if (!docked)
+        return;
+
+    // a splitter neither takes room from what shrank nor gives it back to what was made small
+    const QList<int> sizes = callSplitter->sizes();
+    if (sizes.size() != 2)
+        return;
+    const int total = sizes[0] + sizes[1];
+    if (!open) {
+        if (sizes[0] >= MIN_HEIGHT)
+            QSettings().setValue(CALL_VIEW_HEIGHT_KEY, sizes[0]);
+        callSplitter->setSizes({ compactHeight, qMax(0, total - compactHeight) });
+        return;
+    }
+    if (sizes[0] >= MIN_HEIGHT)
+        return;
+    if (total < MIN_HEIGHT * 2) {
+        callSplitter->setSizes({ 2, 3 });
+        return;
+    }
+    const int wanted = qBound(MIN_HEIGHT, QSettings().value(CALL_VIEW_HEIGHT_KEY, total * 2 / 5).toInt(), total - MIN_HEIGHT);
+    callSplitter->setSizes({ wanted, total - wanted });
+#endif
+}
+
+#ifdef ACHERON_HAVE_VIDEO
+void MainWindow::removeCallView(Snowflake accountId)
+{
+    if (CallView *view = callViews.take(accountId)) {
+        view->hide();
+        view->deleteLater();
+    }
+    updateCallHost();
+}
+
+CallView *MainWindow::ensureCallView(Core::ClientInstance *instance)
+{
+    if (CallView *existing = callViews.value(instance->accountId()))
+        return existing;
+    if (!instance->isInVoice())
+        return nullptr;
+
+    QPointer<Core::UserManager> users = instance->users();
+    const Snowflake guildId = instance->voiceGuildId();
+    auto names = [users, guildId](Snowflake userId) {
+        return users ? users->getDisplayName(userId, guildId) : QString::number(quint64(userId));
+    };
+    auto avatars = [users, guildId](Snowflake userId) -> QUrl {
+        if (!users)
+            return {};
+        const auto user = users->getUser(userId);
+        return user ? users->getAvatarUrl(*user, guildId, CallView::AVATAR_SIZE.width()) : QUrl();
+    };
+
+    ChannelNode *channel = channelTreeModel->findChannelTreeNode(instance->voiceChannelId());
+    auto *view = new CallView(instance->voice(), instance->streamWatcher(), instance->streamBroadcaster(), instance->cameraSender(), session->getImageManager(), instance->accountId(), names, avatars, channel ? channel->name : tr("Call"), callHost);
+    callViews.insert(instance->accountId(), view);
+    connect(view, &CallView::presenceChanged, this, &MainWindow::updateCallHost);
+    const QPointer<ClientInstance> guarded(instance);
+    connect(view, &CallView::leaveRequested, this, [guarded] {
+        if (guarded)
+            guarded->leaveVoice();
+    });
+    connect(view, &CallView::voiceSettingsRequested, this, &MainWindow::openVoiceSettings);
+    connect(view, &CallView::profileRequested, this, [this, guarded](Snowflake userId) {
+        if (guarded)
+            showUserProfile(guarded, userId, guarded->voiceGuildId());
+    });
+    updateCallHost();
+    return view;
+}
+#endif
+
+std::optional<MainWindow::ParticipantRow> MainWindow::participantRowAt(const QModelIndex &proxyIndex) const
+{
+    ChannelNode *node = channelTreeModel->nodeFromIndex(channelFilterProxy->mapToSource(proxyIndex));
+    if (!node || node->type != ChannelNode::Type::VoiceParticipant || !node->parent)
+        return std::nullopt;
+
+    ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+    Core::ClientInstance *instance = accountNode ? session->client(accountNode->id) : nullptr;
+    if (!instance)
+        return std::nullopt;
+
+    ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
+    return ParticipantRow{ instance, node->id, node->parent->id, guildNode ? guildNode->id : Snowflake::Invalid };
+}
+
+void MainWindow::onWatchStreamRequested(const QModelIndex &proxyIndex)
+{
+#ifdef ACHERON_HAVE_VIDEO
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (!row || row->userId == row->instance->accountId())
+        return;
+
+    Core::StreamWatcher *watcher = row->instance->streamWatcher();
+    const Discord::StreamKey key = Discord::StreamKey::forChannel(row->guildId, row->channelId, row->userId);
+    const bool joinFirst = !watcher->canWatch(key);
+    watcher->watchWhenConnected(key);
+    if (joinFirst)
+        emit channelTree->joinVoiceChannelRequested(proxyIndex.parent());
+#else
+    Q_UNUSED(proxyIndex);
+#endif
+}
+
+void MainWindow::onShowCallVideoRequested(const QModelIndex &proxyIndex)
+{
+#ifdef ACHERON_HAVE_VIDEO
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (row && row->instance->voiceChannelId() == row->channelId) {
+        if (CallView *view = ensureCallView(row->instance))
+            view->reveal();
+    }
+#else
+    Q_UNUSED(proxyIndex);
+#endif
+}
+
+void MainWindow::onLiveParticipantHoverChanged(const QModelIndex &proxyIndex)
+{
+#ifndef ACHERON_NO_VOICE
+    if (!proxyIndex.isValid()) {
+        if (streamPreviewPopup)
+            streamPreviewPopup->dismiss();
+        return;
+    }
+
+    const std::optional<ParticipantRow> row = participantRowAt(proxyIndex);
+    if (!row)
+        return;
+    Core::ClientInstance *instance = row->instance;
+    const Snowflake channelId = row->channelId;
+    const Snowflake guildId = row->guildId;
+
+    // as the official client
+    const bool mayLook = instance->voiceChannelId() == channelId || !guildId.isValid() || instance->permissions()->hasChannelPermission(instance->accountId(), channelId, Discord::Permission::CONNECT);
+    if (!mayLook) {
+        if (streamPreviewPopup)
+            streamPreviewPopup->dismiss();
+        return;
+    }
+
+    if (!streamPreviewPopup)
+        streamPreviewPopup = new StreamPreviewPopup(session->getImageManager(), this);
+
+    const QRect rowArea = channelTree->visualRect(proxyIndex);
+    const QRect rowOnScreen(channelTree->viewport()->mapToGlobal(rowArea.topLeft()), rowArea.size());
+    streamPreviewPopup->showFor(instance->streamPreviews(), instance->accountId(), Discord::StreamKey::forChannel(guildId, channelId, row->userId).toString(), rowOnScreen);
+#else
+    Q_UNUSED(proxyIndex);
 #endif
 }
 
@@ -1215,22 +1442,12 @@ void MainWindow::setupUi()
 
 #ifndef ACHERON_NO_VOICE
     voiceStatusBar = new VoiceStatusBar(this);
-    voiceStatusBar->setImageManager(session->getImageManager());
     connect(voiceStatusBar, &VoiceStatusBar::disconnectRequested, this, [this]() {
-        for (const auto &inst : session->getClients()) {
-            if (inst && inst->isInVoice()) {
-                inst->discord()->sendVoiceStateUpdate(inst->voiceGuildId(), Snowflake::Invalid, false, false);
-                break;
-            }
-        }
+        if (ClientInstance *instance = instanceInVoice())
+            instance->leaveVoice();
     });
-    connect(voiceStatusBar, &VoiceStatusBar::userProfileRequested, this,
-            [this](Snowflake accountId, Snowflake userId) {
-                ClientInstance *instance = session->client(accountId);
-                if (!instance)
-                    return;
-                showUserProfile(instance, userId, instance->voiceGuildId());
-            });
+    connect(voiceStatusBar, &VoiceStatusBar::callRevealRequested, this, &MainWindow::revealCall);
+    connect(voiceStatusBar, &VoiceStatusBar::voiceSettingsRequested, this, &MainWindow::openVoiceSettings);
 #endif
 
     serverRail = new ServerRailView(this);
@@ -1410,7 +1627,25 @@ void MainWindow::setupUi()
     rightLayout->addWidget(connectionBanner, 0);
     rightLayout->addWidget(tabBar, 0);
     rightLayout->addWidget(channelToolbar, 0);
-    rightLayout->addWidget(centerSplitter, 1);
+    callHost = new QWidget(rightSideWidget);
+    auto *callLayout = new QVBoxLayout(callHost);
+    callLayout->setContentsMargins(0, 0, 0, 0);
+    callLayout->setSpacing(0);
+    callHost->hide();
+
+    callSplitter = new QSplitter(Qt::Vertical, rightSideWidget);
+    callSplitter->addWidget(callHost);
+    callSplitter->addWidget(centerSplitter);
+    callSplitter->setChildrenCollapsible(false);
+    callSplitter->setStretchFactor(0, 0);
+    callSplitter->setStretchFactor(1, 1);
+    connect(callSplitter, &QSplitter::splitterMoved, this, [this] {
+        const QList<int> sizes = callSplitter->sizes();
+        if (callHost->isVisible() && callHost->maximumHeight() == QWIDGETSIZE_MAX && !sizes.isEmpty())
+            QSettings().setValue(CALL_VIEW_HEIGHT_KEY, sizes[0]);
+    });
+
+    rightLayout->addWidget(callSplitter, 1);
 
     memberListView = new MemberListView(central);
     memberListView->setModel(memberListModel);
@@ -1681,8 +1916,50 @@ void MainWindow::setupUi()
 
                 ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
                 Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
-                showUserContextMenu(session->client(accountNode->id), node->id, guildId, globalPos);
+
+                ClientInstance *instance = session->client(accountNode->id);
+                std::function<void(QMenu &)> leadingEntries;
+#ifndef ACHERON_NO_VOICE
+                const Snowflake userId = node->id;
+                const bool other = instance && node->parent && userId != instance->accountId();
+                const bool inOwnCall = other && instance->voiceChannelId() == node->parent->id;
+                const QPointer<Core::Audio::VoiceManager> voice = inOwnCall ? instance->voice() : nullptr;
+                const QString name = voice ? instance->users()->getDisplayName(userId, guildId) : QString();
+#ifdef ACHERON_HAVE_VIDEO
+                const bool live = other && proxyIndex.data(ChannelTreeModel::IsVoiceLiveRole).toBool();
+                const QPointer<Core::CallVideo> video = inOwnCall ? instance->voice()->video() : nullptr;
+                const bool camera = video && video->senders().contains(userId);
+                const QString streamKey = live ? Discord::StreamKey::forChannel(guildId, node->parent->id, userId).toString() : QString();
+                const QPersistentModelIndex row(proxyIndex);
+                const QPointer<Core::StreamWatcher> watcher = live ? instance->streamWatcher() : nullptr;
+#else
+                const bool live = false;
+                const bool camera = false;
+#endif
+                if (voice || live || camera) {
+                    leadingEntries = [=, this](QMenu &menu) {
+#ifdef ACHERON_HAVE_VIDEO
+                        if (live && watcher) {
+                            addStreamActions(&menu, watcher, streamKey, [this, row] {
+                                if (row.isValid())
+                                    onWatchStreamRequested(row);
+                            });
+                        }
+                        if (camera && video)
+                            addDisableVideoAction(&menu, video, userId);
+#endif
+                        if (voice)
+                            VoiceActions::addUserActions(&menu, voice, userId, name);
+                        menu.addSeparator();
+                    };
+                }
+#endif
+                showUserContextMenu(instance, node->id, guildId, globalPos, leadingEntries);
             });
+
+    connect(channelTree, &ChannelTreeView::liveParticipantHoverChanged, this, &MainWindow::onLiveParticipantHoverChanged);
+    connect(channelTree, &ChannelTreeView::watchStreamRequested, this, &MainWindow::onWatchStreamRequested);
+    connect(channelTree, &ChannelTreeView::showCallVideoRequested, this, &MainWindow::onShowCallVideoRequested);
 
     connect(channelTree, &ChannelTreeView::openInNewTabRequested, this,
             [this](const QModelIndex &proxyIndex) {
@@ -1752,7 +2029,7 @@ void MainWindow::setupUi()
 
                 if (isDM) {
                     qCInfo(LogVoice) << "Joining DM call" << node->name << node->id;
-                    instance->discord()->sendVoiceStateUpdate(Snowflake::Invalid, node->id, false, false);
+                    instance->joinVoice(Snowflake::Invalid, node->id);
                 } else {
                     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
                     if (!guildNode)
@@ -1760,7 +2037,7 @@ void MainWindow::setupUi()
 
                     qCInfo(LogVoice) << "Joining voice channel" << node->name << node->id
                                      << "in guild" << guildNode->id;
-                    instance->discord()->sendVoiceStateUpdate(guildNode->id, node->id, false, false);
+                    instance->joinVoice(guildNode->id, node->id);
                 }
             });
 
@@ -1780,7 +2057,7 @@ void MainWindow::setupUi()
                     return;
 
                 qCInfo(LogVoice) << "Disconnecting from voice";
-                instance->discord()->sendVoiceStateUpdate(instance->voiceGuildId(), Snowflake::Invalid, false, false);
+                instance->leaveVoice();
             });
 #endif
 
@@ -2169,38 +2446,7 @@ void MainWindow::updateVoiceStatusLabel()
         }
     }
 
-    Core::Audio::VoiceManager *vm = voiceInstance ? voiceInstance->voice() : nullptr;
-    voiceStatusBar->setVoiceManager(vm);
-    voiceStatusBar->setAccount(voiceInstance ? voiceInstance->accountId() : Core::Snowflake());
-
-    if (voiceInstance) {
-        QPointer<Core::UserManager> um = voiceInstance->users();
-        Core::Snowflake vGuildId = voiceInstance->voiceGuildId();
-        voiceStatusBar->setNameResolver([um, vGuildId](Core::Snowflake userId) -> QString {
-            if (!um)
-                return QString::number(userId);
-            return um->getDisplayName(userId, vGuildId);
-        });
-        voiceStatusBar->setAvatarResolver([um, vGuildId](Core::Snowflake userId) -> QUrl {
-            if (!um)
-                return {};
-            auto user = um->getUser(userId);
-            if (!user)
-                return {};
-            return um->getAvatarUrl(*user, vGuildId, 32);
-        });
-
-        QPointer<Core::PresenceManager> pm = voiceInstance->presences();
-        voiceStatusBar->setStatusResolver([pm](Core::Snowflake userId) -> Core::PresenceBadge {
-            if (!pm)
-                return {};
-            return pm->badge(userId);
-        });
-    } else {
-        voiceStatusBar->setNameResolver(nullptr);
-        voiceStatusBar->setAvatarResolver(nullptr);
-        voiceStatusBar->setStatusResolver(nullptr);
-    }
+    voiceStatusBar->setVoiceManager(voiceInstance ? voiceInstance->voice() : nullptr);
 
     QString channelName;
     if (voiceInstance) {
@@ -2216,6 +2462,31 @@ void MainWindow::updateVoiceStatusLabel()
         }
     }
     voiceStatusBar->setChannelName(channelName);
+}
+
+Core::ClientInstance *MainWindow::instanceInVoice() const
+{
+    for (ClientInstance *instance : session->getClients()) {
+        if (instance && instance->isInVoice())
+            return instance;
+    }
+    return nullptr;
+}
+
+void MainWindow::revealCall()
+{
+#ifdef ACHERON_HAVE_VIDEO
+    ClientInstance *instance = instanceInVoice();
+    CallView *view = instance ? ensureCallView(instance) : nullptr;
+    if (view)
+        view->reveal();
+#endif
+}
+
+void MainWindow::openVoiceSettings()
+{
+    openSettingsWindow();
+    settingsWindow->showVoicePage();
 }
 #endif
 
@@ -2271,6 +2542,7 @@ void MainWindow::activateChannel(const TabEntry &entry)
     }
 
     instance->readState()->setActiveChannel(entry.channelId);
+    instance->noteChannelSelected(entry.channelId);
     setViewMode(ViewMode::TextChannel);
 
     if (!entry.isDm && entry.guildId.isValid())
@@ -2618,6 +2890,24 @@ void MainWindow::setupMenu()
     addAction(gifPickerShortcut);
     connect(gifPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestGifPicker);
 
+#ifndef ACHERON_NO_VOICE
+    auto *muteShortcut = new QAction(this);
+    muteShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
+    addAction(muteShortcut);
+    connect(muteShortcut, &QAction::triggered, this, [this] {
+        if (ClientInstance *instance = instanceInVoice())
+            instance->voice()->toggleSelfMute();
+    });
+
+    auto *deafenShortcut = new QAction(this);
+    deafenShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+    addAction(deafenShortcut);
+    connect(deafenShortcut, &QAction::triggered, this, [this] {
+        if (ClientInstance *instance = instanceInVoice())
+            instance->voice()->toggleSelfDeafen();
+    });
+#endif
+
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect
     auto *debugReconnect = new QAction(this);
     debugReconnect->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
@@ -2857,7 +3147,7 @@ QWidget *buildRoleChip(const Discord::Role &role, QWidget *parent)
 } // namespace
 
 void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId, Snowflake guildId,
-                                     QPoint globalPos)
+                                     QPoint globalPos, const std::function<void(QMenu &)> &addLeadingEntries)
 {
     QMenu menu(this);
     QPointer<ClientInstance> instanceGuard(instance);
@@ -2876,6 +3166,9 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
         menu.addAction(headerAction);
         menu.addSeparator();
     }
+
+    if (addLeadingEntries)
+        addLeadingEntries(menu);
 
     QAction *profileAction = menu.addAction(tr("Profile"));
     connect(profileAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {

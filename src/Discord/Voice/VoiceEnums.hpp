@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDebug>
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 
@@ -111,3 +112,5 @@ static constexpr int VOICE_GATEWAY_VERSION = 9;
 } // namespace Voice
 } // namespace Discord
 } // namespace Acheron
+
+Q_DECLARE_METATYPE(Acheron::Discord::Voice::VoiceCloseCode)

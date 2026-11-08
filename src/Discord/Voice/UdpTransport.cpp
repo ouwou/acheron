@@ -13,6 +13,8 @@ static constexpr int IP_DISCOVERY_PACKET_SIZE = 74;
 static constexpr quint16 IP_DISCOVERY_REQUEST_TYPE = 0x0001;
 static constexpr quint16 IP_DISCOVERY_RESPONSE_TYPE = 0x0002;
 static constexpr quint16 IP_DISCOVERY_LENGTH = 70;
+static constexpr int IP_DISCOVERY_ADDRESS_OFFSET = 8;
+static constexpr int IP_DISCOVERY_PORT_OFFSET = 72;
 
 UdpTransport::UdpTransport(const Core::ProxyConfig &proxy, QObject *parent)
     : QObject(parent), proxy(proxy)
@@ -27,12 +29,30 @@ UdpTransport::~UdpTransport()
     }
 }
 
+void UdpTransport::setPacketHandler(PacketHandler handler)
+{
+    packetHandler = std::move(handler);
+}
+
+PacketPool::Handle UdpTransport::acquirePacket()
+{
+    return pool.acquire();
+}
+
 void UdpTransport::startIpDiscovery(const QString &ip, int port, quint32 ssrc)
 {
     serverAddress = QHostAddress(ip);
     serverPort = static_cast<quint16>(port);
+    relayHeaderSize = Socks5UdpAssociation::writeRelayHeader(relayHeader, serverAddress, serverPort);
     discoveryPending = true;
     this->ssrc = ssrc;
+
+    // callers refuse such a proxy first; this keeps a missed check from going direct
+    if (!proxy.canRelayUdp()) {
+        discoveryPending = false;
+        QMetaObject::invokeMethod(this, [this] { emit ipDiscoveryFailed(QStringLiteral("an HTTP proxy cannot relay UDP")); }, Qt::QueuedConnection);
+        return;
+    }
 
     if (!openSocket())
         return;
@@ -53,8 +73,10 @@ void UdpTransport::startIpDiscovery(const QString &ip, int port, quint32 ssrc)
     association = new Socks5UdpAssociation(this);
     connect(association, &Socks5UdpAssociation::established, this, &UdpTransport::sendDiscoveryPacket);
     connect(association, &Socks5UdpAssociation::failed, this, [this](const QString &error) {
-        if (!discoveryPending)
+        if (!discoveryPending) {
+            emit relayLost(error);
             return;
+        }
         discoveryPending = false;
         discoveryTimer->stop();
         emit ipDiscoveryFailed("SOCKS5 proxy: " + error);
@@ -83,16 +105,15 @@ bool UdpTransport::openSocket()
 
 void UdpTransport::sendDiscoveryPacket()
 {
-    QByteArray packet(IP_DISCOVERY_PACKET_SIZE, '\0');
-    quint16 type = qToBigEndian(IP_DISCOVERY_REQUEST_TYPE);
-    quint16 length = qToBigEndian(IP_DISCOVERY_LENGTH);
-    quint32 ssrcBE = qToBigEndian(ssrc);
+    PacketPool::Handle packet = pool.acquire();
+    packet->resize(IP_DISCOVERY_PACKET_SIZE);
+    memset(packet->data(), 0, IP_DISCOVERY_PACKET_SIZE);
 
-    memcpy(packet.data() + 0, &type, 2);
-    memcpy(packet.data() + 2, &length, 2);
-    memcpy(packet.data() + 4, &ssrcBE, 4);
+    qToBigEndian(IP_DISCOVERY_REQUEST_TYPE, packet->data() + 0);
+    qToBigEndian(IP_DISCOVERY_LENGTH, packet->data() + 2);
+    qToBigEndian(ssrc, packet->data() + 4);
 
-    send(packet);
+    send(*packet);
 }
 
 void UdpTransport::startDiscoveryTimeout()
@@ -110,21 +131,23 @@ void UdpTransport::startDiscoveryTimeout()
     discoveryTimer->start(DISCOVERY_TIMEOUT_MS);
 }
 
-void UdpTransport::send(const QByteArray &data)
+void UdpTransport::send(PacketBuffer &packet)
 {
     if (!socket)
         return;
 
-    if (!association) {
-        socket->writeDatagram(data, serverAddress, serverPort);
+    if (!relayed()) {
+        socket->writeDatagram(reinterpret_cast<const char *>(packet.data()), packet.size(), serverAddress, serverPort);
         return;
     }
 
-    if (!association->isEstablished())
+    if (!association || !association->isEstablished() || relayHeaderSize <= 0)
         return;
 
-    const QByteArray wrapped = Socks5UdpAssociation::encapsulate(data, serverAddress, serverPort);
-    socket->writeDatagram(wrapped, association->relayAddress(), association->relayPort());
+    if (!Socks5UdpAssociation::wrap(packet, { relayHeader, static_cast<size_t>(relayHeaderSize) }))
+        return;
+    socket->writeDatagram(reinterpret_cast<const char *>(packet.data()), packet.size(), association->relayAddress(), association->relayPort());
+    packet.dropFront(relayHeaderSize);
 }
 
 bool UdpTransport::isBound() const
@@ -139,40 +162,37 @@ quint16 UdpTransport::localPort() const
 
 void UdpTransport::onReadyRead()
 {
-    const QHostAddress expectedSender = association ? association->relayAddress() : serverAddress;
-    const quint16 expectedPort = association ? association->relayPort() : serverPort;
+    if (relayed() && !association)
+        return;
+    const QHostAddress expectedSender = relayed() ? association->relayAddress() : serverAddress;
+    const quint16 expectedPort = relayed() ? association->relayPort() : serverPort;
 
     while (socket && socket->hasPendingDatagrams()) {
-        QByteArray datagram;
-        datagram.resize(socket->pendingDatagramSize());
+        PacketPool::Handle packet = pool.acquire();
         QHostAddress sender;
         quint16 senderPort = 0;
-        socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+        const qint64 received = socket->readDatagram(reinterpret_cast<char *>(packet->data()), PacketBuffer::MAX_CONTENT, &sender, &senderPort);
+        if (received < 0 || !packet->resize(static_cast<int>(received)))
+            continue;
 
         if (!sender.isEqual(expectedSender, QHostAddress::TolerantConversion) || senderPort != expectedPort) {
             qCDebug(LogVoice) << "Dropping UDP datagram from unexpected sender" << sender << senderPort;
             continue;
         }
 
-        if (association) {
-            datagram = Socks5UdpAssociation::decapsulate(datagram);
-            if (datagram.isEmpty())
-                continue;
-        }
+        if (relayed() && !Socks5UdpAssociation::unwrap(*packet))
+            continue;
 
-        if (discoveryPending && datagram.size() >= IP_DISCOVERY_PACKET_SIZE) {
-            parseIpDiscoveryResponse(datagram);
-        } else {
-            emit datagramReceived(datagram);
-        }
+        if (discoveryPending && packet->size() >= IP_DISCOVERY_PACKET_SIZE)
+            parseIpDiscoveryResponse(packet->bytes());
+        else if (packetHandler)
+            packetHandler(std::move(packet));
     }
 }
 
-void UdpTransport::parseIpDiscoveryResponse(const QByteArray &data)
+void UdpTransport::parseIpDiscoveryResponse(std::span<const uint8_t> data)
 {
-    quint16 type;
-    memcpy(&type, data.constData(), 2);
-    type = qFromBigEndian(type);
+    const quint16 type = qFromBigEndian<quint16>(data.data());
 
     if (type != IP_DISCOVERY_RESPONSE_TYPE) {
         qCDebug(LogVoice) << "Received non-discovery UDP packet during discovery, type:" << type;
@@ -184,12 +204,10 @@ void UdpTransport::parseIpDiscoveryResponse(const QByteArray &data)
         discoveryTimer->stop();
 
     // null terminated
-    const char *ipStart = data.constData() + 8;
-    QString discoveredIp = QString::fromUtf8(ipStart);
+    const char *ipStart = reinterpret_cast<const char *>(data.data()) + IP_DISCOVERY_ADDRESS_OFFSET;
+    QString discoveredIp = QString::fromUtf8(ipStart, static_cast<int>(qstrnlen(ipStart, IP_DISCOVERY_PORT_OFFSET - IP_DISCOVERY_ADDRESS_OFFSET)));
 
-    quint16 discoveredPort;
-    memcpy(&discoveredPort, data.constData() + 72, 2);
-    discoveredPort = qFromBigEndian(discoveredPort);
+    const quint16 discoveredPort = qFromBigEndian<quint16>(data.data() + IP_DISCOVERY_PORT_OFFSET);
 
     qCInfo(LogVoice) << "IP Discovery result:" << discoveredIp << ":" << discoveredPort;
 

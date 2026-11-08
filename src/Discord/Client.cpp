@@ -193,6 +193,13 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayGuildMemberListUpdate, this, &Client::guildMemberListUpdate);
     connect(gateway, &Gateway::gatewayVoiceStateUpdate, this, &Client::voiceStateUpdated);
     connect(gateway, &Gateway::gatewayVoiceServerUpdate, this, &Client::voiceServerUpdated);
+    connect(gateway, &Gateway::gatewayCallCreate, this, &Client::callCreated);
+    connect(gateway, &Gateway::gatewayCallUpdate, this, &Client::callUpdated);
+    connect(gateway, &Gateway::gatewayCallDelete, this, &Client::callDeleted);
+    connect(gateway, &Gateway::gatewayStreamCreate, this, &Client::streamCreated);
+    connect(gateway, &Gateway::gatewayStreamServerUpdate, this, &Client::streamServerUpdated);
+    connect(gateway, &Gateway::gatewayStreamUpdate, this, &Client::streamUpdated);
+    connect(gateway, &Gateway::gatewayStreamDelete, this, &Client::streamDeleted);
     connect(gateway, &Gateway::gatewayRelationshipAdd, this, &Client::relationshipAdded);
     connect(gateway, &Gateway::gatewayRelationshipUpdate, this, &Client::relationshipUpdated);
     connect(gateway, &Gateway::gatewayRelationshipRemove, this, &Client::relationshipRemoved);
@@ -1381,9 +1388,66 @@ qint64 Client::getMaxUploadSize(Snowflake channelId) const
     return qMax(userLimit, guildLimit);
 }
 
-void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf)
+void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo)
 {
-    gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf);
+    gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf, selfVideo);
+}
+
+void Client::sendCallConnect(Snowflake channelId)
+{
+    gateway->sendCallConnect(channelId);
+}
+
+void Client::sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion)
+{
+    gateway->sendStreamCreate(channel, preferredRegion);
+}
+
+void Client::sendStreamDelete(const QString &streamKey)
+{
+    gateway->sendStreamDelete(streamKey);
+}
+
+void Client::sendStreamWatch(const QString &streamKey)
+{
+    gateway->sendStreamWatch(streamKey);
+}
+
+void Client::sendStreamPing(const QString &streamKey)
+{
+    gateway->sendStreamPing(streamKey);
+}
+
+void Client::sendStreamSetPaused(const QString &streamKey, bool paused)
+{
+    gateway->sendStreamSetPaused(streamKey, paused);
+}
+
+void Client::fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("version", QString::number(QDateTime::currentMSecsSinceEpoch()));
+
+    httpClient->get("/streams/" + streamKey + "/preview", query, [callback](const HttpResponse &response) {
+        StreamPreviewLookup preview;
+        const QJsonObject body = QJsonDocument::fromJson(response.body).object();
+        if (response.success)
+            preview.url = QUrl(body["url"].toString());
+        else if (response.rateLimited())
+            preview.retryAfterMs = static_cast<qint64>(body["retry_after"].toDouble() * 1000);
+
+        callback(preview);
+    });
+}
+
+void Client::uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback)
+{
+    QJsonObject body;
+    body["thumbnail"] = thumbnail;
+
+    httpClient->post("/streams/" + streamKey + "/preview", body, [callback](const HttpResponse &response) {
+        callback(response.success);
+    });
 }
 
 void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds, bool presences)

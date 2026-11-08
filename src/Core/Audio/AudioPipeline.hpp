@@ -7,6 +7,7 @@
 #include <QVector>
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include <opus.h>
@@ -36,8 +37,12 @@ class AudioPipeline : public QObject
 {
     Q_OBJECT
 public:
+    static constexpr quint32 VOICE_CONNECTION_SOURCE = 0;
+
     explicit AudioPipeline(QObject *parent = nullptr);
     ~AudioPipeline() override;
+
+    void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData, std::optional<int> speakingFlags);
 
 public slots:
     void start(IAudioBackend *backend, bool capturing);
@@ -46,7 +51,9 @@ public slots:
     void startCapture();
     void stopCapture();
 
-    void onAudioReceived(quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+    void onSourceAudioReceived(quint32 source, quint32 ssrc, uint16_t sequence, uint32_t timestamp, const QByteArray &opusData);
+    void setSourceVolume(quint32 source, float volume);
+    void removeSource(quint32 source);
 
     void setSsrcUserId(quint32 ssrc, Snowflake userId);
     void removeUser(Snowflake userId);
@@ -72,6 +79,7 @@ signals:
     void speakingChanged(bool speaking);
     void audioLevelChanged(float rms);
     void userAudioLevelChanged(Snowflake userId, float rms);
+    void userSpeakingChanged(Snowflake userId, bool speaking);
 
 private slots:
     void onAudioCaptured(const QByteArray &pcmData);
@@ -80,15 +88,18 @@ private slots:
 private:
     bool detectVoiceActivity(const QByteArray &pcmFrame, float &outRms) const;
     void sendTrailingSilence();
+    void noteSpeakingOf(quint32 ssrc, const QByteArray &opusData, std::optional<int> speakingFlags);
+    void expireRemoteSpeaking();
+    void stopSpeaking(Snowflake userId);
     void initializeEncoder();
     void reconfigureNoiseSuppressorChannels();
-    static float computeRms(const int16_t *samples, int count);
 
     IAudioBackend *audioBackend = nullptr;
     QTimer *mixTimer = nullptr;
     std::unique_ptr<OpusEncoder> encoder;
     std::unique_ptr<NoiseSuppressor> noiseSuppressor;
-    std::unordered_map<quint32, SpeakerState> speakers;
+    std::unordered_map<quint64, SpeakerState> speakers;
+    QHash<quint32, float> sourceVolumes;
 
     QHash<quint32, Snowflake> ssrcToUser;
     QHash<Snowflake, float> userVolumes;
@@ -117,8 +128,12 @@ private:
     QElapsedTimer rmsThrottleTimer;
     QElapsedTimer userRmsThrottleTimer;
     QHash<Snowflake, float> pendingUserRms;
+    QElapsedTimer speakingClock;
+    QHash<Snowflake, qint64> lastVoiceMs;
 
     static constexpr int TRAILING_SILENCE_FRAMES = 5;
+    // packets come every 20 ms while someone talks, so this long without one means they vanished without the closing silence
+    static constexpr qint64 REMOTE_SPEAKING_HOLD_MS = 500;
     static constexpr qint64 RMS_EMIT_INTERVAL_MS = 60;
 };
 

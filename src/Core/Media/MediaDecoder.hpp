@@ -8,13 +8,14 @@
 
 #include <vector>
 
+#include "Core/Media/InputConfinement.hpp"
+#include "Core/Media/RgbScaler.hpp"
 #include "Core/ProxyConfig.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
 }
 
 namespace Acheron {
@@ -82,13 +83,11 @@ private:
     AVFormatContext *fmtCtx = nullptr;
     AVCodecContext *videoCtx = nullptr;
     AVCodecContext *audioCtx = nullptr;
-    SwsContext *swsCtx = nullptr;
     SwrContext *swrCtx = nullptr;
     int videoStream = -1;
     int audioStream = -1;
-    QSize swsTarget;
-
-    static int denyNestedOpen(AVFormatContext *, AVIOContext **, const char *url, int, AVDictionary **);
+    RgbScaler scaler;
+    InputConfinement confinement;
 
     int (*interruptCallback)(void *) = nullptr;
     void *interruptOpaque = nullptr;

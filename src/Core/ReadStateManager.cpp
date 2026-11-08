@@ -139,7 +139,9 @@ ChannelReadState ReadStateManager::computeChannelReadState(Snowflake channelId, 
         }
     }
 
-    bool countsWhenUnread = result.mentionCount > 0 || (!isVoice && unreadCountsForGuild(guildId, channelId, parentId));
+    const bool unreadSettingIsAllMessages = unreadCountsForGuild(guildId, channelId, parentId);
+    result.unreadIsImportant = result.mentionCount > 0 || unreadSettingIsAllMessages;
+    bool countsWhenUnread = result.mentionCount > 0 || (!isVoice && unreadSettingIsAllMessages);
     result.countsForGuildUnread = result.isUnread &&
                                   countsWhenUnread &&
                                   !isMutedThroughParents(channelId, parentId, Snowflake::Invalid, guildId);

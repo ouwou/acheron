@@ -5,7 +5,11 @@
 #include <QUdpSocket>
 #include <QHostAddress>
 
+#include <functional>
+#include <span>
+
 #include "Core/ProxyConfig.hpp"
+#include "PacketBuffer.hpp"
 #include "Socks5UdpAssociation.hpp"
 
 namespace Acheron {
@@ -19,8 +23,14 @@ public:
     explicit UdpTransport(const Core::ProxyConfig &proxy, QObject *parent = nullptr);
     ~UdpTransport() override;
 
+    // a handler, not a signal, because the receiver takes ownership of the packet
+    using PacketHandler = std::function<void(PacketPool::Handle)>;
+    void setPacketHandler(PacketHandler handler);
+
     void startIpDiscovery(const QString &ip, int port, quint32 ssrc);
-    void send(const QByteArray &data);
+
+    [[nodiscard]] PacketPool::Handle acquirePacket();
+    void send(PacketBuffer &packet);
 
     [[nodiscard]] bool isBound() const;
     [[nodiscard]] quint16 localPort() const;
@@ -28,13 +38,14 @@ public:
 signals:
     void ipDiscovered(const QString &externalIp, int externalPort);
     void ipDiscoveryFailed(const QString &error);
-    void datagramReceived(const QByteArray &data);
+    // the transport never falls back to a direct route
+    void relayLost(const QString &error);
 
 private slots:
     void onReadyRead();
 
 private:
-    void parseIpDiscoveryResponse(const QByteArray &data);
+    void parseIpDiscoveryResponse(std::span<const uint8_t> data);
     bool openSocket();
     void sendDiscoveryPacket();
     void startDiscoveryTimeout();
@@ -46,8 +57,16 @@ private:
     quint32 ssrc = 0;
     bool discoveryPending = false;
 
+    // never past the proxy, whether or not its association is up
+    [[nodiscard]] bool relayed() const { return proxy.type == Core::ProxyConfig::Type::Socks5; }
+
     Core::ProxyConfig proxy;
     Socks5UdpAssociation *association = nullptr;
+    uint8_t relayHeader[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE] = {};
+    int relayHeaderSize = 0;
+
+    PacketPool pool;
+    PacketHandler packetHandler;
 
     static constexpr int DISCOVERY_TIMEOUT_MS = 5000;
 };

@@ -16,6 +16,7 @@
 #include "Inbound.hpp"
 #include "Outbound.hpp"
 #include "Events.hpp"
+#include "StreamKey.hpp"
 
 namespace Acheron {
 
@@ -47,7 +48,13 @@ public:
     void queryGuildMembers(Core::Snowflake guildId, const QString &query, int limit, bool presences);
     void requestForumUnreads(Core::Snowflake guildId, Core::Snowflake forumId,
                              const QList<QPair<Core::Snowflake, Core::Snowflake>> &threads);
-    void sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf);
+    void sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
+    void sendCallConnect(Core::Snowflake channelId);
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
+    void sendStreamDelete(const QString &streamKey);
+    void sendStreamWatch(const QString &streamKey);
+    void sendStreamPing(const QString &streamKey);
+    void sendStreamSetPaused(const QString &streamKey, bool paused);
 
     // for the qos heartbeat
     void setActiveState(bool focused, bool rtcConnected);
@@ -107,6 +114,13 @@ signals:
     void gatewayGuildMemberListUpdate(const GuildMemberListUpdate &data);
     void gatewayVoiceStateUpdate(const VoiceState &data);
     void gatewayVoiceServerUpdate(const VoiceServerUpdate &data);
+    void gatewayCallCreate(const CallCreate &data);
+    void gatewayCallUpdate(const CallUpdate &data);
+    void gatewayCallDelete(const CallDelete &data);
+    void gatewayStreamCreate(const StreamCreate &data);
+    void gatewayStreamServerUpdate(const StreamServerUpdate &data);
+    void gatewayStreamUpdate(const StreamUpdate &data);
+    void gatewayStreamDelete(const StreamDelete &data);
     void gatewayRelationshipAdd(const Relationship &data);
     void gatewayRelationshipUpdate(const RelationshipPartial &data);
     void gatewayRelationshipRemove(const RelationshipPartial &data);
@@ -166,6 +180,13 @@ private:
     void handleVoiceStateUpdate(const Inbound &data);
     void handleVoiceStateUpdateBatch(const Inbound &data);
     void handleVoiceServerUpdate(const Inbound &data);
+    void handleCallCreate(const Inbound &data);
+    void handleCallUpdate(const Inbound &data);
+    void handleCallDelete(const Inbound &data);
+    void handleStreamCreate(const Inbound &data);
+    void handleStreamServerUpdate(const Inbound &data);
+    void handleStreamUpdate(const Inbound &data);
+    void handleStreamDelete(const Inbound &data);
     void handleRelationshipAdd(const Inbound &data);
     void handleRelationshipUpdate(const Inbound &data);
     void handleRelationshipRemove(const Inbound &data);
