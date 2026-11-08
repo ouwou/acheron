@@ -24,6 +24,19 @@ const char *const OPUS_PACKET_LOSS_KEY = "voice/codec/packet_loss";
 const char *const USER_VOLUMES_GROUP = "voice/user_volumes";
 const char *const USER_MUTES_GROUP = "voice/user_mutes";
 
+// gains are kept as percentages of the signal, and older builds stored those as whole numbers
+constexpr double STORED_PER_GAIN = 100.0;
+
+float storedGain(const QSettings &stored, const QString &key)
+{
+    return static_cast<float>(stored.value(key, STORED_PER_GAIN).toDouble() / STORED_PER_GAIN);
+}
+
+double toStored(float gain)
+{
+    return gain * STORED_PER_GAIN;
+}
+
 } // namespace
 
 VoiceSettings VoiceSettings::load()
@@ -33,8 +46,8 @@ VoiceSettings VoiceSettings::load()
     VoiceSettings settings;
     settings.inputDevice = stored.value(INPUT_DEVICE_KEY).toByteArray();
     settings.outputDevice = stored.value(OUTPUT_DEVICE_KEY).toByteArray();
-    settings.inputGainPercent = stored.value(INPUT_GAIN_KEY, defaults.inputGainPercent).toInt();
-    settings.outputVolumePercent = stored.value(OUTPUT_VOLUME_KEY, defaults.outputVolumePercent).toInt();
+    settings.inputGain = storedGain(stored, INPUT_GAIN_KEY);
+    settings.outputVolume = storedGain(stored, OUTPUT_VOLUME_KEY);
     settings.vadThreshold = stored.value(VAD_THRESHOLD_KEY, defaults.vadThreshold).toInt();
     settings.noiseSuppression = stored.value(NOISE_SUPPRESSION_KEY, defaults.noiseSuppression).toBool();
     settings.rnnoiseVad = stored.value(RNNOISE_VAD_KEY, defaults.rnnoiseVad).toBool();
@@ -52,8 +65,8 @@ void VoiceSettings::saveAndApply() const
     QSettings stored;
     stored.setValue(INPUT_DEVICE_KEY, inputDevice);
     stored.setValue(OUTPUT_DEVICE_KEY, outputDevice);
-    stored.setValue(INPUT_GAIN_KEY, inputGainPercent);
-    stored.setValue(OUTPUT_VOLUME_KEY, outputVolumePercent);
+    stored.setValue(INPUT_GAIN_KEY, toStored(inputGain));
+    stored.setValue(OUTPUT_VOLUME_KEY, toStored(outputVolume));
     stored.setValue(VAD_THRESHOLD_KEY, vadThreshold);
     stored.setValue(NOISE_SUPPRESSION_KEY, noiseSuppression);
     stored.setValue(RNNOISE_VAD_KEY, rnnoiseVad);
@@ -73,25 +86,25 @@ VoiceSettingsNotifier *VoiceSettingsNotifier::instance()
     return &notifier;
 }
 
-QHash<Snowflake, int> savedUserVolumes()
+QHash<Snowflake, float> savedUserVolumes()
 {
     QSettings stored;
     stored.beginGroup(USER_VOLUMES_GROUP);
-    QHash<Snowflake, int> volumes;
+    QHash<Snowflake, float> volumes;
     for (const QString &key : stored.childKeys())
-        volumes.insert(Snowflake(key.toULongLong()), stored.value(key).toInt());
+        volumes.insert(Snowflake(key.toULongLong()), storedGain(stored, key));
     return volumes;
 }
 
-void saveUserVolume(Snowflake userId, int percent)
+void saveUserVolume(Snowflake userId, float gain)
 {
     QSettings stored;
     stored.beginGroup(USER_VOLUMES_GROUP);
     const QString key = QString::number(static_cast<quint64>(userId));
-    if (percent == VoiceSettings::UNCHANGED_PERCENT)
+    if (gain == 1.0f)
         stored.remove(key);
     else
-        stored.setValue(key, percent);
+        stored.setValue(key, toStored(gain));
 }
 
 QSet<Snowflake> savedUserMutes()

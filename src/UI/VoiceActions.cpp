@@ -2,6 +2,7 @@
 
 #include "Core/Audio/VoiceManager.hpp"
 #include "Core/Audio/VoiceSettings.hpp"
+#include "Core/Audio/VolumeCurve.hpp"
 #include "UI/VolumeMeter.hpp"
 
 #include <QActionGroup>
@@ -23,6 +24,7 @@ namespace UI {
 using Core::Audio::AudioDeviceInfo;
 using Core::Audio::VoiceManager;
 using Core::Audio::VoiceSettings;
+namespace VolumeCurve = Core::Audio::VolumeCurve;
 
 namespace {
 
@@ -89,22 +91,22 @@ QDialog *codeDialog(QWidget *parent, const QString &title, const QString &descri
 
 } // namespace
 
-void VoiceActions::addVolumeSlider(QMenu *menu, const QString &label, int percent, const std::function<void(int)> &changed)
+void VoiceActions::addVolumeSlider(QMenu *menu, const QString &label, float gain, const std::function<void(float)> &changed)
 {
     auto *row = new QWidget(menu);
     auto *layout = new QHBoxLayout(row);
     layout->setContentsMargins(8, 2, 8, 2);
     layout->addWidget(new QLabel(label, row));
     auto *slider = new QSlider(Qt::Horizontal, row);
-    slider->setRange(0, VoiceSettings::MAX_GAIN_PERCENT);
-    slider->setValue(percent);
+    slider->setRange(0, VolumeCurve::MAX_POSITION);
+    slider->setValue(VolumeCurve::positionOf(gain));
     slider->setFixedWidth(VOLUME_SLIDER_WIDTH);
     layout->addWidget(slider);
-    auto *value = new QLabel(QStringLiteral("%1%").arg(percent), row);
+    auto *value = new QLabel(QStringLiteral("%1%").arg(slider->value()), row);
     layout->addWidget(value);
     QObject::connect(slider, &QSlider::valueChanged, slider, [value, changed](int chosen) {
         value->setText(QStringLiteral("%1%").arg(chosen));
-        changed(chosen);
+        changed(VolumeCurve::gainAt(chosen));
     });
     addRow(menu, row);
 }
@@ -112,9 +114,9 @@ void VoiceActions::addVolumeSlider(QMenu *menu, const QString &label, int percen
 void VoiceActions::addUserActions(QMenu *menu, VoiceManager *voice, Core::Snowflake userId, const QString &name)
 {
     const QPointer<VoiceManager> guarded(voice);
-    addVolumeSlider(menu, tr("User Volume"), voice->userVolume(userId), [guarded, userId](int percent) {
+    addVolumeSlider(menu, tr("User Volume"), voice->userVolume(userId), [guarded, userId](float gain) {
         if (guarded)
-            guarded->setUserVolume(userId, percent);
+            guarded->setUserVolume(userId, gain);
     });
 
     QAction *mute = menu->addAction(tr("Mute"));

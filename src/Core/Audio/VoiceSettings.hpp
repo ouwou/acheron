@@ -17,8 +17,8 @@ struct VoiceSettings
 {
     QByteArray inputDevice;
     QByteArray outputDevice;
-    int inputGainPercent = 100;
-    int outputVolumePercent = 100;
+    float inputGain = 1.0f;
+    float outputVolume = 1.0f;
     int vadThreshold = 100;
     bool noiseSuppression = true;
     bool rnnoiseVad = true;
@@ -32,8 +32,6 @@ struct VoiceSettings
     [[nodiscard]] static VoiceSettings load();
     void saveAndApply() const;
 
-    static constexpr int UNCHANGED_PERCENT = 100;
-    static constexpr int MAX_GAIN_PERCENT = 200;
     static constexpr int MAX_VAD_THRESHOLD = 2000;
 };
 
@@ -50,8 +48,8 @@ private:
     VoiceSettingsNotifier() = default;
 };
 
-[[nodiscard]] QHash<Snowflake, int> savedUserVolumes();
-void saveUserVolume(Snowflake userId, int percent);
+[[nodiscard]] QHash<Snowflake, float> savedUserVolumes();
+void saveUserVolume(Snowflake userId, float gain);
 [[nodiscard]] QSet<Snowflake> savedUserMutes();
 void saveUserMuted(Snowflake userId, bool muted);
 

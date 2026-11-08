@@ -568,6 +568,11 @@ if(BUILD_TESTS)
     target_include_directories(TestVoicePayloads PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME VoicePayloadTests COMMAND TestVoicePayloads)
 
+    qt_add_executable(TestVolumeCurve tests/tst_VolumeCurve.cpp)
+    target_link_libraries(TestVolumeCurve PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestVolumeCurve PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME VolumeCurveTests COMMAND TestVolumeCurve)
+
     qt_add_executable(TestStreams tests/tst_Streams.cpp src/Core/Streams/StreamManager.cpp
         src/Core/Streams/StreamPreviews.cpp src/Discord/StreamKey.cpp src/Core/Logging.cpp
         src/Core/OrderedJson.cpp src/Core/Snowflake.cpp)

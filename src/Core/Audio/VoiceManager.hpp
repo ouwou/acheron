@@ -112,8 +112,8 @@ public:
     [[nodiscard]] CallVideo *video() const { return callVideo; }
 #endif
 
-    void setUserVolume(Snowflake userId, int percent);
-    [[nodiscard]] int userVolume(Snowflake userId) const;
+    void setUserVolume(Snowflake userId, float gain);
+    [[nodiscard]] float userVolume(Snowflake userId) const;
     void setUserMuted(Snowflake userId, bool muted);
     [[nodiscard]] bool isUserMuted(Snowflake userId) const;
 
@@ -197,7 +197,7 @@ private:
     QList<AudioDeviceInfo> cachedOutputDevices;
 
     QHash<Snowflake, VoiceParticipant> participants;
-    QHash<Snowflake, int> userVolumes;
+    QHash<Snowflake, float> userVolumes;
     QSet<Snowflake> mutedUsers;
     QHash<Snowflake, Discord::VoiceState> knownVoiceStates;
     QString cachedPrivacyCode;

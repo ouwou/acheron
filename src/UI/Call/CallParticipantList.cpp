@@ -1,7 +1,7 @@
 #include "UI/Call/CallParticipantList.hpp"
 
 #include "Core/Audio/VoiceManager.hpp"
-#include "Core/Audio/VoiceSettings.hpp"
+#include "Core/Audio/VolumeCurve.hpp"
 #include "Core/ImageManager.hpp"
 #include "Core/Theme/Icons.hpp"
 #include "UI/ElidedLabel.hpp"
@@ -24,7 +24,7 @@ namespace UI {
 
 using Core::Snowflake;
 using Core::Audio::VoiceManager;
-using Core::Audio::VoiceSettings;
+namespace VolumeCurve = Core::Audio::VolumeCurve;
 namespace Icons = Core::Theme::Icons;
 using Core::Theme::Token;
 
@@ -98,12 +98,12 @@ class VolumeSlider : public QSlider
 public:
     explicit VolumeSlider(QWidget *parent) : QSlider(Qt::Horizontal, parent)
     {
-        setRange(0, VoiceSettings::MAX_GAIN_PERCENT);
+        setRange(0, VolumeCurve::MAX_POSITION);
         setFixedWidth(VOLUME_SLIDER_WIDTH);
     }
 
 protected:
-    void mouseDoubleClickEvent(QMouseEvent *) override { setValue(VoiceSettings::UNCHANGED_PERCENT); }
+    void mouseDoubleClickEvent(QMouseEvent *) override { setValue(VolumeCurve::UNCHANGED_POSITION); }
 };
 
 void keepSpaceWhenHidden(QWidget *widget)
@@ -158,9 +158,9 @@ public:
             return;
         }
         refreshPlayback();
-        connect(volume, &QSlider::valueChanged, this, [this](int percent) {
+        connect(volume, &QSlider::valueChanged, this, [this](int position) {
             if (this->voice)
-                this->voice->setUserVolume(this->userId, percent);
+                this->voice->setUserVolume(this->userId, VolumeCurve::gainAt(position));
         });
         connect(muteButton, &QToolButton::toggled, this, [this](bool mute) {
             if (this->voice)
@@ -178,7 +178,7 @@ public:
         if (!voice)
             return;
         const QSignalBlocker quiet(volume);
-        volume->setValue(voice->userVolume(userId));
+        volume->setValue(VolumeCurve::positionOf(voice->userVolume(userId)));
         volume->setToolTip(CallParticipantList::tr("Volume %1%").arg(volume->value()));
         const bool mutedByMe = voice->isUserMuted(userId);
         const QSignalBlocker quietButton(muteButton);

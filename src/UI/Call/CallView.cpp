@@ -570,9 +570,9 @@ void CallView::showTileMenu(const TileKey &key, const QPoint &globalPos)
 
     if (key.isStream() && session && !session->isOver()) {
         const QPointer<StreamSession> watched(session);
-        VoiceActions::addVolumeSlider(menu, tr("Stream Volume"), qRound(session->volume() * 100), [watched](int percent) {
+        VoiceActions::addVolumeSlider(menu, tr("Stream Volume"), session->volume(), [watched](float gain) {
             if (watched)
-                watched->setVolume(static_cast<float>(percent) / 100.0f);
+                watched->setVolume(gain);
         });
     }
     if (!key.isStream() && !isOwnCamera(key)) {

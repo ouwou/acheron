@@ -24,7 +24,7 @@ class VoiceActions
     Q_DECLARE_TR_FUNCTIONS(VoiceActions)
 
 public:
-    static void addVolumeSlider(QMenu *menu, const QString &label, int percent, const std::function<void(int)> &changed);
+    static void addVolumeSlider(QMenu *menu, const QString &label, float gain, const std::function<void(float)> &changed);
     static void addUserActions(QMenu *menu, Core::Audio::VoiceManager *voice, Core::Snowflake userId, const QString &name);
     static void fillDeviceMenu(QMenu *menu, Core::Audio::VoiceManager *voice, const std::function<void()> &openVoiceSettings);
     static void showPrivacyCode(QWidget *parent, Core::Audio::VoiceManager *voice);

@@ -2,6 +2,7 @@
 
 #include "AudioPage.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
+#include "Core/Audio/VolumeCurve.hpp"
 #include "UI/AdvancedToggle.hpp"
 #include "UI/VolumeMeter.hpp"
 
@@ -23,6 +24,7 @@ namespace {
 
 using Core::Audio::AudioDeviceInfo;
 using Core::Audio::VoiceSettings;
+namespace VolumeCurve = Core::Audio::VolumeCurve;
 
 constexpr int MIN_OPUS_BITRATE_KBPS = 8;
 constexpr int MAX_OPUS_BITRATE_KBPS = 510;
@@ -113,15 +115,15 @@ VoicePage::VoicePage(QWidget *parent)
         settings.saveAndApply();
     });
 
-    QSlider *inputGain = addSlider(form, this, tr("Input volume"), 0, VoiceSettings::MAX_GAIN_PERCENT, settings.inputGainPercent, percentText);
-    connect(inputGain, &QSlider::valueChanged, this, [this](int percent) {
-        settings.inputGainPercent = percent;
-        testBackend->setInputGain(static_cast<float>(percent) / VoiceSettings::UNCHANGED_PERCENT);
+    QSlider *inputGain = addSlider(form, this, tr("Input volume"), 0, VolumeCurve::MAX_POSITION, VolumeCurve::positionOf(settings.inputGain), percentText);
+    connect(inputGain, &QSlider::valueChanged, this, [this](int position) {
+        settings.inputGain = VolumeCurve::gainAt(position);
+        testBackend->setInputGain(settings.inputGain);
         settings.saveAndApply();
     });
-    QSlider *outputVolume = addSlider(form, this, tr("Output volume"), 0, VoiceSettings::MAX_GAIN_PERCENT, settings.outputVolumePercent, percentText);
-    connect(outputVolume, &QSlider::valueChanged, this, [this](int percent) {
-        settings.outputVolumePercent = percent;
+    QSlider *outputVolume = addSlider(form, this, tr("Output volume"), 0, VolumeCurve::MAX_POSITION, VolumeCurve::positionOf(settings.outputVolume), percentText);
+    connect(outputVolume, &QSlider::valueChanged, this, [this](int position) {
+        settings.outputVolume = VolumeCurve::gainAt(position);
         settings.saveAndApply();
     });
     QSlider *sensitivity = addSlider(form, this, tr("Input sensitivity"), 0, VoiceSettings::MAX_VAD_THRESHOLD, settings.vadThreshold, plainNumber);
@@ -242,7 +244,7 @@ void VoicePage::setTesting(bool testing)
         return;
     }
     testBackend->setInputDevice(settings.inputDevice);
-    testBackend->setInputGain(static_cast<float>(settings.inputGainPercent) / VoiceSettings::UNCHANGED_PERCENT);
+    testBackend->setInputGain(settings.inputGain);
     testBackend->startCapture();
 }
 

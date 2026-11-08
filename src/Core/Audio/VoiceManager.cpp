@@ -19,11 +19,6 @@ namespace Audio {
 
 namespace {
 
-float levelOf(int percent)
-{
-    return static_cast<float>(percent) / VoiceSettings::UNCHANGED_PERCENT;
-}
-
 // the pipeline's thread
 void applySettings(AudioPipeline *pipeline, const VoiceSettings &chosen)
 {
@@ -36,8 +31,8 @@ void applySettings(AudioPipeline *pipeline, const VoiceSettings &chosen)
     pipeline->setOpusSignalType(chosen.opusSignalType);
     pipeline->setOpusFec(chosen.opusFec);
     pipeline->setOpusPacketLossPercent(chosen.opusPacketLossPercent);
-    pipeline->setInputGain(levelOf(chosen.inputGainPercent));
-    pipeline->setOutputVolume(levelOf(chosen.outputVolumePercent));
+    pipeline->setInputGain(chosen.inputGain);
+    pipeline->setOutputVolume(chosen.outputVolume);
     pipeline->setInputDevice(chosen.inputDevice);
     pipeline->setOutputDevice(chosen.outputDevice);
 }
@@ -359,26 +354,26 @@ void VoiceManager::adopt(const VoiceSettings &chosen)
         QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, chosen]() { applySettings(p, chosen); });
 }
 
-void VoiceManager::setUserVolume(Snowflake userId, int percent)
+void VoiceManager::setUserVolume(Snowflake userId, float gain)
 {
-    if (percent == VoiceSettings::UNCHANGED_PERCENT)
+    if (gain == 1.0f)
         userVolumes.remove(userId);
     else
-        userVolumes.insert(userId, percent);
-    saveUserVolume(userId, percent);
+        userVolumes.insert(userId, gain);
+    saveUserVolume(userId, gain);
     applyUserVolume(userId);
     emit userPlaybackChanged(userId);
 }
 
-int VoiceManager::userVolume(Snowflake userId) const
+float VoiceManager::userVolume(Snowflake userId) const
 {
     const auto found = userVolumes.constFind(userId);
-    return found == userVolumes.constEnd() ? VoiceSettings::UNCHANGED_PERCENT : found.value();
+    return found == userVolumes.constEnd() ? 1.0f : found.value();
 }
 
 float VoiceManager::effectiveVolumeOf(Snowflake userId) const
 {
-    return mutedUsers.contains(userId) ? 0.0f : levelOf(userVolume(userId));
+    return mutedUsers.contains(userId) ? 0.0f : userVolume(userId);
 }
 
 void VoiceManager::applyUserVolume(Snowflake userId)
