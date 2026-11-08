@@ -65,14 +65,39 @@ static void drawBranchIndicator(QPainter *painter, const QStyleOptionViewItem &o
                                          option.widget);
 }
 
-static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option)
+static constexpr int categoryTopGap = 8;
+
+enum class ChatRowMode {
+    Read,
+    Selected,
+    Connected,
+    Muted,
+    Unread,
+    QuietUnread,
+};
+
+// the official channel row takes the first mode that applies, in this order; a row's own unread state counts, not its threads'
+static ChatRowMode chatRowMode(const ChannelNode *node, bool selected, bool connected)
+{
+    if (selected)
+        return ChatRowMode::Selected;
+    if (connected)
+        return ChatRowMode::Connected;
+    if (node->isMuted)
+        return ChatRowMode::Muted;
+    if (!node->self.isUnread)
+        return ChatRowMode::Read;
+    return node->self.unreadIsImportant ? ChatRowMode::Unread : ChatRowMode::QuietUnread;
+}
+
+static void drawUnreadPill(QPainter *painter, const QStyleOptionViewItem &option, const QColor &color)
 {
     int pillWidth = 4;
     int pillHeight = 8;
     int pillX = option.rect.left() - pillWidth;
     int pillY = option.rect.top() + (option.rect.height() - pillHeight) / 2;
 
-    painter->setBrush(option.palette.brightText().color());
+    painter->setBrush(color);
     painter->setPen(Qt::NoPen);
     painter->drawRoundedRect(QRect(pillX, pillY, pillWidth * 2, pillHeight), pillWidth, pillWidth);
 }
@@ -405,6 +430,55 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     QStyleOptionViewItem contentOpt = option;
     contentOpt.rect = option.rect.adjusted(pillMargin + indentWidth(node, indentScopes), 0, 0, 0);
 
+    const bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
+    QColor rowBg = option.palette.base().color();
+    if (isSelected && node->opensChat()) {
+        constexpr float selectedTint = 0.15f;
+        const QColor fg = option.palette.text().color();
+        rowBg = QColor::fromRgbF(rowBg.redF() + (fg.redF() - rowBg.redF()) * selectedTint,
+                                 rowBg.greenF() + (fg.greenF() - rowBg.greenF()) * selectedTint,
+                                 rowBg.blueF() + (fg.blueF() - rowBg.blueF()) * selectedTint);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(rowBg);
+        painter->drawRoundedRect(contentOpt.rect.adjusted(0, 1, -4, -1), 4, 4);
+    }
+
+    if (node->type == ChannelNode::Type::Category) {
+        QColor color = option.palette.placeholderText().color();
+        if (node->isMuted)
+            color.setAlphaF(color.alphaF() / 2);
+
+        // the official header is text-sm/medium next to text-md/medium channel names: 14px against 16px
+        constexpr qreal categoryNameScale = 14.0 / 16.0;
+        QFont font = painter->font();
+        if (font.pointSizeF() > 0)
+            font.setPointSizeF(font.pointSizeF() * categoryNameScale);
+        else
+            font.setPixelSize(qRound(font.pixelSize() * categoryNameScale));
+        font.setWeight(QFont::Medium);
+        painter->setFont(font);
+        painter->setPen(color);
+
+        constexpr int chevronSize = 12;
+        const QRect headerRect = contentOpt.rect.adjusted(0, categoryTopGap, 0, 0);
+        QRect textRect = headerRect.adjusted(4, 0, -(chevronSize + 8), 0);
+        QString elidedName = painter->fontMetrics().elidedText(
+                index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
+        QRect drawnRect;
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName, &drawnRect);
+
+        const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+        QRect chevronRect(drawnRect.right() + 4,
+                          headerRect.top() + (headerRect.height() - chevronSize) / 2,
+                          chevronSize, chevronSize);
+        painter->drawPixmap(chevronRect,
+                            Core::Theme::Icons::pixmap(node->collapsed ? Core::Theme::Icons::Name::ChevronRight
+                                                                       : Core::Theme::Icons::Name::ChevronDown,
+                                                       chevronSize, color, dpr));
+        painter->restore();
+        return;
+    }
+
     if (node->type == ChannelNode::Type::Account) {
         QRect textRect = contentOpt.rect.adjusted(iconSize, 0, -iconSize, 0);
         painter->fillRect(contentOpt.rect, option.palette.alternateBase().color());
@@ -461,7 +535,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         int markersWidth = iconCount * (statusIconSize + markerSpacing) + (isLive ? pillWidth + markerSpacing : 0);
         int rightReserve = markersWidth + 4;
 
-        QColor textColor = option.palette.text().color();
+        QColor textColor = option.palette.placeholderText().color();
         QRect textRect =
                 contentOpt.rect.adjusted(participantIndent + avatarSize + 6, 0, -rightReserve, 0);
         painter->setPen(textColor);
@@ -515,7 +589,7 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         drawBranchIndicator(painter, contentOpt, option.state & QStyle::State_Open);
 
         if (node->isUnread && !node->isMuted)
-            drawUnreadPill(painter, option);
+            drawUnreadPill(painter, option, option.palette.text().color());
 
         if (node->mentionCount > 0)
             drawMentionBadge(painter, contentOpt, node->mentionCount);
@@ -542,20 +616,27 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         }
     }
 
-    // determine text color
     QColor textColor = option.palette.text().color();
-    bool isSelected = index.data(ChannelFilterProxyModel::SelectedRole).toBool();
+    const QColor readColor = option.palette.placeholderText().color();
+    const bool isConnected = index.data(ChannelTreeModel::IsConnectedVoiceChannelRole).toBool();
     if (node->opensChat()) {
-        if (node->isMuted)
-            textColor = option.palette.text().color().darker(150);
-        else if (isSelected || node->isUnread)
-            textColor = option.palette.brightText().color();
+        switch (chatRowMode(node, isSelected, isConnected)) {
+        case ChatRowMode::Muted:
+            textColor = readColor;
+            textColor.setAlphaF(readColor.alphaF() / 2);
+            break;
+        case ChatRowMode::Read:
+        case ChatRowMode::QuietUnread:
+            textColor = readColor;
+            break;
+        case ChatRowMode::Selected:
+        case ChatRowMode::Connected:
+        case ChatRowMode::Unread:
+            break;
+        }
     } else if (node->type == ChannelNode::Type::Server) {
-        if (node->isUnread && !node->isMuted)
-            textColor = option.palette.brightText().color();
-    } else if (node->type == ChannelNode::Type::Category) {
-        if (node->isMuted)
-            textColor = option.palette.text().color().darker(150);
+        if (!node->isUnread || node->isMuted)
+            textColor = readColor;
     }
 
     if (node->type == ChannelNode::Type::Channel) {
@@ -567,17 +648,17 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         else
             drawHashIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     } else if (node->type == ChannelNode::Type::Forum) {
         drawForumIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     } else if (node->type == ChannelNode::Type::Thread) {
         drawThreadBranchIcon(painter, contentOpt.rect, textColor, isLastThreadSibling(node));
     } else if (node->type == ChannelNode::Type::VoiceChannel) {
         drawSpeakerIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)
-            drawPadlockOverlay(painter, contentOpt.rect, textColor, option.palette.base().color());
+            drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     }
 
     const bool showForumBadge =
@@ -606,14 +687,13 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
             index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, elidedName);
 
-    // branch indicator for categories
-    if (node->type == ChannelNode::Type::Category)
-        drawBranchIndicator(painter, contentOpt, !node->collapsed);
-
-    // unread pill for channels and servers (draws in the left margin)
-    if ((node->opensChat() || node->type == ChannelNode::Type::Server) && node->isUnread &&
-        !node->isMuted)
-        drawUnreadPill(painter, option);
+    // unread pill in the left margin; a selected thread hides it while a selected channel keeps it
+    if (node->opensChat()) {
+        if (node->self.isUnread && !node->isMuted && !(isSelected && node->type == ChannelNode::Type::Thread))
+            drawUnreadPill(painter, option, node->self.unreadIsImportant ? option.palette.text().color() : readColor);
+    } else if (node->type == ChannelNode::Type::Server && node->isUnread && !node->isMuted) {
+        drawUnreadPill(painter, option, option.palette.text().color());
+    }
 
     if (showUserLimit) {
         QString countText = QStringLiteral("%1/%2").arg(node->voiceParticipantCount).arg(node->userLimit);
@@ -661,7 +741,8 @@ void ChannelDelegate::setIndentScopes(ChannelIndent::Scopes scopes)
 QSize ChannelDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     QSize sz = QStyledItemDelegate::sizeHint(option, index);
-    return QSize(sz.width(), 24);
+    const auto type = static_cast<ChannelNode::Type>(index.data(ChannelTreeModel::TypeRole).toInt());
+    return QSize(sz.width(), type == ChannelNode::Type::Category ? 24 + categoryTopGap : 24);
 }
 } // namespace UI
 } // namespace Acheron

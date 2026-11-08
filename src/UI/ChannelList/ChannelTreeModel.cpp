@@ -234,6 +234,16 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return QVariant::fromValue(instance->presences()->badge(node->dmRecipientId));
     }
 
+    if (role == IsConnectedVoiceChannelRole) {
+        if (!node->listsVoiceParticipants())
+            return false;
+        ChannelNode *accNode = getAccountNodeFor(node);
+        if (!accNode)
+            return false;
+        auto it = accountVoiceChannels.constFind(accNode->id);
+        return it != accountVoiceChannels.constEnd() && it.value() == node->id;
+    }
+
     if (role == ThreadJoinedRole) {
         if (node->type != ChannelNode::Type::Thread ||
             !node->parent ||

@@ -50,6 +50,7 @@ public:
         OwnMentionCountRole = Qt::UserRole + 17,
         IsVoiceVideoRole = Qt::UserRole + 18,
         IsVoiceLiveRole = Qt::UserRole + 19,
+        IsConnectedVoiceChannelRole = Qt::UserRole + 20,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
