@@ -55,9 +55,9 @@ const std::vector<TokenDescriptor> &registry()
         { Token::MentionBg, "chat.mentionBg", "Mention background", "Chat",
           QColor(88, 101, 242, 77), std::nullopt, true },
         { Token::MentionHighlightBg, "chat.mentionHighlightBg", "Mentioned message background", "Chat",
-          QColor(250, 181, 61, 26), std::nullopt, true },
+          QColor(247, 163, 0, 20), std::nullopt, true },
         { Token::MentionHighlightBar, "chat.mentionHighlightBar", "Mentioned message bar", "Chat",
-          QColor(250, 181, 61), std::nullopt, false },
+          QColor(252, 181, 41), std::nullopt, false },
 
         // presence
         { Token::StatusOnline, "status.online", "Online", "Presence", QColor(35, 165, 90),

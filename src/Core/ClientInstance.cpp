@@ -71,11 +71,14 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     messageManager->setChannelLinkResolver([this](const Markdown::ChannelLinkRef &ref) {
         return channelLinkParts(ref);
     });
-    messageManager->setRoleResolver([this](Snowflake roleId, Snowflake sourceChannelId) -> QString {
-        auto role = roleRepo.getRole(client->getGuildIdForChannel(sourceChannelId), roleId);
-        if (role && role->name.hasValue())
-            return role->name.get();
-        return QStringLiteral("deleted-role");
+    messageManager->setRoleResolver([this](Snowflake roleId, Snowflake sourceChannelId) -> std::optional<Markdown::RoleMention> {
+        const Snowflake guildId = client->getGuildIdForChannel(sourceChannelId);
+        if (!guildId.isValid())
+            return std::nullopt;
+        auto role = roleRepo.getRole(guildId, roleId);
+        if (!role || !role->name.hasValue())
+            return std::nullopt;
+        return Markdown::RoleMention{ role->name.get(), role->color.valueOr(0) };
     });
 
     permissionManager = new PermissionManager(info.id, this);
@@ -892,6 +895,17 @@ bool ClientInstance::isThreadJoined(Snowflake threadId) const
     return joinedThreads.contains(threadId);
 }
 
+QList<Discord::Channel> ClientInstance::joinedActiveThreads(Snowflake guildId) const
+{
+    QList<Discord::Channel> threads;
+    for (const Snowflake threadId : joinedThreads) {
+        const auto it = threadCache.constFind(threadId);
+        if (it != threadCache.constEnd() && it->guildId.hasValue() && it->guildId.get() == guildId && !it->isArchived())
+            threads.append(it.value());
+    }
+    return threads;
+}
+
 void ClientInstance::fetchThreadList(Snowflake channelId, bool archived, int offset, ThreadListPageCallback callback)
 {
     fetchThreadListAttempt(channelId, archived, offset, 0, std::move(callback));
@@ -1347,11 +1361,18 @@ bool ClientInstance::isMessageMentioningMe(const Discord::Message &msg) const
         return !readStateManager->isChannelMuted(msg.channelId.get());
     }
 
-    return messageMentionsMe(msg, msg.guildId.get());
+    return mentionsAccount(msg, msg.guildId.get(), SuppressSettings::Honour);
 }
 
-bool ClientInstance::messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const
+bool ClientInstance::chatHighlightsAsMention(const Discord::Message &msg, Snowflake guildId) const
 {
+    // the official message highlight ignores the server's suppress @everyone / @roles settings, only notifications honour them
+    return mentionsAccount(msg, guildId, SuppressSettings::Ignore);
+}
+
+bool ClientInstance::mentionsAccount(const Discord::Message &msg, Snowflake guildId, SuppressSettings suppress) const
+{
+    const bool honourSuppressSettings = suppress == SuppressSettings::Honour;
     if (msg.mentions.hasValue()) {
         for (const auto &user : msg.mentions.get())
             if (user.id.get() == account.id)
@@ -1362,10 +1383,10 @@ bool ClientInstance::messageMentionsMe(const Discord::Message &msg, Snowflake gu
         return false;
 
     if (msg.mentionEveryone.hasValue() && msg.mentionEveryone.get() &&
-        !readStateManager->isSuppressEveryone(guildId))
+        !(honourSuppressSettings && readStateManager->isSuppressEveryone(guildId)))
         return true;
 
-    if (!msg.mentionRoles.hasValue() || readStateManager->isSuppressRoles(guildId))
+    if (!msg.mentionRoles.hasValue() || (honourSuppressSettings && readStateManager->isSuppressRoles(guildId)))
         return false;
 
     auto myRoles = userManager->getMemberRoles(guildId, account.id);

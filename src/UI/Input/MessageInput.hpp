@@ -51,7 +51,7 @@ public:
     void setPlaceholder(const QString &name);
 
     void setReplyTarget(Core::Snowflake messageId, const QString &authorName,
-                        const QString &contentSnippet, bool canMentionAuthor);
+                        const QString &contentSnippet, bool mentionAuthor, bool showMentionToggle);
     void clearReplyTarget();
     [[nodiscard]] Core::Snowflake replyTargetMessageId() const { return replyMessageId; }
     [[nodiscard]] bool replyMentionsAuthor() const;
@@ -96,6 +96,7 @@ private:
     bool sendBlocked = false;
 
     void adjustHeight();
+    void applyTheme();
     void updateReplyMentionButton();
     [[nodiscard]] QRect pickerAnchor() const;
 };

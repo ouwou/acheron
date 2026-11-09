@@ -165,15 +165,26 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
         }
 
         if (node.type == "role") {
-            QString name;
+            std::optional<RoleMention> role;
             if (roleResolver)
-                name = roleResolver(Snowflake(node.content.toULongLong()),
+                role = roleResolver(Snowflake(node.content.toULongLong()),
                                     Snowflake(node.attributes["sourceChannelId"].toULongLong()));
             else
-                name = node.content;
+                role = RoleMention{ node.content };
 
-            result += QString("<span class=\"mention\">@%1</span>")
-                              .arg(name.toHtmlEscaped());
+            // like the official client, a role it can't find is plain text rather than a mention
+            if (!role) {
+                result += QStringLiteral("@unknown-role");
+                continue;
+            }
+            QString style;
+            if (role->color != 0)
+                style = QStringLiteral(" style=\"color: #%1; background-color: rgba(%2, %3, %4, 0.1);\"")
+                                .arg(role->color, 6, 16, QLatin1Char('0'))
+                                .arg((role->color >> 16) & 0xFF)
+                                .arg((role->color >> 8) & 0xFF)
+                                .arg(role->color & 0xFF);
+            result += QString("<span class=\"mention\"%1>@%2</span>").arg(style, role->name.toHtmlEscaped());
             continue;
         }
 
@@ -552,7 +563,7 @@ void Parser::setupDefaultRules()
     MarkdownRule everyone;
     everyone.name = "everyone";
     everyone.order = 21;
-    everyone.regex = QRegularExpression(R"(^@(everyone|here)(?!\w))");
+    everyone.regex = QRegularExpression(R"(^@(everyone|here))");
     everyone.match = anyScopeRegex(everyone.regex);
     everyone.parse = [](const Capture &match, NestedParseFn nestedParse, ParseState state) -> AstNode {
         AstNode node;

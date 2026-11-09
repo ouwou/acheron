@@ -107,8 +107,12 @@ public:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
+private slots:
+    void restyleTypedMentions();
+
 private:
     void refresh();
+    void showResults(bool keepSelection);
     void accept(const Core::EmojiMatch &match);
     bool handleKey(const QKeyEvent *key);
     void showPopup();

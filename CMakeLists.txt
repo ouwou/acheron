@@ -203,6 +203,7 @@ set(PROJECT_SOURCES
     src/Core/Session.cpp
     src/Core/Logging.cpp
     src/Core/MessageManager.cpp
+    src/Core/MentionSearch.cpp
     src/Core/MessageReactors.cpp
     src/Core/MessageSegments.cpp
     src/Core/ForumManager.cpp
@@ -325,6 +326,7 @@ set(PROJECT_SOURCES
     src/UI/MemberList/MemberListView.cpp
     src/UI/Input/MessageInput.cpp
     src/UI/Input/EmojiAutocompletePopup.cpp
+    src/UI/Input/MentionSuggestions.cpp
     src/UI/Input/MentionText.cpp
     src/UI/Input/TextEdgeNavigation.cpp
     src/UI/Emoji/EmojiButton.cpp
@@ -536,6 +538,11 @@ if(BUILD_TESTS)
     target_link_libraries(TestMentionText PRIVATE Qt::Gui Qt::Test)
     target_include_directories(TestMentionText PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME MentionTextTests COMMAND TestMentionText)
+
+    qt_add_executable(TestMentionSearch tests/tst_MentionSearch.cpp src/Core/MentionSearch.cpp resources.qrc)
+    target_link_libraries(TestMentionSearch PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestMentionSearch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME MentionSearchTests COMMAND TestMentionSearch)
 
     qt_add_executable(TestFrecency tests/tst_Frecency.cpp src/Core/Emoji/FrecencyTracker.cpp)
     target_link_libraries(TestFrecency PRIVATE Qt::Core Qt::Test)

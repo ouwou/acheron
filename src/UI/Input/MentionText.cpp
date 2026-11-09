@@ -5,6 +5,8 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
+#include <utility>
+
 namespace Acheron {
 namespace UI {
 
@@ -42,7 +44,8 @@ void insertWithMentions(QTextCursor &cursor, const QString &text, const MentionN
     for (auto it = mentionPattern.globalMatch(text); resolve && it.hasNext();) {
         const QRegularExpressionMatch match = it.next();
         const QString sigil = match.captured(1);
-        const QChar kind = sigil == QLatin1String("@&") ? QLatin1Char('&') : sigil.at(0);
+        const MentionKind kind = sigil == QLatin1String("@&") ? MentionKind::Role : sigil == QLatin1String("#") ? MentionKind::Channel
+                                                                                                                : MentionKind::User;
         const QString displayText = resolve(kind, Core::Snowflake(match.captured(2).toULongLong()));
         if (displayText.isEmpty())
             continue;
@@ -51,6 +54,25 @@ void insertWithMentions(QTextCursor &cursor, const QString &text, const MentionN
         last = match.capturedEnd();
     }
     cursor.insertText(text.mid(last), QTextCharFormat());
+}
+
+void restyleMentions(QTextDocument *document, const QTextCharFormat &format)
+{
+    // collected first: changing a format can merge the fragments being iterated
+    QList<std::pair<int, int>> mentions;
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (fragment.charFormat().isAnchor() && fragment.charFormat().hasProperty(DisplayTextProperty))
+                mentions.append({ fragment.position(), fragment.length() });
+        }
+    }
+    QTextCursor cursor(document);
+    for (const auto &[position, length] : mentions) {
+        cursor.setPosition(position);
+        cursor.setPosition(position + length, QTextCursor::KeepAnchor);
+        cursor.mergeCharFormat(format);
+    }
 }
 
 QString toMessageText(const QTextDocument *document)

@@ -147,7 +147,6 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     replyLayout->setSpacing(4);
 
     replyLabel = new QLabel(replyBar);
-    replyLabel->setStyleSheet("color: #b5bac1; font-size: 12px;");
     replyLayout->addWidget(replyLabel, 1);
 
     replyMentionButton = new QToolButton(replyBar);
@@ -218,6 +217,8 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
     setAcceptDrops(true);
 
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &MessageInput::applyTheme);
+    applyTheme();
     adjustHeight();
 }
 
@@ -268,10 +269,10 @@ void MessageInput::dropEvent(QDropEvent *event)
 }
 
 void MessageInput::setReplyTarget(Core::Snowflake messageId, const QString &authorName,
-                                  const QString &contentSnippet, bool canMentionAuthor)
+                                  const QString &contentSnippet, bool mentionAuthor, bool showMentionToggle)
 {
-    replyMentionButton->setChecked(true);
-    replyMentionButton->setVisible(canMentionAuthor);
+    replyMentionButton->setChecked(mentionAuthor);
+    replyMentionButton->setVisible(showMentionToggle);
     updateReplyMentionButton();
 
     replyMessageId = messageId;
@@ -299,6 +300,13 @@ void MessageInput::clearReplyTarget()
 bool MessageInput::replyMentionsAuthor() const
 {
     return replyMentionButton->isChecked();
+}
+
+void MessageInput::applyTheme()
+{
+    const QColor muted = Core::Theme::Manager::instance().color(Core::Theme::Token::PlaceholderText);
+    replyLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 12px;").arg(muted.name()));
+    updateReplyMentionButton();
 }
 
 void MessageInput::updateReplyMentionButton()

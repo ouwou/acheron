@@ -150,16 +150,24 @@ void TestMarkdown::testMentions()
              QStringLiteral("hi <span class=\"mention\">@789</span>"));
     QCOMPARE(renderInline("@everyone and @here"),
              QStringLiteral("<span class=\"mention\">@everyone</span> and <span class=\"mention\">@here</span>"));
-    QCOMPARE(renderInline("@heretic"), QStringLiteral("@heretic"));
+    // the official rule has no word boundary after @here
+    QCOMPARE(renderInline("@heretic"), QStringLiteral("<span class=\"mention\">@here</span>tic"));
 
     Parser parser;
-    parser.setRoleResolver([](Acheron::Core::Snowflake roleId, Acheron::Core::Snowflake) {
-        return roleId == Acheron::Core::Snowflake(789) ? QStringLiteral("mods & <admins>") : QString();
+    parser.setRoleResolver([](Acheron::Core::Snowflake roleId, Acheron::Core::Snowflake) -> std::optional<RoleMention> {
+        if (roleId == Acheron::Core::Snowflake(789))
+            return RoleMention{ QStringLiteral("mods & <admins>") };
+        if (roleId == Acheron::Core::Snowflake(790))
+            return RoleMention{ QStringLiteral("red"), 0xFF0000 };
+        return std::nullopt;
     });
     ParseState state;
     state.isInline = true;
     QCOMPARE(parser.toHtml(parser.parse("<@&789>", state)),
              QStringLiteral("<span class=\"mention\">@mods &amp; &lt;admins&gt;</span>"));
+    QCOMPARE(parser.toHtml(parser.parse("<@&790>", state)),
+             QStringLiteral("<span class=\"mention\" style=\"color: #ff0000; background-color: rgba(255, 0, 0, 0.1);\">@red</span>"));
+    QCOMPARE(parser.toHtml(parser.parse("<@&791>", state)), QStringLiteral("@unknown-role"));
 }
 
 QTEST_MAIN(TestMarkdown)

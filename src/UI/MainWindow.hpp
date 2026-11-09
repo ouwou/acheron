@@ -30,6 +30,7 @@ struct TypingStart;
 namespace UI {
 class ChatView;
 class ChatModel;
+class MemberSearch;
 class ForumBrowser;
 class ForumPostModel;
 class ThreadBrowserPopup;
@@ -273,9 +274,7 @@ private:
     Core::ClientInstance *currentInstance = nullptr;
 
     Core::Snowflake cachedGuildId = Core::Snowflake::Invalid;
-    QTimer *memberQueryTimer = nullptr;
-    Core::Snowflake memberQueryGuildId;
-    QString memberQuery;
+    MemberSearch *memberSearch = nullptr;
     QHash<Core::Snowflake, QColor> userColorCache; // current guild
 
     QSet<Core::Snowflake> instancesSignalsConnected;

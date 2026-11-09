@@ -91,7 +91,8 @@ public:
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
-    [[nodiscard]] bool messageMentionsMe(const Discord::Message &msg, Snowflake guildId) const;
+    [[nodiscard]] QList<Discord::Channel> joinedActiveThreads(Snowflake guildId) const;
+    [[nodiscard]] bool chatHighlightsAsMention(const Discord::Message &msg, Snowflake guildId) const;
 
     // sends CALL_CONNECT once per private channel, as the official client does
     void noteChannelSelected(Snowflake channelId);
@@ -190,6 +191,11 @@ private slots:
     bool isMessageMentioningMe(const Discord::Message &msg) const;
 
 private:
+    enum class SuppressSettings {
+        Honour,
+        Ignore,
+    };
+    bool mentionsAccount(const Discord::Message &msg, Snowflake guildId, SuppressSettings suppress) const;
     bool runInCacheTransaction(const char *what, const std::function<void(QSqlDatabase &)> &op);
     QList<Markdown::ChannelLinkPart> channelLinkParts(const Markdown::ChannelLinkRef &ref);
 

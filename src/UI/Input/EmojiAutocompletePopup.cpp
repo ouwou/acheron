@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "Core/ImageManager.hpp"
+#include "Core/Theme/Icons.hpp"
 #include "Core/Theme/Manager.hpp"
 
 namespace Acheron {
@@ -113,6 +114,10 @@ void EmojiAutocompleteDelegate::paint(QPainter *painter, const QStyleOptionViewI
                 painter->setClipping(false);
             }
         }
+    } else if (!match.iconName.isEmpty()) {
+        const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+        const QColor iconColor = match.iconColor.isValid() ? match.iconColor : textColor;
+        painter->drawPixmap(emojiRect, Core::Theme::Icons::pixmap(match.iconName, kEmojiPx, iconColor, dpr));
     } else if (!match.surrogates.isEmpty()) {
         QFont emojiFont = Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message);
         emojiFont.setPixelSize(kEmojiGlyphPx);
@@ -360,12 +365,18 @@ QTextCharFormat mentionFormat()
 
 } // namespace
 
+void EmojiAutocomplete::restyleTypedMentions()
+{
+    UI::restyleMentions(editor->document(), mentionFormat());
+}
+
 EmojiAutocomplete::EmojiAutocomplete(QTextEdit *textEdit, QWidget *anchorWidget)
     : QObject(anchorWidget), editor(textEdit), anchor(anchorWidget), popup(new EmojiAutocompletePopup(anchorWidget))
 {
     connect(editor, &QTextEdit::cursorPositionChanged, this, &EmojiAutocomplete::refresh);
     connect(editor, &QTextEdit::textChanged, this, &EmojiAutocomplete::refresh);
     connect(popup, &EmojiAutocompletePopup::selected, this, &EmojiAutocomplete::accept);
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &EmojiAutocomplete::restyleTypedMentions);
 
     editor->installEventFilter(this);
     anchor->installEventFilter(this);
@@ -395,14 +406,18 @@ void EmojiAutocomplete::refreshResults()
 {
     if (wordStart < 0 || wordStart == dismissedWordStart || !provider)
         return;
+    showResults(true);
+}
 
+void EmojiAutocomplete::showResults(bool keepSelection)
+{
     const QList<Core::EmojiMatch> results = provider(trigger, query.toLower());
     if (results.isEmpty()) {
         popup->hide();
         return;
     }
 
-    popup->setResults(results, trigger, query, true);
+    popup->setResults(results, trigger, query, keepSelection);
     showPopup();
 }
 
@@ -444,15 +459,7 @@ void EmojiAutocomplete::refresh()
     wordStart = docStart;
     trigger = found->trigger;
     query = found->query;
-
-    const QList<Core::EmojiMatch> results = provider(trigger, query.toLower());
-    if (results.isEmpty()) {
-        popup->hide();
-        return;
-    }
-
-    popup->setResults(results, trigger, query);
-    showPopup();
+    showResults(false);
 }
 
 void EmojiAutocomplete::accept(const Core::EmojiMatch &match)

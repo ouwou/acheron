@@ -833,6 +833,15 @@ void Client::onGatewayGuildRoleDelete(const GuildRoleDelete &event)
     emit guildRoleDeleted(event);
 }
 
+// the official client sends this with a reply that should not ping its author, and with an edit of such a reply
+static QJsonObject allowedMentionsWithoutReplyPing()
+{
+    QJsonObject allowedMentions;
+    allowedMentions["parse"] = QJsonArray{ "users", "roles", "everyone" };
+    allowedMentions["replied_user"] = false;
+    return allowedMentions;
+}
+
 void Client::sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
                          Snowflake replyToMessageId, bool mentionRepliedUser,
                          const QList<Core::PendingAttachment> &attachments)
@@ -851,12 +860,8 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
         messageReference["channel_id"] = QString::number(channelId);
         payload["message_reference"] = messageReference;
 
-        if (!mentionRepliedUser) {
-            QJsonObject allowedMentions;
-            allowedMentions["parse"] = QJsonArray{ "users", "roles", "everyone" };
-            allowedMentions["replied_user"] = false;
-            payload["allowed_mentions"] = allowedMentions;
-        }
+        if (!mentionRepliedUser)
+            payload["allowed_mentions"] = allowedMentionsWithoutReplyPing();
     }
 
     if (!attachments.isEmpty()) {
@@ -1052,13 +1057,15 @@ bool Client::cancelMessageSend(const QString &nonce)
     return true;
 }
 
-void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString &content)
+void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged)
 {
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
                        QString::number(messageId);
 
     QJsonObject payload;
     payload["content"] = content;
+    if (keepReplyUnpinged)
+        payload["allowed_mentions"] = allowedMentionsWithoutReplyPing();
 
     httpClient->patch(endpoint, payload, [this, channelId, messageId](const HttpResponse &response) {
         if (!response.success)
@@ -1455,9 +1462,9 @@ void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &user
     gateway->requestGuildMembers(guildId, userIds, presences);
 }
 
-void Client::queryGuildMembers(Snowflake guildId, const QString &query, int limit)
+void Client::queryGuildMembers(Snowflake guildId, const QString &query, int limit, bool presences)
 {
-    gateway->queryGuildMembers(guildId, query, limit, false);
+    gateway->queryGuildMembers(guildId, query, limit, presences);
 }
 
 [[nodiscard]] const Proto::PreloadedUserSettings &Client::getSettings() const

@@ -282,6 +282,7 @@ public:
     [[nodiscard]] Snowflake getOldestMessageId() const;
     [[nodiscard]] Snowflake getNewestMessageId() const;
     [[nodiscard]] int rowForMessage(Snowflake messageId) const;
+    [[nodiscard]] const QVector<Discord::Message> &messagesOldestFirst() const { return messages; }
     [[nodiscard]] Snowflake getActiveChannelId() const;
     [[nodiscard]] Snowflake getActiveGuildId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
