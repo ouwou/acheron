@@ -116,10 +116,10 @@ public:
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<Core::PendingAttachment> &attachments = {});
     bool cancelMessageSend(const QString &nonce);
-    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);
+    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged = false);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
     void pinMessage(Snowflake channelId, Snowflake messageId);
     void unpinMessage(Snowflake channelId, Snowflake messageId);
@@ -181,7 +181,7 @@ public:
     void ensureSubscriptionByChannel(Snowflake channelId);
     void requestForumUnreads(Snowflake forumId, const QList<QPair<Snowflake, Snowflake>> &threads);
     void requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds, bool presences = true);
-    void queryGuildMembers(Snowflake guildId, const QString &query, int limit);
+    void queryGuildMembers(Snowflake guildId, const QString &query, int limit, bool presences = false);
 
     [[nodiscard]] Snowflake getGuildIdForChannel(Snowflake channelId) const;
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);

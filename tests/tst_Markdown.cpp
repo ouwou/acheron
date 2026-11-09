@@ -15,6 +15,7 @@ private slots:
     void testUrl();
     void testSingleLink();
     void testEmojiSequences();
+    void testMentions();
 };
 
 static QString renderInline(const QString &source)
@@ -135,6 +136,38 @@ void TestMarkdown::testEmojiSequences()
     QCOMPARE(countUnicodeEmojisSegmented(thumbsUp + " " + family), 2);
     QCOMPARE(countUnicodeEmojisSegmented("x " + thumbsUp), -1);
     QCOMPARE(countUnicodeEmojisSegmented("   "), 0);
+}
+
+void TestMarkdown::testMentions()
+{
+    QCOMPARE(renderInline("<@123>"),
+             QStringLiteral("<a href=\"acheron://user/123\" class=\"mention\">@123</a>"));
+    QCOMPARE(renderInline("<@!123>"),
+             QStringLiteral("<a href=\"acheron://user/123\" class=\"mention\">@123</a>"));
+    QCOMPARE(renderInline("<#456>"),
+             QStringLiteral("<a href=\"acheron://channel/456\" class=\"mention\">#456</a>"));
+    QCOMPARE(renderInline("hi <@&789>"),
+             QStringLiteral("hi <span class=\"mention\">@789</span>"));
+    QCOMPARE(renderInline("@everyone and @here"),
+             QStringLiteral("<span class=\"mention\">@everyone</span> and <span class=\"mention\">@here</span>"));
+    // the official rule has no word boundary after @here
+    QCOMPARE(renderInline("@heretic"), QStringLiteral("<span class=\"mention\">@here</span>tic"));
+
+    Parser parser;
+    parser.setRoleResolver([](Acheron::Core::Snowflake roleId, Acheron::Core::Snowflake) -> std::optional<RoleMention> {
+        if (roleId == Acheron::Core::Snowflake(789))
+            return RoleMention{ QStringLiteral("mods & <admins>") };
+        if (roleId == Acheron::Core::Snowflake(790))
+            return RoleMention{ QStringLiteral("red"), 0xFF0000 };
+        return std::nullopt;
+    });
+    ParseState state;
+    state.isInline = true;
+    QCOMPARE(parser.toHtml(parser.parse("<@&789>", state)),
+             QStringLiteral("<span class=\"mention\">@mods &amp; &lt;admins&gt;</span>"));
+    QCOMPARE(parser.toHtml(parser.parse("<@&790>", state)),
+             QStringLiteral("<span class=\"mention\" style=\"color: #ff0000; background-color: rgba(255, 0, 0, 0.1);\">@red</span>"));
+    QCOMPARE(parser.toHtml(parser.parse("<@&791>", state)), QStringLiteral("@unknown-role"));
 }
 
 QTEST_MAIN(TestMarkdown)

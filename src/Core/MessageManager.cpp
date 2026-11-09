@@ -137,6 +137,11 @@ void MessageManager::setChannelLinkResolver(Markdown::ChannelLinkResolverFn reso
     parser->setChannelLinkResolver(std::move(resolver));
 }
 
+void MessageManager::setRoleResolver(Markdown::RoleResolverFn resolver)
+{
+    parser->setRoleResolver(std::move(resolver));
+}
+
 void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)
 {
     parser->setChannelResolver([resolver](const QString &channelId) {
@@ -499,7 +504,7 @@ void MessageManager::onReactionChangeFailed(ReactionOp op, const ReactionChange 
 }
 
 void MessageManager::sendMessage(Snowflake channelId, const QString &content,
-                                 Snowflake replyToMessageId,
+                                 Snowflake replyToMessageId, bool mentionRepliedUser,
                                  const QList<PendingAttachment> &attachments)
 {
     if (emojiManager)
@@ -575,7 +580,7 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
         }
     }
 
-    client->sendMessage(channelId, content, nonce, replyToMessageId, outgoing);
+    client->sendMessage(channelId, content, nonce, replyToMessageId, mentionRepliedUser, outgoing);
 }
 
 void MessageManager::cancelSend(Snowflake channelId, const QString &nonce)

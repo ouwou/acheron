@@ -38,6 +38,8 @@ enum class Token {
     EmbedDefault,
     MentionText,
     MentionBg,
+    MentionHighlightBg,
+    MentionHighlightBar,
     // presence
     StatusOnline,
     StatusIdle,

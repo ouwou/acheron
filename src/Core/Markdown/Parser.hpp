@@ -4,6 +4,9 @@
 #include <QSet>
 #include <QVariantMap>
 
+#include <functional>
+#include <optional>
+
 #include "Core/Snowflake.hpp"
 
 namespace Acheron {
@@ -54,6 +57,12 @@ struct MarkdownRule
 
 using UserResolverFn = std::function<QString(Snowflake userId, Snowflake sourceChannelId)>;
 using ChannelResolverFn = std::function<QString(const QString &channelId)>;
+struct RoleMention
+{
+    QString name;
+    int color = 0; // 0xRRGGBB like Discord's role colour, 0 when the role has none
+};
+using RoleResolverFn = std::function<std::optional<RoleMention>(Snowflake roleId, Snowflake sourceChannelId)>;
 
 struct ChannelLinkRef
 {
@@ -82,6 +91,7 @@ public:
 
     void setUserResolver(UserResolverFn resolver);
     void setChannelResolver(ChannelResolverFn resolver);
+    void setRoleResolver(RoleResolverFn resolver);
     void setChannelLinkResolver(ChannelLinkResolverFn resolver);
 
     static bool isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis = 30);
@@ -98,6 +108,7 @@ private:
     QMap<QString, MarkdownRule *> ruleMap;
     UserResolverFn userResolver;
     ChannelResolverFn channelResolver;
+    RoleResolverFn roleResolver;
     ChannelLinkResolverFn channelLinkResolver;
 };
 
