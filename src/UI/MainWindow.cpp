@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <QSystemTrayIcon>
 
+#include <algorithm>
 #include <utility>
 
 #include "Chat/ChatModel.hpp"
@@ -17,6 +18,7 @@
 #include "Chat/FrameAnimator.hpp"
 #include "Chat/GifPlayback.hpp"
 #include "Chat/InlineVideoController.hpp"
+#include "Input/MentionSuggestions.hpp"
 #include "Forum/ForumBrowser.hpp"
 #include "Forum/ForumPostModel.hpp"
 #include "Forum/NewPostDialog.hpp"
@@ -123,6 +125,16 @@ bool canAddReactionsIn(Core::ClientInstance *instance, Core::Snowflake channelId
     return !guildId.isValid() || hasPermissionIn(instance, channel, channelId, Discord::Permission::ADD_REACTIONS);
 }
 
+// the official client keeps an edited reply from pinging its author when the original reply didn't
+bool isUnpingedReply(const Discord::Message &message)
+{
+    if (!message.type.hasValue() || message.type.get() != Discord::MessageType::REPLY || !message.referencedMessage || !message.referencedMessage->author.hasValue())
+        return false;
+    const Core::Snowflake authorId = message.referencedMessage->author->id.get();
+    const QList<Discord::MentionedUser> mentions = message.mentions.valueOr();
+    return std::none_of(mentions.begin(), mentions.end(), [authorId](const Discord::MentionedUser &user) { return user.id.get() == authorId; });
+}
+
 ReactionsPopup::RemovableReactors removableReactorsIn(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId)
 {
     const std::optional<Discord::Channel> channel = instance->getChannel(channelId);
@@ -190,6 +202,10 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 
     chatModel->setRoleColorResolver(
             [this](Snowflake userId, Snowflake guildId) { return resolveRoleColor(userId, guildId); });
+
+    chatModel->setMentionResolver([this](const Discord::Message &msg, Snowflake guildId) {
+        return currentInstance && currentInstance->chatHighlightsAsMention(msg, guildId);
+    });
 
     chatModel->setChannelNameResolver([this](Snowflake channelId) -> QString {
         if (!currentInstance)
@@ -344,6 +360,7 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         return;
 
     messageInput->emojiAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->cancel();
 
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
     if (!accountNode) {
@@ -559,6 +576,9 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     chatModel->setAccount(currentInstance->accountId());
     messageInput->emojiAutocomplete()->cancel();
     messageInput->emojiAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
+    memberSearch->setInstance(currentInstance);
+    chatView->inlineEditAutocomplete()->cancel();
+    chatView->inlineEditAutocomplete()->setImageManager(session->getImageManager(), currentInstance->accountId());
 
     forumModel->setAccount(currentInstance->accountId());
     forumModel->setManager(currentInstance->forums());
@@ -618,6 +638,10 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
 
                 chatModel->refreshUsersInView(userIds);
                 forumModel->refreshAuthors();
+                if (guildId == chatModel->getActiveGuildId()) {
+                    messageInput->emojiAutocomplete()->refreshResults();
+                    chatView->inlineEditAutocomplete()->refreshResults();
+                }
             });
 
     connect(currentInstance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
@@ -1401,14 +1425,21 @@ void MainWindow::setupUi()
     chatView = new ChatView(rightSideWidget);
     chatView->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
     messageInput = new MessageInput(rightSideWidget);
-    messageInput->emojiAutocomplete()->setProvider([this](const QString &query) -> QList<Core::EmojiMatch> {
+    memberSearch = new MemberSearch(this);
+    auto autocompleteProvider = [this](QChar trigger, const QString &query) -> QList<Core::EmojiMatch> {
         if (!currentInstance)
             return {};
         Snowflake channelId = chatModel->getActiveChannelId();
         if (!channelId.isValid())
             return {};
+        if (trigger == '#')
+            return MentionSuggestions::forChannel(currentInstance, channelId, query);
+        if (trigger == '@')
+            return MentionSuggestions::forMention(currentInstance, channelId, query, chatModel->messagesOldestFirst(), *memberSearch);
         return currentInstance->emojis()->search(query, channelId);
-    });
+    };
+    messageInput->emojiAutocomplete()->setProvider(autocompleteProvider);
+    chatView->inlineEditAutocomplete()->setProvider(autocompleteProvider);
     typingIndicator = new TypingIndicator(rightSideWidget);
     slowModeIndicator = new SlowModeIndicator(rightSideWidget);
 
@@ -1689,25 +1720,26 @@ void MainWindow::setupUi()
 
     connect(chatView, &ChatView::editMessageRequested, this,
             [this](Snowflake channelId, Snowflake messageId, const QString &content) {
-                if (currentInstance)
-                    currentInstance->discord()->editMessage(channelId, messageId, content);
+                if (!currentInstance)
+                    return;
+                const int row = chatModel->rowForMessage(messageId);
+                const bool unpingedReply = row >= 0 && isUnpingedReply(chatModel->messagesOldestFirst()[row]);
+                currentInstance->discord()->editMessage(channelId, messageId, content, unpingedReply);
             });
 
     connect(chatView, &ChatView::replyToMessageRequested, this,
-            [this](Snowflake channelId, Snowflake messageId) {
-                // Find the message in the model to get author name and content
-                for (int row = 0; row < chatModel->rowCount(); ++row) {
-                    QModelIndex idx = chatModel->index(row, 0);
-                    Snowflake msgId = idx.data(ChatModel::MessageIdRole).toULongLong();
-                    if (msgId == messageId) {
-                        QString authorName = idx.data(ChatModel::UsernameRole).toString();
-                        QString content = idx.data(ChatModel::ContentRole).toString();
-                        messageInput->setReplyTarget(messageId, authorName, content);
-                        return;
-                    }
+            [this](Snowflake, Snowflake messageId) {
+                const int row = chatModel->rowForMessage(messageId);
+                const QModelIndex idx = row >= 0 ? chatModel->index(row, 0) : QModelIndex();
+                const bool ownMessage = idx.isValid() && currentInstance && idx.data(ChatModel::UserIdRole).toULongLong() == currentInstance->accountId();
+                // like the official client: a reply to your own message or started with Shift held doesn't ping, and DMs have no toggle
+                const bool mentionAuthor = !ownMessage && !QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+                const bool showMentionToggle = !ownMessage && chatModel->getActiveGuildId().isValid();
+                if (!idx.isValid()) {
+                    messageInput->setReplyTarget(messageId, tr("Unknown"), QString(), mentionAuthor, showMentionToggle);
+                    return;
                 }
-                // Fallback if message not found in model
-                messageInput->setReplyTarget(messageId, tr("Unknown"), QString());
+                messageInput->setReplyTarget(messageId, idx.data(ChatModel::UsernameRole).toString(), idx.data(ChatModel::ContentRole).toString(), mentionAuthor, showMentionToggle);
             });
 
     connect(chatView, &ChatView::reactionPickerRequested, this, &MainWindow::openReactionPicker);
@@ -1735,6 +1767,28 @@ void MainWindow::setupUi()
             });
 
     connect(chatView, &ChatView::channelMentionClicked, this, &MainWindow::navigateToChannel);
+    connect(chatView, &ChatView::userMentionClicked, this, [this](Snowflake userId) {
+        if (currentInstance)
+            showUserProfile(currentInstance, userId, chatModel->getActiveGuildId());
+    });
+    chatView->setMentionNameResolver([this](MentionKind kind, Snowflake id) -> QString {
+        if (!currentInstance)
+            return {};
+        const Snowflake guildId = chatModel->getActiveGuildId();
+        if (kind == MentionKind::Channel) {
+            auto channel = currentInstance->getChannel(id);
+            return channel && channel->name.hasValue() ? QLatin1Char('#') + channel->name.get() : QString();
+        }
+        if (kind == MentionKind::Role) {
+            for (const auto &role : currentInstance->getRolesForGuild(guildId))
+                if (role.id.get() == id)
+                    return QLatin1Char('@') + role.name.get();
+            return {};
+        }
+        if (!currentInstance->users()->getUser(id))
+            return {};
+        return QLatin1Char('@') + currentInstance->users()->getDisplayName(id, guildId);
+    });
     connect(chatView, &ChatView::messageLinkClicked, this, &MainWindow::jumpToMessageLink);
     connect(chatView, &ChatView::atBottomChanged, this, [this](bool atBottom) {
         if (currentInstance)
@@ -3020,8 +3074,11 @@ void MainWindow::showUserContextMenu(ClientInstance *instance, Snowflake userId,
 
     QAction *mentionAction = menu.addAction(tr("Mention"));
     mentionAction->setEnabled(instance == currentInstance);
-    connect(mentionAction, &QAction::triggered, this, [this, userId]() {
-        messageInput->insertText(QStringLiteral("<@%1>").arg(quint64(userId)));
+    connect(mentionAction, &QAction::triggered, this, [this, instanceGuard, userId, guildId]() {
+        if (!instanceGuard)
+            return;
+        messageInput->insertMention(QLatin1Char('@') + instanceGuard->users()->getDisplayName(userId, guildId),
+                                    QStringLiteral("<@%1>").arg(quint64(userId)));
     });
 
     QAction *openDmAction = menu.addAction(tr("Open DM"));
@@ -3194,7 +3251,7 @@ bool MainWindow::sendFromChatInput(const QString &text, const QList<Core::Pendin
     Snowflake replyTo = messageInput->replyTargetMessageId();
     if (!chatModel->isAtLatest())
         chatView->jumpToPresent();
-    currentInstance->messages()->sendMessage(channelId, text, replyTo, attachments);
+    currentInstance->messages()->sendMessage(channelId, text, replyTo, messageInput->replyMentionsAuthor(), attachments);
 
     int rateLimit = currentInstance->getChannelRateLimit(channelId);
     Snowflake userId = currentInstance->accountId();

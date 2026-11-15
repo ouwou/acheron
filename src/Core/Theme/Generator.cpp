@@ -128,6 +128,9 @@ QHash<Token, QColor> generate(const QColor &seed, Scheme scheme, bool dark)
         m.insert(Token::MentionBg, mentionBg);
     }
 
+    // the official mention highlight is the same warning amber on every theme; only its bar darkens on light ones
+    m.insert(Token::MentionHighlightBg, descriptor(Token::MentionHighlightBg).defaultColor);
+    m.insert(Token::MentionHighlightBar, dark ? descriptor(Token::MentionHighlightBar).defaultColor : QColor(148, 84, 0));
     m.insert(Token::ChatError, hsl(2.0, 0.70, dark ? 0.62 : 0.50));
     m.insert(Token::EmbedDefault, m.value(Token::Highlight));
 

@@ -33,6 +33,7 @@ struct User : Core::JsonUtils::JsonObject
     Field<PremiumType, true, true> premiumType;
     Field<QString, true> discriminator;
     Field<bool, true> mfaEnabled;
+    Field<bool, true> system;
 
     static User fromJson(const QJsonObject &obj)
     {
@@ -48,7 +49,15 @@ struct User : Core::JsonUtils::JsonObject
         get(obj, "premium_type", user.premiumType);
         get(obj, "discriminator", user.discriminator);
         get(obj, "mfa_enabled", user.mfaEnabled);
+        get(obj, "system", user.system);
         return user;
+    }
+
+    // the official client's name for system users and webhooks, which its "recently talked" mention suggestions skip
+    [[nodiscard]] bool isNonUserBot() const
+    {
+        const QLatin1String webhookDiscriminator("0000");
+        return system.valueOr(false) || (bot.valueOr(false) && discriminator.hasValue() && discriminator.get() == webhookDiscriminator);
     }
 
     QString tag() const
