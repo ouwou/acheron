@@ -511,6 +511,7 @@ struct PermissionOverwrite : Core::JsonUtils::JsonObject
 struct ThreadMetadata : Core::JsonUtils::JsonObject
 {
     Field<bool> archived;
+    Field<bool, true> locked;
     Field<int, true> autoArchiveDuration; // minutes
     Field<QDateTime, true> archiveTimestamp; // when the archive status last changed
 
@@ -518,6 +519,7 @@ struct ThreadMetadata : Core::JsonUtils::JsonObject
     {
         ThreadMetadata meta;
         get(obj, "archived", meta.archived);
+        get(obj, "locked", meta.locked);
         get(obj, "auto_archive_duration", meta.autoArchiveDuration);
         get(obj, "archive_timestamp", meta.archiveTimestamp);
         return meta;
@@ -571,6 +573,7 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<QList<User>, true> recipients;
     Field<QList<Core::Snowflake>, true> recipientIds;
     Field<Core::Snowflake, true, true> lastMessageId;
+    Field<QDateTime, true, true> lastPinTimestamp;
     Field<QString, true, true> icon;
     Field<Core::Snowflake, true> ownerId;
     Field<int, true> rateLimitPerUser;
@@ -606,6 +609,7 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "recipients", channel.recipients);
         get(obj, "recipient_ids", channel.recipientIds);
         get(obj, "last_message_id", channel.lastMessageId);
+        get(obj, "last_pin_timestamp", channel.lastPinTimestamp);
         get(obj, "icon", channel.icon);
         get(obj, "owner_id", channel.ownerId);
         get(obj, "rate_limit_per_user", channel.rateLimitPerUser);

@@ -175,6 +175,37 @@ struct ChannelDelete : Core::JsonUtils::JsonObject
     }
 };
 
+struct ChannelPinsUpdate : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<Core::Snowflake, true> guildId;
+    Field<QDateTime, true, true> lastPinTimestamp;
+
+    static ChannelPinsUpdate fromJson(const QJsonObject &obj)
+    {
+        ChannelPinsUpdate event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "guild_id", event.guildId);
+        get(obj, "last_pin_timestamp", event.lastPinTimestamp);
+        return event;
+    }
+};
+
+// another session of this account opened the channel's pins
+struct ChannelPinsAck : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<QDateTime, true, true> timestamp;
+
+    static ChannelPinsAck fromJson(const QJsonObject &obj)
+    {
+        ChannelPinsAck event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "timestamp", event.timestamp);
+        return event;
+    }
+};
+
 struct ThreadDelete : Core::JsonUtils::JsonObject
 {
     Field<Core::Snowflake> id;

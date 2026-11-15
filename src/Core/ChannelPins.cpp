@@ -4,11 +4,42 @@
 
 #include <algorithm>
 
+#include "Discord/CdnUrls.hpp"
 #include "Discord/Client.hpp"
 #include "Discord/Events.hpp"
 
 namespace Acheron {
 namespace Core {
+
+namespace {
+
+// the official client treats an attachment link without an expiry as expired too
+bool attachmentLinkExpired(const QString &url)
+{
+    const QUrl parsed(url);
+    return !Discord::Cdn::isSigned(parsed) || Discord::Cdn::hasExpired(parsed);
+}
+
+bool embedHasExpiredMedia(const Discord::Embed &embed)
+{
+    const auto expired = [](const Discord::EmbedMedia &media) { return Discord::Cdn::hasExpired(QUrl(media.url.get())); };
+    return (embed.image.hasValue() && expired(embed.image.get())) || (embed.video.hasValue() && expired(embed.video.get()));
+}
+
+bool hasExpiredMediaLink(const Discord::Message &msg)
+{
+    if (msg.attachments.hasValue())
+        for (const Discord::Attachment &attachment : msg.attachments.get())
+            if (attachmentLinkExpired(attachment.url.get()))
+                return true;
+    if (msg.embeds.hasValue())
+        for (const Discord::Embed &embed : msg.embeds.get())
+            if (embedHasExpiredMedia(embed))
+                return true;
+    return false;
+}
+
+} // namespace
 
 ChannelPins::ChannelPins(Discord::Client *client, PrepareMessage prepare, QObject *parent)
     : QObject(parent), client(client), prepare(std::move(prepare))
@@ -44,20 +75,37 @@ void ChannelPins::fetchPageAfterOldest(Snowflake channelId)
     fetch(channelId, known->newestFirst.last().pinnedAt);
 }
 
-void ChannelPins::fetch(Snowflake channelId, std::optional<QDateTime> pinnedBefore)
+void ChannelPins::refetchFromFirstPage(Snowflake channelId)
+{
+    fetch(channelId, std::nullopt, true);
+}
+
+bool ChannelPins::hasExpiredMediaLinks(Snowflake channelId) const
+{
+    const Channel *known = channel(channelId);
+    return known && std::any_of(known->newestFirst.cbegin(), known->newestFirst.cend(), [](const Pinned &p) { return hasExpiredMediaLink(p.message); });
+}
+
+void ChannelPins::fetch(Snowflake channelId, std::optional<QDateTime> pinnedBefore, bool reset)
 {
     auto it = channels.find(channelId);
     if (it == channels.end())
         it = channels.insert(channelId, Channel{ client->getGuildIdForChannel(channelId) });
+    if (reset)
+        it->newestFirst.clear();
     it->state = LoadState::Loading;
+    const int generation = ++lastGeneration;
+    it->generation = generation;
+    if (reset)
+        emit pinsChanged(channelId);
     emit loadStateChanged(channelId);
 
     const QPointer<ChannelPins> self(this);
-    client->fetchMessagePins(channelId, PageSize, pinnedBefore, [self, channelId](const Result<Discord::Client::MessagePinsPage> &page) {
+    client->fetchMessagePins(channelId, PageSize, pinnedBefore, [self, channelId, generation](const Result<Discord::Client::MessagePinsPage> &page) {
         if (!self)
             return;
         auto it = self->channels.find(channelId);
-        if (it == self->channels.end() || it->state != LoadState::Loading)
+        if (it == self->channels.end() || it->generation != generation)
             return;
 
         if (!page.success()) {
@@ -81,21 +129,49 @@ void ChannelPins::fetch(Snowflake channelId, std::optional<QDateTime> pinnedBefo
     });
 }
 
+void ChannelPins::setThreadReopenRule(ThreadReopenRule rule)
+{
+    mustReopenThread = std::move(rule);
+}
+
+// the official client reopens an archived thread before pinning or unpinning in it, and gives up if that fails
+void ChannelPins::withThreadOpen(Snowflake channelId, std::function<void()> action)
+{
+    if (!mustReopenThread || !mustReopenThread(channelId)) {
+        action();
+        return;
+    }
+
+    const QPointer<ChannelPins> self(this);
+    client->reopenThread(channelId, [self, channelId, action = std::move(action)](Discord::Client::ThreadReopenResult result) {
+        if (!self)
+            return;
+        if (result == Discord::Client::ThreadReopenResult::Reopened)
+            action();
+        else
+            emit self->threadReopenFailed(channelId, result);
+    });
+}
+
 void ChannelPins::pin(Snowflake channelId, Snowflake messageId)
 {
     const QPointer<ChannelPins> self(this);
-    client->pinMessage(channelId, messageId, [self, channelId](const Result<void> &result) {
-        if (self && !result.success())
-            emit self->pinFailed(channelId, result.code, result.error);
+    withThreadOpen(channelId, [self, channelId, messageId]() {
+        self->client->pinMessage(channelId, messageId, [self, channelId](const Result<void> &result) {
+            if (self && !result.success())
+                emit self->pinFailed(channelId, result.code, result.error);
+        });
     });
 }
 
 void ChannelPins::unpin(Snowflake channelId, Snowflake messageId)
 {
     const QPointer<ChannelPins> self(this);
-    client->unpinMessage(channelId, messageId, [self, channelId, messageId](const Result<void> &result) {
-        if (self && !result.success())
-            emit self->unpinFailed(channelId, messageId);
+    withThreadOpen(channelId, [self, channelId, messageId]() {
+        self->client->unpinMessage(channelId, messageId, [self, channelId, messageId](const Result<void> &result) {
+            if (self && !result.success())
+                emit self->unpinFailed(channelId, messageId);
+        });
     });
 }
 

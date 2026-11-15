@@ -74,6 +74,8 @@ signals:
     void gatewayChannelCreate(const ChannelCreate &data);
     void gatewayChannelUpdate(const ChannelUpdate &data);
     void gatewayChannelDelete(const ChannelDelete &data);
+    void gatewayChannelPinsUpdate(const ChannelPinsUpdate &data);
+    void gatewayChannelPinsAck(const ChannelPinsAck &data);
     void gatewayThreadCreate(const ChannelCreate &data);
     void gatewayThreadUpdate(const ChannelUpdate &data);
     void gatewayThreadDelete(const ThreadDelete &data);
@@ -128,6 +130,7 @@ private:
     void handleMessageCreate(const Inbound &data);
     void handleMessageUpdate(const Inbound &data);
     void handleMessageDelete(const Inbound &data);
+    void handleMessageDeleteBulk(const Inbound &data);
     void handleTypingStart(const Inbound &data);
     void handleChannelCreate(const Inbound &data);
     void handleChannelUpdate(const Inbound &data);

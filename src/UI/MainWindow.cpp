@@ -74,6 +74,27 @@ namespace Acheron {
 namespace UI {
 
 namespace {
+
+class UnreadDot : public QWidget
+{
+public:
+    explicit UnreadDot(QWidget *parent) : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setFixedSize(7, 7);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(palette().highlight());
+        painter.drawEllipse(rect());
+    }
+};
+
 constexpr int LeftPaneIndex = 0;
 constexpr int CenterPaneIndex = 1;
 constexpr int MemberPaneIndex = 2;
@@ -131,7 +152,10 @@ bool isPrivateChannel(Core::ClientInstance *instance, Core::Snowflake channelId)
 
 bool canPinMessagesIn(Core::ClientInstance *instance, Core::Snowflake channelId)
 {
-    return isPrivateChannel(instance, channelId) || hasPermissionIn(instance, instance->getChannel(channelId), channelId, Discord::Permission::PIN_MESSAGES);
+    const std::optional<Discord::Channel> channel = instance->getChannel(channelId);
+    if (!channel)
+        return false;
+    return isPrivateChannel(instance, channelId) || hasPermissionIn(instance, channel, channelId, Discord::Permission::PIN_MESSAGES);
 }
 
 void showReactionRejection(QWidget *parent, MessageManager::ReactionRejection reason)
@@ -500,9 +524,11 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     disconnect(msgs, nullptr, this, nullptr);
     disconnect(msgs, nullptr, chatView, nullptr);
     disconnect(msgs->reactors(), nullptr, chatView, nullptr);
+    disconnect(msgs->pins(), nullptr, this, nullptr);
     disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
     disconnect(currentInstance->permissions(), nullptr, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+    disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
     disconnect(currentInstance->relationships(), nullptr, this, nullptr);
     disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
     disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -534,6 +560,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->discord(), &Discord::Client::typingStart, this, nullptr);
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
+        disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
         disconnect(currentInstance->relationships(), nullptr, this, nullptr);
         disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -582,6 +609,8 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs, &MessageManager::reactionRejected, this, [this](MessageManager::ReactionRejection reason) { showReactionRejection(this, reason); }, Qt::QueuedConnection);
     connect(msgs->pins(), &Core::ChannelPins::pinFailed, this, &MainWindow::showPinFailure);
     connect(msgs->pins(), &Core::ChannelPins::unpinFailed, this, &MainWindow::offerUnpinRetry);
+    connect(msgs->pins(), &Core::ChannelPins::threadReopenFailed, this, &MainWindow::showThreadReopenFailure);
+    connect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, &MainWindow::onPinsReadStateChanged);
     connect(msgs->reactors(), &Core::MessageReactors::reactorsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::reactionsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::messagesReceived, this,
@@ -1191,6 +1220,9 @@ void MainWindow::setupUi()
     pinsButton->setAutoRaise(true);
     pinsButton->setCursor(Qt::PointingHandCursor);
     connect(pinsButton, &QToolButton::clicked, this, &MainWindow::openPinnedMessages);
+    pinsUnreadDot = new UnreadDot(pinsButton);
+    pinsUnreadDot->move(14, 2);
+    pinsUnreadDot->hide();
 
     channelToolbar = new QWidget(rightSideWidget);
     channelToolbar->setObjectName("channelToolbar");
@@ -1474,8 +1506,13 @@ void MainWindow::setupUi()
 
     connect(chatView, &ChatView::pinMessageRequested, this,
             [this](Snowflake channelId, Snowflake messageId) {
-                if (currentInstance)
-                    currentInstance->messages()->pins()->pin(channelId, messageId);
+                if (!currentInstance)
+                    return;
+                QString channelName;
+                if (!isPrivateChannel(currentInstance, channelId))
+                    if (const auto channel = currentInstance->getChannel(channelId))
+                        channelName = channel->name.valueOr(QString());
+                PinnedMessagesPopup::confirmPin(this, currentInstance->messages()->pins(), channelId, messageId, channelName);
             });
 
     connect(chatView, &ChatView::unpinMessageRequested, this,
@@ -2994,6 +3031,22 @@ void MainWindow::setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, 
     threadBrowserButton->setVisible(threadBrowserChannel.isValid());
     pinsButton->setVisible(pinsChannel.isValid());
     channelToolbar->setVisible(threadBrowserChannel.isValid() || pinsChannel.isValid());
+    onPinsReadStateChanged(pinsChannel);
+}
+
+void MainWindow::onPinsReadStateChanged(Core::Snowflake channelId)
+{
+    if (channelId != pinsChannelId)
+        return;
+    if (pinnedMessages && pinnedMessages->isVisible())
+        ackPinsIfUnread();
+    pinsUnreadDot->setVisible(currentInstance && pinsChannelId.isValid() && currentInstance->hasUnreadPins(pinsChannelId));
+}
+
+void MainWindow::ackPinsIfUnread()
+{
+    if (currentInstance && currentInstance->hasUnreadPins(pinsChannelId))
+        currentInstance->readState()->ackPins(pinsChannelId);
 }
 
 void MainWindow::openPinnedMessagesOf(Core::Snowflake channelId)
@@ -3022,6 +3075,7 @@ void MainWindow::openPinnedMessages()
     pinnedMessages->configure(currentInstance, pinsChannelId, name, canPinMessagesIn(currentInstance, pinsChannelId));
     pinnedMessages->show();
     pinnedMessages->raise();
+    ackPinsIfUnread();
 }
 
 void MainWindow::showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage)
@@ -3031,8 +3085,9 @@ void MainWindow::showPinFailure(Core::Snowflake channelId, int errorCode, const 
     const auto channel = currentInstance->getChannel(channelId);
     const bool isPrivate = isPrivateChannel(currentInstance, channelId);
 
-    QString title = tr("The Pin Broke");
-    QString text = errorMessage.isEmpty() ? tr("An error occurred, please try again.") : errorMessage;
+    const bool hasApiCode = errorCode != 0;
+    QString title = hasApiCode ? tr("The Pin Broke") : tr("Error");
+    QString text = hasApiCode && !errorMessage.isEmpty() ? errorMessage : tr("An error occurred, please try again.");
     switch (errorCode) {
     case Discord::ApiError::TooManyPinsInChannel:
         text = isPrivate ? tr("Discord is unable to pin that message. You may have hit the limit of %1 pins in this channel.").arg(Core::ChannelPins::MaxPerChannel)
@@ -3057,6 +3112,44 @@ void MainWindow::showPinFailure(Core::Snowflake channelId, int errorCode, const 
     case Discord::ApiError::UnknownMessage:
         title = tr("Unknown Message");
         text = tr("The message you are trying to pin does not exist.");
+        break;
+    }
+
+    auto *box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok, this);
+    box->setTextFormat(Qt::PlainText);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
+}
+
+void MainWindow::showThreadReopenFailure(Core::Snowflake threadId, Discord::Client::ThreadReopenResult result)
+{
+    if (!currentInstance)
+        return;
+    const auto thread = currentInstance->getChannel(threadId);
+    const bool isPost = thread && thread->parentId.hasValue() && currentInstance->isForumParent(thread->parentId.get());
+
+    using Result = Discord::Client::ThreadReopenResult;
+    QString title = isPost ? tr("Cannot reopen post") : tr("Cannot reopen thread");
+    QString text;
+    switch (result) {
+    case Result::TooManyThreads:
+        text = isPost ? tr("This server has reached the maximum number of active posts. Free up space by archiving a post.")
+                      : tr("This server has reached the maximum number of active threads. Free up space by archiving a thread.");
+        break;
+    case Result::TooManyAnnouncementThreads:
+        title = tr("Cannot reopen thread");
+        text = tr("This server has reached the maximum number of active announcement threads. Free up space by archiving a thread.");
+        break;
+    case Result::RateLimited:
+        text = tr("You are being rate limited.");
+        break;
+    case Result::Forbidden:
+        text = isPost ? tr("This post is archived.") : tr("This thread is archived.");
+        break;
+    case Result::Reopened:
+    case Result::Failed:
+        title = tr("Error");
+        text = tr("An error occurred, please try again.");
         break;
     }
 

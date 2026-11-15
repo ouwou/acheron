@@ -133,6 +133,19 @@ public:
     void pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
     void unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
 
+    enum class ThreadReopenResult {
+        Reopened,
+        TooManyThreads,
+        TooManyAnnouncementThreads,
+        RateLimited,
+        Forbidden,
+        Failed,
+    };
+    using ThreadReopenCallback = std::function<void(ThreadReopenResult)>;
+    void reopenThread(Snowflake threadId, ThreadReopenCallback callback);
+
+    void ackPins(Snowflake channelId, PinCallback callback);
+
     enum class ReactionLocation {
         HoverBar,
         InlineButton,
@@ -283,6 +296,8 @@ signals:
     void channelCreated(const ChannelCreate &event);
     void channelUpdated(const ChannelUpdate &event);
     void channelDeleted(const ChannelDelete &event);
+    void channelPinsUpdated(const ChannelPinsUpdate &event);
+    void channelPinsAcked(const ChannelPinsAck &event);
     void threadCreated(const ChannelCreate &event);
     void threadUpdated(const ChannelUpdate &event);
     void threadDeleted(const ThreadDelete &event);
@@ -352,6 +367,8 @@ private slots:
     void onGatewayChannelCreate(const ChannelCreate &event);
     void onGatewayChannelUpdate(const ChannelUpdate &event);
     void onGatewayChannelDelete(const ChannelDelete &event);
+    void onGatewayChannelPinsUpdate(const ChannelPinsUpdate &event);
+    void onGatewayChannelPinsAck(const ChannelPinsAck &event);
     void onGatewayThreadCreate(const ChannelCreate &event);
     void onGatewayThreadUpdate(const ChannelUpdate &event);
     void onGatewayThreadDelete(const ThreadDelete &event);

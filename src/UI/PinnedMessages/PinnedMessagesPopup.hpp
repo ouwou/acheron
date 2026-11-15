@@ -27,6 +27,7 @@ public:
 
     void configure(Core::ClientInstance *instance, Core::Snowflake channelId, const QString &channelName, bool canUnpin);
 
+    static void confirmPin(QWidget *parent, Core::ChannelPins *pins, Core::Snowflake channelId, Core::Snowflake messageId, const QString &guildChannelName);
     static void confirmUnpin(QWidget *parent, Core::ChannelPins *pins, Core::Snowflake channelId, Core::Snowflake messageId);
 
 signals:

@@ -160,6 +160,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayChannelCreate, this, &Client::onGatewayChannelCreate);
     connect(gateway, &Gateway::gatewayChannelUpdate, this, &Client::onGatewayChannelUpdate);
     connect(gateway, &Gateway::gatewayChannelDelete, this, &Client::onGatewayChannelDelete);
+    connect(gateway, &Gateway::gatewayChannelPinsUpdate, this, &Client::onGatewayChannelPinsUpdate);
+    connect(gateway, &Gateway::gatewayChannelPinsAck, this, &Client::onGatewayChannelPinsAck);
     connect(gateway, &Gateway::gatewayThreadCreate, this, &Client::onGatewayThreadCreate);
     connect(gateway, &Gateway::gatewayThreadUpdate, this, &Client::onGatewayThreadUpdate);
     connect(gateway, &Gateway::gatewayThreadDelete, this, &Client::onGatewayThreadDelete);
@@ -794,6 +796,16 @@ void Client::onGatewayChannelDelete(const ChannelDelete &event)
     emit channelDeleted(event);
 }
 
+void Client::onGatewayChannelPinsUpdate(const ChannelPinsUpdate &event)
+{
+    emit channelPinsUpdated(event);
+}
+
+void Client::onGatewayChannelPinsAck(const ChannelPinsAck &event)
+{
+    emit channelPinsAcked(event);
+}
+
 void Client::onGatewayThreadCreate(const ChannelCreate &event)
 {
     const Channel &thread = event.channel.get();
@@ -1127,6 +1139,41 @@ void Client::unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback 
             qCInfo(LogDiscord) << "Message" << messageId << "unpinned from channel" << channelId;
         callback(pinResult(response));
     });
+}
+
+static Client::ThreadReopenResult threadReopenFailure(const HttpResponse &response)
+{
+    using Result = Client::ThreadReopenResult;
+    const int code = ApiError::fromResponse(response).code;
+    if (code == ApiError::TooManyThreads)
+        return Result::TooManyThreads;
+    if (code == ApiError::TooManyAnnouncementThreads)
+        return Result::TooManyAnnouncementThreads;
+    if (response.rateLimited())
+        return Result::RateLimited;
+    if (response.statusCode == 403)
+        return Result::Forbidden;
+    return Result::Failed;
+}
+
+void Client::reopenThread(Snowflake threadId, ThreadReopenCallback callback)
+{
+    const QString endpoint = "/channels/" + QString::number(threadId);
+    httpClient->patch(endpoint, QJsonObject{ { "archived", false } }, [this, threadId, callback](const HttpResponse &response) {
+        if (!response.success) {
+            qCWarning(LogDiscord) << "Failed to reopen thread" << threadId << "with status" << response.statusCode << ":" << response.error;
+            callback(threadReopenFailure(response));
+            return;
+        }
+        // the official client applies the returned channel at once instead of waiting for THREAD_UPDATE
+        emit threadUpdated(ChannelUpdate::fromJson(QJsonDocument::fromJson(response.body).object()));
+        callback(ThreadReopenResult::Reopened);
+    });
+}
+
+void Client::ackPins(Snowflake channelId, PinCallback callback)
+{
+    httpClient->send(HttpClient::Method::POST, "/channels/" + QString::number(channelId) + "/pins/ack", {}, {}, actionHandler("Acking pins", std::move(callback)));
 }
 
 namespace {

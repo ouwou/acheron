@@ -19,9 +19,11 @@ struct ApiError
     static constexpr int InvalidPinMessageChannel = 50019;
     static constexpr int InvalidActionSystemMessage = 50021;
     static constexpr int InvalidFormBody = 50035;
-    static constexpr int InvalidThreadArchiveState = 50083;
     static constexpr int FileTooLarge = 50045;
+    static constexpr int InvalidThreadArchiveState = 50083;
     static constexpr int CannotResizeAnimated = 50138;
+    static constexpr int TooManyThreads = 160006;
+    static constexpr int TooManyAnnouncementThreads = 160007;
 
     int code = 0;
     QString message;

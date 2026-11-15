@@ -120,7 +120,29 @@ void PinnedMessagesPopup::configure(Core::ClientInstance *inst, Core::Snowflake 
     rebuildCards();
     updateStatus();
     scroll->verticalScrollBar()->setValue(0);
-    pins()->fetchFirstPage(channelId);
+    if (pins()->hasExpiredMediaLinks(channelId))
+        pins()->refetchFromFirstPage(channelId);
+    else
+        pins()->fetchFirstPage(channelId);
+}
+
+void PinnedMessagesPopup::confirmPin(QWidget *parent, Core::ChannelPins *pins, Core::Snowflake channelId, Core::Snowflake messageId, const QString &guildChannelName)
+{
+    if (shiftHeld()) {
+        pins->pin(channelId, messageId);
+        return;
+    }
+
+    const QString text = guildChannelName.isEmpty() ? tr("Hey, just double checking that you want to pin this message to the current channel for posterity and greatness?")
+                                                    : tr("Hey, just double checking that you want to pin this message to #%1 for posterity and greatness?").arg(guildChannelName.toHtmlEscaped());
+    auto *confirm = new ConfirmPopup(tr("Pin It. Pin It Good."), text, tr("Oh yeah. Pin it"), parent);
+    confirm->setAttribute(Qt::WA_DeleteOnClose);
+    const QPointer<Core::ChannelPins> target(pins);
+    connect(confirm, &QDialog::accepted, pins, [target, channelId, messageId]() {
+        if (target)
+            target->pin(channelId, messageId);
+    });
+    confirm->open();
 }
 
 void PinnedMessagesPopup::confirmUnpin(QWidget *parent, Core::ChannelPins *pins, Core::Snowflake channelId, Core::Snowflake messageId)
@@ -292,13 +314,17 @@ void PinnedMessagesPopup::addCard(const Core::ChannelPins::Pinned &pin)
     }
     cardLayout->addLayout(header);
 
-    if (!msg.parsedContentCached.isEmpty()) {
+    const Discord::Message &shown = msg.contentMessage();
+    if (msg.isForwarded())
+        cardLayout->addWidget(mutedLabel(tr("Forwarded"), card));
+
+    if (!shown.parsedContentCached.isEmpty()) {
         const int width = bodyWidth();
         auto *body = new MessageTextBrowser(images, instance->accountId(), card);
         body->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
         body->setFixedWidth(width);
         body->fitHeightToDocument();
-        body->setMessageHtml(msg.parsedContentCached, width);
+        body->setMessageHtml(shown.parsedContentCached, width);
         connect(body, &MessageTextBrowser::linkActivated, this, [this](const QString &url) {
             emit linkActivated(url);
             accept();
@@ -308,12 +334,12 @@ void PinnedMessagesPopup::addCard(const Core::ChannelPins::Pinned &pin)
 
     // attachments, embeds and stickers are not rendered here, so name them to keep the card from looking empty
     QStringList extras;
-    if (msg.attachments.hasValue())
-        for (const auto &att : msg.attachments.get())
+    if (shown.attachments.hasValue())
+        for (const auto &att : shown.attachments.get())
             extras.append(QStringLiteral("📎 ") + att.filename.valueOr(tr("attachment")));
-    if (msg.stickerItems.hasValue() && !msg.stickerItems->isEmpty())
+    if (shown.stickerItems.hasValue() && !shown.stickerItems->isEmpty())
         extras.append(tr("Sticker"));
-    if (msg.parsedContentCached.isEmpty() && extras.isEmpty() && msg.embeds.hasValue() && !msg.embeds->isEmpty())
+    if (shown.parsedContentCached.isEmpty() && extras.isEmpty() && shown.embeds.hasValue() && !shown.embeds->isEmpty())
         extras.append(tr("Embed"));
 
     for (const QString &text : extras) {

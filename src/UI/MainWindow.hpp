@@ -15,6 +15,7 @@
 #include "MemberList/MemberListDelegate.hpp"
 #include "TabBar/TabBar.hpp"
 #include "GuildSettings/GuildSettingsSection.hpp"
+#include "Discord/Client.hpp"
 #include "Discord/Entities.hpp"
 
 namespace Acheron {
@@ -161,7 +162,10 @@ private:
     void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
     void openPinnedMessages();
     void openPinnedMessagesOf(Core::Snowflake channelId);
+    void onPinsReadStateChanged(Core::Snowflake channelId);
+    void ackPinsIfUnread();
     void showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage);
+    void showThreadReopenFailure(Core::Snowflake threadId, Discord::Client::ThreadReopenResult result);
     void offerUnpinRetry(Core::Snowflake channelId, Core::Snowflake messageId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
@@ -216,6 +220,7 @@ private:
     QWidget *channelToolbar = nullptr;
     QToolButton *threadBrowserButton = nullptr;
     QToolButton *pinsButton = nullptr;
+    QWidget *pinsUnreadDot = nullptr;
     ChannelTopicLine *channelTopicLine = nullptr;
     Core::Snowflake channelTopicChannelId = Core::Snowflake::Invalid;
     ThreadBrowserPopup *threadBrowser = nullptr;

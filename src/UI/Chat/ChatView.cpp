@@ -1019,18 +1019,15 @@ void ChatView::onActionBarTriggered(MessageActionBar::Action action)
 
 void ChatView::onActionBarMoreRequested(const QPoint &buttonTopLeft)
 {
-    using Action = MessageActionBar::Action;
     constexpr int MenuGap = 4;
 
-    QMenu menu(this);
+    const QModelIndex index = hoveredMessage;
+    if (!index.isValid())
+        return;
 
+    QMenu menu(this);
     menu.setAttribute(Qt::WA_NoMouseReplay);
-    addMessageAction(menu, Action::Reply, actionBarMessageId);
-    addMessageAction(menu, Action::CopyLink, actionBarMessageId);
-    if (canDeleteMessage(hoveredMessage))
-        addMessageAction(menu, Action::Delete, actionBarMessageId);
-    menu.addSeparator();
-    addMessageAction(menu, Action::CopyId, actionBarMessageId);
+    addMessageMenuItems(menu, index, ChatLayout::resolveLayout(this, index), std::nullopt);
 
     actionBar->setMoreButtonDown(true);
 
@@ -1244,16 +1241,10 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     if (!chatModel)
         return;
 
-    Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
-    Core::Snowflake authorId = index.data(ChatModel::UserIdRole).toULongLong();
-    Core::Snowflake channelId = chatModel->getActiveChannelId();
-    QString content = index.data(ChatModel::ContentRole).toString();
-    bool isOwnMessage = (authorId == currentUserId);
-
     ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, index);
     auto region = ChatLayout::hitTest(resolved, event->pos());
     if (region && (region->kind == ChatLayout::HitRegion::Kind::Avatar || region->kind == ChatLayout::HitRegion::Kind::UsernameHeader)) {
-        emit userContextMenuRequested(authorId, event->globalPos());
+        emit userContextMenuRequested(index.data(ChatModel::UserIdRole).toULongLong(), event->globalPos());
         return;
     }
 
@@ -1286,6 +1277,20 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     }
     if (!menu.isEmpty())
         menu.addSeparator();
+
+    addMessageMenuItems(menu, index, resolved, region);
+    execMessageMenu(menu, event->globalPos());
+}
+
+void ChatView::addMessageMenuItems(QMenu &menu, const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    const Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
+    const Core::Snowflake channelId = chatModel->getActiveChannelId();
+    const bool isOwnMessage = index.data(ChatModel::UserIdRole).toULongLong() == currentUserId;
 
     QAction *copyAction = menu.addAction(tr("Copy Text"));
     copyAction->setShortcut(QKeySequence::Copy);
@@ -1353,8 +1358,6 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     menu.addSeparator();
     addMessageAction(menu, MessageActionBar::Action::CopyLink, messageId);
     addMessageAction(menu, MessageActionBar::Action::CopyId, messageId);
-
-    execMessageMenu(menu, event->globalPos());
 }
 
 void ChatView::keyPressEvent(QKeyEvent *event)

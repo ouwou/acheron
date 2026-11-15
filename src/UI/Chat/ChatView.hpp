@@ -189,6 +189,7 @@ private:
     QPoint actionBarPosition(const QModelIndex &index) const;
     void updateHoveredMessage();
     void addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId);
+    void addMessageMenuItems(QMenu &menu, const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region);
     void triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId);
     void execMessageMenu(QMenu &menu, const QPoint &globalPos);
     [[nodiscard]] bool canReactTo(const QModelIndex &index) const;

@@ -67,6 +67,8 @@ void ForumManager::trackReadState(Snowflake forumId, const Discord::Channel &pos
 {
     readState->updateChannelLastMessageId(post.id.get(), post.effectiveLastMessageId());
     readState->updateChannelLastMessageId(forumId, post.id.get());
+    readState->registerThreadParent(post.id.get(), forumId);
+    readState->registerChannelLastPin(post);
 }
 
 int ForumManager::addPost(Snowflake forumId, ForumState &st, const Discord::Channel &post)
