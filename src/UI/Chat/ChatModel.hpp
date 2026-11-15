@@ -252,6 +252,7 @@ public:
         ForwardOriginRole,
         StickersRole,
         IsPinnedRole,
+        IsMentionedRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -272,6 +273,9 @@ public:
     using GuildInfoResolver = std::function<QPair<QString, QUrl>(Snowflake guildId)>;
     void setGuildInfoResolver(GuildInfoResolver resolver);
 
+    using MentionResolver = std::function<bool(const Discord::Message &msg, Snowflake guildId)>;
+    void setMentionResolver(MentionResolver resolver);
+
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role) const override;
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
@@ -279,6 +283,7 @@ public:
     [[nodiscard]] Snowflake getOldestMessageId() const;
     [[nodiscard]] Snowflake getNewestMessageId() const;
     [[nodiscard]] int rowForMessage(Snowflake messageId) const;
+    [[nodiscard]] const QVector<Discord::Message> &messagesOldestFirst() const { return messages; }
     [[nodiscard]] Snowflake getActiveChannelId() const;
     [[nodiscard]] Snowflake getActiveGuildId() const;
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
@@ -345,6 +350,7 @@ private:
     RoleColorResolver roleColorResolver;
     ChannelNameResolver channelNameResolver;
     GuildInfoResolver guildInfoResolver;
+    MentionResolver mentionResolver;
 
     mutable AvatarRequestTracker<QPersistentModelIndex> avatarTracker;
     QSet<QString> pendingNonces;

@@ -11,9 +11,17 @@
 namespace Acheron {
 namespace UI {
 
+// as the official client
+static constexpr int LIVE_HOVER_DELAY_MS = 100;
+
 static bool isAlwaysExpanded(ChannelNode::Type type)
 {
     return type == ChannelNode::Type::Forum;
+}
+
+static bool isParticipantWith(const QModelIndex &proxyIndex, int role)
+{
+    return proxyIndex.isValid() && static_cast<ChannelNode::Type>(proxyIndex.data(ChannelTreeModel::TypeRole).toInt()) == ChannelNode::Type::VoiceParticipant && proxyIndex.data(role).toBool();
 }
 
 ChannelTreeView::ChannelTreeView(QWidget *parent)
@@ -24,6 +32,54 @@ ChannelTreeView::ChannelTreeView(QWidget *parent)
         if (isAlwaysExpanded(nodeType))
             expand(index);
     });
+
+    viewport()->setMouseTracking(true);
+    liveHoverDelay.setSingleShot(true);
+    liveHoverDelay.setInterval(LIVE_HOVER_DELAY_MS);
+    connect(&liveHoverDelay, &QTimer::timeout, this, [this] {
+        if (!pendingLiveHover.isValid())
+            return;
+        shownLiveHover = pendingLiveHover;
+        pendingLiveHover = QPersistentModelIndex();
+        emit liveParticipantHoverChanged(shownLiveHover);
+    });
+}
+
+void ChannelTreeView::mouseMoveEvent(QMouseEvent *event)
+{
+    QTreeView::mouseMoveEvent(event);
+    setHoveredLiveParticipant(indexAt(event->pos()));
+}
+
+void ChannelTreeView::leaveEvent(QEvent *event)
+{
+    QTreeView::leaveEvent(event);
+    setHoveredLiveParticipant(QModelIndex());
+}
+
+void ChannelTreeView::hideLiveHover()
+{
+    if (!shownLiveHover.isValid())
+        return;
+    shownLiveHover = QPersistentModelIndex();
+    emit liveParticipantHoverChanged(QModelIndex());
+}
+
+void ChannelTreeView::setHoveredLiveParticipant(const QModelIndex &proxyIndex)
+{
+    if (!isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceLiveRole)) {
+        liveHoverDelay.stop();
+        pendingLiveHover = QPersistentModelIndex();
+        hideLiveHover();
+        return;
+    }
+
+    if (proxyIndex == shownLiveHover || proxyIndex == pendingLiveHover)
+        return;
+
+    hideLiveHover();
+    pendingLiveHover = proxyIndex;
+    liveHoverDelay.start();
 }
 
 void ChannelTreeView::setModel(QAbstractItemModel *m)
@@ -59,6 +115,7 @@ void ChannelTreeView::onRowsInserted(const QModelIndex &parent, int first, int l
     if (parent.isValid()) {
         auto parentType = static_cast<ChannelNode::Type>(parent.data(ChannelTreeModel::TypeRole).toInt());
         if ((parentType == ChannelNode::Type::VoiceChannel ||
+             parentType == ChannelNode::Type::DMChannel ||
              parentType == ChannelNode::Type::Channel ||
              isAlwaysExpanded(parentType)) &&
             !isExpanded(parent))
@@ -107,6 +164,18 @@ void ChannelTreeView::mousePressEvent(QMouseEvent *event)
 
 void ChannelTreeView::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    const QModelIndex proxyIndex = indexAt(event->pos());
+    if (event->button() == Qt::LeftButton && isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceLiveRole)) {
+        emit watchStreamRequested(proxyIndex);
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && isParticipantWith(proxyIndex, ChannelTreeModel::IsVoiceVideoRole)) {
+        emit showCallVideoRequested(proxyIndex);
+        event->accept();
+        return;
+    }
+
     handleMouseEventForExpansion(event);
     event->accept(); // shut up
 }
@@ -133,6 +202,7 @@ bool ChannelTreeView::handleMouseEventForExpansion(QMouseEvent *event)
         return true;
     } else if (nodeType != ChannelNode::Type::Channel &&
                nodeType != ChannelNode::Type::VoiceChannel &&
+               nodeType != ChannelNode::Type::DMChannel &&
                !isAlwaysExpanded(nodeType) &&
                model()->hasChildren(proxyIndex)) {
         setExpanded(proxyIndex, !isExpanded(proxyIndex));

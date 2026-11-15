@@ -195,6 +195,13 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayGuildMemberListUpdate, this, &Client::guildMemberListUpdate);
     connect(gateway, &Gateway::gatewayVoiceStateUpdate, this, &Client::voiceStateUpdated);
     connect(gateway, &Gateway::gatewayVoiceServerUpdate, this, &Client::voiceServerUpdated);
+    connect(gateway, &Gateway::gatewayCallCreate, this, &Client::callCreated);
+    connect(gateway, &Gateway::gatewayCallUpdate, this, &Client::callUpdated);
+    connect(gateway, &Gateway::gatewayCallDelete, this, &Client::callDeleted);
+    connect(gateway, &Gateway::gatewayStreamCreate, this, &Client::streamCreated);
+    connect(gateway, &Gateway::gatewayStreamServerUpdate, this, &Client::streamServerUpdated);
+    connect(gateway, &Gateway::gatewayStreamUpdate, this, &Client::streamUpdated);
+    connect(gateway, &Gateway::gatewayStreamDelete, this, &Client::streamDeleted);
     connect(gateway, &Gateway::gatewayRelationshipAdd, this, &Client::relationshipAdded);
     connect(gateway, &Gateway::gatewayRelationshipUpdate, this, &Client::relationshipUpdated);
     connect(gateway, &Gateway::gatewayRelationshipRemove, this, &Client::relationshipRemoved);
@@ -862,8 +869,18 @@ void Client::onGatewayGuildRoleDelete(const GuildRoleDelete &event)
     emit guildRoleDeleted(event);
 }
 
+// the official client sends this with a reply that should not ping its author, and with an edit of such a reply
+static QJsonObject allowedMentionsWithoutReplyPing()
+{
+    QJsonObject allowedMentions;
+    allowedMentions["parse"] = QJsonArray{ "users", "roles", "everyone" };
+    allowedMentions["replied_user"] = false;
+    return allowedMentions;
+}
+
 void Client::sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
-                         Snowflake replyToMessageId, const QList<Core::PendingAttachment> &attachments)
+                         Snowflake replyToMessageId, bool mentionRepliedUser,
+                         const QList<Core::PendingAttachment> &attachments)
 {
     // todo extract to struct probably
     QJsonObject payload;
@@ -878,6 +895,9 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
         messageReference["message_id"] = QString::number(replyToMessageId);
         messageReference["channel_id"] = QString::number(channelId);
         payload["message_reference"] = messageReference;
+
+        if (!mentionRepliedUser)
+            payload["allowed_mentions"] = allowedMentionsWithoutReplyPing();
     }
 
     if (!attachments.isEmpty()) {
@@ -1073,13 +1093,15 @@ bool Client::cancelMessageSend(const QString &nonce)
     return true;
 }
 
-void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString &content)
+void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged)
 {
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages/" +
                        QString::number(messageId);
 
     QJsonObject payload;
     payload["content"] = content;
+    if (keepReplyUnpinged)
+        payload["allowed_mentions"] = allowedMentionsWithoutReplyPing();
 
     httpClient->patch(endpoint, payload, [this, channelId, messageId](const HttpResponse &response) {
         if (!response.success)
@@ -1453,9 +1475,66 @@ qint64 Client::getMaxUploadSize(Snowflake channelId) const
     return qMax(userLimit, guildLimit);
 }
 
-void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf)
+void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo)
 {
-    gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf);
+    gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf, selfVideo);
+}
+
+void Client::sendCallConnect(Snowflake channelId)
+{
+    gateway->sendCallConnect(channelId);
+}
+
+void Client::sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion)
+{
+    gateway->sendStreamCreate(channel, preferredRegion);
+}
+
+void Client::sendStreamDelete(const QString &streamKey)
+{
+    gateway->sendStreamDelete(streamKey);
+}
+
+void Client::sendStreamWatch(const QString &streamKey)
+{
+    gateway->sendStreamWatch(streamKey);
+}
+
+void Client::sendStreamPing(const QString &streamKey)
+{
+    gateway->sendStreamPing(streamKey);
+}
+
+void Client::sendStreamSetPaused(const QString &streamKey, bool paused)
+{
+    gateway->sendStreamSetPaused(streamKey, paused);
+}
+
+void Client::fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback)
+{
+    QUrlQuery query;
+    query.addQueryItem("version", QString::number(QDateTime::currentMSecsSinceEpoch()));
+
+    httpClient->get("/streams/" + streamKey + "/preview", query, [callback](const HttpResponse &response) {
+        StreamPreviewLookup preview;
+        const QJsonObject body = QJsonDocument::fromJson(response.body).object();
+        if (response.success)
+            preview.url = QUrl(body["url"].toString());
+        else if (response.rateLimited())
+            preview.retryAfterMs = static_cast<qint64>(body["retry_after"].toDouble() * 1000);
+
+        callback(preview);
+    });
+}
+
+void Client::uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback)
+{
+    QJsonObject body;
+    body["thumbnail"] = thumbnail;
+
+    httpClient->post("/streams/" + streamKey + "/preview", body, [callback](const HttpResponse &response) {
+        callback(response.success);
+    });
 }
 
 void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds, bool presences)
@@ -1463,9 +1542,9 @@ void Client::requestGuildMembers(Snowflake guildId, const QList<Snowflake> &user
     gateway->requestGuildMembers(guildId, userIds, presences);
 }
 
-void Client::queryGuildMembers(Snowflake guildId, const QString &query, int limit)
+void Client::queryGuildMembers(Snowflake guildId, const QString &query, int limit, bool presences)
 {
-    gateway->queryGuildMembers(guildId, query, limit, false);
+    gateway->queryGuildMembers(guildId, query, limit, presences);
 }
 
 [[nodiscard]] const Proto::PreloadedUserSettings &Client::getSettings() const

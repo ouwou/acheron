@@ -5,7 +5,10 @@
 
 #include <functional>
 #include <memory>
+#include <map>
+#include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -21,6 +24,9 @@ struct SignaturePrivateKey;
 namespace Acheron {
 namespace Discord {
 namespace Voice {
+
+// one who left is in the roster changes without a key
+[[nodiscard]] bool bringsNewKeys(const discord::dave::RosterMap &changes);
 
 class DaveSession : public QObject
 {
@@ -43,12 +49,14 @@ public:
     void onExecuteTransition(int transitionId);
     void onPrepareEpoch(int protocolVersion, int epoch);
 
-    discord::dave::IEncryptor *encryptor();
-    discord::dave::IDecryptor *getOrCreateDecryptor(quint32 ssrc, uint64_t userId);
+    [[nodiscard]] size_t maxCiphertextSize(discord::dave::MediaType type, size_t frameSize);
+    [[nodiscard]] std::optional<size_t> encrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out);
+    [[nodiscard]] size_t maxPlaintextSize(discord::dave::MediaType type, quint32 ssrc, size_t frameSize);
+    [[nodiscard]] std::optional<size_t> decrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out);
 
     bool isDaveEnabled() const { return daveEnabled; }
 
-    bool isDowngraded() const { return daveDowngraded; }
+    [[nodiscard]] bool awaitsKeys() const { return !daveEnabled && !daveDowngraded; }
 
     using FingerprintCallback = std::function<void(const std::vector<uint8_t> &)>;
     void getPairwiseFingerprint(const std::string &userId, FingerprintCallback callback) const;
@@ -56,6 +64,7 @@ public:
     std::vector<uint8_t> lastEpochAuthenticator() const;
 
     void setLocalSsrc(quint32 ssrc);
+    void setLocalVideoCodec(quint32 ssrc, discord::dave::Codec codec);
     void addConnectedUser(const std::string &userId);
     void removeConnectedUser(const std::string &userId);
     void applyKeyRatchetForSsrc(quint32 ssrc, uint64_t userId);
@@ -66,10 +75,13 @@ signals:
     void sendReadyForTransition(int transitionId);
     void sendInvalidCommitWelcome(int transitionId);
     void daveStateChanged(bool enabled);
+    // its receivers can read nothing until the next key frame, which the official client then asks for
+    void newKeysNeedKeyframe();
 
 private:
     void reinit();
     void completeTransition();
+    discord::dave::IDecryptor *decryptorFor(quint32 ssrc);
 
     std::unique_ptr<discord::dave::mls::ISession> mlsSession;
     std::unique_ptr<discord::dave::IEncryptor> daveEncryptor;
@@ -80,12 +92,14 @@ private:
     Core::Snowflake channelId;
     Core::Snowflake userId;
     quint32 localSsrc = 0;
+    std::map<quint32, discord::dave::Codec> localVideoCodecs;
 
     std::set<std::string> connectedUserIds;
     int pendingTransitionId = -1;
     bool daveEnabled = false;
     bool daveDowngraded = false;
     bool pendingTransitionReady = false;
+    bool pendingTransitionBringsKeys = false;
 
     const QHash<quint32, uint64_t> &ssrcMap;
 

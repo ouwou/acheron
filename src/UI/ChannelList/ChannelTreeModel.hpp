@@ -48,6 +48,9 @@ public:
         OwnerIdRole = Qt::UserRole + 15,
         PresenceBadgeRole = Qt::UserRole + 16,
         OwnMentionCountRole = Qt::UserRole + 17,
+        IsVoiceVideoRole = Qt::UserRole + 18,
+        IsVoiceLiveRole = Qt::UserRole + 19,
+        IsConnectedVoiceChannelRole = Qt::UserRole + 20,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
@@ -90,6 +93,7 @@ public:
     void setAccountVoiceChannel(Snowflake accountId, Snowflake channelId);
     void updateVoiceParticipant(Snowflake channelId, Snowflake userId, bool joined, Snowflake accountId);
     void updateVoiceParticipantState(Snowflake channelId, Snowflake userId, Snowflake accountId);
+    void addKnownVoiceParticipants(Snowflake channelId, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
     void setCollapsed(const QModelIndex &index, bool collapsed);
 

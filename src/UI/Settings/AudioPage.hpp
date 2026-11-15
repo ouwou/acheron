@@ -7,14 +7,13 @@ class QComboBox;
 namespace Acheron {
 namespace UI {
 
+[[nodiscard]] QComboBox *makeAudioBackendCombo(QWidget *parent);
+
 class AudioPage : public QWidget
 {
     Q_OBJECT
 public:
     explicit AudioPage(QWidget *parent = nullptr);
-
-private:
-    QComboBox *backendCombo;
 };
 
 } // namespace UI

@@ -124,10 +124,10 @@ public:
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<Core::PendingAttachment> &attachments = {});
     bool cancelMessageSend(const QString &nonce);
-    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);
+    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged = false);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
     using PinCallback = std::function<void(const Core::Result<void> &)>;
     void pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
@@ -176,7 +176,20 @@ public:
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
     void ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished);
 
-    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
+    // every update must say whether the camera is on
+    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
+
+    void sendCallConnect(Snowflake channelId);
+
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
+    void sendStreamDelete(const QString &streamKey);
+    void sendStreamWatch(const QString &streamKey);
+    void sendStreamPing(const QString &streamKey);
+    void sendStreamSetPaused(const QString &streamKey, bool paused);
+
+    using StreamPreviewCallback = std::function<void(const StreamPreviewLookup &)>;
+    void fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback);
+    void uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback);
     void setVoiceConnected(bool connected);
 
     void restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored);
@@ -190,7 +203,7 @@ public:
     void ensureSubscriptionByChannel(Snowflake channelId);
     void requestForumUnreads(Snowflake forumId, const QList<QPair<Snowflake, Snowflake>> &threads);
     void requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds, bool presences = true);
-    void queryGuildMembers(Snowflake guildId, const QString &query, int limit);
+    void queryGuildMembers(Snowflake guildId, const QString &query, int limit, bool presences = false);
 
     [[nodiscard]] Snowflake getGuildIdForChannel(Snowflake channelId) const;
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
@@ -334,6 +347,13 @@ signals:
     void guildMemberListUpdate(const GuildMemberListUpdate &event);
     void voiceStateUpdated(const VoiceState &event);
     void voiceServerUpdated(const VoiceServerUpdate &event);
+    void callCreated(const CallCreate &event);
+    void callUpdated(const CallUpdate &event);
+    void callDeleted(const CallDelete &event);
+    void streamCreated(const StreamCreate &event);
+    void streamServerUpdated(const StreamServerUpdate &event);
+    void streamUpdated(const StreamUpdate &event);
+    void streamDeleted(const StreamDelete &event);
     void relationshipAdded(const Relationship &event);
     void relationshipUpdated(const RelationshipPartial &event);
     void relationshipRemoved(const RelationshipPartial &event);

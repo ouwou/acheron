@@ -18,6 +18,8 @@ env:
   # AppImage builds against this prebuilt prefix and bundles it.
   FFMPEG_LINUX_BUILD: ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-lgpl-shared-8.1
   FFMPEG_LINUX_SHA256: c882a80f06617149198a98a07a0880a7e881953ae9f9cb931f5be09a4f93caae
+  # makes the stubs through which the AppImage loads libpipewire when it is first called
+  IMPLIB_COMMIT: a3e167cf978a5b8a38ec0f710d8c4331e8dcdd9a
   # aqtinstall 3.3.0, still the newest release, cannot find Qt 6.11+ for Windows: the
   # repository moved to one folder per compiler (jurplel/install-qt-action#374).
   AQT_FOR_WINDOWS_QT6: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
@@ -95,8 +97,15 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
+      # the voice client's tests load the curl-impersonate DLL, which is only put beside the
+      # executables when the artifact is made. without it Windows shows a dialog and waits
       - name: Test
-        run: ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
+          # without this Qt Test writes its report to the debugger, and a failure shows nothing here
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --timeout 600
 
       - name: Deploy Qt
         shell: pwsh
@@ -185,7 +194,9 @@ jobs:
         run: cmake --build build --config RelWithDebInfo --parallel
 
       - name: Test
-        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+        env:
+          QT_FORCE_STDERR_LOGGING: 1
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure --timeout 600
 
       - name: Deploy Qt
         shell: pwsh
@@ -220,7 +231,10 @@ jobs:
           path: acheron-windows-minimal
 
   build-windows-qt5:
-    runs-on: windows-latest
+    # Visual Studio 2022: its C++ runtime (14.4x) is the last that loads on Windows 7,
+    # and the artifact carries it beside the exe. what a newer toolset builds crashes
+    # at its first std::mutex on an installed runtime older than that toolset
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v7
@@ -250,7 +264,7 @@ jobs:
           path: build/vcpkg_installed
           # Keyed apart from the Qt6 jobs: this one also holds the from-source ffmpeg,
           # and restoring their cache would rebuild it on every run.
-          key: vcpkg-x64-windows-static-md-ffmpeg-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-x64-windows-static-md-ffmpeg-vs2022-${{ hashFiles('vcpkg.json') }}
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -298,7 +312,12 @@ jobs:
         run: cmake --build build --config MinSizeRel --parallel
 
       - name: Test
-        run: ctest --test-dir build -C MinSizeRel --output-on-failure
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
+          # without this Qt Test writes its report to the debugger, and a failure shows nothing here
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          ctest --test-dir build -C MinSizeRel --output-on-failure --timeout 600
 
       - name: Deploy Qt
         shell: pwsh
@@ -324,6 +343,12 @@ jobs:
           # QNetworkAccessManager needs it for HTTPS and windeployqt does not deploy it.
           Copy-Item "openssl-bin/*.dll" $out -Force
 
+          # the C++ runtime this job built against, so that the machine's own, which may
+          # be older, isnt the one loaded. vccorlib140 is left out: it is for WinRT
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Sort-Object FullName | Select-Object -Last 1
+          Copy-Item "$($crt.FullName)\msvcp140*.dll","$($crt.FullName)\vcruntime140*.dll" $out -Force
+
           # Drop build leftovers, and the plugins the app can never reach: main.cpp
           # forces the Fusion style and Storage only ever opens QSQLITE. The .exp
           # (and its .lib) exist because static ffmpeg marks its API dllexport, so
@@ -341,8 +366,39 @@ jobs:
           name: acheron-windows-qt5-MinSizeRel
           path: acheron-windows-qt5-MinSizeRel
 
+      # the media tests as this job built them, to be run by hand on a real Windows 7:
+      # the runner is a newer Windows, so passing here says nothing about that one
+      - name: Prepare media tests
+        shell: pwsh
+        run: |
+          $out = "acheron-windows-qt5-media-tests"
+          $app = "acheron-windows-qt5-MinSizeRel"
+          New-Item -ItemType Directory -Path $out -Force
+          foreach ($test in "TestVideoDecode", "TestVideoEncode", "TestVideoSend", "TestVideoSurface", "TestCameraCapture", "TestRtpVideo", "TestOpusEncoder", "TestClips", "TestMediaInput", "TestApng") {
+            Copy-Item "build/MinSizeRel/$test.exe" $out
+            windeployqt --no-translations --no-system-d3d-compiler "$out/$test.exe"
+          }
+          # the DLLs the app ships with, the C++ runtime among them, and the platform
+          # plugin the tests that draw nothing ask for
+          Copy-Item "$app/*.dll" $out -Force
+          Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$out/platforms" -Force
+
+      - name: Upload media tests
+        uses: actions/upload-artifact@v7
+        with:
+          name: acheron-windows-qt5-media-tests
+          path: acheron-windows-qt5-media-tests
+          retention-days: 7
+
   build-linux:
-    runs-on: ubuntu-latest
+    # not -latest: mlspp builds with -Werror, which fails on ubuntu-26.04's gcc 15
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # cameras and screen shares are optional, so the build without them is kept working
+        video: ['ON', 'OFF']
+    name: build-linux (video ${{ matrix.video }})
 
     steps:
       - uses: actions/checkout@v4
@@ -354,6 +410,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+
+      - name: Install what cameras and screen shares need
+        if: matrix.video == 'ON'
+        run: |
+          sudo apt-get install -y libavfilter-dev libavdevice-dev libpipewire-0.3-dev \
+            libxcb1-dev libxcb-randr0-dev libxcb-composite0-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -395,12 +457,14 @@ jobs:
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
+          -DENABLE_VIDEO=${{ matrix.video }}
 
+      # every error in one run, not only the first: nothing else compiles this platform's code
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: cmake --build build --parallel $(nproc) -- --keep-going
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --timeout 600
 
   build-appimage:
     # ubuntu-22.04, not -latest: the AppImage bundles Qt but not glibc, so the
@@ -422,7 +486,8 @@ jobs:
           # ffmpeg.cmake would reject it, so the prebuilt prefix below is used instead.
           sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0
+            libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
+            libxcb1-dev libxcb-randr0-dev libxcb-composite0-dev libpipewire-0.3-dev
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -441,7 +506,7 @@ jobs:
         with:
           path: build/vcpkg_installed
           # Keyed separately from build-linux: its cache is built on
-          # ubuntu-latest and restoring it here would raise the glibc floor.
+          # ubuntu-24.04 and restoring it here would raise the glibc floor.
           key: vcpkg-x64-linux-jammy-${{ hashFiles('vcpkg.json') }}
 
       - name: Install curl-impersonate
@@ -465,11 +530,20 @@ jobs:
           mkdir -p ffmpeg
           tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
 
+      # libpipewire has to be the one of the machine the AppImage runs on, which is why
+      # linuxdeploy leaves it out. linked in the ordinary way, Acheron would then not start
+      # where there is none, so it is loaded when it is first called (linuxcapture.cmake)
+      - name: Get Implib.so
+        run: |
+          git clone https://github.com/yugr/Implib.so implib
+          git -C implib checkout ${{ env.IMPLIB_COMMIT }}
+
       - name: Configure
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_INSTALL_PREFIX=/usr
+          -DIMPLIB_GEN=${{ github.workspace }}/implib/implib-gen.py
           -DVCPKG_TARGET_TRIPLET=x64-linux
           -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;${{ github.workspace }}/ffmpeg"
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
@@ -482,7 +556,7 @@ jobs:
       - name: Test
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/ffmpeg/lib
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --timeout 600
 
       - name: Build AppDir
         run: |
@@ -551,6 +625,12 @@ jobs:
               || { echo "$lib was not bundled into AppDir/usr/lib"; exit 1; }
           done
 
+      - name: Check Acheron starts without libpipewire
+        run: |
+          if readelf -d AppDir/usr/bin/acheron | grep NEEDED | grep -q pipewire; then
+            echo "acheron cannot start without libpipewire"; exit 1
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
@@ -605,10 +685,12 @@ jobs:
           -DBUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu)
+        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu) -- --keep-going
 
+      # no camera can be opened on macOS yet, and the stand-in the camera tests use cant
+      # keep thirty pictures a second on the hosted runners, whose timers wake it late
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --output-on-failure --timeout 600 -E CameraCaptureTests
 
       - name: Prepare artifact
         run: |

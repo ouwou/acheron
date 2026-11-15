@@ -234,6 +234,16 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return QVariant::fromValue(instance->presences()->badge(node->dmRecipientId));
     }
 
+    if (role == IsConnectedVoiceChannelRole) {
+        if (!node->listsVoiceParticipants())
+            return false;
+        ChannelNode *accNode = getAccountNodeFor(node);
+        if (!accNode)
+            return false;
+        auto it = accountVoiceChannels.constFind(accNode->id);
+        return it != accountVoiceChannels.constEnd() && it.value() == node->id;
+    }
+
     if (role == ThreadJoinedRole) {
         if (node->type != ChannelNode::Type::Thread ||
             !node->parent ||
@@ -246,7 +256,7 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return instance && instance->isThreadJoined(node->id);
     }
 
-    if (role == IsVoiceMutedRole || role == IsVoiceDeafenedRole) {
+    if (role == IsVoiceMutedRole || role == IsVoiceDeafenedRole || role == IsVoiceVideoRole || role == IsVoiceLiveRole) {
         if (node->type != ChannelNode::Type::VoiceParticipant)
             return false;
 #ifndef ACHERON_NO_VOICE
@@ -261,6 +271,10 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             return false;
         if (role == IsVoiceMutedRole)
             return state->selfMute.get() || state->mute.get();
+        if (role == IsVoiceVideoRole)
+            return state->selfVideo.get();
+        if (role == IsVoiceLiveRole)
+            return state->selfStream.valueOr(false);
         return state->selfDeaf.get() || state->deaf.get();
 #else
         return false;
@@ -1221,6 +1235,7 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         }
 
         insertChildAt(dmHeader, 0, std::move(dmNode));
+        addKnownVoiceParticipants(channel.id, accountId);
 
         return;
     }
@@ -1772,7 +1787,7 @@ void ChannelTreeModel::updateVoiceCount(Snowflake channelId, int count, Snowflak
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     if (channelNode->voiceParticipantCount == count)
@@ -1793,7 +1808,7 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     int existingRow = -1;
@@ -1861,6 +1876,22 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
     }
 }
 
+void ChannelTreeModel::addKnownVoiceParticipants(Snowflake channelId, Snowflake accountId)
+{
+#ifndef ACHERON_NO_VOICE
+    auto *instance = session->client(accountId);
+    if (!instance)
+        return;
+
+    const QList<Snowflake> userIds = instance->voice()->channelVoiceUsers(channelId);
+    for (Snowflake userId : userIds)
+        updateVoiceParticipant(channelId, userId, true, accountId);
+#else
+    Q_UNUSED(channelId);
+    Q_UNUSED(accountId);
+#endif
+}
+
 void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflake userId,
                                                    Snowflake accountId)
 {
@@ -1869,14 +1900,14 @@ void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflak
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     for (auto &child : channelNode->children) {
         if (child->type == ChannelNode::Type::VoiceParticipant && child->id == userId) {
             QModelIndex idx = indexForNode(child.get());
             if (idx.isValid())
-                emit dataChanged(idx, idx, { IsVoiceMutedRole, IsVoiceDeafenedRole });
+                emit dataChanged(idx, idx, { IsVoiceMutedRole, IsVoiceDeafenedRole, IsVoiceVideoRole, IsVoiceLiveRole });
             return;
         }
     }

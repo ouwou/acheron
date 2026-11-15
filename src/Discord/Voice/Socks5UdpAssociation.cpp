@@ -1,10 +1,13 @@
 #include "Socks5UdpAssociation.hpp"
 
+#include "PacketBuffer.hpp"
+
 #include "Core/Logging.hpp"
 
 #include <QtEndian>
 
 #include <algorithm>
+#include <cstring>
 
 namespace Acheron {
 namespace Discord {
@@ -23,37 +26,48 @@ constexpr char ATYP_DOMAIN = 0x03;
 constexpr char ATYP_IPV6 = 0x04;
 constexpr char REPLY_SUCCEEDED = 0x00;
 
-void appendAddress(QByteArray &out, const QHostAddress &address, quint16 port)
+int addressFieldSize(const QHostAddress &address)
+{
+    return address.protocol() == QAbstractSocket::IPv6Protocol ? Socks5UdpAssociation::IPV6_ADDRESS_FIELD_SIZE : Socks5UdpAssociation::IPV4_ADDRESS_FIELD_SIZE;
+}
+
+void writeAddressField(uint8_t *out, const QHostAddress &address, quint16 port)
 {
     if (address.protocol() == QAbstractSocket::IPv6Protocol) {
-        out.append(ATYP_IPV6);
-        Q_IPV6ADDR raw = address.toIPv6Address();
-        out.append(reinterpret_cast<const char *>(raw.c), 16);
+        *out++ = ATYP_IPV6;
+        const Q_IPV6ADDR raw = address.toIPv6Address();
+        std::memcpy(out, raw.c, 16);
+        out += 16;
     } else {
-        out.append(ATYP_IPV4);
-        quint32 raw = qToBigEndian(address.toIPv4Address());
-        out.append(reinterpret_cast<const char *>(&raw), 4);
+        *out++ = ATYP_IPV4;
+        qToBigEndian(address.toIPv4Address(), out);
+        out += 4;
     }
+    qToBigEndian(port, out);
+}
 
-    quint16 portBE = qToBigEndian(port);
-    out.append(reinterpret_cast<const char *>(&portBE), 2);
+void appendAddress(QByteArray &out, const QHostAddress &address, quint16 port)
+{
+    const auto at = out.size();
+    out.resize(at + addressFieldSize(address));
+    writeAddressField(reinterpret_cast<uint8_t *>(out.data()) + at, address, port);
 }
 
 // Length of the ATYP+ADDR+PORT tail starting at `offset`, or -1 if incomplete or unknown.
-int addressFieldLength(const QByteArray &data, int offset)
+int addressFieldLength(const char *data, int size, int offset)
 {
-    if (data.size() <= offset)
+    if (size <= offset)
         return -1;
 
-    switch (data.at(offset)) {
+    switch (data[offset]) {
     case ATYP_IPV4:
-        return 1 + 4 + 2;
+        return Socks5UdpAssociation::IPV4_ADDRESS_FIELD_SIZE;
     case ATYP_IPV6:
-        return 1 + 16 + 2;
+        return Socks5UdpAssociation::IPV6_ADDRESS_FIELD_SIZE;
     case ATYP_DOMAIN:
-        if (data.size() <= offset + 1)
+        if (size <= offset + 1)
             return -1;
-        return 1 + 1 + static_cast<quint8>(data.at(offset + 1)) + 2;
+        return 1 + 1 + static_cast<quint8>(data[offset + 1]) + 2;
     default:
         return -1;
     }
@@ -320,27 +334,38 @@ void Socks5UdpAssociation::fail(const QString &error)
     QMetaObject::invokeMethod(this, [this, error] { emit failed(error); }, Qt::QueuedConnection);
 }
 
-QByteArray Socks5UdpAssociation::encapsulate(const QByteArray &payload, const QHostAddress &destination,
-                                             quint16 destinationPort)
+int Socks5UdpAssociation::writeRelayHeader(std::span<uint8_t> out, const QHostAddress &destination, quint16 destinationPort)
 {
-    QByteArray datagram(3, '\0');
-    appendAddress(datagram, destination, destinationPort);
-    datagram.append(payload);
+    const int size = DATAGRAM_PREFIX_SIZE + addressFieldSize(destination);
+    if (static_cast<int>(out.size()) < size)
+        return -1;
 
-    return datagram;
+    std::memset(out.data(), 0, DATAGRAM_PREFIX_SIZE);
+    writeAddressField(out.data() + DATAGRAM_PREFIX_SIZE, destination, destinationPort);
+    return size;
 }
 
-QByteArray Socks5UdpAssociation::decapsulate(const QByteArray &datagram)
+bool Socks5UdpAssociation::wrap(PacketBuffer &packet, std::span<const uint8_t> relayHeader)
 {
+    if (!packet.growFront(static_cast<int>(relayHeader.size())))
+        return false;
+    std::memcpy(packet.data(), relayHeader.data(), relayHeader.size());
+    return true;
+}
+
+bool Socks5UdpAssociation::unwrap(PacketBuffer &packet)
+{
+    const char *datagram = reinterpret_cast<const char *>(packet.data());
+
     // fragmented relays (FRAG != 0) are not supported; Discord never fragments
-    if (datagram.size() < 4 || datagram.at(2) != 0)
-        return QByteArray();
+    if (packet.size() < DATAGRAM_PREFIX_SIZE + 1 || datagram[2] != 0)
+        return false;
 
-    const int tail = addressFieldLength(datagram, 3);
-    if (tail < 0 || datagram.size() < 3 + tail)
-        return QByteArray();
+    const int tail = addressFieldLength(datagram, packet.size(), DATAGRAM_PREFIX_SIZE);
+    if (tail < 0)
+        return false;
 
-    return datagram.mid(3 + tail);
+    return packet.dropFront(DATAGRAM_PREFIX_SIZE + tail);
 }
 
 } // namespace Voice
