@@ -286,16 +286,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
     connect(channelTreeModel, &ChannelTreeModel::totalMentionCountChanged, this,
             &MainWindow::onTotalMentionCountChanged);
 
-    connect(session, &Session::ready, this, [this](const Discord::Ready &ready) {
-        channelTreeModel->populateFromReady(ready);
-        if (channelListMode == ChannelListMode::Tree)
-            channelTree->performDefaultExpansion();
-        applyTreeState();
-        maybeActivatePendingChannel(ready.user->id);
-        refreshTabReadStates();
-        if (channelListMode == ChannelListMode::Classic)
-            applyPendingRailSelection(ready.user->id);
-    });
+    connect(session, &Session::ready, this, &MainWindow::onSessionReady);
 
     connect(accountsModel, &AccountsModel::dataChanged, this,
             [this, session](const QModelIndex &topLeft, const QModelIndex &bottomRight,
@@ -2667,6 +2658,76 @@ void MainWindow::applyTreeState()
     });
 }
 
+void MainWindow::keepLiveTreeState()
+{
+    QStringList expanded, collapsed, collapsedCategories;
+    QSet<QString> presentAccounts;
+    captureTreeState(expanded, collapsed, collapsedCategories, presentAccounts);
+
+    const auto merged = [&presentAccounts](const QSet<QString> &previous, const QStringList &captured) {
+        const QStringList keys = mergeTreeKeys(previous.values(), captured, presentAccounts);
+        return QSet<QString>(keys.begin(), keys.end());
+    };
+
+    if (channelListMode == ChannelListMode::Tree) {
+        savedExpandedNodes = merged(savedExpandedNodes, expanded);
+        savedCollapsedNodes = merged(savedCollapsedNodes, collapsed);
+    }
+    savedCollapsedCategories = merged(savedCollapsedCategories, collapsedCategories);
+    hasSavedTreeState = true;
+}
+
+void MainWindow::onSessionReady(const Discord::Ready &ready)
+{
+    const Snowflake accountId = ready.user->id;
+    const bool repopulating = channelTreeModel->listsGuildsOrPrivateChannels(accountId);
+    if (repopulating) {
+        keepLiveTreeState();
+        // otherwise qt makes a neighbor of the removed row current and that channel opens
+        QSignalBlocker blocker(channelTree->selectionModel());
+        channelTree->selectionModel()->clearSelection();
+        channelTree->selectionModel()->clearCurrentIndex();
+    }
+
+    channelTreeModel->populateFromReady(ready);
+    if (channelListMode == ChannelListMode::Tree)
+        channelTree->performDefaultExpansion();
+    applyTreeState();
+    maybeActivatePendingChannel(accountId);
+    refreshTabReadStates();
+    if (channelListMode == ChannelListMode::Classic)
+        applyPendingRailSelection(accountId);
+
+    if (repopulating)
+        reselectAfterRepopulation(accountId);
+}
+
+void MainWindow::reselectAfterRepopulation(Snowflake accountId)
+{
+    if (channelListMode == ChannelListMode::Classic && railHasSelection && railSelectedAccountId == accountId) {
+        railHasSelection = false;
+        if (railSelectedIsHome)
+            onRailAccountHomeSelected(accountId);
+        else
+            onRailGuildSelected(accountId, railSelectedGuildId);
+        if (!railHasSelection)
+            selectInitialRailItem();
+    }
+
+    if (!currentInstance || currentInstance->accountId() != accountId)
+        return;
+
+    const Snowflake channelId = chatModel->getActiveChannelId();
+    if (!channelId.isValid())
+        return;
+
+    if (channelTreeModel->findChannelTreeNode(channelId, accountId))
+        return;
+    const auto channel = currentInstance->getChannel(channelId);
+    if (channel && channel->isThread())
+        channelTreeModel->showTemporaryThread(*channel, accountId);
+}
+
 void MainWindow::maybeActivatePendingChannel(Core::Snowflake accountId)
 {
     if (!pendingActiveEntry.has_value() || pendingActiveEntry->accountId != accountId)
@@ -2882,6 +2943,15 @@ void MainWindow::setupMenu()
     connect(debugReconnect, &QAction::triggered, this, [this]() {
         if (currentInstance)
             currentInstance->discord()->debugForceReconnect();
+    });
+
+    // DEBUG: Ctrl+Shift+Alt+R to drop the session so the next connect gets a fresh READY
+    auto *debugReidentify = new QAction(this);
+    debugReidentify->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::ALT | Qt::Key_R));
+    addAction(debugReidentify);
+    connect(debugReidentify, &QAction::triggered, this, [this]() {
+        if (currentInstance)
+            currentInstance->discord()->debugForceReidentify();
     });
 }
 

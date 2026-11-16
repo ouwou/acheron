@@ -197,6 +197,7 @@ public:
     void leaveGuild(Snowflake guildId);
 
     void debugForceReconnect();
+    void debugForceReidentify();
 
     void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
                                  const QList<QPair<int, int>> &ranges);

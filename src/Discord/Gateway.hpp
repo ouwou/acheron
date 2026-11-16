@@ -62,6 +62,7 @@ public:
 
     // Debug: simulate a server RECONNECT opcode
     void debugForceReconnect();
+    void debugForceReidentify();
 
 signals:
     void connected();

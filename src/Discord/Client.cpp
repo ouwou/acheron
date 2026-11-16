@@ -1307,6 +1307,11 @@ void Client::debugForceReconnect()
     gateway->debugForceReconnect();
 }
 
+void Client::debugForceReidentify()
+{
+    gateway->debugForceReidentify();
+}
+
 void Client::setVoiceConnected(bool connected)
 {
     if (voiceConnected == connected)

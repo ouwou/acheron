@@ -64,6 +64,7 @@ public:
     void removeAccount(Snowflake accountId);
 
     void populateFromReady(const Discord::Ready &ready);
+    [[nodiscard]] bool listsGuildsOrPrivateChannels(Snowflake accountId) const;
 
     static ChannelNode *getAccountNodeFor(ChannelNode *node);
     static ChannelNode *findGuildNode(ChannelNode *node);
@@ -131,6 +132,8 @@ private:
     ChannelNode *findFolderNodeById(ChannelNode *accountNode, Snowflake folderId);
     ChannelNode *findCategoryNode(Snowflake categoryId, ChannelNode *guildNode);
     void insertChildAt(ChannelNode *parent, int row, std::unique_ptr<ChannelNode> node);
+    void removeGuildsAndPrivateChannels(ChannelNode *accNode);
+    void showKnownVoiceParticipants(ChannelNode *accNode);
     void emitDataChangedRecursive(const QModelIndex &index);
 
 private:

@@ -82,6 +82,7 @@ private slots:
     void onChannelPermissionsChanged(Core::Snowflake channelId);
     void onSplitterMoved();
     void onTotalMentionCountChanged(int count, int previousCount);
+    void onSessionReady(const Discord::Ready &ready);
 
 private:
     void switchActiveInstance(Core::ClientInstance *instance);
@@ -100,6 +101,8 @@ private:
                           QSet<QString> &presentAccounts) const;
     void forEachSourceNode(const std::function<void(const QModelIndex &, ChannelNode *)> &fn) const;
     QString treeNodeKey(const ChannelNode *node) const;
+    void keepLiveTreeState();
+    void reselectAfterRepopulation(Core::Snowflake accountId);
     void maybeActivatePendingChannel(Core::Snowflake accountId);
     QColor resolveRoleColor(Core::Snowflake userId, Core::Snowflake guildId);
     void refreshGuildRoleData(Core::Snowflake guildId);

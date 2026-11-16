@@ -1256,6 +1256,13 @@ void Gateway::debugForceReconnect()
     shouldReconnect = true;
 }
 
+void Gateway::debugForceReidentify()
+{
+    qCInfo(LogDiscord) << "DEBUG: Forcing a new session (simulating op 9 INVALID_SESSION, not resumable)";
+    canResume = false;
+    shouldReconnect = true;
+}
+
 void Gateway::resume()
 {
     qCInfo(LogDiscord) << "Sending RESUME";
