@@ -15,6 +15,7 @@
 #include "PacketBytes.hpp"
 
 #include <QCryptographicHash>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -1100,19 +1101,24 @@ void TestVoiceClient::aFrameLeavesAtThePaceOfTheBitrateItWasEncodedAt()
     QTRY_VERIFY(call.isUp());
     call.startVideo();
 
-    // after the pacer's 40 ms burst, the rest of 12 KB at 500 kbps takes over 100 ms by the packets' own send times
     constexpr int PACKETS = 11;
-    const auto timeToLeave = [&](quint32 timestamp) {
+    const auto allLeave = [&](quint32 timestamp) {
         call.server.rtp.clear();
         call.client->sendVideoFrame(videoFrame(12000, true, timestamp));
         [&] { QTRY_COMPARE(call.server.rtp.size(), PACKETS); }();
-        if (call.server.rtp.size() != PACKETS)
-            return -1.0;
-        return (sendTimeOf(call.server.rtp.last()) - sendTimeOf(call.server.rtp.first())) * 1000.0;
+        return call.server.rtp.size() == PACKETS;
+    };
+    const auto timeToLeave = [&](quint32 timestamp) {
+        return allLeave(timestamp) ? (sendTimeOf(call.server.rtp.last()) - sendTimeOf(call.server.rtp.first())) * 1000.0 : -1.0;
     };
 
+    // after the pacer's 40 ms burst, the rest of 12 KB at 500 kbps takes over 100 ms.
+    // timed from the handover: a late first tick squeezes the packets' own send times against the queue limit
     call.client->setVideoBitrate(500000);
-    const double slow = timeToLeave(1000);
+    QElapsedTimer sinceHandover;
+    sinceHandover.start();
+    QVERIFY(allLeave(1000));
+    const qint64 slow = sinceHandover.elapsed();
     QVERIFY2(slow >= 90 && slow < 1000, qPrintable(QString::number(slow)));
 
     call.client->stopVideo();
