@@ -188,6 +188,9 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::MESSAGE_DELETE:
         handleMessageDelete(data);
         break;
+    case GatewayEvent::MESSAGE_DELETE_BULK:
+        handleMessageDeleteBulk(data);
+        break;
     case GatewayEvent::TYPING_START:
         handleTypingStart(data);
         break;
@@ -199,6 +202,12 @@ void Gateway::handleDispatch(const Inbound &data)
         break;
     case GatewayEvent::CHANNEL_DELETE:
         handleChannelDelete(data);
+        break;
+    case GatewayEvent::CHANNEL_PINS_UPDATE:
+        emit gatewayChannelPinsUpdate(data.getData<ChannelPinsUpdate>());
+        break;
+    case GatewayEvent::CHANNEL_PINS_ACK:
+        emit gatewayChannelPinsAck(data.getData<ChannelPinsAck>());
         break;
     case GatewayEvent::THREAD_CREATE:
         handleThreadCreate(data);
@@ -402,6 +411,16 @@ void Gateway::handleMessageDelete(const Inbound &data)
     MessageDelete event = data.getData<MessageDelete>();
 
     emit gatewayMessageDelete(event);
+}
+
+void Gateway::handleMessageDeleteBulk(const Inbound &data)
+{
+    const QJsonObject obj = data.data.toObject();
+    MessageDelete event = MessageDelete::fromJson(obj);
+    for (const QJsonValue &id : obj.value("ids").toArray()) {
+        event.id = Core::Snowflake(id.toString().toULongLong());
+        emit gatewayMessageDelete(event);
+    }
 }
 
 void Gateway::handleTypingStart(const Inbound &data)

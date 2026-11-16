@@ -34,6 +34,7 @@ public:
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
     void registerChannel(const Discord::Channel &channel, Snowflake guildId);
     void registerPrivateChannel(const Discord::Channel &channel);
+    void registerThreadParent(Snowflake threadId, Snowflake parentId);
     void removeGuild(Snowflake guildId);
 
     [[nodiscard]] ChannelReadState computeChannelReadState(Snowflake channelId, Snowflake guildId, Snowflake parentId) const;
@@ -73,6 +74,12 @@ public:
     void updateChannelLastMessageId(Snowflake channelId, Snowflake messageId);
     [[nodiscard]] Snowflake getChannelLastMessageId(Snowflake channelId) const;
 
+    void registerChannelLastPin(const Discord::Channel &channel);
+    [[nodiscard]] bool hasUnreadPins(Snowflake channelId, Snowflake guildId, Snowflake parentId, bool isThread, bool joinedThread) const;
+    void ackPins(Snowflake channelId);
+    void onChannelPinsUpdate(const Discord::ChannelPinsUpdate &event);
+    void onChannelPinsAck(const Discord::ChannelPinsAck &event);
+
     static bool isMuteActive(bool muted, const Discord::MuteConfig *muteConfig);
     static int daysSinceDiscordEpoch();
 
@@ -81,6 +88,8 @@ signals:
     void guildSettingsUpdated(Snowflake guildId);
     void ackRequested(Snowflake channelId, Snowflake messageId);
     void bulkAckRequested(const QList<QPair<Snowflake, Snowflake>> &channelMessagePairs);
+    void pinsReadStateChanged(Snowflake channelId);
+    void pinsAckRequested(Snowflake channelId);
 
 private:
     Discord::ReadStateEntry &entryFor(Snowflake channelId);
@@ -102,6 +111,7 @@ private:
     [[nodiscard]] bool isOptInGuild(Snowflake guildId) const;
     [[nodiscard]] bool isChannelOptedIn(Snowflake channelId) const;
     [[nodiscard]] bool hasRecentlyVisitedAndRead(Snowflake channelId, Snowflake lastMessageId) const;
+    [[nodiscard]] bool optInHidesUnread(Snowflake channelId, Snowflake parentId, Snowflake lastMessageId, int mentionCount) const;
     Snowflake guildForChannel(Snowflake channelId) const;
 
     struct GuildReadInfo
@@ -116,6 +126,8 @@ private:
 
     QHash<Snowflake, Discord::ReadStateEntry> channelReadStates;
     QHash<Snowflake, Snowflake> channelLastMessageIds;
+    QHash<Snowflake, qint64> channelLastPinMs;
+    QHash<Snowflake, qint64> channelAckPinMs;
     QHash<Snowflake, Snowflake> ackIdAtSelect;
     QHash<Snowflake, Discord::UserGuildSettings> guildSettingsMap; // Snowflake(0) for DMs
 
@@ -124,6 +136,7 @@ private:
 
     QHash<Snowflake, GuildReadInfo> guildInfo;
     QHash<Snowflake, Snowflake> channelGuildMap;
+    QHash<Snowflake, Snowflake> threadParents;
     QSet<Snowflake> resourceChannels;
     QSet<Snowflake> voiceChannels;
     QSet<Snowflake> forumChannels;

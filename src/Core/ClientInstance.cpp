@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include <QPointer>
 #include <QSet>
 #include <QTimer>
 
@@ -82,6 +83,14 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     });
 
     permissionManager = new PermissionManager(info.id, this);
+    messageManager->pins()->setThreadReopenRule([this](Snowflake channelId) {
+        const std::optional<Discord::Channel> thread = getChannel(channelId);
+        if (!thread || !thread->isThread() || !thread->isArchived())
+            return false;
+        const bool locked = thread->threadMetadata->locked.valueOr(false);
+        const Snowflake permissionChannel = thread->parentId.hasValue() ? thread->parentId.get() : channelId;
+        return !locked || permissionManager->hasChannelPermission(accountId(), permissionChannel, Discord::Permission::MANAGE_THREADS);
+    });
     readStateManager = new ReadStateManager(info.id, permissionManager, this);
     forumManager = new ForumManager(client, channelRepo, readStateManager, this);
     memberListManager = new MemberListManager(channelRepo, roleRepo, this);
@@ -315,6 +324,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(messageManager, &MessageManager::membersLearnedFromMessage, this, &ClientInstance::membersUpdated);
 
     connect(client, &Discord::Client::messageAcked, readStateManager, &ReadStateManager::onMessageAck);
+    connect(client, &Discord::Client::channelPinsUpdated, readStateManager, &ReadStateManager::onChannelPinsUpdate);
+    connect(client, &Discord::Client::channelPinsAcked, readStateManager, &ReadStateManager::onChannelPinsAck);
     connect(client, &Discord::Client::userGuildSettingsUpdated, readStateManager, &ReadStateManager::onUserGuildSettingsUpdate);
     connect(client, &Discord::Client::notificationSettingsUpdated, readStateManager, &ReadStateManager::onNotificationSettingsUpdate);
 
@@ -343,6 +354,8 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 
     connect(readStateManager, &ReadStateManager::ackRequested, this, &ClientInstance::handleAckRequest);
     connect(readStateManager, &ReadStateManager::bulkAckRequested, this, &ClientInstance::handleBulkAckRequest);
+    connect(readStateManager, &ReadStateManager::pinsAckRequested, this, &ClientInstance::handlePinsAckRequest);
+    connect(readStateManager, &ReadStateManager::pinsReadStateChanged, this, &ClientInstance::pinsReadStateChanged);
 
     connect(client, &Discord::Client::voiceStateUpdated, this, &ClientInstance::onVoiceStateUpdated);
 
@@ -742,8 +755,11 @@ void ClientInstance::registerThreadReadState(const Discord::Channel &thread, Sno
 {
     if (guildId.isValid())
         readStateManager->registerChannelGuild(thread.id.get(), guildId);
+    if (thread.parentId.hasValue())
+        readStateManager->registerThreadParent(thread.id.get(), thread.parentId.get());
     if (thread.lastMessageId.hasValue())
         readStateManager->updateChannelLastMessageId(thread.id.get(), thread.lastMessageId.get());
+    readStateManager->registerChannelLastPin(thread);
 }
 
 void ClientInstance::cacheThread(const Discord::Channel &thread, Snowflake guildId)
@@ -1412,6 +1428,38 @@ void ClientInstance::handleAckRequest(Snowflake channelId, Snowflake messageId)
         ackFlags = static_cast<int>(Discord::ReadStateFlag::IS_GUILD_CHANNEL);
     int lastViewed = ReadStateManager::daysSinceDiscordEpoch();
     client->ackMessage(channelId, messageId, ackFlags, lastViewed);
+}
+
+void ClientInstance::handlePinsAckRequest(Snowflake channelId)
+{
+    sendPinsAck(channelId, 1);
+}
+
+// same retry schedule as the official client
+void ClientInstance::sendPinsAck(Snowflake channelId, int attempt)
+{
+    constexpr int MaxAttempts = 3;
+    constexpr int RetryDelayStepMs = 2000;
+    const QPointer<ClientInstance> self(this);
+    client->ackPins(channelId, [self, channelId, attempt](const Result<void> &result) {
+        if (!self || result.success() || attempt >= MaxAttempts)
+            return;
+        QTimer::singleShot(attempt * RetryDelayStepMs, self, [self, channelId, attempt]() {
+            if (self)
+                self->sendPinsAck(channelId, attempt + 1);
+        });
+    });
+}
+
+bool ClientInstance::hasUnreadPins(Snowflake channelId)
+{
+    const std::optional<Discord::Channel> channel = getChannel(channelId);
+    if (!channel)
+        return false;
+    const Snowflake guildId = client->getGuildIdForChannel(channelId);
+    const Snowflake parentId = channel->parentId.hasValue() ? channel->parentId.get() : Snowflake::Invalid;
+    const bool isThread = channel->isThread();
+    return readStateManager->hasUnreadPins(channelId, guildId, parentId, isThread, isThread && isThreadJoined(channelId));
 }
 
 void ClientInstance::handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs)

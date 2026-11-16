@@ -11,6 +11,7 @@
 #include "Core/Theme/Manager.hpp"
 #include "Core/Media/Player.hpp"
 #include "Discord/CdnUrls.hpp"
+#include "Discord/ChannelLink.hpp"
 #include "Discord/Enums.hpp"
 
 namespace Acheron {
@@ -291,6 +292,15 @@ QColor ChatModel::resolveAuthorColor(const Discord::User &author) const
     return roleColorResolver(author.id.get(), currentGuildId);
 }
 
+QString ChatModel::authorHtml(const Discord::User &author) const
+{
+    const QString name = resolveAuthorName(author).toHtmlEscaped();
+    const QColor color = resolveAuthorColor(author);
+    if (!color.isValid())
+        return QStringLiteral("<b>%1</b>").arg(name);
+    return QStringLiteral("<span style=\"color:%1;font-weight:600\">%2</span>").arg(color.name(), name);
+}
+
 ForwardOriginData ChatModel::forwardOrigin(const Discord::Message &msg) const
 {
     const Discord::MessageReference &ref = *msg.messageReference;
@@ -406,20 +416,35 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
             else if (msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::HAS_THREAD))
                 threadId = msg.id.get();
 
-            QString authorName = resolveAuthorName(msg.author.get()).toHtmlEscaped();
-            QColor authorColor = resolveAuthorColor(msg.author.get());
-            QString authorHtml = authorColor.isValid()
-                                         ? QStringLiteral("<span style=\"color:%1;font-weight:600\">%2</span>")
-                                                   .arg(authorColor.name(), authorName)
-                                         : QStringLiteral("<b>%1</b>").arg(authorName);
-
             QString label = threadName.isEmpty() ? tr("a thread") : threadName;
             QString threadHtml = threadId.isValid()
                                          ? QStringLiteral("<a href=\"acheron://channel/%1\">%2</a>")
                                                    .arg(QString::number(static_cast<quint64>(threadId)), label)
                                          : QStringLiteral("<b>%1</b>").arg(label);
 
-            return authorHtml + tr(" started a thread: ") + threadHtml;
+            return authorHtml(msg.author.get()) + tr(" started a thread: ") + threadHtml;
+        }
+
+        // the content of a pin notice is not meant to be shown, the pinned message is in message_reference
+        if (msg.type.get() == Discord::MessageType::CHANNEL_PINNED_MESSAGE) {
+            Discord::ChannelLink link;
+            link.guildId = currentGuildId;
+            link.channelId = msg.channelId.get();
+            if (msg.messageReference.hasValue()) {
+                if (msg.messageReference->channelId.hasValue())
+                    link.channelId = msg.messageReference->channelId.get();
+                if (msg.messageReference->messageId.hasValue())
+                    link.messageId = msg.messageReference->messageId.get();
+            }
+
+            QString label = tr("a message");
+            QString messageHtml = link.messageId.isValid()
+                                          ? QStringLiteral("<a href=\"%1\">%2</a>").arg(link.toUrl(), label)
+                                          : label;
+            QString pinsHtml = QStringLiteral("<a href=\"acheron://pins/%1\">%2</a>")
+                                       .arg(QString::number(static_cast<quint64>(msg.channelId.get())), tr("pinned messages"));
+
+            return authorHtml(msg.author.get()) + tr(" pinned ") + messageHtml + tr(" to this channel. See all ") + pinsHtml + tr(".");
         }
 
         if (msg.type.get() == Discord::MessageType::THREAD_STARTER_MESSAGE) {
@@ -874,6 +899,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
     }
     case IsSystemMessageRole:
         return isSystemMessageType(msg.type);
+    case IsPinnedRole:
+        return msg.isPinned();
     case MessageTypeRole:
         return static_cast<int>(msg.type.get());
     case IsForwardedRole:

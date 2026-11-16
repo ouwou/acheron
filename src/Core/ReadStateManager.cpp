@@ -17,6 +17,7 @@ namespace {
 
 constexpr int kDeferredAckDelayMs = 3000;
 constexpr qint64 kMsPerDay = 24 * 60 * 60 * 1000;
+constexpr int OptInStaleDays = 7;
 
 bool isOlderThanDays(Snowflake id, int days)
 {
@@ -34,6 +35,11 @@ bool hasFlag(const Settings &settings, Flag flag)
 bool usesNewNotifications(int notificationSettingsFlags)
 {
     return (notificationSettingsFlags & static_cast<int>(Discord::NotificationSettingsFlag::USE_NEW_NOTIFICATIONS)) != 0;
+}
+
+qint64 pinTimestampMs(const QDateTime &timestamp)
+{
+    return timestamp.isValid() ? timestamp.toMSecsSinceEpoch() : 0;
 }
 
 template <typename Settings>
@@ -71,6 +77,7 @@ void ReadStateManager::loadFromReady(const QList<Discord::ReadStateEntry> &readS
     messageRequestChannels.clear();
     ackIdAtSelect.clear();
     outgoingAcks.clear();
+    channelAckPinMs.clear();
 
     for (const auto &entry : readStates) {
         int rsType = entry.readStateType.hasValue() ? entry.readStateType.get() : 0;
@@ -78,6 +85,8 @@ void ReadStateManager::loadFromReady(const QList<Discord::ReadStateEntry> &readS
             continue;
 
         channelReadStates.insert(entry.id.get(), entry);
+        if (entry.lastPinTimestamp.hasValue())
+            channelAckPinMs.insert(entry.id.get(), pinTimestampMs(QDateTime::fromString(entry.lastPinTimestamp.get(), Qt::ISODateWithMs)));
     }
 
     channelOverrideCache.clear();
@@ -130,13 +139,10 @@ ChannelReadState ReadStateManager::computeChannelReadState(Snowflake channelId, 
         result.mentionCount = 0;
 
     if (isOptInGuild(guildId)) {
-        bool optedIn = isChannelOptedIn(channelId) || (parentId.isValid() && isChannelOptedIn(parentId));
-        if (isOlderThanDays(lastMessageId, 7)) {
+        if (isOlderThanDays(lastMessageId, OptInStaleDays))
             result.mentionCount = 0;
+        if (optInHidesUnread(channelId, parentId, lastMessageId, result.mentionCount))
             result.isUnread = false;
-        } else if (result.mentionCount == 0 && !optedIn && !hasRecentlyVisitedAndRead(channelId, lastMessageId)) {
-            result.isUnread = false;
-        }
     }
 
     const bool unreadSettingIsAllMessages = unreadCountsForGuild(guildId, channelId, parentId);
@@ -201,7 +207,15 @@ bool ReadStateManager::canTrackUnreads(Snowflake channelId) const
 {
     if (resourceChannels.contains(channelId))
         return false;
-    return permissionManager->hasChannelPermission(accountId, channelId, Discord::Permission::VIEW_CHANNEL);
+    // threads are not in the channel repository PermissionManager reads, and take their parent's permissions anyway
+    const auto parent = threadParents.constFind(channelId);
+    const Snowflake permissionChannel = parent != threadParents.constEnd() ? parent.value() : channelId;
+    return permissionManager->hasChannelPermission(accountId, permissionChannel, Discord::Permission::VIEW_CHANNEL);
+}
+
+void ReadStateManager::registerThreadParent(Snowflake threadId, Snowflake parentId)
+{
+    threadParents.insert(threadId, parentId);
 }
 
 bool ReadStateManager::isOptInGuild(Snowflake guildId) const
@@ -217,6 +231,14 @@ bool ReadStateManager::isChannelOptedIn(Snowflake channelId) const
 {
     auto it = channelOverrideCache.constFind(channelId);
     return it != channelOverrideCache.constEnd() && hasFlag(it.value(), Discord::ChannelOverrideFlag::OPT_IN_ENABLED);
+}
+
+bool ReadStateManager::optInHidesUnread(Snowflake channelId, Snowflake parentId, Snowflake lastMessageId, int mentionCount) const
+{
+    if (isOlderThanDays(lastMessageId, OptInStaleDays))
+        return true;
+    const bool optedIn = isChannelOptedIn(channelId) || (parentId.isValid() && isChannelOptedIn(parentId));
+    return mentionCount == 0 && !optedIn && !hasRecentlyVisitedAndRead(channelId, lastMessageId);
 }
 
 bool ReadStateManager::hasRecentlyVisitedAndRead(Snowflake channelId, Snowflake lastMessageId) const
@@ -461,6 +483,7 @@ void ReadStateManager::registerChannel(const Discord::Channel &channel, Snowflak
 {
     Snowflake channelId = channel.id.get();
     registerChannelGuild(channelId, guildId);
+    registerChannelLastPin(channel);
 
     if (channel.isVoice())
         voiceChannels.insert(channelId);
@@ -494,6 +517,60 @@ void ReadStateManager::registerPrivateChannel(const Discord::Channel &channel)
 
     if (channel.lastMessageId.hasValue())
         updateChannelLastMessageId(channelId, channel.lastMessageId.get());
+    registerChannelLastPin(channel);
+}
+
+void ReadStateManager::registerChannelLastPin(const Discord::Channel &channel)
+{
+    if (!channel.lastPinTimestamp.hasValue() && !channel.lastPinTimestamp.isNull())
+        return;
+    const qint64 lastPin = pinTimestampMs(channel.lastPinTimestamp.valueOr(QDateTime()));
+    if (channelLastPinMs.value(channel.id.get()) == lastPin)
+        return;
+    channelLastPinMs.insert(channel.id.get(), lastPin);
+    emit pinsReadStateChanged(channel.id.get());
+}
+
+// mirrors the official ReadState.canBeUnread, minus the blocked-user DM check
+bool ReadStateManager::hasUnreadPins(Snowflake channelId, Snowflake guildId, Snowflake parentId, bool isThread, bool joinedThread) const
+{
+    if (channelLastPinMs.value(channelId) <= channelAckPinMs.value(channelId))
+        return false;
+    if (isThread && !joinedThread)
+        return false;
+    if (!isThread && isOptInGuild(guildId) && optInHidesUnread(channelId, parentId, getChannelLastMessageId(channelId), getMentionCount(channelId)))
+        return false;
+    return canTrackUnreads(channelId);
+}
+
+void ReadStateManager::ackPins(Snowflake channelId)
+{
+    if (!canTrackUnreads(channelId))
+        return;
+    const qint64 lastPin = channelLastPinMs.value(channelId);
+    if (lastPin == channelAckPinMs.value(channelId))
+        return;
+    channelAckPinMs.insert(channelId, lastPin);
+    emit pinsAckRequested(channelId);
+    emit pinsReadStateChanged(channelId);
+}
+
+void ReadStateManager::onChannelPinsUpdate(const Discord::ChannelPinsUpdate &event)
+{
+    const Snowflake channelId = event.channelId.get();
+    const qint64 lastPin = pinTimestampMs(event.lastPinTimestamp.valueOr(QDateTime()));
+    if (channelLastPinMs.value(channelId) == lastPin)
+        return;
+    channelLastPinMs.insert(channelId, lastPin);
+    emit pinsReadStateChanged(channelId);
+}
+
+void ReadStateManager::onChannelPinsAck(const Discord::ChannelPinsAck &event)
+{
+    const Snowflake channelId = event.channelId.get();
+    const qint64 acked = pinTimestampMs(event.timestamp.valueOr(QDateTime()));
+    channelAckPinMs.insert(channelId, acked != 0 ? acked : channelLastPinMs.value(channelId));
+    emit pinsReadStateChanged(channelId);
 }
 
 void ReadStateManager::removeGuild(Snowflake guildId)

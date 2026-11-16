@@ -91,6 +91,8 @@ public:
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
+    [[nodiscard]] bool hasUnreadPins(Snowflake channelId);
+    [[nodiscard]] bool isForumParent(Snowflake parentId);
     [[nodiscard]] QList<Discord::Channel> joinedActiveThreads(Snowflake guildId) const;
     [[nodiscard]] bool chatHighlightsAsMention(const Discord::Message &msg, Snowflake guildId) const;
 
@@ -144,6 +146,7 @@ signals:
     void membersUpdated(Snowflake guildId, const QList<Snowflake> &userIds);
     void memberRemoved(Snowflake guildId, Snowflake userId);
     void readStateChanged(Snowflake channelId);
+    void pinsReadStateChanged(Snowflake channelId);
     void forumBadgeChanged(Snowflake forumId);
     void forumJoinedPostsChanged(Snowflake forumId);
     void guildSettingsChanged(Snowflake guildId);
@@ -180,6 +183,7 @@ private slots:
     void onMessageCreated(const Discord::Message &msg);
     void handleAckRequest(Snowflake channelId, Snowflake messageId);
     void handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs);
+    void handlePinsAckRequest(Snowflake channelId);
     void onVoiceConnected();
     void onVoiceDisconnected();
     void onSelfAudioToggled();
@@ -202,13 +206,13 @@ private:
     void saveGuild(const Discord::GatewayGuild &guild, const QList<Discord::Member> *members, Snowflake myId, QSqlDatabase &db);
     void initGuildReadState(const Discord::GatewayGuild &guild);
 
-    [[nodiscard]] bool isForumParent(Snowflake parentId);
     void registerThreadReadState(const Discord::Channel &thread, Snowflake guildId);
     void cacheThread(const Discord::Channel &thread, Snowflake guildId);
     void ingestThread(const Discord::Channel &thread, Snowflake guildId);
     void fetchThreadListAttempt(Snowflake channelId, bool archived, int offset, int attempt, const ThreadListPageCallback &callback);
     [[nodiscard]] QList<Snowflake> markableChannelIds(Snowflake guildId, Snowflake categoryId);
     void sendNextBulkAckBatch();
+    void sendPinsAck(Snowflake channelId, int attempt);
 
     AccountInfo account;
 

@@ -205,6 +205,7 @@ set(PROJECT_SOURCES
     src/Core/MessageManager.cpp
     src/Core/MentionSearch.cpp
     src/Core/MessageReactors.cpp
+    src/Core/ChannelPins.cpp
     src/Core/MessageSegments.cpp
     src/Core/ForumManager.cpp
     src/Core/Calls/CallStore.cpp
@@ -311,6 +312,7 @@ set(PROJECT_SOURCES
     src/UI/Forum/ForumBrowser.cpp
     src/UI/Forum/NewPostDialog.cpp
     src/UI/ThreadBrowser/ThreadBrowserPopup.cpp
+    src/UI/PinnedMessages/PinnedMessagesPopup.cpp
     src/UI/Dialogs/TokenInputDialog.cpp
     src/UI/Dialogs/ProxyInputDialog.cpp
     src/UI/Dialogs/QRLoginDialog.cpp

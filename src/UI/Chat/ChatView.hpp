@@ -136,6 +136,7 @@ signals:
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
+    void unpinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void replyToMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void reactionPickerRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void cancelUploadRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -145,6 +146,7 @@ signals:
     void channelMentionClicked(Core::Snowflake channelId);
     void userMentionClicked(Core::Snowflake userId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
+    void pinsLinkClicked(Core::Snowflake channelId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
     void inlineEditFinished();
 
@@ -192,6 +194,7 @@ private:
     QPoint actionBarPosition(const QModelIndex &index) const;
     void updateHoveredMessage();
     void addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId);
+    void addMessageMenuItems(QMenu &menu, const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region);
     void triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId);
     void execMessageMenu(QMenu &menu, const QPoint &globalPos);
     [[nodiscard]] bool canReactTo(const QModelIndex &index) const;

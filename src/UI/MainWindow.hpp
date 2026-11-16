@@ -15,6 +15,7 @@
 #include "MemberList/MemberListDelegate.hpp"
 #include "TabBar/TabBar.hpp"
 #include "GuildSettings/GuildSettingsSection.hpp"
+#include "Discord/Client.hpp"
 #include "Discord/Entities.hpp"
 
 namespace Acheron {
@@ -34,6 +35,7 @@ class MemberSearch;
 class ForumBrowser;
 class ForumPostModel;
 class ThreadBrowserPopup;
+class PinnedMessagesPopup;
 class ChannelTreeModel;
 class ChannelFilterProxyModel;
 class AccountsWindow;
@@ -175,7 +177,14 @@ private:
     void openThreadBrowser();
     void navigateToChannel(Core::Snowflake channelId);
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
-    void setThreadBrowserTarget(Core::Snowflake channelId);
+    void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
+    void openPinnedMessages();
+    void openPinnedMessagesOf(Core::Snowflake channelId);
+    void onPinsReadStateChanged(Core::Snowflake channelId);
+    void ackPinsIfUnread();
+    void showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage);
+    void showThreadReopenFailure(Core::Snowflake threadId, Discord::Client::ThreadReopenResult result);
+    void offerUnpinRetry(Core::Snowflake channelId, Core::Snowflake messageId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void openReactors(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Core::ReactionRef> &selected);
@@ -231,10 +240,14 @@ private:
     TabBar *tabBar;
     QWidget *channelToolbar = nullptr;
     QToolButton *threadBrowserButton = nullptr;
+    QToolButton *pinsButton = nullptr;
+    QWidget *pinsUnreadDot = nullptr;
     ChannelTopicLine *channelTopicLine = nullptr;
     Core::Snowflake channelTopicChannelId = Core::Snowflake::Invalid;
     ThreadBrowserPopup *threadBrowser = nullptr;
     Core::Snowflake threadBrowserChannelId = Core::Snowflake::Invalid;
+    PinnedMessagesPopup *pinnedMessages = nullptr;
+    Core::Snowflake pinsChannelId = Core::Snowflake::Invalid;
 
     struct PendingLinkJump
     {

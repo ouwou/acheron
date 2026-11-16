@@ -7,6 +7,7 @@
 #include <QPair>
 #include <QSet>
 
+#include "ChannelPins.hpp"
 #include "MessageReactors.hpp"
 #include "MessageSegments.hpp"
 #include "PendingAttachment.hpp"
@@ -65,6 +66,7 @@ public:
     void removeReactionOf(Snowflake reactorId, Snowflake channelId, const ReactionRef &reaction);
 
     [[nodiscard]] MessageReactors *reactors() const { return reactorStore; }
+    [[nodiscard]] ChannelPins *pins() const { return pinStore; }
     [[nodiscard]] QList<Discord::Reaction> reactionsOf(Snowflake messageId);
 
     enum class ReactionRejection {
@@ -137,6 +139,7 @@ private:
     Discord::Client *client;
     UserManager *userManager;
     MessageReactors *reactorStore;
+    ChannelPins *pinStore;
     EmojiManager *emojiManager = nullptr;
     std::unique_ptr<Markdown::Parser> parser;
 

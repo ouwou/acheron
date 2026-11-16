@@ -112,6 +112,14 @@ public:
     using ThreadListCallback = std::function<void(const Core::Result<ThreadListResult> &)>;
     void searchThreads(Snowflake channelId, bool archived, int offset, ThreadListCallback callback);
 
+    struct MessagePinsPage
+    {
+        QList<MessagePin> newestFirst;
+        bool hasMore = false;
+    };
+    using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsPage> &)>;
+    void fetchMessagePins(Snowflake channelId, int limit, std::optional<QDateTime> pinnedBefore, MessagePinsCallback callback);
+
     using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
@@ -121,8 +129,22 @@ public:
     bool cancelMessageSend(const QString &nonce);
     void editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged = false);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
-    void pinMessage(Snowflake channelId, Snowflake messageId);
-    void unpinMessage(Snowflake channelId, Snowflake messageId);
+    using PinCallback = std::function<void(const Core::Result<void> &)>;
+    void pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
+    void unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
+
+    enum class ThreadReopenResult {
+        Reopened,
+        TooManyThreads,
+        TooManyAnnouncementThreads,
+        RateLimited,
+        Forbidden,
+        Failed,
+    };
+    using ThreadReopenCallback = std::function<void(ThreadReopenResult)>;
+    void reopenThread(Snowflake threadId, ThreadReopenCallback callback);
+
+    void ackPins(Snowflake channelId, PinCallback callback);
 
     enum class ReactionLocation {
         HoverBar,
@@ -287,6 +309,8 @@ signals:
     void channelCreated(const ChannelCreate &event);
     void channelUpdated(const ChannelUpdate &event);
     void channelDeleted(const ChannelDelete &event);
+    void channelPinsUpdated(const ChannelPinsUpdate &event);
+    void channelPinsAcked(const ChannelPinsAck &event);
     void threadCreated(const ChannelCreate &event);
     void threadUpdated(const ChannelUpdate &event);
     void threadDeleted(const ThreadDelete &event);
@@ -363,6 +387,8 @@ private slots:
     void onGatewayChannelCreate(const ChannelCreate &event);
     void onGatewayChannelUpdate(const ChannelUpdate &event);
     void onGatewayChannelDelete(const ChannelDelete &event);
+    void onGatewayChannelPinsUpdate(const ChannelPinsUpdate &event);
+    void onGatewayChannelPinsAck(const ChannelPinsAck &event);
     void onGatewayThreadCreate(const ChannelCreate &event);
     void onGatewayThreadUpdate(const ChannelUpdate &event);
     void onGatewayThreadDelete(const ThreadDelete &event);

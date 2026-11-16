@@ -6,3 +6,4 @@ CMakeUserPresets.json
 *.aps
 .planning/
 /build
+/curl-impersonate
