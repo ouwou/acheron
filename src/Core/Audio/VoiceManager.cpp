@@ -31,6 +31,12 @@ void applySettings(AudioPipeline *pipeline, const VoiceSettings &chosen)
     pipeline->setOpusSignalType(chosen.opusSignalType);
     pipeline->setOpusFec(chosen.opusFec);
     pipeline->setOpusPacketLossPercent(chosen.opusPacketLossPercent);
+    pipeline->setOpusDtx(chosen.opusDtx);
+    pipeline->setOpusVbr(chosen.opusBitrateMode != VoiceSettings::BITRATE_MODE_CBR);
+    pipeline->setOpusVbrConstraint(chosen.opusBitrateMode == VoiceSettings::BITRATE_MODE_CONSTRAINED_VBR);
+    pipeline->setOpusMaxBandwidth(chosen.opusMaxBandwidth);
+    pipeline->setOpusFrameDuration(chosen.opusFrameDuration);
+    pipeline->setOpusLsbDepth(chosen.opusLsbDepth);
     pipeline->setInputGain(chosen.inputGain);
     pipeline->setOutputVolume(chosen.outputVolume);
     pipeline->setInputDevice(chosen.inputDevice);

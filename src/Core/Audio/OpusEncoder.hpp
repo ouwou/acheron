@@ -31,6 +31,12 @@ public:
     void setFec(bool enabled);
     void setDtx(bool enabled);
     void setPacketLossPercent(int percent);
+    void setVbr(bool enabled);
+    void setVbrConstraint(bool enabled);
+    void setMaxBandwidth(int bandwidth);
+    void setExpertFrameDuration(int duration);
+    void setLsbDepth(int depth);
+    void resetState();
 
 private:
     ::OpusEncoder *encoder = nullptr;

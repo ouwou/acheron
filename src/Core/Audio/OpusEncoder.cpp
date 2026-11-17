@@ -33,6 +33,11 @@ bool OpusEncoder::init(int sampleRate, int channels, int application)
     setFec(true);
     setDtx(false);
     setPacketLossPercent(0);
+    setVbr(true);
+    setVbrConstraint(true);
+    setMaxBandwidth(OPUS_BANDWIDTH_FULLBAND);
+    setExpertFrameDuration(OPUS_FRAMESIZE_ARG);
+    setLsbDepth(16);
     return true;
 }
 
@@ -99,6 +104,42 @@ void OpusEncoder::setPacketLossPercent(int percent)
 {
     if (encoder)
         opus_encoder_ctl(encoder, OPUS_SET_PACKET_LOSS_PERC(percent));
+}
+
+void OpusEncoder::setVbr(bool enabled)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_VBR(enabled ? 1 : 0));
+}
+
+void OpusEncoder::setVbrConstraint(bool enabled)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_VBR_CONSTRAINT(enabled ? 1 : 0));
+}
+
+void OpusEncoder::setMaxBandwidth(int bandwidth)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_MAX_BANDWIDTH(bandwidth));
+}
+
+void OpusEncoder::setExpertFrameDuration(int duration)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_EXPERT_FRAME_DURATION(duration));
+}
+
+void OpusEncoder::setLsbDepth(int depth)
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_SET_LSB_DEPTH(depth));
+}
+
+void OpusEncoder::resetState()
+{
+    if (encoder)
+        opus_encoder_ctl(encoder, OPUS_RESET_STATE);
 }
 
 } // namespace Audio

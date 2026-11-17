@@ -73,6 +73,12 @@ public slots:
     void setOpusSignalType(int signalType);
     void setOpusFec(bool enabled);
     void setOpusPacketLossPercent(int percent);
+    void setOpusDtx(bool enabled);
+    void setOpusVbr(bool enabled);
+    void setOpusVbrConstraint(bool enabled);
+    void setOpusMaxBandwidth(int bandwidth);
+    void setOpusFrameDuration(int duration);
+    void setOpusLsbDepth(int depth);
 
 signals:
     void encodedAudioReady(const QByteArray &opusData);
@@ -124,6 +130,12 @@ private:
     int opusSignalType = OPUS_SIGNAL_VOICE;
     bool opusFec = true;
     int opusPacketLossPercent = 0;
+    bool opusDtx = false;
+    bool opusVbr = true;
+    bool opusVbrConstraint = true;
+    int opusMaxBandwidth = OPUS_BANDWIDTH_FULLBAND;
+    int opusFrameDuration = OPUS_FRAMESIZE_ARG;
+    int opusLsbDepth = 16;
 
     QElapsedTimer rmsThrottleTimer;
     QElapsedTimer userRmsThrottleTimer;

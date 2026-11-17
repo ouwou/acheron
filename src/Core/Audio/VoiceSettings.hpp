@@ -28,11 +28,19 @@ struct VoiceSettings
     int opusSignalType = OPUS_SIGNAL_VOICE;
     bool opusFec = true;
     int opusPacketLossPercent = 0;
+    bool opusDtx = false;
+    int opusBitrateMode = BITRATE_MODE_CONSTRAINED_VBR;
+    int opusMaxBandwidth = OPUS_BANDWIDTH_FULLBAND;
+    int opusFrameDuration = OPUS_FRAMESIZE_ARG;
+    int opusLsbDepth = 16;
 
     [[nodiscard]] static VoiceSettings load();
     void saveAndApply() const;
 
     static constexpr int MAX_VAD_THRESHOLD = 2000;
+    static constexpr int BITRATE_MODE_VBR = 0;
+    static constexpr int BITRATE_MODE_CONSTRAINED_VBR = 1;
+    static constexpr int BITRATE_MODE_CBR = 2;
 };
 
 class VoiceSettingsNotifier : public QObject
