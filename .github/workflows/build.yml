@@ -366,30 +366,6 @@ jobs:
           name: acheron-windows-qt5-MinSizeRel
           path: acheron-windows-qt5-MinSizeRel
 
-      # the media tests as this job built them, to be run by hand on a real Windows 7:
-      # the runner is a newer Windows, so passing here says nothing about that one
-      - name: Prepare media tests
-        shell: pwsh
-        run: |
-          $out = "acheron-windows-qt5-media-tests"
-          $app = "acheron-windows-qt5-MinSizeRel"
-          New-Item -ItemType Directory -Path $out -Force
-          foreach ($test in "TestVideoDecode", "TestVideoEncode", "TestVideoSend", "TestVideoSurface", "TestCameraCapture", "TestRtpVideo", "TestOpusEncoder", "TestClips", "TestMediaInput", "TestApng") {
-            Copy-Item "build/MinSizeRel/$test.exe" $out
-            windeployqt --no-translations --no-system-d3d-compiler "$out/$test.exe"
-          }
-          # the DLLs the app ships with, the C++ runtime among them, and the platform
-          # plugin the tests that draw nothing ask for
-          Copy-Item "$app/*.dll" $out -Force
-          Copy-Item "$env:QT_ROOT_DIR/plugins/platforms/qoffscreen.dll" "$out/platforms" -Force
-
-      - name: Upload media tests
-        uses: actions/upload-artifact@v7
-        with:
-          name: acheron-windows-qt5-media-tests
-          path: acheron-windows-qt5-media-tests
-          retention-days: 7
-
   build-linux:
     # not -latest: mlspp builds with -Werror, which fails on ubuntu-26.04's gcc 15
     runs-on: ubuntu-24.04
