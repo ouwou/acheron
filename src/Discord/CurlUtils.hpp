@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QByteArray>
+#include <QList>
 #include <QString>
 #include <QObject>
 
@@ -9,6 +11,7 @@
 
 #include <functional>
 #include <mutex>
+#include <optional>
 
 class QNetworkAccessManager;
 
@@ -32,16 +35,42 @@ QString getUserAgent();
 QString getImpersonateTarget();
 UserAgentProps getUserAgentProps();
 QString getSystemLocale();
+QByteArray getAcceptLanguage();
 
 void ensureBuildNumber(QNetworkAccessManager *nam, std::function<void()> done);
 int getBuildNumber();
 
-// cacert, curl-impersonate, user-agent
+// cacert, curl-impersonate tls/h2 (no default headers)
 void applyCommonOptions(CURL *curl);
 
 void applyProxy(CURL *curl, const Core::ProxyConfig &proxy);
 
-void appendDiscordHeaders(curl_slist **headers, const ClientIdentity &identity, const QString &referer);
+inline constexpr const char *ChromeAcceptEncoding = "gzip, deflate, br, zstd";
+
+// a request chrome makes from a discord.com page
+struct BrowserRequest
+{
+    QList<QByteArray> pageHeaders; // set by discord's js
+    std::optional<qint64> contentLength;
+    QByteArray contentType;
+    QByteArray accept = "*/*";
+    bool sendsOrigin = false;
+    bool crossSite = false;
+    QByteArray mode = "cors";
+    QByteArray dest = "empty";
+    QByteArray referer;
+    QByteArray acceptEncoding = ChromeAcceptEncoding;
+    QByteArray range;
+    QByteArray priority = "u=1, i";
+};
+
+curl_slist *browserHeaders(const BrowserRequest &request);
+
+// what discord's api layer adds to every request
+QList<QByteArray> discordHeaders(const ClientIdentity &identity, const QString &token, const QString &fingerprint);
+
+// handshake for a CURLOPT_CONNECT_ONLY=2 websocket handle
+CURLcode performWebSocketHandshake(CURL *curl, const QByteArray &url);
 
 // CURLOPT_WRITEFUNCTION for QByteArray
 size_t writeToByteArray(char *ptr, size_t size, size_t nmemb, void *userdata);

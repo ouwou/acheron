@@ -977,7 +977,6 @@ void Gateway::runConnection()
         curl_version_info_data *info = curl_version_info(CURLVERSION_NOW);
         printf("SSL backend: %s\n", info->ssl_version);
 
-        curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
@@ -986,7 +985,7 @@ void Gateway::runConnection()
         CurlUtils::applyCommonOptions(curl);
         CurlUtils::applyProxy(curl, proxy);
 
-        CURLcode res = curl_easy_perform(curl);
+        CURLcode res = CurlUtils::performWebSocketHandshake(curl, connectUrl.toUtf8());
         if (res != CURLE_OK) {
             if (wantToClose) {
                 {

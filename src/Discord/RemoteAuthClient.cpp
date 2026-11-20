@@ -157,17 +157,12 @@ void RemoteAuthClient::networkLoop()
         return;
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, gatewayUrl);
     curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     CurlUtils::applyCommonOptions(curl);
     CurlUtils::applyProxy(curl, proxy);
 
-    curl_slist *headers = curl_slist_append(nullptr, "Origin: https://discord.com");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
+    CURLcode res = CurlUtils::performWebSocketHandshake(curl, gatewayUrl);
 
     if (res != CURLE_OK) {
         qCWarning(LogDiscord) << "Remote auth connect failed:" << curl_easy_strerror(res);
@@ -404,16 +399,17 @@ void RemoteAuthClient::postLogin(const QString &ticket, std::optional<CaptchaSol
             CurlUtils::applyCommonOptions(curl);
             CurlUtils::applyProxy(curl, proxy);
 
-            curl_slist *headers = nullptr;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-
             // todo: this probably isnt a perfect mimicry of the real client
             ClientIdentity identity;
-            CurlUtils::appendDiscordHeaders(&headers, identity, "https://discord.com/login");
-            headers = curl_slist_append(headers, "Origin: https://discord.com");
-
+            CurlUtils::BrowserRequest browser;
+            browser.contentLength = static_cast<qint64>(body.size());
+            browser.contentType = "application/json";
+            browser.sendsOrigin = true;
+            browser.referer = "https://discord.com/login";
             if (solution)
-                appendCaptchaHeaders(headers, *solution);
+                browser.pageHeaders.append(captchaHeaders(*solution));
+            browser.pageHeaders.append(CurlUtils::discordHeaders(identity, {}, {}));
+            curl_slist *headers = CurlUtils::browserHeaders(browser);
 
             curl_easy_setopt(curl, CURLOPT_URL, loginUrl);
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);

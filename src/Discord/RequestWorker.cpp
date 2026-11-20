@@ -191,35 +191,38 @@ CURL *RequestWorker::buildEasyHandle(TransferContext *ctx)
     curl_easy_setopt(curl, CURLOPT_COOKIEFILE, ""); // engine
     curl_easy_setopt(curl, CURLOPT_SHARE, share);
 
-    curl_slist *headers = nullptr;
-    if (desc.method != HttpClient::Method::GET)
-        headers = curl_slist_append(headers, "Origin: https://discord.com");
+    CurlUtils::BrowserRequest browser;
+    browser.sendsOrigin = desc.method != HttpClient::Method::GET;
+    if (!desc.multipart && !ctx->uploadFile && desc.method != HttpClient::Method::GET && (desc.method != HttpClient::Method::DELETE_ || !desc.body.isEmpty()))
+        browser.contentLength = desc.body.size();
+
     if (desc.external) {
-        if (!desc.contentType.isEmpty())
-            headers = curl_slist_append(headers, ("Content-Type: " + desc.contentType).toUtf8().constData());
+        browser.crossSite = true;
+        browser.referer = "https://discord.com/";
+        browser.contentType = desc.contentType.toUtf8();
         if (ctx->uploadFile)
-            headers = curl_slist_append(headers, "Expect:"); // CURLOPT_UPLOAD turns this on
+            browser.contentLength = ctx->uploadFile->size();
     } else {
-        if (!token.isEmpty())
-            headers = curl_slist_append(headers, ("Authorization: " + token).toUtf8().constData());
         if (!desc.multipart && !desc.body.isEmpty())
-            headers = curl_slist_append(headers, "Content-Type: application/json");
+            browser.contentType = "application/json";
+        browser.referer = desc.referer.toUtf8();
+
         if (!desc.originalMd5.isEmpty())
-            headers = curl_slist_append(headers, ("X-Discord-Original-MD5: " + desc.originalMd5).constData());
+            browser.pageHeaders.append("X-Discord-Original-MD5: " + desc.originalMd5);
         if (desc.auditLogReason) {
             const QByteArray reason = encodeUriComponent(*desc.auditLogReason);
-            headers = curl_slist_append(headers, reason.isEmpty() ? "X-Audit-Log-Reason;" : ("X-Audit-Log-Reason: " + reason).constData());
+            browser.pageHeaders.append(reason.isEmpty() ? QByteArray("X-Audit-Log-Reason;") : "X-Audit-Log-Reason: " + reason);
         }
         if (!desc.contextProperties.isEmpty())
-            headers = curl_slist_append(headers, ("X-Context-Properties: " + desc.contextProperties).constData());
-
-        CurlUtils::appendDiscordHeaders(&headers, identity, desc.referer);
-        if (!desc.fingerprint.isEmpty())
-            headers = curl_slist_append(headers, ("X-Fingerprint: " + desc.fingerprint).toUtf8().constData());
-
+            browser.pageHeaders.append("X-Context-Properties: " + desc.contextProperties);
         if (desc.solution)
-            appendCaptchaHeaders(headers, *desc.solution);
+            browser.pageHeaders.append(captchaHeaders(*desc.solution));
+        browser.pageHeaders.append(CurlUtils::discordHeaders(identity, token, desc.fingerprint));
     }
+
+    curl_slist *headers = CurlUtils::browserHeaders(browser);
+    if (ctx->uploadFile)
+        headers = curl_slist_append(headers, "Expect:"); // CURLOPT_UPLOAD turns this on
 
     ctx->headers = headers;
     ctx->url = desc.url;
