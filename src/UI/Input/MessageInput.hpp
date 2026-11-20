@@ -23,6 +23,7 @@ public:
 
     [[nodiscard]] QToolButton *emojiButton() const { return emojiPickerButton; }
     [[nodiscard]] QToolButton *gifButton() const { return gifPickerButton; }
+    [[nodiscard]] int heightForContent(int contentHeight) const;
 
 protected:
     void keyPressEvent(QKeyEvent *e) override;
@@ -38,6 +39,8 @@ signals:
     void imagePasted(const QImage &image);
 
 private:
+    void positionPickerButtons();
+
     QToolButton *gifPickerButton;
     QToolButton *emojiPickerButton;
 };
@@ -97,6 +100,7 @@ private:
 
     void adjustHeight();
     void applyTheme();
+    void applyMessageFont();
     void updateReplyMentionButton();
     [[nodiscard]] QRect pickerAnchor() const;
 };

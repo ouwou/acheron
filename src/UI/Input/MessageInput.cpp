@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QMimeData>
 #include <QToolButton>
+#include <QtMath>
 
 #include <algorithm>
 
@@ -65,15 +66,29 @@ ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
 void ChatTextEdit::resizeEvent(QResizeEvent *e)
 {
     QTextEdit::resizeEvent(e);
+    positionPickerButtons();
+}
+
+void ChatTextEdit::positionPickerButtons()
+{
     const int left = viewport()->geometry().right() + 1 + PickerButtonGap;
-    const int top = (MinTextEditHeight - PickerButtonSize) / 2;
+    const int top = (heightForContent(fontMetrics().lineSpacing()) - PickerButtonSize) / 2;
     gifPickerButton->move(left, top);
     emojiPickerButton->move(left + PickerButtonSize + PickerButtonGap, top);
+}
+
+int ChatTextEdit::heightForContent(int contentHeight) const
+{
+    ensurePolished();
+    const int chrome = height() - contentsRect().height();
+    return std::clamp(contentHeight + chrome, MinTextEditHeight, MaxTextEditHeight);
 }
 
 void ChatTextEdit::changeEvent(QEvent *e)
 {
     QTextEdit::changeEvent(e);
+    if (e->type() == QEvent::FontChange)
+        positionPickerButtons();
     if (e->type() != QEvent::EnabledChange)
         return;
 
@@ -203,8 +218,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
         attachmentPanel->clearAttachments();
     });
 
-    connect(textEdit->document(), &QTextDocument::contentsChanged, this,
-            &MessageInput::adjustHeight);
+    connect(textEdit->document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged, this, &MessageInput::adjustHeight);
 
     autocomplete = new EmojiAutocomplete(textEdit, this);
 
@@ -218,7 +232,9 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     setAcceptDrops(true);
 
     connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &MessageInput::applyTheme);
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::metricsChanged, this, &MessageInput::applyMessageFont);
     applyTheme();
+    applyMessageFont();
     adjustHeight();
 }
 
@@ -309,6 +325,11 @@ void MessageInput::applyTheme()
     updateReplyMentionButton();
 }
 
+void MessageInput::applyMessageFont()
+{
+    textEdit->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
+}
+
 void MessageInput::updateReplyMentionButton()
 {
     using namespace Core::Theme;
@@ -367,14 +388,7 @@ void MessageInput::setGifPickerOpen(bool open)
 
 void MessageInput::adjustHeight()
 {
-    int contentHeight = textEdit->document()->size().height();
-
-    int newHeight = contentHeight + contentHeight;
-
-    if (newHeight < MinTextEditHeight)
-        newHeight = MinTextEditHeight;
-    if (newHeight > MaxTextEditHeight)
-        newHeight = MaxTextEditHeight;
+    const int newHeight = textEdit->heightForContent(qCeil(textEdit->document()->size().height()));
 
     if (newHeight >= MaxTextEditHeight)
         textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
