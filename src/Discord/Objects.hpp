@@ -61,9 +61,9 @@ struct ClientProperties : Acheron::Core::JsonUtils::JsonObject
         insert(obj, "client_launch_id", clientLaunchId);
         insert(obj, "launch_signature", launchSignature);
         insert(obj, "client_app_state", clientAppState);
+        insert(obj, "client_heartbeat_session_id", clientHeartbeatSessionId);
         insert(obj, "is_fast_connect", isFastConnect);
         insert(obj, "gateway_connect_reasons", gatewayConnectReasons);
-        insert(obj, "client_heartbeat_session_id", clientHeartbeatSessionId);
 
         return obj;
     }
