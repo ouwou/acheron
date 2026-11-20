@@ -256,5 +256,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestBrowserHeaders)
+QTEST_GUILESS_MAIN(TestBrowserHeaders)
 #include "tst_BrowserHeaders.moc"
