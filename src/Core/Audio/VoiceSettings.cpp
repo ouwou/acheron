@@ -21,6 +21,11 @@ const char *const OPUS_COMPLEXITY_KEY = "voice/codec/complexity";
 const char *const OPUS_SIGNAL_TYPE_KEY = "voice/codec/signal_type";
 const char *const OPUS_FEC_KEY = "voice/codec/fec";
 const char *const OPUS_PACKET_LOSS_KEY = "voice/codec/packet_loss";
+const char *const OPUS_DTX_KEY = "voice/codec/dtx";
+const char *const OPUS_BITRATE_MODE_KEY = "voice/codec/bitrate_mode";
+const char *const OPUS_MAX_BANDWIDTH_KEY = "voice/codec/max_bandwidth";
+const char *const OPUS_FRAME_DURATION_KEY = "voice/codec/frame_duration";
+const char *const OPUS_LSB_DEPTH_KEY = "voice/codec/lsb_depth";
 const char *const USER_VOLUMES_GROUP = "voice/user_volumes";
 const char *const USER_MUTES_GROUP = "voice/user_mutes";
 
@@ -57,6 +62,11 @@ VoiceSettings VoiceSettings::load()
     settings.opusSignalType = stored.value(OPUS_SIGNAL_TYPE_KEY, defaults.opusSignalType).toInt();
     settings.opusFec = stored.value(OPUS_FEC_KEY, defaults.opusFec).toBool();
     settings.opusPacketLossPercent = stored.value(OPUS_PACKET_LOSS_KEY, defaults.opusPacketLossPercent).toInt();
+    settings.opusDtx = stored.value(OPUS_DTX_KEY, defaults.opusDtx).toBool();
+    settings.opusBitrateMode = stored.value(OPUS_BITRATE_MODE_KEY, defaults.opusBitrateMode).toInt();
+    settings.opusMaxBandwidth = stored.value(OPUS_MAX_BANDWIDTH_KEY, defaults.opusMaxBandwidth).toInt();
+    settings.opusFrameDuration = stored.value(OPUS_FRAME_DURATION_KEY, defaults.opusFrameDuration).toInt();
+    settings.opusLsbDepth = stored.value(OPUS_LSB_DEPTH_KEY, defaults.opusLsbDepth).toInt();
     return settings;
 }
 
@@ -76,6 +86,11 @@ void VoiceSettings::saveAndApply() const
     stored.setValue(OPUS_SIGNAL_TYPE_KEY, opusSignalType);
     stored.setValue(OPUS_FEC_KEY, opusFec);
     stored.setValue(OPUS_PACKET_LOSS_KEY, opusPacketLossPercent);
+    stored.setValue(OPUS_DTX_KEY, opusDtx);
+    stored.setValue(OPUS_BITRATE_MODE_KEY, opusBitrateMode);
+    stored.setValue(OPUS_MAX_BANDWIDTH_KEY, opusMaxBandwidth);
+    stored.setValue(OPUS_FRAME_DURATION_KEY, opusFrameDuration);
+    stored.setValue(OPUS_LSB_DEPTH_KEY, opusLsbDepth);
     VoiceSettingsNotifier *notifier = VoiceSettingsNotifier::instance();
     emit notifier->changed();
 }

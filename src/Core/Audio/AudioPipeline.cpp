@@ -297,6 +297,12 @@ void AudioPipeline::initializeEncoder()
     encoder->setSignalType(opusSignalType);
     encoder->setFec(opusFec);
     encoder->setPacketLossPercent(opusPacketLossPercent);
+    encoder->setDtx(opusDtx);
+    encoder->setVbr(opusVbr);
+    encoder->setVbrConstraint(opusVbrConstraint);
+    encoder->setMaxBandwidth(opusMaxBandwidth);
+    encoder->setExpertFrameDuration(opusFrameDuration);
+    encoder->setLsbDepth(opusLsbDepth);
 }
 
 void AudioPipeline::setOpusApplication(int application)
@@ -348,6 +354,61 @@ void AudioPipeline::setOpusPacketLossPercent(int percent)
 
     if (encoder)
         encoder->setPacketLossPercent(percent);
+}
+
+void AudioPipeline::setOpusDtx(bool enabled)
+{
+    opusDtx = enabled;
+
+    if (encoder)
+        encoder->setDtx(enabled);
+}
+
+void AudioPipeline::setOpusVbr(bool enabled)
+{
+    opusVbr = enabled;
+
+    if (encoder)
+        encoder->setVbr(enabled);
+}
+
+void AudioPipeline::setOpusVbrConstraint(bool enabled)
+{
+    opusVbrConstraint = enabled;
+
+    if (encoder)
+        encoder->setVbrConstraint(enabled);
+}
+
+void AudioPipeline::setOpusMaxBandwidth(int bandwidth)
+{
+    opusMaxBandwidth = bandwidth;
+
+    if (encoder)
+        encoder->setMaxBandwidth(bandwidth);
+}
+
+void AudioPipeline::setOpusFrameDuration(int duration)
+{
+    // capture and packetization stay at 20 ms (960 samples), so only frame sizes matching the feed can be forced;
+    // anything else makes opus_encode fail or silently drop samples
+    if (duration != OPUS_FRAMESIZE_ARG && duration != OPUS_FRAMESIZE_20_MS) {
+        qCWarning(LogVoice) << "Ignoring unsupported expert frame duration" << duration;
+        return;
+    }
+
+    opusFrameDuration = duration;
+
+    if (encoder)
+        encoder->setExpertFrameDuration(duration);
+}
+
+void AudioPipeline::setOpusLsbDepth(int depth)
+{
+    opusLsbDepth = depth;
+
+    if (encoder)
+        encoder->setLsbDepth(depth);
 }
 
 void AudioPipeline::onAudioCaptured(const QByteArray &pcmData)
