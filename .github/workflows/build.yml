@@ -33,7 +33,8 @@ env:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    # not -latest: the same build took two to four times as long there as on this image
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
@@ -64,8 +65,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vcpkg-archives
-          key: vcpkg-archives-x64-windows-static-md-qt6-${{ github.run_id }}
-          restore-keys: vcpkg-archives-x64-windows-static-md-qt6-
+          key: vcpkg-archives-x64-windows-static-md-vs2022-qt6-${{ github.run_id }}
+          # the qt5 job's archives come from the same compiler and hold all of these
+          restore-keys: |
+            vcpkg-archives-x64-windows-static-md-vs2022-qt6-
+            vcpkg-archives-x64-windows-static-md-ffmpeg-vs2022-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -113,7 +117,7 @@ jobs:
         id: vcpkg-prune
         continue-on-error: true
         shell: bash
-        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-qt6- >> "$GITHUB_OUTPUT"
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-vs2022-qt6- >> "$GITHUB_OUTPUT"
 
       - name: Save vcpkg packages
         if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
@@ -168,7 +172,8 @@ jobs:
           path: acheron-windows-${{ matrix.build_type }}
 
   build-windows-minimal:
-    runs-on: windows-latest
+    # not -latest: the same build took two to four times as long there as on this image
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
@@ -195,8 +200,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vcpkg-archives
-          key: vcpkg-archives-x64-windows-static-md-qt6-${{ github.run_id }}
-          restore-keys: vcpkg-archives-x64-windows-static-md-qt6-
+          key: vcpkg-archives-x64-windows-static-md-vs2022-qt6-${{ github.run_id }}
+          # the qt5 job's archives come from the same compiler and hold all of these
+          restore-keys: |
+            vcpkg-archives-x64-windows-static-md-vs2022-qt6-
+            vcpkg-archives-x64-windows-static-md-ffmpeg-vs2022-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -230,7 +238,7 @@ jobs:
         id: vcpkg-prune
         continue-on-error: true
         shell: bash
-        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-qt6- >> "$GITHUB_OUTPUT"
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-vs2022-qt6- >> "$GITHUB_OUTPUT"
 
       - name: Save vcpkg packages
         if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
