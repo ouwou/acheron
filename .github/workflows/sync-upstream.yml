@@ -1,0 +1,49 @@
+name: Sync with upstream
+
+# Keeps this fork's master merged with ouwou/acheron master.
+# Runs daily and can be started by hand from the Actions tab ("Run workflow").
+#
+# Needs a repository secret named SYNC_TOKEN: a fine-grained personal access token for this repo
+# with "Contents: Read and write" and "Workflows: Read and write". Why not the built-in token:
+#   - commits pushed with the built-in token don't trigger other workflows, so Build would never run
+#     for synced changes (and the updater would never see a new build);
+#   - the built-in token can't update files under .github/workflows when upstream changes them.
+
+on:
+  schedule:
+    - cron: '17 9 * * *'   # daily, around 4-5 AM Eastern
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge ouwou/acheron master into master
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
+          HAS_SYNC_TOKEN: ${{ secrets.SYNC_TOKEN != '' }}
+        run: |
+          set -uo pipefail
+          if [ "$HAS_SYNC_TOKEN" != "true" ]; then
+            echo "::warning::SYNC_TOKEN secret is not set; using the built-in token. Synced commits will NOT start a Build, and upstream workflow-file changes will fail to sync."
+          fi
+
+          # GitHub's "Sync fork" API: fast-forwards, or creates a merge commit when the fork has its own commits.
+          if out=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/merge-upstream" -f branch=master 2>&1); then
+            echo "$out"
+            {
+              echo "### Sync with ouwou/acheron"
+              echo "$out" | jq -r '"- " + .message + " (" + .merge_type + ")"'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$out"
+            echo "::error::Sync failed. If it's a merge conflict, open the repo on GitHub and use Sync fork, or merge ouwou/acheron master locally and push."
+            exit 1
+          fi
