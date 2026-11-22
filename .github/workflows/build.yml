@@ -23,6 +23,10 @@ env:
   # aqtinstall 3.3.0, still the newest release, cannot find Qt 6.11+ for Windows: the
   # repository moved to one folder per compiler (jurplel/install-qt-action#374).
   AQT_FOR_WINDOWS_QT6: git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7
+  # cache vcpkg's per-package archives, not vcpkg_installed: a newer compiler on the runner
+  # changes every package's abi so vcpkg rebuilt all of it, and an exact cache hit never
+  # saved the rebuilt one
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-archives
 
 jobs:
   build-windows:
@@ -50,12 +54,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.bat
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
         with:
-          path: build/vcpkg_installed
-          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-x64-windows-static-md-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-windows-static-md-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -94,7 +101,23 @@ jobs:
             -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
             -DBUILD_TESTS=ON
 
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
+
+      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
+        env:
+          CL: /MP
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       # the voice client's tests load the curl-impersonate DLL, which is only put beside the
@@ -160,12 +183,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.bat
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
         with:
-          path: build/vcpkg_installed
-          key: vcpkg-x64-windows-static-md-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-x64-windows-static-md-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-windows-static-md-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -190,7 +216,23 @@ jobs:
             -DENABLE_RNNOISE=OFF `
             -DENABLE_FFMPEG=OFF
 
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
+
+      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
+        env:
+          CL: /MP
         run: cmake --build build --config RelWithDebInfo --parallel
 
       - name: Test
@@ -257,14 +299,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.bat
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v6
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v6
         with:
-          path: build/vcpkg_installed
-          # Keyed apart from the Qt6 jobs: this one also holds the from-source ffmpeg,
-          # and restoring their cache would rebuild it on every run.
-          key: vcpkg-x64-windows-static-md-ffmpeg-vs2022-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-x64-windows-static-md-ffmpeg-vs2022-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-windows-static-md-ffmpeg-vs2022-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -308,7 +351,23 @@ jobs:
             -DBUILD_TESTS=ON `
             -DFFMPEG_FROM_VCPKG=ON
 
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-ffmpeg-vs2022- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v6
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
+
+      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
+        env:
+          CL: /MP
         run: cmake --build build --config MinSizeRel --parallel
 
       - name: Test
@@ -404,12 +463,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.sh
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
         with:
-          path: build/vcpkg_installed
-          key: vcpkg-x64-linux-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-x64-linux-noble-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-linux-noble-
 
       - name: Install curl-impersonate
         run: |
@@ -434,6 +496,19 @@ jobs:
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
           -DENABLE_VIDEO=${{ matrix.video }}
+
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python3 .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-linux-noble- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
 
       # every error in one run, not only the first: nothing else compiles this platform's code
       - name: Build
@@ -476,14 +551,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.sh
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
         with:
-          path: build/vcpkg_installed
-          # Keyed separately from build-linux: its cache is built on
-          # ubuntu-24.04 and restoring it here would raise the glibc floor.
-          key: vcpkg-x64-linux-jammy-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-x64-linux-jammy-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-linux-jammy-
 
       - name: Install curl-impersonate
         run: |
@@ -525,6 +601,19 @@ jobs:
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
+
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python3 .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-linux-jammy- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
 
       - name: Build
         run: cmake --build build --parallel $(nproc)
@@ -635,12 +724,15 @@ jobs:
         run: |
           git -C vendor/vcpkg fetch --unshallow
           vendor/vcpkg/bootstrap-vcpkg.sh
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
 
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
         with:
-          path: build/vcpkg_installed
-          key: vcpkg-arm64-osx-${{ hashFiles('vcpkg.json') }}
+          path: vcpkg-archives
+          key: vcpkg-archives-arm64-osx-${{ github.run_id }}
+          restore-keys: vcpkg-archives-arm64-osx-
 
       - name: Install curl-impersonate
         run: |
@@ -659,6 +751,19 @@ jobs:
           -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
           -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz -Wl,-rpath,@executable_path/../Frameworks -Wl,-rpath,${{ github.workspace }}/curl-impersonate"
           -DBUILD_TESTS=ON
+
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python3 .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-arm64-osx- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
 
       - name: Build
         run: cmake --build build --parallel $(sysctl -n hw.logicalcpu) -- --keep-going
