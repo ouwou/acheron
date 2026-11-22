@@ -61,8 +61,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vcpkg-archives
-          key: vcpkg-archives-x64-windows-static-md-${{ github.run_id }}
-          restore-keys: vcpkg-archives-x64-windows-static-md-
+          key: vcpkg-archives-x64-windows-static-md-qt6-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-windows-static-md-qt6-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -105,7 +105,7 @@ jobs:
         id: vcpkg-prune
         continue-on-error: true
         shell: bash
-        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md- >> "$GITHUB_OUTPUT"
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-qt6- >> "$GITHUB_OUTPUT"
 
       - name: Save vcpkg packages
         if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
@@ -190,8 +190,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: vcpkg-archives
-          key: vcpkg-archives-x64-windows-static-md-${{ github.run_id }}
-          restore-keys: vcpkg-archives-x64-windows-static-md-
+          key: vcpkg-archives-x64-windows-static-md-qt6-${{ github.run_id }}
+          restore-keys: vcpkg-archives-x64-windows-static-md-qt6-
 
       - name: Install curl-impersonate
         shell: pwsh
@@ -220,7 +220,7 @@ jobs:
         id: vcpkg-prune
         continue-on-error: true
         shell: bash
-        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md- >> "$GITHUB_OUTPUT"
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-x64-windows-static-md-qt6- >> "$GITHUB_OUTPUT"
 
       - name: Save vcpkg packages
         if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
