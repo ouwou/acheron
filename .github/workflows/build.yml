@@ -27,6 +27,9 @@ env:
   # changes every package's abi so vcpkg rebuilt all of it, and an exact cache hit never
   # saved the rebuilt one
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-archives
+  # ccache on linux and macos. the sloppiness is what lets it cache files built with the precompiled header
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
 
 jobs:
   build-windows:
@@ -88,13 +91,18 @@ jobs:
           $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
           Move-Item -Path $inner.FullName -Destination ffmpeg
 
+      # ninja: msbuild only started on the app's own sources once every other project was built
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+            -G "Ninja Multi-Config" `
+            -DCMAKE_CONFIGURATION_TYPES=${{ matrix.build_type }} `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
@@ -114,10 +122,7 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
-      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
-        env:
-          CL: /MP
         run: cmake --build build --config ${{ matrix.build_type }} --parallel
 
       # the voice client's tests load the curl-impersonate DLL, which is only put beside the
@@ -201,12 +206,17 @@ jobs:
           New-Item -ItemType Directory -Path curl-impersonate -Force
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
 
+      # ninja: msbuild only started on the app's own sources once every other project was built
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Configure
         shell: pwsh
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           cmake -B build -S . `
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            -G "Ninja Multi-Config" `
+            -DCMAKE_CONFIGURATION_TYPES=RelWithDebInfo `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
@@ -229,10 +239,7 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
-      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
-        env:
-          CL: /MP
         run: cmake --build build --config RelWithDebInfo --parallel
 
       - name: Test
@@ -333,6 +340,10 @@ jobs:
             ForEach-Object { Copy-Item $_.FullName openssl-bin -Force }
           if (-not (Test-Path openssl-bin/libssl-1_1-x64.dll)) { throw "OpenSSL 1.1 x64 DLLs not found in archive" }
 
+      # ninja: msbuild only started on the app's own sources once every other project was built
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
       # No prebuilt ffmpeg here: the BtbN DLLs are Windows 10 binaries. Their avcodec
       # imports SetThreadDescription (1607+) and WaitOnAddress (8+), and since the
       # exe links avcodec directly, bundling it stops this artifact from even
@@ -343,7 +354,8 @@ jobs:
         run: |
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           cmake -B build -S . `
-            -DCMAKE_BUILD_TYPE=MinSizeRel `
+            -G "Ninja Multi-Config" `
+            -DCMAKE_CONFIGURATION_TYPES=MinSizeRel `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
@@ -364,10 +376,7 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
-      # msbuild gives each project one compiler, so without /MP the app's sources compile one at a time
       - name: Build
-        env:
-          CL: /MP
         run: cmake --build build --config MinSizeRel --parallel
 
       - name: Test
@@ -443,7 +452,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
+          sudo apt-get install -y ccache libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
 
       - name: Install what cameras and screen shares need
@@ -495,6 +504,8 @@ jobs:
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DENABLE_VIDEO=${{ matrix.video }}
 
       - name: Prune vcpkg packages
@@ -510,9 +521,34 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-linux-noble-video-${{ matrix.video }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-linux-noble-video-${{ matrix.video }}-
+
       # every error in one run, not only the first: nothing else compiles this platform's code
       - name: Build
-        run: cmake --build build --parallel $(nproc) -- --keep-going
+        run: |
+          ccache --zero-stats
+          echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          cmake --build build --parallel $(nproc) -- --keep-going
+
+      # what this build didn't use goes, so the saved cache stays the size of one build
+      - name: Trim compiler cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          ccache --show-stats
+          ccache --evict-older-than $(( $(date +%s) - BUILD_STARTED + 60 ))s
+
+      - name: Save compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-linux-noble-video-${{ matrix.video }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Test
         run: ctest --test-dir build --output-on-failure --timeout 600
@@ -535,7 +571,7 @@ jobs:
           # requirement of the xcb platform plugin since Qt 6.5.
           # No libav*-dev here, unlike build-linux: jammy only has ffmpeg 4.4 and
           # ffmpeg.cmake would reject it, so the prebuilt prefix below is used instead.
-          sudo apt-get install -y libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
+          sudo apt-get install -y ccache libcurl4-openssl-dev libsecret-1-dev zlib1g-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-render-util0 libxcb-shape0 libxcb-xkb1 libxkbcommon-x11-0 \
             libxcb1-dev libxcb-randr0-dev libxcb-composite0-dev libpipewire-0.3-dev
@@ -601,6 +637,8 @@ jobs:
           -DCURL_INCLUDE_DIR=${{ github.workspace }}/curl-impersonate/include
           -DCURL_LIBRARY=${{ github.workspace }}/curl-impersonate/libcurl-impersonate-local.a
           -DBUILD_TESTS=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Prune vcpkg packages
         id: vcpkg-prune
@@ -615,8 +653,33 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-linux-jammy-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-linux-jammy-
+
       - name: Build
-        run: cmake --build build --parallel $(nproc)
+        run: |
+          ccache --zero-stats
+          echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          cmake --build build --parallel $(nproc)
+
+      # what this build didn't use goes, so the saved cache stays the size of one build
+      - name: Trim compiler cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          ccache --show-stats
+          ccache --evict-older-than $(( $(date +%s) - BUILD_STARTED + 60 ))s
+
+      - name: Save compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-linux-jammy-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Test
         env:
@@ -711,7 +774,7 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
-        run: brew install curl autoconf automake libtool ffmpeg
+        run: brew install curl autoconf automake libtool ffmpeg ccache
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -741,6 +804,8 @@ jobs:
           mkdir -p curl-impersonate
           tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
 
+      # -fno-pch-timestamp: clang checks the header times stored in the precompiled header,
+      # and one from the compiler cache was made from an older checkout
       - name: Configure
         run: >
           cmake -B build -S .
@@ -751,6 +816,9 @@ jobs:
           -DCURL_LIBRARY="${{ github.workspace }}/curl-impersonate/libcurl-impersonate.dylib"
           -DCMAKE_EXE_LINKER_FLAGS="-framework SystemConfiguration -framework Security -framework CoreFoundation -liconv -lz -Wl,-rpath,@executable_path/../Frameworks -Wl,-rpath,${{ github.workspace }}/curl-impersonate"
           -DBUILD_TESTS=ON
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_FLAGS="-Xclang -fno-pch-timestamp"
 
       - name: Prune vcpkg packages
         id: vcpkg-prune
@@ -765,8 +833,33 @@ jobs:
           path: vcpkg-archives
           key: ${{ steps.vcpkg-prune.outputs.key }}
 
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-arm64-osx-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-arm64-osx-
+
       - name: Build
-        run: cmake --build build --parallel $(sysctl -n hw.logicalcpu) -- --keep-going
+        run: |
+          ccache --zero-stats
+          echo "BUILD_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          cmake --build build --parallel $(sysctl -n hw.logicalcpu) -- --keep-going
+
+      # what this build didn't use goes, so the saved cache stays the size of one build
+      - name: Trim compiler cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          ccache --show-stats
+          ccache --evict-older-than $(( $(date +%s) - BUILD_STARTED + 60 ))s
+
+      - name: Save compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-arm64-osx-${{ github.run_id }}-${{ github.run_attempt }}
 
       # no camera can be opened on macOS yet, and the stand-in the camera tests use cant
       # keep thirty pictures a second on the hosted runners, whose timers wake it late
