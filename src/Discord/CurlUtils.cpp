@@ -253,11 +253,14 @@ void applyProxy(CURL *curl, const Core::ProxyConfig &proxy)
     }
 }
 
-static constexpr const char *DiscordOrigin = "https://discord.com";
+static constexpr const char *DiscordOriginHeader = "Origin: https://discord.com";
 
-static curl_slist *appendHeader(curl_slist *headers, const char *name, const QByteArray &value)
+static curl_slist *toCurlList(const QList<QByteArray> &headers)
 {
-    return curl_slist_append(headers, (QByteArray(name) + ": " + value).constData());
+    curl_slist *list = nullptr;
+    for (const QByteArray &header : headers)
+        list = curl_slist_append(list, header.constData());
+    return list;
 }
 
 // chrome orders these by name, not by when they were set. from captures of fetch() with each of discord's header sets.
@@ -282,26 +285,25 @@ curl_slist *browserHeaders(const BrowserRequest &request)
         ranked.append("Content-Type: " + request.contentType);
     std::stable_sort(ranked.begin(), ranked.end(), [](const QByteArray &a, const QByteArray &b) { return headerRank(a) < headerRank(b); });
 
-    curl_slist *headers = nullptr;
+    QList<QByteArray> headers;
     if (request.contentLength)
-        headers = appendHeader(headers, "Content-Length", QByteArray::number(*request.contentLength));
-    for (const QByteArray &header : ranked)
-        headers = curl_slist_append(headers, header.constData());
-    headers = appendHeader(headers, "Accept", request.accept);
+        headers.append("Content-Length: " + QByteArray::number(*request.contentLength));
+    headers.append(ranked);
+    headers.append("Accept: " + request.accept);
     if (request.sendsOrigin)
-        headers = appendHeader(headers, "Origin", DiscordOrigin);
-    headers = appendHeader(headers, "Sec-Fetch-Site", request.crossSite ? "cross-site" : "same-origin");
-    headers = appendHeader(headers, "Sec-Fetch-Mode", request.mode);
-    headers = appendHeader(headers, "Sec-Fetch-Dest", request.dest);
+        headers.append(DiscordOriginHeader);
+    headers.append(QByteArray("Sec-Fetch-Site: ") + (request.crossSite ? "cross-site" : "same-origin"));
+    headers.append("Sec-Fetch-Mode: " + request.mode);
+    headers.append("Sec-Fetch-Dest: " + request.dest);
     if (!request.referer.isEmpty())
-        headers = appendHeader(headers, "Referer", request.referer);
-    headers = appendHeader(headers, "Accept-Encoding", request.acceptEncoding);
-    headers = appendHeader(headers, "Accept-Language", getAcceptLanguage());
+        headers.append("Referer: " + request.referer);
+    headers.append("Accept-Encoding: " + request.acceptEncoding);
+    headers.append("Accept-Language: " + getAcceptLanguage());
     if (!request.range.isEmpty())
-        headers = appendHeader(headers, "Range", request.range);
+        headers.append("Range: " + request.range);
     if (!request.priority.isEmpty())
-        headers = appendHeader(headers, "Priority", request.priority);
-    return headers;
+        headers.append("Priority: " + request.priority);
+    return toCurlList(headers);
 }
 
 QList<QByteArray> discordHeaders(const ClientIdentity &identity, const QString &token, const QString &fingerprint)
@@ -343,21 +345,22 @@ static QByteArray randomWebSocketKey()
 
 static curl_slist *webSocketHeaders(const QString &host)
 {
-    curl_slist *headers = nullptr;
-    headers = curl_slist_append(headers, "Pragma: no-cache");
-    headers = curl_slist_append(headers, "Cache-Control: no-cache");
-    headers = appendHeader(headers, "User-Agent", getUserAgent().toUtf8());
-    headers = curl_slist_append(headers, "Upgrade: websocket");
-    headers = appendHeader(headers, "Origin", DiscordOrigin);
-    headers = curl_slist_append(headers, "Sec-WebSocket-Version: 13");
-    headers = appendHeader(headers, "Accept-Encoding", ChromeAcceptEncoding);
-    headers = appendHeader(headers, "Accept-Language", getAcceptLanguage());
-    // curl-impersonate would put its own key right after Host
-    headers = appendHeader(headers, "Sec-WebSocket-Key", randomWebSocketKey());
+    QList<QByteArray> headers = {
+        "Pragma: no-cache",
+        "Cache-Control: no-cache",
+        "User-Agent: " + getUserAgent().toUtf8(),
+        "Upgrade: websocket",
+        DiscordOriginHeader,
+        "Sec-WebSocket-Version: 13",
+        QByteArray("Accept-Encoding: ") + ChromeAcceptEncoding,
+        "Accept-Language: " + getAcceptLanguage(),
+        // curl-impersonate would put its own key right after Host
+        "Sec-WebSocket-Key: " + randomWebSocketKey(),
+    };
     if (offersCompressionTo(host))
-        headers = curl_slist_append(headers, "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
-    headers = curl_slist_append(headers, "Accept:"); // drops curl's default, chrome sends none on a handshake
-    return headers;
+        headers.append("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+    headers.append("Accept:"); // drops curl's default, chrome sends none on a handshake
+    return toCurlList(headers);
 }
 
 CURLcode performWebSocketHandshake(CURL *curl, const QByteArray &url)
