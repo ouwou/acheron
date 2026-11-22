@@ -132,6 +132,7 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
 {
     gateway = new Gateway(token, gatewayUrl, identity, proxy, this);
     httpClient = new HttpClient(baseUrl, token, identity, proxy, captchaResolver, this);
+    messageQueue = new MessageQueue(this);
 
     heartbeatSessionTimer = new QTimer(this);
     heartbeatSessionTimer->setInterval(15 * 60 * 1000);
@@ -210,9 +211,9 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayPresenceUpdate, this, &Client::presenceUpdated);
     connect(gateway, &Gateway::gatewayPresencesReplace, this, &Client::presencesReplaced);
     connect(gateway, &Gateway::gatewaySessionsReplace, this, &Client::sessionsReplaced);
-    connect(gateway, &Gateway::reconnecting, this, [this](int attempt, int maxAttempts) {
+    connect(gateway, &Gateway::reconnecting, this, [this](int attempt) {
         setState(Core::ConnectionState::Connecting);
-        emit reconnecting(attempt, maxAttempts);
+        emit reconnecting(attempt);
     });
 }
 
@@ -910,14 +911,18 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
             withFiles["attachments"] = attachmentsJson;
 
             QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
-            httpClient->post(endpoint, withFiles, ContextProperties::location("chat_input"),
-                             [this, nonce](const HttpResponse &response) {
-                                 if (!response.success) {
-                                     qCWarning(LogDiscord) << "Failed to send message:" << response.error
-                                                           << "Status:" << response.statusCode;
-                                     emit messageSendFailed(nonce, response.error);
-                                 }
-                             });
+            messageQueue->enqueue(
+                    nonce,
+                    [this, endpoint, withFiles](HttpCallback done) {
+                        httpClient->post(endpoint, withFiles, ContextProperties::location("chat_input"), done);
+                    },
+                    [this, nonce](const HttpResponse &response) {
+                        if (!response.success) {
+                            qCWarning(LogDiscord) << "Failed to send message:" << response.error
+                                                  << "Status:" << response.statusCode;
+                            emit messageSendFailed(nonce, response.error);
+                        }
+                    });
         };
         state->onFailed = [this, nonce](const QString &error) {
             emit messageSendFailed(nonce, error);
@@ -933,17 +938,21 @@ void Client::sendMessage(Snowflake channelId, const QString &content, const QStr
     }
 
     QString endpoint = "/channels/" + QString::number(channelId) + "/messages";
-    httpClient->post(endpoint, payload, ContextProperties::location("chat_input"),
-                     [this, channelId, nonce](const HttpResponse &response) {
-                         if (!response.success) {
-                             qCWarning(LogDiscord) << "Failed to send message:" << response.error
-                                                   << "Status:" << response.statusCode;
-                             emit messageSendFailed(nonce, response.error);
-                             return;
-                         }
+    messageQueue->enqueue(
+            nonce,
+            [this, endpoint, payload](HttpCallback done) {
+                httpClient->post(endpoint, payload, ContextProperties::location("chat_input"), done);
+            },
+            [this, channelId, nonce](const HttpResponse &response) {
+                if (!response.success) {
+                    qCWarning(LogDiscord) << "Failed to send message:" << response.error
+                                          << "Status:" << response.statusCode;
+                    emit messageSendFailed(nonce, response.error);
+                    return;
+                }
 
-                         qCInfo(LogDiscord) << "Message sent successfully to channel" << channelId;
-                     });
+                qCInfo(LogDiscord) << "Message sent successfully to channel" << channelId;
+            });
 }
 
 void Client::uploadAttachmentsAndSend(const std::shared_ptr<UploadState> &state)
@@ -1086,6 +1095,8 @@ void Client::settleUpload(const std::shared_ptr<UploadState> &state)
 
 bool Client::cancelMessageSend(const QString &nonce)
 {
+    if (messageQueue->cancel(nonce))
+        return true;
     auto it = activeUploads.constFind(nonce);
     if (it == activeUploads.constEnd())
         return false;
@@ -1103,13 +1114,16 @@ void Client::editMessage(Snowflake channelId, Snowflake messageId, const QString
     if (keepReplyUnpinged)
         payload["allowed_mentions"] = allowedMentionsWithoutReplyPing();
 
-    httpClient->patch(endpoint, payload, [this, channelId, messageId](const HttpResponse &response) {
-        if (!response.success)
-            qCWarning(LogDiscord) << "Failed to edit message" << messageId << "in channel"
-                                  << channelId << ":" << response.error;
-        else
-            qCInfo(LogDiscord) << "Message" << messageId << "edited in channel" << channelId;
-    });
+    messageQueue->enqueue(
+            QString::number(messageId),
+            [this, endpoint, payload](HttpCallback done) { httpClient->patch(endpoint, payload, done); },
+            [channelId, messageId](const HttpResponse &response) {
+                if (!response.success)
+                    qCWarning(LogDiscord) << "Failed to edit message" << messageId << "in channel"
+                                          << channelId << ":" << response.error;
+                else
+                    qCInfo(LogDiscord) << "Message" << messageId << "edited in channel" << channelId;
+            });
 }
 
 void Client::deleteMessage(Snowflake channelId, Snowflake messageId)

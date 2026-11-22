@@ -361,6 +361,7 @@ set(PROJECT_SOURCES
     src/Discord/HttpClient.cpp
     src/Discord/ApiError.cpp
     src/Discord/RequestWorker.cpp
+    src/Discord/MessageQueue.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/CdnUrls.cpp
     src/Discord/StreamKey.cpp
@@ -562,6 +563,17 @@ if(BUILD_TESTS)
     target_link_libraries(TestOrderedJson PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestOrderedJson PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME OrderedJsonTests COMMAND TestOrderedJson)
+
+    qt_add_executable(TestRateLimiter tests/tst_RateLimiter.cpp)
+    target_link_libraries(TestRateLimiter PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestRateLimiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME RateLimiterTests COMMAND TestRateLimiter)
+
+    qt_add_executable(TestMessageQueue tests/tst_MessageQueue.cpp src/Discord/MessageQueue.cpp)
+    target_link_libraries(TestMessageQueue PRIVATE Qt::Core Qt::Network Qt::Test)
+    target_include_directories(TestMessageQueue PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+        $<TARGET_PROPERTY:CURL::libcurl,INTERFACE_INCLUDE_DIRECTORIES>)
+    add_test(NAME MessageQueueTests COMMAND TestMessageQueue)
 
     qt_add_executable(TestProto tests/tst_Proto.cpp src/Proto/ProtoReader.cpp
         src/Proto/ProtoWriter.cpp src/Proto/FrecencySettings.cpp src/Core/Logging.cpp)

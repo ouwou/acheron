@@ -7,6 +7,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "Core/Logging.hpp"
@@ -126,11 +128,13 @@ void RequestWorker::threadLoop()
                 handleCompletion(ctx, result);
         }
 
+        startReleased();
+
         if (!running.load())
             break;
 
         int numfds = 0;
-        curl_multi_poll(multi, nullptr, 0, 1000, &numfds);
+        curl_multi_poll(multi, nullptr, 0, pollTimeoutMs(), &numfds);
     }
 
     abortAllInFlight();
@@ -144,26 +148,122 @@ void RequestWorker::drainSubmissions()
         batch.swap(pending);
     }
 
-    for (auto &descriptor : batch) {
-        auto *ctx = new TransferContext();
-        ctx->worker = this;
-        ctx->descriptor = std::move(descriptor);
+    for (auto &descriptor : batch)
+        admit(std::move(descriptor));
+}
 
-        CURL *easy = buildEasyHandle(ctx);
-        if (!easy) {
-            failTransfer(ctx, "Failed to initialize curl");
-            continue;
-        }
+static std::string rateLimitKey(const RequestDescriptor &descriptor)
+{
+    return descriptor.url.substr(0, descriptor.url.find('?'));
+}
 
-        CURLMcode mc = curl_multi_add_handle(multi, easy);
-        if (mc != CURLM_OK) {
-            qCWarning(LogNetwork) << "curl_multi_add_handle failed:" << curl_multi_strerror(mc);
-            failTransfer(ctx, "Failed to add transfer");
-            continue;
-        }
-
-        active.insert(ctx);
+void RequestWorker::admit(RequestDescriptor descriptor)
+{
+    if (descriptor.external) {
+        startTransfer(std::move(descriptor));
+        return;
     }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (limiter.refusing(now)) {
+        refuse(std::move(descriptor));
+        return;
+    }
+    refusingLogged = false;
+
+    const std::string key = rateLimitKey(descriptor);
+    if (auto admitted = limiter.admit(key, std::move(descriptor), now))
+        startTransfer(std::move(*admitted));
+}
+
+void RequestWorker::startReleased()
+{
+    for (auto &descriptor : limiter.takeReleased(std::chrono::steady_clock::now()))
+        startTransfer(std::move(descriptor));
+}
+
+long RequestWorker::pollTimeoutMs() const
+{
+    constexpr long idleMs = 1000;
+    const auto wake = limiter.nextWake();
+    if (!wake)
+        return idleMs;
+    const auto untilWake = std::chrono::duration_cast<std::chrono::milliseconds>(*wake - std::chrono::steady_clock::now()).count();
+    return std::clamp<long>(static_cast<long>(untilWake) + 1, 0, idleMs);
+}
+
+void RequestWorker::startTransfer(RequestDescriptor descriptor)
+{
+    auto *ctx = new TransferContext();
+    ctx->worker = this;
+    ctx->descriptor = std::move(descriptor);
+
+    CURL *easy = buildEasyHandle(ctx);
+    if (!easy) {
+        failTransfer(ctx, "Failed to initialize curl");
+        return;
+    }
+
+    CURLMcode mc = curl_multi_add_handle(multi, easy);
+    if (mc != CURLM_OK) {
+        qCWarning(LogNetwork) << "curl_multi_add_handle failed:" << curl_multi_strerror(mc);
+        failTransfer(ctx, "Failed to add transfer");
+        return;
+    }
+
+    active.insert(ctx);
+}
+
+void RequestWorker::refuse(RequestDescriptor descriptor)
+{
+    if (!refusingLogged) {
+        refusingLogged = true;
+        qCWarning(LogNetwork) << "Discord refused" << RateLimiter<RequestDescriptor>::maxRefusals << "requests in 10 minutes, not sending any more for now";
+    }
+    HttpResponse response;
+    response.error = "Too many refused requests";
+    dispatchCompletion(std::move(descriptor), std::move(response), std::nullopt);
+}
+
+static std::optional<QByteArray> responseHeader(CURL *easy, const char *name)
+{
+    curl_header *header = nullptr;
+    if (curl_easy_header(easy, name, 0, CURLH_HEADER, -1, &header) != CURLHE_OK)
+        return std::nullopt;
+    return QByteArray(header->value);
+}
+
+static RateLimitResponse rateLimitResponse(CURL *easy, const HttpResponse &response)
+{
+    RateLimitResponse limit;
+    limit.status = response.statusCode;
+    limit.retryAfterMs = response.retryAfterMs;
+
+    if (limit.status == 429) {
+        const QJsonObject body = QJsonDocument::fromJson(response.body).object();
+        limit.global = body.value("global").toBool();
+        const double retryAfter = body.value("retry_after").toDouble();
+        if (!limit.retryAfterMs && retryAfter > 0)
+            limit.retryAfterMs = static_cast<int>(retryAfter * 1000);
+    }
+
+    char *contentType = nullptr;
+    curl_easy_getinfo(easy, CURLINFO_CONTENT_TYPE, &contentType);
+    const bool json = contentType && QByteArray(contentType).startsWith("application/json");
+    limit.blockedByCloudflare = (limit.status == 403 || limit.status == 429) && !json;
+
+    bool ok = false;
+    if (const auto remaining = responseHeader(easy, "x-ratelimit-remaining")) {
+        const int value = remaining->toInt(&ok);
+        if (ok)
+            limit.bucketRemaining = value;
+    }
+    if (const auto resetAfter = responseHeader(easy, "x-ratelimit-reset-after")) {
+        const double seconds = resetAfter->toDouble(&ok);
+        if (ok)
+            limit.bucketResetAfterMs = static_cast<int>(seconds * 1000);
+    }
+    return limit;
 }
 
 CURL *RequestWorker::buildEasyHandle(TransferContext *ctx)
@@ -326,6 +426,23 @@ void RequestWorker::handleCompletion(TransferContext *ctx, CURLcode result)
         curl_easy_getinfo(ctx->easy, CURLINFO_RESPONSE_CODE, &httpCode);
         ctx->response.statusCode = static_cast<int>(httpCode);
         ctx->response.success = (httpCode >= 200 && httpCode < 300);
+
+        // the official client only reads whole seconds here
+        bool ok = false;
+        if (const auto retryAfter = responseHeader(ctx->easy, "retry-after")) {
+            const int seconds = retryAfter->toInt(&ok);
+            if (ok && seconds > 0)
+                ctx->response.retryAfterMs = seconds * 1000;
+        }
+    }
+
+    if (!ctx->descriptor.external) {
+        const RateLimitResponse limit = result == CURLE_OK ? rateLimitResponse(ctx->easy, ctx->response) : RateLimitResponse{};
+        if (limit.blockedByCloudflare)
+            qCWarning(LogNetwork) << "Blocked by Cloudflare with status" << limit.status << ", holding every request";
+        else if (limit.global)
+            qCWarning(LogNetwork) << "Global rate limit, holding every request for" << limit.retryAfterMs.value_or(0) << "ms";
+        limiter.record(rateLimitKey(ctx->descriptor), limit, std::chrono::steady_clock::now());
     }
 
     std::optional<CaptchaChallenge> challenge;
@@ -388,6 +505,7 @@ void RequestWorker::abortAllInFlight()
         delete ctx; // no callback fired
     }
     active.clear();
+    limiter.clear();
 
     std::lock_guard<std::mutex> lock(mutex);
     pending.clear();

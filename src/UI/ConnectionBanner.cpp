@@ -44,10 +44,10 @@ void ConnectionBanner::paintEvent(QPaintEvent *event)
     painter.fillRect(rect(), palette().highlight());
 }
 
-void ConnectionBanner::showReconnecting(int attempt, int maxAttempts)
+void ConnectionBanner::showReconnecting(int attempt)
 {
     if (attempt > 0)
-        baseText = QString("Reconnecting (attempt %1/%2)").arg(attempt).arg(maxAttempts);
+        baseText = QString("Reconnecting (attempt %1)").arg(attempt);
     else
         baseText = "Reconnecting";
 

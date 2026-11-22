@@ -21,6 +21,7 @@
 #include "CaptchaResolver.hpp"
 #include "Core/ProxyConfig.hpp"
 #include "HttpClient.hpp"
+#include "RateLimiter.hpp"
 
 namespace Acheron {
 namespace Discord {
@@ -80,9 +81,14 @@ public:
 private:
     void threadLoop();
     void drainSubmissions();
+    void admit(RequestDescriptor descriptor);
+    void startTransfer(RequestDescriptor descriptor);
+    void startReleased();
+    [[nodiscard]] long pollTimeoutMs() const;
     CURL *buildEasyHandle(TransferContext *ctx);
     void handleCompletion(TransferContext *ctx, CURLcode result);
     void failTransfer(TransferContext *ctx, const char *error);
+    void refuse(RequestDescriptor descriptor);
     void dispatchCompletion(RequestDescriptor descriptor, HttpResponse response,
                             std::optional<CaptchaChallenge> challenge);
     void abortAllInFlight();
@@ -105,6 +111,8 @@ private:
     bool acceptingSubmissions = true;
 
     std::unordered_set<TransferContext *> active; // worker thread only
+    RateLimiter<RequestDescriptor> limiter; // worker thread only
+    bool refusingLogged = false;
 };
 
 } // namespace Discord
