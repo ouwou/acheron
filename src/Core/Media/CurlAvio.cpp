@@ -39,6 +39,7 @@ struct Stream
 
     CURLM *multi = nullptr;
     CURL *easy = nullptr;
+    curl_slist *headers = nullptr;
 
     std::deque<char> pending;
     qint64 position = 0;
@@ -63,6 +64,8 @@ struct Stream
             curl_easy_cleanup(easy);
             easy = nullptr;
         }
+        curl_slist_free_all(headers);
+        headers = nullptr;
         transferRunning = false;
         paused = false;
     }
@@ -126,10 +129,17 @@ bool startTransfer(Stream *stream)
     curl_easy_setopt(stream->easy, CURLOPT_HEADERDATA, stream);
     curl_easy_setopt(stream->easy, CURLOPT_CONNECTTIMEOUT, 15L);
 
-    if (stream->position > 0) {
-        const std::string range = std::to_string(stream->position) + "-";
-        curl_easy_setopt(stream->easy, CURLOPT_RANGE, range.c_str());
-    }
+    Discord::CurlUtils::BrowserRequest chromeVideoElement;
+    chromeVideoElement.crossSite = true;
+    chromeVideoElement.mode = "no-cors";
+    chromeVideoElement.dest = "video";
+    chromeVideoElement.referer = "https://discord.com/";
+    chromeVideoElement.acceptEncoding = "identity;q=1, *;q=0";
+    chromeVideoElement.range = "bytes=" + QByteArray::number(stream->position) + "-";
+    // guessed, not captured: chrome loads media at Low, which goes out as the default urgency 3, incremental
+    chromeVideoElement.priority = "i";
+    stream->headers = Discord::CurlUtils::browserHeaders(chromeVideoElement);
+    curl_easy_setopt(stream->easy, CURLOPT_HTTPHEADER, stream->headers);
 
     if (curl_multi_add_handle(stream->multi, stream->easy) != CURLM_OK) {
         stream->stopTransfer();

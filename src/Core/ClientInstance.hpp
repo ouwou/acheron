@@ -125,7 +125,7 @@ public:
 
 signals:
     void stateChanged(ConnectionState state);
-    void reconnecting(int attempt, int maxAttempts);
+    void reconnecting(int attempt);
     void detailsUpdated(const AccountInfo &info);
 
     void ready(const Discord::Ready &ready);
