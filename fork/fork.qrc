@@ -1,0 +1,12 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/fork">
+        <file>tray-16.png</file>
+        <file>tray-24.png</file>
+        <file>tray-32.png</file>
+        <file>tray-48.png</file>
+        <file>tray-64.png</file>
+        <file>tray-128.png</file>
+        <file>tray-256.png</file>
+    </qresource>
+</RCC>

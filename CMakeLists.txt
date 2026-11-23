@@ -520,6 +520,12 @@ else()
     list(APPEND PROJECT_SOURCES vendor/qrcodegen/cpp/qrcodegen.cpp)
 endif()
 
+# Fork: custom icon for windows, taskbar, .exe and tray (see fork/README.md)
+list(APPEND PROJECT_SOURCES fork/fork.qrc)
+if(WIN32)
+    list(APPEND PROJECT_SOURCES fork/acheron.rc)
+endif()
+
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE vendor/emoji-segmenter)

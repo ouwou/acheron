@@ -1,5 +1,6 @@
 #include "TrayIcon.hpp"
 
+#include <QFile>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QSvgRenderer>
@@ -15,6 +16,16 @@ static constexpr bool ClickOpensTheMenu = false;
 
 static QIcon applicationIcon()
 {
+    // Fork: prefer the custom tray icon bundled from fork/fork.qrc.
+    QIcon custom;
+    for (int side : { 16, 24, 32, 48, 64, 128, 256 }) {
+        const QString path = QStringLiteral(":/fork/tray-%1.png").arg(side);
+        if (QFile::exists(path))
+            custom.addFile(path, QSize(side, side));
+    }
+    if (!custom.isNull())
+        return custom;
+
     QSvgRenderer renderer(QStringLiteral(":/acheron.svg"));
     QIcon rendered;
     for (int side : { 16, 24, 32, 48, 64 }) {
