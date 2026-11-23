@@ -443,6 +443,7 @@ jobs:
           path: acheron-windows-qt5-MinSizeRel
 
   build-linux:
+    if: github.repository == 'ouwou/acheron'   # fork: skip Linux (only Windows builds are used)
     # not -latest: mlspp builds with -Werror, which fails on ubuntu-26.04's gcc 15
     runs-on: ubuntu-24.04
     strategy:
@@ -562,6 +563,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure --timeout 600
 
   build-appimage:
+    if: github.repository == 'ouwou/acheron'   # fork: skip AppImage (only Windows builds are used)
     # ubuntu-22.04, not -latest: the AppImage bundles Qt but not glibc, so the
     # builder's glibc (2.35 here) is the floor. Covers Debian 12+/Ubuntu 22.04+.
     runs-on: ubuntu-22.04
