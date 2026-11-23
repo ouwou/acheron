@@ -33,6 +33,7 @@ struct User : Core::JsonUtils::JsonObject
     Field<PremiumType, true, true> premiumType;
     Field<QString, true> discriminator;
     Field<bool, true> mfaEnabled;
+    Field<bool, true> system;
 
     static User fromJson(const QJsonObject &obj)
     {
@@ -48,7 +49,15 @@ struct User : Core::JsonUtils::JsonObject
         get(obj, "premium_type", user.premiumType);
         get(obj, "discriminator", user.discriminator);
         get(obj, "mfa_enabled", user.mfaEnabled);
+        get(obj, "system", user.system);
         return user;
+    }
+
+    // the official client's name for system users and webhooks, which its "recently talked" mention suggestions skip
+    [[nodiscard]] bool isNonUserBot() const
+    {
+        const QLatin1String webhookDiscriminator("0000");
+        return system.valueOr(false) || (bot.valueOr(false) && discriminator.hasValue() && discriminator.get() == webhookDiscriminator);
     }
 
     QString tag() const
@@ -511,6 +520,7 @@ struct PermissionOverwrite : Core::JsonUtils::JsonObject
 struct ThreadMetadata : Core::JsonUtils::JsonObject
 {
     Field<bool> archived;
+    Field<bool, true> locked;
     Field<int, true> autoArchiveDuration; // minutes
     Field<QDateTime, true> archiveTimestamp; // when the archive status last changed
 
@@ -518,6 +528,7 @@ struct ThreadMetadata : Core::JsonUtils::JsonObject
     {
         ThreadMetadata meta;
         get(obj, "archived", meta.archived);
+        get(obj, "locked", meta.locked);
         get(obj, "auto_archive_duration", meta.autoArchiveDuration);
         get(obj, "archive_timestamp", meta.archiveTimestamp);
         return meta;
@@ -571,6 +582,7 @@ struct Channel : Core::JsonUtils::JsonObject
     Field<QList<User>, true> recipients;
     Field<QList<Core::Snowflake>, true> recipientIds;
     Field<Core::Snowflake, true, true> lastMessageId;
+    Field<QDateTime, true, true> lastPinTimestamp;
     Field<QString, true, true> icon;
     Field<Core::Snowflake, true> ownerId;
     Field<int, true> rateLimitPerUser;
@@ -606,6 +618,7 @@ struct Channel : Core::JsonUtils::JsonObject
         get(obj, "recipients", channel.recipients);
         get(obj, "recipient_ids", channel.recipientIds);
         get(obj, "last_message_id", channel.lastMessageId);
+        get(obj, "last_pin_timestamp", channel.lastPinTimestamp);
         get(obj, "icon", channel.icon);
         get(obj, "owner_id", channel.ownerId);
         get(obj, "rate_limit_per_user", channel.rateLimitPerUser);
@@ -928,6 +941,9 @@ struct VoiceState : Core::JsonUtils::JsonObject
     Field<bool> selfVideo;
     Field<bool> suppress;
     Field<QString, true> requestToSpeakTimestamp;
+
+    [[nodiscard]] Core::Snowflake channel() const { return channelId.isNull() ? Core::Snowflake::Invalid : channelId.get(); }
+    [[nodiscard]] bool isHeldBy(const QString &gatewaySessionId) const { return gatewaySessionId.isEmpty() || sessionId.get() == gatewaySessionId; }
 
     static VoiceState fromJson(const QJsonObject &obj)
     {
@@ -1299,6 +1315,7 @@ struct Message : Core::JsonUtils::JsonObject
     Field<bool, true> mentionEveryone;
     Field<QList<Reaction>, true> reactions;
     Field<QList<StickerItem>, true> stickerItems;
+    Field<bool, true> pinned;
 
     Field<MessageReference, true> messageReference;
 
@@ -1328,6 +1345,8 @@ struct Message : Core::JsonUtils::JsonObject
 
     // track for MESSAGE_UPDATE
     QSet<QString> presentKeys;
+
+    [[nodiscard]] bool isPinned() const { return pinned.hasValue() && pinned.get(); }
 
     [[nodiscard]] bool isForwarded() const
     {
@@ -1384,6 +1403,7 @@ struct Message : Core::JsonUtils::JsonObject
         get(obj, "mention_everyone", message.mentionEveryone);
         get(obj, "reactions", message.reactions);
         get(obj, "sticker_items", message.stickerItems);
+        get(obj, "pinned", message.pinned);
         get(obj, "message_reference", message.messageReference);
         get(obj, "guild_id", message.guildId);
         get(obj, "channel_type", message.channelType);
@@ -1436,6 +1456,8 @@ struct Message : Core::JsonUtils::JsonObject
             attachments = update.attachments;
         if (present.contains(QStringLiteral("message_reference")))
             messageReference = update.messageReference;
+        if (present.contains(QStringLiteral("pinned")))
+            pinned = update.pinned;
 
         if (present.contains(QStringLiteral("message_snapshots"))) {
             snapshotMessage = update.snapshotMessage;
@@ -1456,6 +1478,20 @@ struct Message : Core::JsonUtils::JsonObject
             stickerItems = update.stickerItems;
             stickersJson = update.stickersJson;
         }
+    }
+};
+
+struct MessagePin : Core::JsonUtils::JsonObject
+{
+    Field<QDateTime> pinnedAt;
+    Field<Message> message;
+
+    static MessagePin fromJson(const QJsonObject &obj)
+    {
+        MessagePin pin;
+        get(obj, "pinned_at", pin.pinnedAt);
+        get(obj, "message", pin.message);
+        return pin;
     }
 };
 

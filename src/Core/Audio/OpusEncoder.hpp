@@ -19,6 +19,10 @@ public:
 
     bool init(int sampleRate, int channels, int application = OPUS_APPLICATION_VOIP);
 
+    // keeps the packet within the official client's 1200 bytes: networks with a reduced MTU, such as a
+    // VPN's, split larger ones, and split voice packets are lost
+    static constexpr int MAX_PACKET_BYTES = 1160;
+
     QByteArray encode(const QByteArray &pcmFrame);
 
     void setBitrate(int bitrate);

@@ -69,7 +69,7 @@ static QString resolveSystemMessageContent(const Discord::Message &msg, const st
 
 MessageManager::MessageManager(Snowflake accountId, Discord::Client *client,
                                UserManager *userManager, QObject *parent)
-    : QObject(parent), client(client), userManager(userManager), reactorStore(new MessageReactors(client, userManager, this)), repo(accountId), parser(std::make_unique<Markdown::Parser>())
+    : QObject(parent), client(client), userManager(userManager), reactorStore(new MessageReactors(client, userManager, this)), pinStore(new ChannelPins(client, [this](Discord::Message &msg) { parseMessageContent(msg); }, this)), repo(accountId), parser(std::make_unique<Markdown::Parser>())
 {
     messageCache.setMaxCost(1'000);
 
@@ -135,6 +135,11 @@ QString MessageManager::profileBioHtml(const QString &bio) const
 void MessageManager::setChannelLinkResolver(Markdown::ChannelLinkResolverFn resolver)
 {
     parser->setChannelLinkResolver(std::move(resolver));
+}
+
+void MessageManager::setRoleResolver(Markdown::RoleResolverFn resolver)
+{
+    parser->setRoleResolver(std::move(resolver));
 }
 
 void MessageManager::setChannelResolver(std::function<QString(Snowflake)> resolver)
@@ -366,6 +371,7 @@ void MessageManager::onMessageCreated(const Discord::Message &message)
 void MessageManager::onMessageUpdated(const Discord::Message &message)
 {
     cacheGatewayMembers(message);
+    pinStore->applyMessageUpdate(message);
 
     Discord::Message merged;
     bool haveBaseline = false;
@@ -404,6 +410,7 @@ void MessageManager::onMessageDeleted(const Discord::MessageDelete &event)
     Snowflake messageId = event.id.get();
 
     messageCache.remove(messageId);
+    pinStore->forgetMessage(channelId, messageId);
 
     if (segments.contains(channelId))
         segments[channelId].remove(messageId);
@@ -499,7 +506,7 @@ void MessageManager::onReactionChangeFailed(ReactionOp op, const ReactionChange 
 }
 
 void MessageManager::sendMessage(Snowflake channelId, const QString &content,
-                                 Snowflake replyToMessageId,
+                                 Snowflake replyToMessageId, bool mentionRepliedUser,
                                  const QList<PendingAttachment> &attachments)
 {
     if (emojiManager)
@@ -575,7 +582,7 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
         }
     }
 
-    client->sendMessage(channelId, content, nonce, replyToMessageId, outgoing);
+    client->sendMessage(channelId, content, nonce, replyToMessageId, mentionRepliedUser, outgoing);
 }
 
 void MessageManager::cancelSend(Snowflake channelId, const QString &nonce)

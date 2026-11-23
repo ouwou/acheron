@@ -14,10 +14,12 @@
 #include "Core/MessageReactors.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Client.hpp"
+#include "UI/Input/MentionText.hpp"
 
 namespace Acheron {
 namespace UI {
 
+class EmojiAutocomplete;
 class FrameAnimator;
 class GifPlayback;
 class ImageViewer;
@@ -95,6 +97,8 @@ public:
     void setModel(QAbstractItemModel *model) override;
 
     void setCurrentUserId(Core::Snowflake userId);
+    void setMentionNameResolver(MentionNameResolver resolver);
+    [[nodiscard]] EmojiAutocomplete *inlineEditAutocomplete() const { return editAutocomplete; }
     void setCanPinMessages(bool canPin);
     void setCanManageMessages(bool canManage);
     void setCanAddReactions(bool canReact);
@@ -132,6 +136,7 @@ signals:
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
+    void unpinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void replyToMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void reactionPickerRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void cancelUploadRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -139,7 +144,9 @@ signals:
     void reactionToggleRequested(Core::Snowflake channelId, Core::Snowflake messageId, const Acheron::Discord::Emoji &emoji, bool currentlyReacted, bool isBurst, Acheron::Discord::Client::ReactionLocation location);
     void reactorsRequested(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Acheron::Core::ReactionRef> &selected);
     void channelMentionClicked(Core::Snowflake channelId);
+    void userMentionClicked(Core::Snowflake userId);
     void messageLinkClicked(Core::Snowflake channelId, Core::Snowflake messageId);
+    void pinsLinkClicked(Core::Snowflake channelId);
     void userContextMenuRequested(Core::Snowflake userId, QPoint globalPos);
     void inlineEditFinished();
 
@@ -187,6 +194,7 @@ private:
     QPoint actionBarPosition(const QModelIndex &index) const;
     void updateHoveredMessage();
     void addMessageAction(QMenu &menu, MessageActionBar::Action action, Core::Snowflake messageId);
+    void addMessageMenuItems(QMenu &menu, const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region);
     void triggerMessageAction(MessageActionBar::Action action, Core::Snowflake messageId);
     void execMessageMenu(QMenu &menu, const QPoint &globalPos);
     [[nodiscard]] bool canReactTo(const QModelIndex &index) const;
@@ -215,6 +223,8 @@ private:
     QPointer<Core::EmojiManager> emojis;
 
     QTextEdit *inlineEditWidget = nullptr;
+    EmojiAutocomplete *editAutocomplete = nullptr;
+    MentionNameResolver mentionNameResolver;
     Core::Snowflake currentEditingMessageId = Core::Snowflake::Invalid;
     QModelIndex currentEditingIndex;
 

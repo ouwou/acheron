@@ -6,6 +6,7 @@
 #include <QToolTip>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 #include "Core/ImageManager.hpp"
@@ -21,6 +22,7 @@
 #include "UI/Emoji/EmojiGlyphs.hpp"
 #include "UI/Emoji/EmojiPainting.hpp"
 #include "UI/ImageViewer.hpp"
+#include "UI/Input/EmojiAutocompletePopup.hpp"
 #include "UI/Input/TextEdgeNavigation.hpp"
 
 namespace Acheron {
@@ -127,6 +129,7 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     inlineEditWidget->setFrameStyle(QFrame::Box);
     inlineEditWidget->setLineWidth(2);
     inlineEditWidget->installEventFilter(this);
+    editAutocomplete = new EmojiAutocomplete(inlineEditWidget, inlineEditWidget);
 
     video = new InlineVideoController(this);
     animator = new FrameAnimator(this);
@@ -386,12 +389,19 @@ void ChatView::openLink(const QString &url)
     if (url.isEmpty())
         return;
 
-    const QLatin1String channelMention("acheron://channel/");
-    if (url.startsWith(channelMention)) {
+    using IdLinkSignal = void (ChatView::*)(Core::Snowflake);
+    static const std::array<std::pair<QLatin1String, IdLinkSignal>, 3> idLinks = { {
+            { QLatin1String("acheron://channel/"), &ChatView::channelMentionClicked },
+            { QLatin1String("acheron://user/"), &ChatView::userMentionClicked },
+            { QLatin1String("acheron://pins/"), &ChatView::pinsLinkClicked },
+    } };
+    for (const auto &[prefix, clicked] : idLinks) {
+        if (!url.startsWith(prefix))
+            continue;
         bool ok = false;
-        quint64 id = url.mid(channelMention.size()).toULongLong(&ok);
+        const quint64 id = url.mid(prefix.size()).toULongLong(&ok);
         if (ok)
-            emit channelMentionClicked(Core::Snowflake(id));
+            emit (this->*clicked)(Core::Snowflake(id));
         return;
     }
 
@@ -1010,18 +1020,15 @@ void ChatView::onActionBarTriggered(MessageActionBar::Action action)
 
 void ChatView::onActionBarMoreRequested(const QPoint &buttonTopLeft)
 {
-    using Action = MessageActionBar::Action;
     constexpr int MenuGap = 4;
 
-    QMenu menu(this);
+    const QModelIndex index = hoveredMessage;
+    if (!index.isValid())
+        return;
 
+    QMenu menu(this);
     menu.setAttribute(Qt::WA_NoMouseReplay);
-    addMessageAction(menu, Action::Reply, actionBarMessageId);
-    addMessageAction(menu, Action::CopyLink, actionBarMessageId);
-    if (canDeleteMessage(hoveredMessage))
-        addMessageAction(menu, Action::Delete, actionBarMessageId);
-    menu.addSeparator();
-    addMessageAction(menu, Action::CopyId, actionBarMessageId);
+    addMessageMenuItems(menu, index, ChatLayout::resolveLayout(this, index), std::nullopt);
 
     actionBar->setMoreButtonDown(true);
 
@@ -1202,6 +1209,11 @@ void ChatView::setCurrentUserId(Core::Snowflake userId)
     currentUserId = userId;
 }
 
+void ChatView::setMentionNameResolver(MentionNameResolver resolver)
+{
+    mentionNameResolver = std::move(resolver);
+}
+
 void ChatView::setCanPinMessages(bool canPin)
 {
     canPinMessages = canPin;
@@ -1235,16 +1247,10 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     if (!chatModel)
         return;
 
-    Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
-    Core::Snowflake authorId = index.data(ChatModel::UserIdRole).toULongLong();
-    Core::Snowflake channelId = chatModel->getActiveChannelId();
-    QString content = index.data(ChatModel::ContentRole).toString();
-    bool isOwnMessage = (authorId == currentUserId);
-
     ChatLayout::ResolvedLayout resolved = ChatLayout::resolveLayout(this, index);
     auto region = ChatLayout::hitTest(resolved, event->pos());
     if (region && (region->kind == ChatLayout::HitRegion::Kind::Avatar || region->kind == ChatLayout::HitRegion::Kind::UsernameHeader)) {
-        emit userContextMenuRequested(authorId, event->globalPos());
+        emit userContextMenuRequested(index.data(ChatModel::UserIdRole).toULongLong(), event->globalPos());
         return;
     }
 
@@ -1278,6 +1284,20 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     if (!menu.isEmpty())
         menu.addSeparator();
 
+    addMessageMenuItems(menu, index, resolved, region);
+    execMessageMenu(menu, event->globalPos());
+}
+
+void ChatView::addMessageMenuItems(QMenu &menu, const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region)
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel)
+        return;
+
+    const Core::Snowflake messageId = index.data(ChatModel::MessageIdRole).toULongLong();
+    const Core::Snowflake channelId = chatModel->getActiveChannelId();
+    const bool isOwnMessage = index.data(ChatModel::UserIdRole).toULongLong() == currentUserId;
+
     QAction *copyAction = menu.addAction(tr("Copy Text"));
     copyAction->setShortcut(QKeySequence::Copy);
     if (hasTextSelection()) {
@@ -1307,7 +1327,12 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
 
     menu.addSeparator();
 
-    if (canPinMessages) {
+    if (canPinMessages && index.data(ChatModel::IsPinnedRole).toBool()) {
+        QAction *unpinAction = menu.addAction(tr("Unpin Message"));
+        connect(unpinAction, &QAction::triggered, this, [this, channelId, messageId]() {
+            emit unpinMessageRequested(channelId, messageId);
+        });
+    } else if (canPinMessages) {
         QAction *pinAction = menu.addAction(tr("Pin Message"));
         connect(pinAction, &QAction::triggered, this, [this, channelId, messageId]() {
             emit pinMessageRequested(channelId, messageId);
@@ -1339,8 +1364,6 @@ void ChatView::contextMenuEvent(QContextMenuEvent *event)
     menu.addSeparator();
     addMessageAction(menu, MessageActionBar::Action::CopyLink, messageId);
     addMessageAction(menu, MessageActionBar::Action::CopyId, messageId);
-
-    execMessageMenu(menu, event->globalPos());
 }
 
 void ChatView::keyPressEvent(QKeyEvent *event)
@@ -1505,7 +1528,8 @@ void ChatView::startInlineEdit(const QModelIndex &index)
 
         inlineEditWidget->setGeometry(editRect);
         inlineEditWidget->setFont(resolved.ctx.font);
-        inlineEditWidget->setPlainText(content);
+        inlineEditWidget->clear();
+        editAutocomplete->insertTextWithMentions(content, mentionNameResolver);
         inlineEditWidget->setVisible(true);
         inlineEditWidget->setFocus();
         inlineEditWidget->selectAll();
@@ -1540,7 +1564,7 @@ void ChatView::commitInlineEdit()
     if (!currentEditingIndex.isValid())
         return;
 
-    QString newContent = inlineEditWidget->toPlainText().trimmed();
+    QString newContent = toMessageText(inlineEditWidget->document()).trimmed();
     QString oldContent = currentEditingIndex.data(ChatModel::ContentRole).toString();
 
     auto *chatModel = qobject_cast<ChatModel *>(model());

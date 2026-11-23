@@ -23,6 +23,7 @@ public:
 
     [[nodiscard]] QToolButton *emojiButton() const { return emojiPickerButton; }
     [[nodiscard]] QToolButton *gifButton() const { return gifPickerButton; }
+    [[nodiscard]] int heightForContent(int contentHeight) const;
 
 protected:
     void keyPressEvent(QKeyEvent *e) override;
@@ -38,6 +39,8 @@ signals:
     void imagePasted(const QImage &image);
 
 private:
+    void positionPickerButtons();
+
     QToolButton *gifPickerButton;
     QToolButton *emojiPickerButton;
 };
@@ -51,14 +54,16 @@ public:
     void setPlaceholder(const QString &name);
 
     void setReplyTarget(Core::Snowflake messageId, const QString &authorName,
-                        const QString &contentSnippet);
+                        const QString &contentSnippet, bool mentionAuthor, bool showMentionToggle);
     void clearReplyTarget();
     [[nodiscard]] Core::Snowflake replyTargetMessageId() const { return replyMessageId; }
+    [[nodiscard]] bool replyMentionsAuthor() const;
 
     void setSendBlocked(bool blocked);
     [[nodiscard]] bool isSendBlocked() const { return sendBlocked; }
 
     void insertText(const QString &text);
+    void insertMention(const QString &displayText, const QString &mentionText);
 
     void requestEmojiPicker();
     void setEmojiPickerOpen(bool open);
@@ -85,6 +90,7 @@ private:
     ChatTextEdit *textEdit;
     QWidget *replyBar;
     QLabel *replyLabel;
+    QToolButton *replyMentionButton;
     QToolButton *replyCancelButton;
     AttachmentPreviewPanel *attachmentPanel;
     EmojiAutocomplete *autocomplete;
@@ -93,6 +99,9 @@ private:
     bool sendBlocked = false;
 
     void adjustHeight();
+    void applyTheme();
+    void applyMessageFont();
+    void updateReplyMentionButton();
     [[nodiscard]] QRect pickerAnchor() const;
 };
 

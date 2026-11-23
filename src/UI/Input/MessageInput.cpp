@@ -1,9 +1,11 @@
 #include "MessageInput.hpp"
 #include "AttachmentPreviewPanel.hpp"
+#include "MentionText.hpp"
 #include "TextEdgeNavigation.hpp"
 
 #include "Core/Emoji/UnicodeEmojiIndex.hpp"
 #include "Core/Theme/Icons.hpp"
+#include "Core/Theme/Manager.hpp"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -13,6 +15,7 @@
 #include <QImage>
 #include <QMimeData>
 #include <QToolButton>
+#include <QtMath>
 
 #include <algorithm>
 
@@ -63,15 +66,29 @@ ChatTextEdit::ChatTextEdit(QWidget *parent) : QTextEdit(parent)
 void ChatTextEdit::resizeEvent(QResizeEvent *e)
 {
     QTextEdit::resizeEvent(e);
+    positionPickerButtons();
+}
+
+void ChatTextEdit::positionPickerButtons()
+{
     const int left = viewport()->geometry().right() + 1 + PickerButtonGap;
-    const int top = (MinTextEditHeight - PickerButtonSize) / 2;
+    const int top = (heightForContent(fontMetrics().lineSpacing()) - PickerButtonSize) / 2;
     gifPickerButton->move(left, top);
     emojiPickerButton->move(left + PickerButtonSize + PickerButtonGap, top);
+}
+
+int ChatTextEdit::heightForContent(int contentHeight) const
+{
+    ensurePolished();
+    const int chrome = height() - contentsRect().height();
+    return std::clamp(contentHeight + chrome, MinTextEditHeight, MaxTextEditHeight);
 }
 
 void ChatTextEdit::changeEvent(QEvent *e)
 {
     QTextEdit::changeEvent(e);
+    if (e->type() == QEvent::FontChange)
+        positionPickerButtons();
     if (e->type() != QEvent::EnabledChange)
         return;
 
@@ -145,8 +162,16 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     replyLayout->setSpacing(4);
 
     replyLabel = new QLabel(replyBar);
-    replyLabel->setStyleSheet("color: #b5bac1; font-size: 12px;");
     replyLayout->addWidget(replyLabel, 1);
+
+    replyMentionButton = new QToolButton(replyBar);
+    replyMentionButton->setCheckable(true);
+    replyMentionButton->setChecked(true);
+    replyMentionButton->setAutoRaise(true);
+    replyMentionButton->setCursor(Qt::PointingHandCursor);
+    replyMentionButton->setFocusPolicy(Qt::NoFocus);
+    replyLayout->addWidget(replyMentionButton);
+    connect(replyMentionButton, &QToolButton::toggled, this, &MessageInput::updateReplyMentionButton);
 
     replyCancelButton = new QToolButton(replyBar);
     replyCancelButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::X, Core::Theme::Token::PlaceholderText));
@@ -176,7 +201,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
     connect(textEdit, &ChatTextEdit::returnPressed, [this]() {
         if (sendBlocked)
             return;
-        QString txt = textEdit->toPlainText().trimmed();
+        QString txt = toMessageText(textEdit->document()).trimmed();
         if (txt.isEmpty() && !attachmentPanel->hasAttachments())
             return;
         txt = Core::UnicodeEmojiIndex::instance().translateNamesToSurrogates(txt);
@@ -193,8 +218,7 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
         attachmentPanel->clearAttachments();
     });
 
-    connect(textEdit->document(), &QTextDocument::contentsChanged, this,
-            &MessageInput::adjustHeight);
+    connect(textEdit->document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged, this, &MessageInput::adjustHeight);
 
     autocomplete = new EmojiAutocomplete(textEdit, this);
 
@@ -207,6 +231,10 @@ MessageInput::MessageInput(QWidget *parent) : QWidget(parent)
 
     setAcceptDrops(true);
 
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &MessageInput::applyTheme);
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::metricsChanged, this, &MessageInput::applyMessageFont);
+    applyTheme();
+    applyMessageFont();
     adjustHeight();
 }
 
@@ -257,8 +285,12 @@ void MessageInput::dropEvent(QDropEvent *event)
 }
 
 void MessageInput::setReplyTarget(Core::Snowflake messageId, const QString &authorName,
-                                  const QString &contentSnippet)
+                                  const QString &contentSnippet, bool mentionAuthor, bool showMentionToggle)
 {
+    replyMentionButton->setChecked(mentionAuthor);
+    replyMentionButton->setVisible(showMentionToggle);
+    updateReplyMentionButton();
+
     replyMessageId = messageId;
     QString snippet = contentSnippet;
     snippet.replace('\n', ' ');
@@ -281,6 +313,35 @@ void MessageInput::clearReplyTarget()
     adjustHeight();
 }
 
+bool MessageInput::replyMentionsAuthor() const
+{
+    return replyMentionButton->isChecked();
+}
+
+void MessageInput::applyTheme()
+{
+    const QColor muted = Core::Theme::Manager::instance().color(Core::Theme::Token::PlaceholderText);
+    replyLabel->setStyleSheet(QStringLiteral("color: %1; font-size: 12px;").arg(muted.name()));
+    updateReplyMentionButton();
+}
+
+void MessageInput::applyMessageFont()
+{
+    textEdit->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
+}
+
+void MessageInput::updateReplyMentionButton()
+{
+    using namespace Core::Theme;
+    const bool on = replyMentionButton->isChecked();
+    const QColor color = Manager::instance().color(on ? Token::LinkText : Token::PlaceholderText);
+    replyMentionButton->setText(on ? tr("@ ON") : tr("@ OFF"));
+    replyMentionButton->setToolTip(on ? tr("Click to disable pinging the original author")
+                                      : tr("Click to enable pinging the original author"));
+    replyMentionButton->setStyleSheet(QStringLiteral("QToolButton { border: none; font-size: 12px; font-weight: bold; color: %1; }")
+                                              .arg(color.name()));
+}
+
 void MessageInput::setSendBlocked(bool blocked)
 {
     sendBlocked = blocked;
@@ -290,6 +351,11 @@ void MessageInput::insertText(const QString &text)
 {
     textEdit->insertPlainText(text);
     textEdit->setFocus();
+}
+
+void MessageInput::insertMention(const QString &displayText, const QString &mentionText)
+{
+    autocomplete->insertMention(displayText, mentionText);
 }
 
 QRect MessageInput::pickerAnchor() const
@@ -322,14 +388,7 @@ void MessageInput::setGifPickerOpen(bool open)
 
 void MessageInput::adjustHeight()
 {
-    int contentHeight = textEdit->document()->size().height();
-
-    int newHeight = contentHeight + contentHeight;
-
-    if (newHeight < MinTextEditHeight)
-        newHeight = MinTextEditHeight;
-    if (newHeight > MaxTextEditHeight)
-        newHeight = MaxTextEditHeight;
+    const int newHeight = textEdit->heightForContent(qCeil(textEdit->document()->size().height()));
 
     if (newHeight >= MaxTextEditHeight)
         textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);

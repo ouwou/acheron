@@ -34,6 +34,14 @@ class VoiceManager;
 
 class ReadStateManager;
 class ForumManager;
+class CallStore;
+enum class CallConnect;
+class StreamManager;
+class StreamPreviews;
+class StreamWatcher;
+class StreamBroadcaster;
+class CameraSender;
+struct ShareTerms;
 
 class ClientInstance : public QObject
 {
@@ -58,9 +66,19 @@ public:
     [[nodiscard]] PresenceManager *presences() const;
     [[nodiscard]] EmojiManager *emojis() const;
     [[nodiscard]] FavoriteGifs *favoriteGifs() const;
+    [[nodiscard]] CallStore *calls() const;
+    [[nodiscard]] StreamManager *streams() const;
+    [[nodiscard]] StreamPreviews *streamPreviews() const;
 #ifndef ACHERON_NO_VOICE
     [[nodiscard]] Audio::VoiceManager *voice() const;
 #endif
+#ifdef ACHERON_HAVE_VIDEO
+    [[nodiscard]] StreamWatcher *streamWatcher() const;
+    [[nodiscard]] StreamBroadcaster *streamBroadcaster() const;
+    [[nodiscard]] CameraSender *cameraSender() const;
+#endif
+    void joinVoice(Snowflake guildId, Snowflake channelId);
+    void leaveVoice();
 
     [[nodiscard]] QList<Discord::Role> getRolesForGuild(Snowflake guildId);
     [[nodiscard]] QList<Discord::Role> getMemberRolesSorted(Snowflake guildId, Snowflake userId);
@@ -73,6 +91,13 @@ public:
     [[nodiscard]] int getChannelRateLimit(Snowflake channelId);
 
     [[nodiscard]] bool isThreadJoined(Snowflake threadId) const;
+    [[nodiscard]] bool hasUnreadPins(Snowflake channelId);
+    [[nodiscard]] bool isForumParent(Snowflake parentId);
+    [[nodiscard]] QList<Discord::Channel> joinedActiveThreads(Snowflake guildId) const;
+    [[nodiscard]] bool chatHighlightsAsMention(const Discord::Message &msg, Snowflake guildId) const;
+
+    // sends CALL_CONNECT once per private channel, as the official client does
+    void noteChannelSelected(Snowflake channelId);
 
     [[nodiscard]] QList<Discord::Ban> observedBans(Snowflake guildId) const;
     [[nodiscard]] QList<Discord::Invite> createdInvites(Snowflake guildId) const;
@@ -121,6 +146,7 @@ signals:
     void membersUpdated(Snowflake guildId, const QList<Snowflake> &userIds);
     void memberRemoved(Snowflake guildId, Snowflake userId);
     void readStateChanged(Snowflake channelId);
+    void pinsReadStateChanged(Snowflake channelId);
     void forumBadgeChanged(Snowflake forumId);
     void forumJoinedPostsChanged(Snowflake forumId);
     void guildSettingsChanged(Snowflake guildId);
@@ -157,25 +183,36 @@ private slots:
     void onMessageCreated(const Discord::Message &msg);
     void handleAckRequest(Snowflake channelId, Snowflake messageId);
     void handleBulkAckRequest(const QList<QPair<Snowflake, Snowflake>> &pairs);
+    void handlePinsAckRequest(Snowflake channelId);
     void onVoiceConnected();
     void onVoiceDisconnected();
+    void onSelfAudioToggled();
+    void sendOwnVoiceState(Snowflake guildId, Snowflake channelId);
+    void onVoiceStateUpdated(const Discord::VoiceState &event);
+    void onCallCreated(const Discord::CallCreate &event);
+    void onCallDeleted(const Discord::CallDelete &event);
     void onHeartbeatSessionChanged(const Discord::HeartbeatSession &session);
     bool isMessageMentioningMe(const Discord::Message &msg) const;
 
 private:
+    enum class SuppressSettings {
+        Honour,
+        Ignore,
+    };
+    bool mentionsAccount(const Discord::Message &msg, Snowflake guildId, SuppressSettings suppress) const;
     bool runInCacheTransaction(const char *what, const std::function<void(QSqlDatabase &)> &op);
     QList<Markdown::ChannelLinkPart> channelLinkParts(const Markdown::ChannelLinkRef &ref);
 
     void saveGuild(const Discord::GatewayGuild &guild, const QList<Discord::Member> *members, Snowflake myId, QSqlDatabase &db);
     void initGuildReadState(const Discord::GatewayGuild &guild);
 
-    [[nodiscard]] bool isForumParent(Snowflake parentId);
     void registerThreadReadState(const Discord::Channel &thread, Snowflake guildId);
     void cacheThread(const Discord::Channel &thread, Snowflake guildId);
     void ingestThread(const Discord::Channel &thread, Snowflake guildId);
     void fetchThreadListAttempt(Snowflake channelId, bool archived, int offset, int attempt, const ThreadListPageCallback &callback);
     [[nodiscard]] QList<Snowflake> markableChannelIds(Snowflake guildId, Snowflake categoryId);
     void sendNextBulkAckBatch();
+    void sendPinsAck(Snowflake channelId, int attempt);
 
     AccountInfo account;
 
@@ -190,8 +227,17 @@ private:
     PresenceManager *presenceManager;
     EmojiManager *emojiManager;
     FavoriteGifs *favoriteGifManager;
+    CallStore *callStore;
+    StreamManager *streamManager;
+    StreamPreviews *streamPreviewCache;
 #ifndef ACHERON_NO_VOICE
     Audio::VoiceManager *voiceManager;
+#endif
+#ifdef ACHERON_HAVE_VIDEO
+    StreamWatcher *streamWatch = nullptr;
+    StreamBroadcaster *streamBroadcast = nullptr;
+    CameraSender *cameraSend = nullptr;
+    [[nodiscard]] ShareTerms screenShareTerms();
 #endif
 
     Storage::RoleRepository roleRepo;
@@ -204,6 +250,11 @@ private:
 
     Snowflake currentVoiceChannelId;
     Snowflake currentVoiceGuildId;
+
+    // voice states and calls belong to the gateway session they came from
+    QString gatewaySessionId;
+    Snowflake selectedChannelId;
+    void connectSelectedCall(CallConnect rule);
 
     // notFound members are kept in here so we dont ask for them again
     QSet<QPair<Snowflake /*guildId*/, Snowflake /*userId*/>> pendingMemberRequests;

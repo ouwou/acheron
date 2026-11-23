@@ -107,7 +107,7 @@ void drawLeftIndicator(QPainter *painter, const QStyleOptionViewItem &option, in
     int pillY = option.rect.top() + (option.rect.height() - pillH) / 2;
 
     painter->setPen(Qt::NoPen);
-    painter->setBrush(option.palette.brightText().color());
+    painter->setBrush(option.palette.text().color());
     painter->drawRoundedRect(QRect(pillX - pillW, pillY, pillW * 2, pillH), pillW, pillW);
 }
 

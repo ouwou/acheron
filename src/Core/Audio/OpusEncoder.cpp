@@ -7,8 +7,6 @@ namespace Acheron {
 namespace Core {
 namespace Audio {
 
-static constexpr int OPUS_MAX_PACKET_SIZE = 4000;
-
 OpusEncoder::OpusEncoder() = default;
 
 OpusEncoder::~OpusEncoder()
@@ -50,13 +48,13 @@ QByteArray OpusEncoder::encode(const QByteArray &pcmFrame)
         return {};
     }
 
-    QByteArray encoded(OPUS_MAX_PACKET_SIZE, '\0');
+    QByteArray encoded(MAX_PACKET_BYTES, '\0');
 
     int bytes = opus_encode(encoder,
                             reinterpret_cast<const opus_int16 *>(pcmFrame.constData()),
                             frameSamples,
                             reinterpret_cast<unsigned char *>(encoded.data()),
-                            OPUS_MAX_PACKET_SIZE);
+                            MAX_PACKET_BYTES);
 
     if (bytes < 0) {
         qCWarning(LogVoice) << "Opus encode failed:" << opus_strerror(bytes);

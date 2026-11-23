@@ -18,7 +18,9 @@
 #include "Core/ImageManager.hpp"
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
+#include "Discord/Voice/PacketBuffer.hpp"
 #include "Discord/Voice/Socks5UdpAssociation.hpp"
+#include "PacketBytes.hpp"
 
 #include <QHostAddress>
 #include <QNetworkAccessManager>
@@ -32,7 +34,10 @@
 using Acheron::Core::ImageManager;
 using Acheron::Core::ProxyConfig;
 using Acheron::Core::Snowflake;
+using Acheron::Discord::Voice::PacketBuffer;
 using Acheron::Discord::Voice::Socks5UdpAssociation;
+using PacketBytes::bytesOf;
+using PacketBytes::contentsOf;
 
 Q_DECLARE_METATYPE(ProxyConfig)
 
@@ -116,6 +121,27 @@ QByteArray buildDatagram(quint8 fragment, quint8 addressType, const QByteArray &
     return datagram;
 }
 
+QByteArray encapsulate(const QByteArray &payload, const QHostAddress &destination, quint16 port)
+{
+    uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
+    const int headerSize = Socks5UdpAssociation::writeRelayHeader(header, destination, port);
+    if (headerSize < 0)
+        return QByteArray();
+
+    PacketBuffer packet;
+    if (!packet.append(bytesOf(payload)) || !Socks5UdpAssociation::wrap(packet, { header, static_cast<size_t>(headerSize) }))
+        return QByteArray();
+    return contentsOf(packet);
+}
+
+QByteArray decapsulate(const QByteArray &datagram)
+{
+    PacketBuffer packet;
+    if (!packet.append(bytesOf(datagram)) || !Socks5UdpAssociation::unwrap(packet))
+        return QByteArray();
+    return contentsOf(packet);
+}
+
 } // namespace
 
 class TestProxy : public QObject
@@ -180,6 +206,11 @@ private slots:
     void decapsulateRejectsFragments();
     void decapsulateSurvivesTruncationFuzz();
     void encapsulateRefusesUnknownDestination();
+    void wrapWritesIntoHeadroomWithoutMovingPayload_data();
+    void wrapWritesIntoHeadroomWithoutMovingPayload();
+    void wrapFailsClosedWithoutHeadroom();
+    void relayHeaderNeedsRoom();
+    void unwrapLeavesPayloadWhereItWasReceived();
 };
 
 // ---------------------------------------------------------------------------
@@ -686,7 +717,7 @@ void TestProxy::encapsulateIpv4Layout()
 {
     const QByteArray payload("audio");
     const QByteArray datagram =
-            Socks5UdpAssociation::encapsulate(payload, QHostAddress("1.2.3.4"), 0x1234);
+            encapsulate(payload, QHostAddress("1.2.3.4"), 0x1234);
 
     QCOMPARE(datagram.size(), 10 + payload.size());
     QCOMPARE(datagram.mid(0, 3), QByteArray("\x00\x00\x00", 3)); // RSV + FRAG
@@ -700,7 +731,7 @@ void TestProxy::encapsulateIpv6Layout()
 {
     const QByteArray payload("x");
     const QByteArray datagram =
-            Socks5UdpAssociation::encapsulate(payload, QHostAddress("2001:db8::1"), 443);
+            encapsulate(payload, QHostAddress("2001:db8::1"), 443);
 
     QCOMPARE(datagram.size(), 22 + payload.size());
     QCOMPARE(quint8(datagram.at(3)), quint8(4)); // ATYP = IPv6
@@ -730,7 +761,7 @@ void TestProxy::encapsulateAddressesExactDestination()
 
     const QHostAddress destination(address);
     const QByteArray datagram =
-            Socks5UdpAssociation::encapsulate(QByteArray("payload"), destination, port);
+            encapsulate(QByteArray("payload"), destination, port);
 
     // Decoded independently of the encoder: a mistake here would relay voice to
     // the wrong host rather than fail visibly.
@@ -759,7 +790,7 @@ void TestProxy::encapsulatePreservesPayload()
     QFETCH(QByteArray, payload);
 
     const QByteArray datagram =
-            Socks5UdpAssociation::encapsulate(payload, QHostAddress("1.2.3.4"), 19334);
+            encapsulate(payload, QHostAddress("1.2.3.4"), 19334);
     QCOMPARE(datagram.size(), 10 + payload.size());
     QCOMPARE(datagram.mid(10), payload);
 }
@@ -781,8 +812,8 @@ void TestProxy::decapsulateRoundTrip()
     QFETCH(QByteArray, payload);
 
     const QByteArray wrapped =
-            Socks5UdpAssociation::encapsulate(payload, QHostAddress(address), 19334);
-    QCOMPARE(Socks5UdpAssociation::decapsulate(wrapped), payload);
+            encapsulate(payload, QHostAddress(address), 19334);
+    QCOMPARE(decapsulate(wrapped), payload);
 }
 
 void TestProxy::decapsulateAcceptsDomainAddresses()
@@ -796,7 +827,7 @@ void TestProxy::decapsulateAcceptsDomainAddresses()
     const QByteArray payload("\x80\x78opus", 6);
     const QByteArray datagram = buildDatagram(0, 3, address, 19334, payload);
 
-    QCOMPARE(Socks5UdpAssociation::decapsulate(datagram), payload);
+    QCOMPARE(decapsulate(datagram), payload);
 }
 
 void TestProxy::decapsulateRejectsMalformed_data()
@@ -833,7 +864,7 @@ void TestProxy::decapsulateRejectsMalformed_data()
 void TestProxy::decapsulateRejectsMalformed()
 {
     QFETCH(QByteArray, datagram);
-    QVERIFY(Socks5UdpAssociation::decapsulate(datagram).isEmpty());
+    QVERIFY(decapsulate(datagram).isEmpty());
 }
 
 void TestProxy::decapsulateRejectsFragments_data()
@@ -853,7 +884,7 @@ void TestProxy::decapsulateRejectsFragments()
     // handed to the decoder as if it were a whole packet.
     const QByteArray datagram =
             buildDatagram(fragment, 1, QByteArray("\x01\x02\x03\x04", 4), 19334, "payload");
-    QVERIFY(Socks5UdpAssociation::decapsulate(datagram).isEmpty());
+    QVERIFY(decapsulate(datagram).isEmpty());
 }
 
 void TestProxy::decapsulateSurvivesTruncationFuzz()
@@ -868,12 +899,12 @@ void TestProxy::decapsulateSurvivesTruncationFuzz()
     };
 
     for (const auto &entry : cases) {
-        const QByteArray full = Socks5UdpAssociation::encapsulate(
+        const QByteArray full = encapsulate(
                 QByteArray("\x80\x78payload", 9), QHostAddress(entry.first), 19334);
         QCOMPARE(full.size(), entry.second + 9);
 
         for (int length = 0; length < full.size(); ++length) {
-            const QByteArray result = Socks5UdpAssociation::decapsulate(full.left(length));
+            const QByteArray result = decapsulate(full.left(length));
             const int available = qMax(0, length - entry.second);
             QVERIFY2(result.size() <= available,
                      qPrintable(QStringLiteral("prefix %1 of %2 returned %3 bytes")
@@ -887,16 +918,91 @@ void TestProxy::encapsulateRefusesUnknownDestination()
     // Discord hands us the voice address as a string; if it ever fails to parse,
     // the datagram must not end up aimed at something routable.
     const QByteArray datagram =
-            Socks5UdpAssociation::encapsulate(QByteArray("x"), QHostAddress(), 19334);
+            encapsulate(QByteArray("x"), QHostAddress(), 19334);
 
     if (datagram.isEmpty())
         return;
 
     const Header header = decodeHeader(datagram);
     QVERIFY(header.valid);
-    QVERIFY(header.destination.isNull()
-            || header.destination == QHostAddress(QHostAddress::AnyIPv4)
-            || header.destination == QHostAddress(QHostAddress::AnyIPv6));
+    QVERIFY(header.destination.isNull() || header.destination == QHostAddress(QHostAddress::AnyIPv4) || header.destination == QHostAddress(QHostAddress::AnyIPv6));
+}
+
+void TestProxy::wrapWritesIntoHeadroomWithoutMovingPayload_data()
+{
+    QTest::addColumn<QString>("address");
+    QTest::addColumn<int>("headerSize");
+
+    QTest::newRow("ipv4") << "104.29.156.117" << 10;
+    QTest::newRow("ipv6") << "2001:db8::1" << 22;
+}
+
+void TestProxy::wrapWritesIntoHeadroomWithoutMovingPayload()
+{
+    QFETCH(QString, address);
+    QFETCH(int, headerSize);
+
+    uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
+    QCOMPARE(Socks5UdpAssociation::writeRelayHeader(header, QHostAddress(address), 50004), headerSize);
+
+    const QByteArray payload = QByteArray("\x80\x65", 2) + QByteArray(1198, 'v');
+    PacketBuffer packet;
+    QVERIFY(packet.append(bytesOf(payload)));
+    const uint8_t *payloadAddress = packet.data();
+
+    QVERIFY(Socks5UdpAssociation::wrap(packet, { header, static_cast<size_t>(headerSize) }));
+    QCOMPARE(packet.size(), headerSize + int(payload.size()));
+    QCOMPARE(static_cast<const void *>(packet.data() + headerSize), static_cast<const void *>(payloadAddress));
+
+    const Header decoded = decodeHeader(contentsOf(packet));
+    QVERIFY(decoded.valid);
+    QCOMPARE(decoded.fragment, quint8(0));
+    QCOMPARE(decoded.destination, QHostAddress(address));
+    QCOMPARE(decoded.port, quint16(50004));
+    QCOMPARE(decoded.payload, payload);
+
+    QVERIFY(packet.dropFront(headerSize));
+    QCOMPARE(contentsOf(packet), payload);
+    QCOMPARE(static_cast<const void *>(packet.data()), static_cast<const void *>(payloadAddress));
+}
+
+void TestProxy::wrapFailsClosedWithoutHeadroom()
+{
+    uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
+    const int headerSize = Socks5UdpAssociation::writeRelayHeader(header, QHostAddress("2001:db8::1"), 443);
+    QCOMPARE(headerSize, 22);
+
+    PacketBuffer packet;
+    QVERIFY(packet.append(bytesOf(QByteArray("payload"))));
+    QVERIFY(packet.growFront(packet.headroom() - headerSize + 1));
+    const QByteArray before = contentsOf(packet);
+
+    QVERIFY(!Socks5UdpAssociation::wrap(packet, { header, static_cast<size_t>(headerSize) }));
+    QCOMPARE(contentsOf(packet), before);
+}
+
+void TestProxy::relayHeaderNeedsRoom()
+{
+    uint8_t header[Socks5UdpAssociation::MAX_RELAY_HEADER_SIZE];
+
+    QCOMPARE(Socks5UdpAssociation::writeRelayHeader({ header, 9 }, QHostAddress("1.2.3.4"), 443), -1);
+    QCOMPARE(Socks5UdpAssociation::writeRelayHeader({ header, 10 }, QHostAddress("1.2.3.4"), 443), 10);
+    QCOMPARE(Socks5UdpAssociation::writeRelayHeader({ header, 21 }, QHostAddress("2001:db8::1"), 443), -1);
+    QCOMPARE(Socks5UdpAssociation::writeRelayHeader(header, QHostAddress("2001:db8::1"), 443), 22);
+}
+
+void TestProxy::unwrapLeavesPayloadWhereItWasReceived()
+{
+    const QByteArray payload = QByteArray("\x80\x78", 2) + QByteArray(160, 'o');
+    const QByteArray datagram = buildDatagram(0, 1, QByteArray("\x01\x02\x03\x04", 4), 19334, payload);
+
+    PacketBuffer packet;
+    QVERIFY(packet.append(bytesOf(datagram)));
+    const uint8_t *received = packet.data();
+
+    QVERIFY(Socks5UdpAssociation::unwrap(packet));
+    QCOMPARE(contentsOf(packet), payload);
+    QCOMPARE(static_cast<const void *>(packet.data()), static_cast<const void *>(received + 10));
 }
 
 QTEST_GUILESS_MAIN(TestProxy)

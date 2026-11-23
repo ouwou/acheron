@@ -15,6 +15,7 @@
 #include "MemberList/MemberListDelegate.hpp"
 #include "TabBar/TabBar.hpp"
 #include "GuildSettings/GuildSettingsSection.hpp"
+#include "Discord/Client.hpp"
 #include "Discord/Entities.hpp"
 
 namespace Acheron {
@@ -30,9 +31,11 @@ struct TypingStart;
 namespace UI {
 class ChatView;
 class ChatModel;
+class MemberSearch;
 class ForumBrowser;
 class ForumPostModel;
 class ThreadBrowserPopup;
+class PinnedMessagesPopup;
 class ChannelTreeModel;
 class ChannelFilterProxyModel;
 class AccountsWindow;
@@ -51,6 +54,8 @@ class GuildSettingsWindow;
 class TrayIcon;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
+class StreamPreviewPopup;
+class CallView;
 #endif
 } // namespace UI
 } // namespace Acheron
@@ -77,6 +82,7 @@ private slots:
     void onChannelPermissionsChanged(Core::Snowflake channelId);
     void onSplitterMoved();
     void onTotalMentionCountChanged(int count, int previousCount);
+    void onSessionReady(const Discord::Ready &ready);
 
 private:
     void switchActiveInstance(Core::ClientInstance *instance);
@@ -95,13 +101,15 @@ private:
                           QSet<QString> &presentAccounts) const;
     void forEachSourceNode(const std::function<void(const QModelIndex &, ChannelNode *)> &fn) const;
     QString treeNodeKey(const ChannelNode *node) const;
+    void keepLiveTreeState();
+    void reselectAfterRepopulation(Core::Snowflake accountId);
     void maybeActivatePendingChannel(Core::Snowflake accountId);
     QColor resolveRoleColor(Core::Snowflake userId, Core::Snowflake guildId);
     void refreshGuildRoleData(Core::Snowflake guildId);
     void confirmAndLeaveGuild(Core::Snowflake accountId, Core::Snowflake guildId);
     [[nodiscard]] QList<GuildSettingsSection> guildSettingsSections(Core::Snowflake accountId, Core::Snowflake guildId);
     void openGuildSettings(Core::Snowflake accountId, Core::Snowflake guildId, GuildSettingsSection section);
-    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos);
+    void showUserContextMenu(Core::ClientInstance *instance, Core::Snowflake userId, Core::Snowflake guildId, QPoint globalPos, const std::function<void(QMenu &)> &addLeadingEntries = {});
     void selectChannelInTree(Core::Snowflake accountId, Core::Snowflake channelId);
 
 public:
@@ -131,7 +139,22 @@ private:
     void recordLastViewedChannel(Core::Snowflake accountId, Core::Snowflake guildId, Core::Snowflake channelId);
 #ifndef ACHERON_NO_VOICE
     void updateVoiceStatusLabel();
+    [[nodiscard]] Core::ClientInstance *instanceInVoice() const;
+    void revealCall();
+    void openVoiceSettings();
 #endif
+    void onLiveParticipantHoverChanged(const QModelIndex &proxyIndex);
+    void onWatchStreamRequested(const QModelIndex &proxyIndex);
+    void onShowCallVideoRequested(const QModelIndex &proxyIndex);
+
+    struct ParticipantRow
+    {
+        Core::ClientInstance *instance = nullptr;
+        Core::Snowflake userId;
+        Core::Snowflake channelId;
+        Core::Snowflake guildId;
+    };
+    [[nodiscard]] std::optional<ParticipantRow> participantRowAt(const QModelIndex &proxyIndex) const;
 
 private:
     void setupUi();
@@ -157,7 +180,14 @@ private:
     void openThreadBrowser();
     void navigateToChannel(Core::Snowflake channelId);
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
-    void setThreadBrowserTarget(Core::Snowflake channelId);
+    void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
+    void openPinnedMessages();
+    void openPinnedMessagesOf(Core::Snowflake channelId);
+    void onPinsReadStateChanged(Core::Snowflake channelId);
+    void ackPinsIfUnread();
+    void showPinFailure(Core::Snowflake channelId, int errorCode, const QString &errorMessage);
+    void showThreadReopenFailure(Core::Snowflake threadId, Discord::Client::ThreadReopenResult result);
+    void offerUnpinRetry(Core::Snowflake channelId, Core::Snowflake messageId);
 
     void openReactionPicker(Core::Snowflake channelId, Core::Snowflake messageId, const QRect &globalAnchor);
     void openReactors(Core::Snowflake channelId, Core::Snowflake messageId, const std::optional<Core::ReactionRef> &selected);
@@ -185,6 +215,9 @@ private:
     ViewMode viewMode = ViewMode::TextChannel;
     bool memberListWanted = false;
     QSplitter *centerSplitter = nullptr;
+    QSplitter *callSplitter = nullptr;
+    QWidget *callHost = nullptr;
+    void updateCallHost();
     QWidget *threadPane = nullptr;
     QWidget *threadHeader = nullptr;
     QPushButton *popOutButton = nullptr;
@@ -210,10 +243,14 @@ private:
     TabBar *tabBar;
     QWidget *channelToolbar = nullptr;
     QToolButton *threadBrowserButton = nullptr;
+    QToolButton *pinsButton = nullptr;
+    QWidget *pinsUnreadDot = nullptr;
     ChannelTopicLine *channelTopicLine = nullptr;
     Core::Snowflake channelTopicChannelId = Core::Snowflake::Invalid;
     ThreadBrowserPopup *threadBrowser = nullptr;
     Core::Snowflake threadBrowserChannelId = Core::Snowflake::Invalid;
+    PinnedMessagesPopup *pinnedMessages = nullptr;
+    Core::Snowflake pinsChannelId = Core::Snowflake::Invalid;
 
     struct PendingLinkJump
     {
@@ -231,6 +268,10 @@ private:
 
 #ifndef ACHERON_NO_VOICE
     VoiceStatusBar *voiceStatusBar;
+    StreamPreviewPopup *streamPreviewPopup = nullptr;
+    QHash<Core::Snowflake, QPointer<CallView>> callViews;
+    CallView *ensureCallView(Core::ClientInstance *instance);
+    void removeCallView(Core::Snowflake accountId);
 #endif
     AccountsWindow *accountsWindow = nullptr;
     SettingsWindow *settingsWindow = nullptr;
@@ -249,6 +290,7 @@ private:
     Core::ClientInstance *currentInstance = nullptr;
 
     Core::Snowflake cachedGuildId = Core::Snowflake::Invalid;
+    MemberSearch *memberSearch = nullptr;
     QHash<Core::Snowflake, QColor> userColorCache; // current guild
 
     QSet<Core::Snowflake> instancesSignalsConnected;

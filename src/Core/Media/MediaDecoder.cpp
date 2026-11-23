@@ -47,13 +47,6 @@ void MediaDecoder::setInterrupt(int (*callback)(void *), void *opaque)
     interruptOpaque = opaque;
 }
 
-// just in case it tries for some reason
-int MediaDecoder::denyNestedOpen(AVFormatContext *, AVIOContext **, const char *url, int, AVDictionary **)
-{
-    qCWarning(LogVideo) << "refusing nested open of" << url << "while proxied";
-    return AVERROR(EPERM);
-}
-
 bool MediaDecoder::open(const QString &input, const ProxyConfig &proxy, QString *error)
 {
     fmtCtx = avformat_alloc_context();
@@ -79,10 +72,10 @@ bool MediaDecoder::open(const QString &input, const ProxyConfig &proxy, QString 
 
         fmtCtx->pb = curlIo;
         fmtCtx->flags |= AVFMT_FLAG_CUSTOM_IO;
-        fmtCtx->io_open = &MediaDecoder::denyNestedOpen;
     }
 
     AVDictionary *options = nullptr;
+    confinement.apply(fmtCtx, &options, input);
     const QByteArray userAgent = Discord::CurlUtils::getUserAgent().toUtf8();
     av_dict_set(&options, "user_agent", userAgent.constData(), 0);
     av_dict_set(&options, "reconnect", "1", 0);
@@ -185,10 +178,6 @@ bool MediaDecoder::openResampler()
 
 void MediaDecoder::close()
 {
-    if (swsCtx) {
-        sws_freeContext(swsCtx);
-        swsCtx = nullptr;
-    }
     if (swrCtx)
         swr_free(&swrCtx);
     if (videoCtx)
@@ -205,7 +194,6 @@ void MediaDecoder::close()
 
     videoStream = -1;
     audioStream = -1;
-    swsTarget = QSize();
 }
 
 MediaDecoder::Info MediaDecoder::info() const
@@ -324,39 +312,8 @@ int MediaDecoder::receiveFrame(Stream stream, AVFrame *frame)
 
 QImage MediaDecoder::scaleToImage(const AVFrame *frame, const QSize &target)
 {
-    if (target.isEmpty())
-        return QImage();
-
-    if (!swsCtx || swsTarget != target) {
-        if (swsCtx)
-            sws_freeContext(swsCtx);
-
-        swsCtx = sws_getContext(frame->width, frame->height,
-                                static_cast<AVPixelFormat>(frame->format),
-                                target.width(), target.height(),
-                                AV_PIX_FMT_RGB32,
-                                SWS_BILINEAR,
-                                nullptr, nullptr, nullptr);
-        if (!swsCtx)
-            return QImage();
-        swsTarget = target;
-    }
-
-    // swscale will oob without extra room because of simd stuff
-    const int stride = target.width() * 4;
-    const int spareRows = (64 + stride - 1) / stride;
-
-    auto *storage = new QImage(target.width(), target.height() + spareRows, QImage::Format_RGB32);
-    if (storage->isNull()) {
-        delete storage;
-        return QImage();
-    }
-
-    uint8_t *dstData[4] = { storage->bits(), nullptr, nullptr, nullptr };
-    int dstStride[4] = { static_cast<int>(storage->bytesPerLine()), 0, 0, 0 };
-    sws_scale(swsCtx, frame->data, frame->linesize, 0, frame->height, dstData, dstStride);
-
-    return QImage(storage->bits(), target.width(), target.height(), storage->bytesPerLine(), QImage::Format_RGB32, [](void *owner) { delete static_cast<QImage *>(owner); }, storage);
+    QImage image = RgbScaler::allocate(target, QImage::Format_RGB32);
+    return scaler.scale(frame, image) ? image : QImage();
 }
 
 int MediaDecoder::appendResampledFrames(const AVFrame *frame, std::vector<float> &out,

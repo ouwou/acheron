@@ -1,5 +1,6 @@
 #include "ChannelTreeModel.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -234,6 +235,16 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return QVariant::fromValue(instance->presences()->badge(node->dmRecipientId));
     }
 
+    if (role == IsConnectedVoiceChannelRole) {
+        if (!node->listsVoiceParticipants())
+            return false;
+        ChannelNode *accNode = getAccountNodeFor(node);
+        if (!accNode)
+            return false;
+        auto it = accountVoiceChannels.constFind(accNode->id);
+        return it != accountVoiceChannels.constEnd() && it.value() == node->id;
+    }
+
     if (role == ThreadJoinedRole) {
         if (node->type != ChannelNode::Type::Thread ||
             !node->parent ||
@@ -246,7 +257,7 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
         return instance && instance->isThreadJoined(node->id);
     }
 
-    if (role == IsVoiceMutedRole || role == IsVoiceDeafenedRole) {
+    if (role == IsVoiceMutedRole || role == IsVoiceDeafenedRole || role == IsVoiceVideoRole || role == IsVoiceLiveRole) {
         if (node->type != ChannelNode::Type::VoiceParticipant)
             return false;
 #ifndef ACHERON_NO_VOICE
@@ -261,6 +272,10 @@ QVariant ChannelTreeModel::data(const QModelIndex &index, int role) const
             return false;
         if (role == IsVoiceMutedRole)
             return state->selfMute.get() || state->mute.get();
+        if (role == IsVoiceVideoRole)
+            return state->selfVideo.get();
+        if (role == IsVoiceLiveRole)
+            return state->selfStream.valueOr(false);
         return state->selfDeaf.get() || state->deaf.get();
 #else
         return false;
@@ -402,16 +417,17 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
             topLevelNodes.push_back(createGuildNode(*it, instance));
     }
 
-    if (topLevelNodes.empty())
-        return;
+    removeGuildsAndPrivateChannels(accNode);
 
-    int startRow = accNode->children.size();
-    int endRow = startRow + topLevelNodes.size() - 1;
+    if (!topLevelNodes.empty()) {
+        int startRow = accNode->children.size();
+        int endRow = startRow + topLevelNodes.size() - 1;
 
-    beginInsertRows(accIndex, startRow, endRow);
-    for (auto &node : topLevelNodes)
-        accNode->addChild(std::move(node));
-    endInsertRows();
+        beginInsertRows(accIndex, startRow, endRow);
+        for (auto &node : topLevelNodes)
+            accNode->addChild(std::move(node));
+        endInsertRows();
+    }
 
     if (ready.privateChannels.hasValue() && !ready.privateChannels->isEmpty()) {
         ChannelNode *dmHeader = nullptr;
@@ -476,6 +492,69 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
 
     refreshReadStates(accNode, instance);
     publishTotalMentionCount();
+    showKnownVoiceParticipants(accNode);
+}
+
+bool ChannelTreeModel::listsGuildsOrPrivateChannels(Snowflake accountId) const
+{
+    const ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    if (!accNode)
+        return false;
+
+    return std::any_of(accNode->children.begin(), accNode->children.end(), [](const auto &child) {
+        return child->type != ChannelNode::Type::DMHeader || !child->children.empty();
+    });
+}
+
+void ChannelTreeModel::removeGuildsAndPrivateChannels(ChannelNode *accNode)
+{
+    if (temporaryThreadAccount == accNode->id) {
+        temporaryThreadId = Snowflake::Invalid;
+        temporaryThreadAccount = Snowflake::Invalid;
+    }
+
+    auto &children = accNode->children;
+    const auto firstGuild = std::find_if(children.begin(), children.end(), [](const auto &child) { return child->type != ChannelNode::Type::DMHeader; });
+    if (firstGuild != children.end()) {
+        beginRemoveRows(indexForNode(accNode), static_cast<int>(firstGuild - children.begin()), static_cast<int>(children.size()) - 1);
+        children.erase(firstGuild, children.end());
+        endRemoveRows();
+    }
+
+    for (const auto &dmHeader : children) {
+        if (dmHeader->children.empty())
+            continue;
+        beginRemoveRows(indexForNode(dmHeader.get()), 0, static_cast<int>(dmHeader->children.size()) - 1);
+        dmHeader->children.clear();
+        endRemoveRows();
+    }
+}
+
+void ChannelTreeModel::showKnownVoiceParticipants(ChannelNode *accNode)
+{
+#ifndef ACHERON_NO_VOICE
+    auto *instance = session->client(accNode->id);
+    if (!instance)
+        return;
+
+    QList<Snowflake> channelIds;
+    std::function<void(const ChannelNode *)> collect = [&](const ChannelNode *node) {
+        if (node->listsVoiceParticipants()) {
+            channelIds.append(node->id);
+            return;
+        }
+        for (const auto &child : node->children)
+            collect(child.get());
+    };
+    collect(accNode);
+
+    for (Snowflake channelId : std::as_const(channelIds)) {
+        updateVoiceCount(channelId, instance->voice()->channelVoiceUserCount(channelId), accNode->id);
+        addKnownVoiceParticipants(channelId, accNode->id);
+    }
+#else
+    Q_UNUSED(accNode);
+#endif
 }
 
 ChannelNode *ChannelTreeModel::getAccountNodeFor(ChannelNode *node)
@@ -1221,6 +1300,7 @@ void ChannelTreeModel::addChannel(const Discord::ChannelCreate &event, Snowflake
         }
 
         insertChildAt(dmHeader, 0, std::move(dmNode));
+        addKnownVoiceParticipants(channel.id, accountId);
 
         return;
     }
@@ -1772,7 +1852,7 @@ void ChannelTreeModel::updateVoiceCount(Snowflake channelId, int count, Snowflak
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     if (channelNode->voiceParticipantCount == count)
@@ -1793,7 +1873,7 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     int existingRow = -1;
@@ -1861,6 +1941,22 @@ void ChannelTreeModel::updateVoiceParticipant(Snowflake channelId, Snowflake use
     }
 }
 
+void ChannelTreeModel::addKnownVoiceParticipants(Snowflake channelId, Snowflake accountId)
+{
+#ifndef ACHERON_NO_VOICE
+    auto *instance = session->client(accountId);
+    if (!instance)
+        return;
+
+    const QList<Snowflake> userIds = instance->voice()->channelVoiceUsers(channelId);
+    for (Snowflake userId : userIds)
+        updateVoiceParticipant(channelId, userId, true, accountId);
+#else
+    Q_UNUSED(channelId);
+    Q_UNUSED(accountId);
+#endif
+}
+
 void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflake userId,
                                                    Snowflake accountId)
 {
@@ -1869,14 +1965,14 @@ void ChannelTreeModel::updateVoiceParticipantState(Snowflake channelId, Snowflak
         return;
 
     ChannelNode *channelNode = findChannelTreeNode(channelId, accNode);
-    if (!channelNode || channelNode->type != ChannelNode::Type::VoiceChannel)
+    if (!channelNode || !channelNode->listsVoiceParticipants())
         return;
 
     for (auto &child : channelNode->children) {
         if (child->type == ChannelNode::Type::VoiceParticipant && child->id == userId) {
             QModelIndex idx = indexForNode(child.get());
             if (idx.isValid())
-                emit dataChanged(idx, idx, { IsVoiceMutedRole, IsVoiceDeafenedRole });
+                emit dataChanged(idx, idx, { IsVoiceMutedRole, IsVoiceDeafenedRole, IsVoiceVideoRole, IsVoiceLiveRole });
             return;
         }
     }

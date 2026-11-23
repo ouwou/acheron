@@ -7,6 +7,8 @@
 #include <curl/curl.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 
@@ -23,35 +25,41 @@ class VoiceGateway : public QObject
 {
     Q_OBJECT
 public:
-    VoiceGateway(const QString &endpoint, Core::Snowflake serverId, Core::Snowflake channelId,
-                 Core::Snowflake userId, const QString &sessionId, const QString &token,
-                 const Core::ProxyConfig &proxy, QObject *parent = nullptr);
+    explicit VoiceGateway(const ConnectionParams &params, QObject *parent = nullptr);
     ~VoiceGateway();
 
     void start();
     void stop();
     void hardStop();
 
-    void sendSelectProtocol(const QString &address, int port, const QString &mode);
+    void sendSelectProtocol(const SelectProtocolData &data);
+    void sendVideo(const LocalVideoState &state);
+    void sendSessionUpdate(const QList<Codec> &codecs);
+    void sendMediaSinkWants(const MediaSinkWants &wants);
+    void sendVoiceBackendVersion();
     void sendSpeaking(int flags, int delay, quint32 ssrc);
     void sendBinaryPayload(int opcode, const QByteArray &data);
     void sendDaveReadyForTransition(int transitionId);
     void sendDaveInvalidCommitWelcome(int transitionId);
 
     [[nodiscard]] uint64_t currentGeneration() const { return generation.load(); }
+    // any thread
+    [[nodiscard]] bool isStopping() const { return !running; }
 
 signals:
     void connected();
-    void disconnected(VoiceCloseCode code, const QString &reason);
+    void disconnected(Acheron::Discord::Voice::VoiceCloseCode code, const QString &reason);
     void reconnecting(int attempt, int maxAttempts);
 
     void helloReceived(int heartbeatInterval);
     void readyReceived(const VoiceReady &data);
     void sessionDescriptionReceived(const SessionDescription &data);
     void speakingReceived(const SpeakingData &data);
-    void clientConnected(const ClientConnectData &data);
+    void videoStateReceived(const RemoteVideoState &remote);
     void clientsConnected(const QStringList &userIds);
     void clientDisconnected(Core::Snowflake userId);
+    void sessionUpdated(const SessionUpdate &update);
+    void mediaSinkWantsReceived(const MediaSinkWants &wants);
     void resumed();
 
     void payloadReceived(const QJsonObject &root);
@@ -72,7 +80,7 @@ private:
     void handleSpeaking(const QJsonObject &data);
     void handleHeartbeatAck(quint64 nonce);
     void handleResumed();
-    void handleClientConnect(const QJsonObject &data);
+    void handleVideo(const QJsonObject &data);
     void handleClientsConnected(const QJsonObject &data);
     void handleClientDisconnect(const QJsonObject &data);
     void handleDavePrepareTransition(const QJsonObject &data);
@@ -85,15 +93,10 @@ private:
 
     void networkLoop();
     void heartbeatLoop();
+    void waitUnlessStopped(std::chrono::milliseconds delay);
 
 private:
-    QString endpoint;
-    Core::Snowflake serverId;
-    Core::Snowflake channelId;
-    Core::Snowflake userId;
-    QString sessionId;
-    QString token;
-    Core::ProxyConfig proxy;
+    ConnectionParams params;
 
     std::atomic<bool> running{ false };
 

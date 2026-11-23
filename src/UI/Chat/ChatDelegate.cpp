@@ -47,6 +47,18 @@ static void drawHoverHighlight(QPainter *painter, const QStyleOptionViewItem &op
     painter->fillRect(rect, tint);
 }
 
+static constexpr int MentionBarWidth = 2;
+
+static void drawMentionHighlight(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index, const QRect &rect)
+{
+    if (!index.data(ChatModel::IsMentionedRole).toBool())
+        return;
+    const Core::Theme::Manager &theme = Core::Theme::Manager::instance();
+    painter->fillRect(rect, theme.color(Core::Theme::Token::MentionHighlightBg));
+    const QRect bar(option.rect.left(), rect.top(), MentionBarWidth, rect.height());
+    painter->fillRect(bar.intersected(rect), theme.color(Core::Theme::Token::MentionHighlightBar));
+}
+
 static QColor bodyTextColor(const QStyleOptionViewItem &option, const QModelIndex &index)
 {
     if (index.data(ChatModel::IsErroredRole).toBool())
@@ -119,6 +131,7 @@ bool ChatDelegate::paintBodyTextOnly(QPainter *painter, const QStyleOptionViewIt
     if (!doc)
         return false;
 
+    drawMentionHighlight(painter, option, index, damage);
     drawHoverHighlight(painter, option, chatView, index.row(), damage);
     drawHighlightFlash(painter, option, chatView, index.row(), damage);
     drawBodyDocument(painter, doc, textRect, damage.translated(-textRect.topLeft()), option, index, chatView);
@@ -352,6 +365,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (gifs) {
         if (const auto clips = gifs->clipOnlyRepaint(index, option.rect)) {
             for (const auto &clip : *clips) {
+                drawMentionHighlight(painter, option, index, clip.rect);
                 drawHoverHighlight(painter, option, chatView, index.row(), clip.rect);
                 drawHighlightFlash(painter, option, chatView, index.row(), clip.rect);
                 GifPainting::drawClipFrame(painter, clip.rect, clip.frame, clip.fit);
@@ -376,6 +390,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     if (animator) {
         if (const auto stickers = animator->stickerOnlyRepaint(index.row(), option.rect)) {
             for (const auto &sticker : *stickers) {
+                drawMentionHighlight(painter, option, index, sticker.rect);
                 drawHoverHighlight(painter, option, chatView, index.row(), sticker.rect);
                 drawHighlightFlash(painter, option, chatView, index.row(), sticker.rect);
                 drawSticker(painter, sticker.rect, sticker.frame);
@@ -396,6 +411,7 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     QRect messageRect = option.rect;
     if (layout.hasSeparator)
         messageRect.setTop(layout.separatorRect.bottom() + 1);
+    drawMentionHighlight(painter, option, index, messageRect);
     drawHoverHighlight(painter, option, chatView, index.row(), messageRect);
     drawHighlightFlash(painter, option, chatView, index.row(), option.rect);
 

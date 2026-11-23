@@ -5,11 +5,16 @@
 #include <QTcpSocket>
 #include <QTimer>
 
+#include <cstdint>
+#include <span>
+
 #include "Core/ProxyConfig.hpp"
 
 namespace Acheron {
 namespace Discord {
 namespace Voice {
+
+class PacketBuffer;
 
 // RFC 1928 UDP ASSOCIATE
 class Socks5UdpAssociation : public QObject
@@ -25,8 +30,15 @@ public:
     [[nodiscard]] QHostAddress relayAddress() const { return relay; }
     [[nodiscard]] quint16 relayPort() const { return relayPortNumber; }
 
-    static QByteArray encapsulate(const QByteArray &payload, const QHostAddress &destination, quint16 destinationPort);
-    static QByteArray decapsulate(const QByteArray &datagram);
+    // RSV (two bytes) and FRAG
+    static constexpr int DATAGRAM_PREFIX_SIZE = 3;
+    static constexpr int IPV4_ADDRESS_FIELD_SIZE = 1 + 4 + 2;
+    static constexpr int IPV6_ADDRESS_FIELD_SIZE = 1 + 16 + 2;
+    static constexpr int MAX_RELAY_HEADER_SIZE = DATAGRAM_PREFIX_SIZE + IPV6_ADDRESS_FIELD_SIZE;
+    static int writeRelayHeader(std::span<uint8_t> out, const QHostAddress &destination, quint16 destinationPort);
+
+    static bool wrap(PacketBuffer &packet, std::span<const uint8_t> relayHeader);
+    static bool unwrap(PacketBuffer &packet);
 
 signals:
     void established();

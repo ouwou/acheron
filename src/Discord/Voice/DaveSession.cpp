@@ -1,4 +1,8 @@
 #include "DaveSession.hpp"
+
+#include <algorithm>
+#include <utility>
+
 #include "VoiceEnums.hpp"
 #include "Core/Logging.hpp"
 
@@ -54,6 +58,8 @@ void DaveSession::reinit()
     daveEncryptor = discord::dave::CreateEncryptor();
     if (localSsrc != 0)
         daveEncryptor->AssignSsrcToCodec(localSsrc, discord::dave::Codec::Opus);
+    for (const auto &[ssrc, codec] : localVideoCodecs)
+        daveEncryptor->AssignSsrcToCodec(ssrc, codec);
 
     auto keyPackage = mlsSession->GetMarshalledKeyPackage();
     if (!keyPackage.empty()) {
@@ -87,6 +93,11 @@ void DaveSession::onProposals(const QByteArray &payload)
     }
 }
 
+bool bringsNewKeys(const discord::dave::RosterMap &changes)
+{
+    return std::any_of(changes.begin(), changes.end(), [](const auto &member) { return !member.second.empty(); });
+}
+
 void DaveSession::onAnnounceCommitTransition(const QByteArray &payload)
 {
     if (payload.size() < 2)
@@ -105,6 +116,7 @@ void DaveSession::onAnnounceCommitTransition(const QByteArray &payload)
     if (auto *roster = std::get_if<discord::dave::RosterMap>(&result)) {
         qCInfo(LogDave) << "ProcessCommit succeeded, roster size =" << roster->size();
         pendingTransitionReady = true;
+        pendingTransitionBringsKeys = pendingTransitionBringsKeys || bringsNewKeys(*roster);
         emit sendReadyForTransition(transitionId);
         if (transitionId == 0)
             completeTransition();
@@ -135,6 +147,7 @@ void DaveSession::onWelcome(const QByteArray &payload)
     if (roster) {
         qCInfo(LogDave) << "ProcessWelcome succeeded, roster size =" << roster->size();
         pendingTransitionReady = true;
+        pendingTransitionBringsKeys = true;
         emit sendReadyForTransition(transitionId);
         if (transitionId == 0)
             completeTransition();
@@ -215,6 +228,8 @@ void DaveSession::completeTransition()
     }
 
     emit daveStateChanged(true);
+    if (std::exchange(pendingTransitionBringsKeys, false))
+        emit newKeysNeedKeyframe();
 
     pendingTransitionId = -1;
 }
@@ -229,16 +244,48 @@ void DaveSession::onPrepareEpoch(int version, int epoch)
     }
 }
 
-discord::dave::IEncryptor *DaveSession::encryptor()
+size_t DaveSession::maxCiphertextSize(discord::dave::MediaType type, size_t frameSize)
 {
-    return daveEncryptor.get();
+    return daveEncryptor->GetMaxCiphertextByteSize(type, frameSize);
 }
 
-discord::dave::IDecryptor *DaveSession::getOrCreateDecryptor(quint32 ssrc, uint64_t uid)
+std::optional<size_t> DaveSession::encrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out)
+{
+    size_t written = 0;
+    const auto result = daveEncryptor->Encrypt(type, ssrc, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(out.data(), out.size()), &written);
+    if (result == discord::dave::IEncryptor::Success)
+        return written;
+    qCWarning(LogDave) << "DAVE encrypt failed: result =" << static_cast<int>(result) << "frameSize =" << frame.size();
+    return std::nullopt;
+}
+
+size_t DaveSession::maxPlaintextSize(discord::dave::MediaType type, quint32 ssrc, size_t frameSize)
+{
+    return decryptorFor(ssrc)->GetMaxPlaintextByteSize(type, frameSize);
+}
+
+std::optional<size_t> DaveSession::decrypt(discord::dave::MediaType type, quint32 ssrc, std::span<const uint8_t> frame, std::span<uint8_t> out)
+{
+    size_t written = 0;
+    const auto result = decryptorFor(ssrc)->Decrypt(type, discord::dave::ArrayView<const uint8_t>(frame.data(), frame.size()), discord::dave::ArrayView<uint8_t>(out.data(), out.size()), &written);
+    if (result == discord::dave::IDecryptor::Success)
+        return written;
+
+    static constexpr const char *RESULT_NAMES[] = { "Success", "DecryptionFailure", "MissingKeyRatchet", "InvalidNonce", "MissingCryptor" };
+    const auto index = static_cast<size_t>(result);
+    const bool hasMagicMarker = frame.size() >= 2 && frame[frame.size() - 2] == 0xFA && frame.back() == 0xFA;
+    qCDebug(LogDave) << "DAVE decrypt failed: SSRC =" << ssrc << "result =" << (index < std::size(RESULT_NAMES) ? RESULT_NAMES[index] : "Unknown") << "frameSize =" << frame.size() << "hasMagicMarker =" << hasMagicMarker;
+    return std::nullopt;
+}
+
+discord::dave::IDecryptor *DaveSession::decryptorFor(quint32 ssrc)
 {
     auto it = daveDecryptors.find(ssrc);
     if (it != daveDecryptors.end())
         return it->second.get();
+
+    const auto user = ssrcMap.constFind(ssrc);
+    const uint64_t uid = user == ssrcMap.constEnd() ? 0 : user.value();
 
     auto decryptor = discord::dave::CreateDecryptor();
 
@@ -266,6 +313,13 @@ void DaveSession::setLocalSsrc(quint32 ssrc)
         daveEncryptor->AssignSsrcToCodec(ssrc, discord::dave::Codec::Opus);
 }
 
+void DaveSession::setLocalVideoCodec(quint32 ssrc, discord::dave::Codec codec)
+{
+    localVideoCodecs[ssrc] = codec;
+    if (daveEncryptor)
+        daveEncryptor->AssignSsrcToCodec(ssrc, codec);
+}
+
 void DaveSession::addConnectedUser(const std::string &id)
 {
     connectedUserIds.insert(id);
@@ -277,10 +331,8 @@ void DaveSession::removeConnectedUser(const std::string &id)
 
     uint64_t uid = std::stoull(id);
     for (auto it = ssrcMap.constBegin(); it != ssrcMap.constEnd(); ++it) {
-        if (it.value() == uid) {
+        if (it.value() == uid)
             daveDecryptors.erase(it.key());
-            break;
-        }
     }
 }
 

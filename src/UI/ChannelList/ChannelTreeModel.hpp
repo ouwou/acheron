@@ -48,6 +48,9 @@ public:
         OwnerIdRole = Qt::UserRole + 15,
         PresenceBadgeRole = Qt::UserRole + 16,
         OwnMentionCountRole = Qt::UserRole + 17,
+        IsVoiceVideoRole = Qt::UserRole + 18,
+        IsVoiceLiveRole = Qt::UserRole + 19,
+        IsConnectedVoiceChannelRole = Qt::UserRole + 20,
     };
 
     QModelIndex index(int row, int column, const QModelIndex &parentIndex) const override;
@@ -61,6 +64,7 @@ public:
     void removeAccount(Snowflake accountId);
 
     void populateFromReady(const Discord::Ready &ready);
+    [[nodiscard]] bool listsGuildsOrPrivateChannels(Snowflake accountId) const;
 
     static ChannelNode *getAccountNodeFor(ChannelNode *node);
     static ChannelNode *findGuildNode(ChannelNode *node);
@@ -90,6 +94,7 @@ public:
     void setAccountVoiceChannel(Snowflake accountId, Snowflake channelId);
     void updateVoiceParticipant(Snowflake channelId, Snowflake userId, bool joined, Snowflake accountId);
     void updateVoiceParticipantState(Snowflake channelId, Snowflake userId, Snowflake accountId);
+    void addKnownVoiceParticipants(Snowflake channelId, Snowflake accountId);
     void toggleCollapsed(const QModelIndex &index);
     void setCollapsed(const QModelIndex &index, bool collapsed);
 
@@ -127,6 +132,8 @@ private:
     ChannelNode *findFolderNodeById(ChannelNode *accountNode, Snowflake folderId);
     ChannelNode *findCategoryNode(Snowflake categoryId, ChannelNode *guildNode);
     void insertChildAt(ChannelNode *parent, int row, std::unique_ptr<ChannelNode> node);
+    void removeGuildsAndPrivateChannels(ChannelNode *accNode);
+    void showKnownVoiceParticipants(ChannelNode *accNode);
     void emitDataChangedRecursive(const QModelIndex &index);
 
 private:

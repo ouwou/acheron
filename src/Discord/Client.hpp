@@ -112,17 +112,39 @@ public:
     using ThreadListCallback = std::function<void(const Core::Result<ThreadListResult> &)>;
     void searchThreads(Snowflake channelId, bool archived, int offset, ThreadListCallback callback);
 
+    struct MessagePinsPage
+    {
+        QList<MessagePin> newestFirst;
+        bool hasMore = false;
+    };
+    using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsPage> &)>;
+    void fetchMessagePins(Snowflake channelId, int limit, std::optional<QDateTime> pinnedBefore, MessagePinsCallback callback);
+
     using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
     void sendMessage(Snowflake channelId, const QString &content, const QString &nonce,
-                     Snowflake replyToMessageId = Snowflake::Invalid,
+                     Snowflake replyToMessageId = Snowflake::Invalid, bool mentionRepliedUser = true,
                      const QList<Core::PendingAttachment> &attachments = {});
     bool cancelMessageSend(const QString &nonce);
-    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content);
+    void editMessage(Snowflake channelId, Snowflake messageId, const QString &content, bool keepReplyUnpinged = false);
     void deleteMessage(Snowflake channelId, Snowflake messageId);
-    void pinMessage(Snowflake channelId, Snowflake messageId);
-    void unpinMessage(Snowflake channelId, Snowflake messageId);
+    using PinCallback = std::function<void(const Core::Result<void> &)>;
+    void pinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
+    void unpinMessage(Snowflake channelId, Snowflake messageId, PinCallback callback);
+
+    enum class ThreadReopenResult {
+        Reopened,
+        TooManyThreads,
+        TooManyAnnouncementThreads,
+        RateLimited,
+        Forbidden,
+        Failed,
+    };
+    using ThreadReopenCallback = std::function<void(ThreadReopenResult)>;
+    void reopenThread(Snowflake threadId, ThreadReopenCallback callback);
+
+    void ackPins(Snowflake channelId, PinCallback callback);
 
     enum class ReactionLocation {
         HoverBar,
@@ -154,7 +176,20 @@ public:
     void ackMessage(Snowflake channelId, Snowflake messageId, int flags, int lastViewed);
     void ackBulk(const QList<AckEntry> &entries, std::function<void(bool success)> onFinished);
 
-    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf);
+    // every update must say whether the camera is on
+    void sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo);
+
+    void sendCallConnect(Snowflake channelId);
+
+    void sendStreamCreate(const StreamKey &channel, const std::optional<QString> &preferredRegion);
+    void sendStreamDelete(const QString &streamKey);
+    void sendStreamWatch(const QString &streamKey);
+    void sendStreamPing(const QString &streamKey);
+    void sendStreamSetPaused(const QString &streamKey, bool paused);
+
+    using StreamPreviewCallback = std::function<void(const StreamPreviewLookup &)>;
+    void fetchStreamPreview(const QString &streamKey, StreamPreviewCallback callback);
+    void uploadStreamPreview(const QString &streamKey, const QString &thumbnail, std::function<void(bool uploaded)> callback);
     void setVoiceConnected(bool connected);
 
     void restoreHeartbeatSession(const std::optional<HeartbeatSession> &stored);
@@ -162,13 +197,14 @@ public:
     void leaveGuild(Snowflake guildId);
 
     void debugForceReconnect();
+    void debugForceReidentify();
 
     void subscribeToGuildChannel(Snowflake guildId, Snowflake channelId,
                                  const QList<QPair<int, int>> &ranges);
     void ensureSubscriptionByChannel(Snowflake channelId);
     void requestForumUnreads(Snowflake forumId, const QList<QPair<Snowflake, Snowflake>> &threads);
     void requestGuildMembers(Snowflake guildId, const QList<Snowflake> &userIds, bool presences = true);
-    void queryGuildMembers(Snowflake guildId, const QString &query, int limit);
+    void queryGuildMembers(Snowflake guildId, const QString &query, int limit, bool presences = false);
 
     [[nodiscard]] Snowflake getGuildIdForChannel(Snowflake channelId) const;
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
@@ -274,6 +310,8 @@ signals:
     void channelCreated(const ChannelCreate &event);
     void channelUpdated(const ChannelUpdate &event);
     void channelDeleted(const ChannelDelete &event);
+    void channelPinsUpdated(const ChannelPinsUpdate &event);
+    void channelPinsAcked(const ChannelPinsAck &event);
     void threadCreated(const ChannelCreate &event);
     void threadUpdated(const ChannelUpdate &event);
     void threadDeleted(const ThreadDelete &event);
@@ -310,6 +348,13 @@ signals:
     void guildMemberListUpdate(const GuildMemberListUpdate &event);
     void voiceStateUpdated(const VoiceState &event);
     void voiceServerUpdated(const VoiceServerUpdate &event);
+    void callCreated(const CallCreate &event);
+    void callUpdated(const CallUpdate &event);
+    void callDeleted(const CallDelete &event);
+    void streamCreated(const StreamCreate &event);
+    void streamServerUpdated(const StreamServerUpdate &event);
+    void streamUpdated(const StreamUpdate &event);
+    void streamDeleted(const StreamDelete &event);
     void relationshipAdded(const Relationship &event);
     void relationshipUpdated(const RelationshipPartial &event);
     void relationshipRemoved(const RelationshipPartial &event);
@@ -343,6 +388,8 @@ private slots:
     void onGatewayChannelCreate(const ChannelCreate &event);
     void onGatewayChannelUpdate(const ChannelUpdate &event);
     void onGatewayChannelDelete(const ChannelDelete &event);
+    void onGatewayChannelPinsUpdate(const ChannelPinsUpdate &event);
+    void onGatewayChannelPinsAck(const ChannelPinsAck &event);
     void onGatewayThreadCreate(const ChannelCreate &event);
     void onGatewayThreadUpdate(const ChannelUpdate &event);
     void onGatewayThreadDelete(const ThreadDelete &event);
