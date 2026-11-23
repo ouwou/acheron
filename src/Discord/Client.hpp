@@ -23,6 +23,7 @@
 #include "Gateway.hpp"
 #include "GuildRequests.hpp"
 #include "HttpClient.hpp"
+#include "MessageQueue.hpp"
 #include "ClientIdentity.hpp"
 
 using Acheron::Core::Snowflake;
@@ -370,7 +371,7 @@ signals:
     void guildLeaveFailed(Core::Snowflake guildId, const QString &error);
     void attachmentUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
 
-    void reconnecting(int attempt, int maxAttempts);
+    void reconnecting(int attempt);
     void errorOccurred(const QString &errorStr);
     void authenticationFailed();
     void heartbeatSessionChanged(const HeartbeatSession &session);
@@ -449,6 +450,7 @@ private:
 
     ClientIdentity identity;
     HttpClient *httpClient;
+    MessageQueue *messageQueue;
     Gateway *gateway;
 
     QHash<Snowflake, Snowflake> channelToGuild; // todo prob move this somewhere or just a cache

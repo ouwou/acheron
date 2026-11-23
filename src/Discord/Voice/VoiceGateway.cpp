@@ -375,7 +375,6 @@ void VoiceGateway::networkLoop()
             return;
         }
 
-        curl_easy_setopt(curl, CURLOPT_URL, connectUrl.toUtf8().constData());
         curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
         curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abortOnceStopped);
@@ -383,7 +382,7 @@ void VoiceGateway::networkLoop()
         CurlUtils::applyCommonOptions(curl);
         CurlUtils::applyProxy(curl, params.proxy);
 
-        CURLcode res = curl_easy_perform(curl);
+        CURLcode res = CurlUtils::performWebSocketHandshake(curl, connectUrl.toUtf8());
         if (res != CURLE_OK) {
             qCWarning(LogVoice) << "Failed to connect to voice gateway:"
                                 << curl_easy_strerror(res);

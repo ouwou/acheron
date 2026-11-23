@@ -29,6 +29,8 @@ struct HttpResponse
     QByteArray body;
     QString error;
     bool success = false;
+    // from the Retry-After header
+    std::optional<int> retryAfterMs;
 
     [[nodiscard]] bool rateLimited() const { return statusCode == 429; }
 };

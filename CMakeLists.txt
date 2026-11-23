@@ -361,6 +361,7 @@ set(PROJECT_SOURCES
     src/Discord/HttpClient.cpp
     src/Discord/ApiError.cpp
     src/Discord/RequestWorker.cpp
+    src/Discord/MessageQueue.cpp
     src/Discord/CurlUtils.cpp
     src/Discord/CdnUrls.cpp
     src/Discord/StreamKey.cpp
@@ -569,6 +570,17 @@ if(BUILD_TESTS)
     target_include_directories(TestOrderedJson PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME OrderedJsonTests COMMAND TestOrderedJson)
 
+    qt_add_executable(TestRateLimiter tests/tst_RateLimiter.cpp)
+    target_link_libraries(TestRateLimiter PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestRateLimiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME RateLimiterTests COMMAND TestRateLimiter)
+
+    qt_add_executable(TestMessageQueue tests/tst_MessageQueue.cpp src/Discord/MessageQueue.cpp)
+    target_link_libraries(TestMessageQueue PRIVATE Qt::Core Qt::Network Qt::Test)
+    target_include_directories(TestMessageQueue PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
+        $<TARGET_PROPERTY:CURL::libcurl,INTERFACE_INCLUDE_DIRECTORIES>)
+    add_test(NAME MessageQueueTests COMMAND TestMessageQueue)
+
     qt_add_executable(TestProto tests/tst_Proto.cpp src/Proto/ProtoReader.cpp
         src/Proto/ProtoWriter.cpp src/Proto/FrecencySettings.cpp src/Core/Logging.cpp)
     target_link_libraries(TestProto PRIVATE Qt::Core Qt::Test)
@@ -635,6 +647,8 @@ if(BUILD_TESTS)
         add_media_test(TestUdpTransport UdpTransportTests tests/tst_UdpTransport.cpp)
         add_media_test(TestSinkWants SinkWantsTests tests/tst_SinkWants.cpp)
         add_media_test(TestVoiceClient VoiceClientTests tests/tst_VoiceClient.cpp)
+        add_media_test(TestBrowserHeaders BrowserHeadersTests tests/tst_BrowserHeaders.cpp
+            src/Discord/HttpClient.cpp src/Discord/RequestWorker.cpp src/Discord/ContextProperties.cpp)
 
         if(ACHERON_HAVE_VIDEO)
             target_compile_definitions(TestVoiceClient PRIVATE ACHERON_HAVE_VIDEO)
@@ -801,6 +815,10 @@ unset(CMAKE_REQUIRED_INCLUDES)
 
 if(HAS_CURL_IMPERSONATE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE IS_CURL_IMPERSONATE)
+    # CurlUtils.cpp lives in acheron_media when voice is on
+    if(TARGET acheron_media)
+        target_compile_definitions(acheron_media PRIVATE IS_CURL_IMPERSONATE)
+    endif()
 elseif(ALLOW_PLAIN_CURL)
     message(WARNING "curl_easy_impersonate not found, building against plain libcurl")
 else()
@@ -840,6 +858,17 @@ if(FFMPEG_RUNTIME_DLLS)
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
         COMMENT "Copying ffmpeg runtime libraries to build directory"
     )
+endif()
+
+# curl-impersonate's windows release keeps its dll beside the import library
+if(WIN32 AND CURL_LIBRARY MATCHES "_imp\\.lib$")
+    string(REGEX REPLACE "_imp\\.lib$" ".dll" _curl_runtime_dll "${CURL_LIBRARY}")
+    if(EXISTS "${_curl_runtime_dll}")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_curl_runtime_dll}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying curl-impersonate runtime library to build directory"
+        )
+    endif()
 endif()
 
 include(GNUInstallDirs)

@@ -14,7 +14,7 @@ class ConnectionBanner : public QWidget
 public:
     explicit ConnectionBanner(QWidget *parent = nullptr);
 
-    void showReconnecting(int attempt, int maxAttempts);
+    void showReconnecting(int attempt);
     void hide();
 
 protected:

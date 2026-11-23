@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 env:
-  CURL_IMPERSONATE_VERSION: v2.0.0
+  CURL_IMPERSONATE_VERSION: v2.1.1
   # BtbN keeps only the last couple of weeks of daily autobuilds plus one build per
   # month, so pin a month-end tag: a daily one gets deleted out from under us and
   # every ffmpeg download starts 404ing.

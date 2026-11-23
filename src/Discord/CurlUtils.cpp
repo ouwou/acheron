@@ -9,11 +9,15 @@
 #include <QFile>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QSet>
 #include <QTimeZone>
+#include <QUrl>
+#include <QRandomGenerator>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -136,31 +140,67 @@ static QByteArray readCertificateBundle()
     return file.readAll();
 }
 
+// curl-impersonate's chrome150 tls measured the same as chrome 158 on windows, so the strings are 158's.
+// v2.2.0+ reorder custom headers, so newer profiles need a fix there first
+QString getImpersonateTarget()
+{
+    return "chrome150";
+}
+
 QString getUserAgent()
 {
     return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-           "Chrome/142.0.0.0 Safari/537.36";
+           "Chrome/158.0.0.0 Safari/537.36";
 }
 
-QString getImpersonateTarget()
+static QByteArray getSecChUa()
 {
-    return "chrome142";
+    return R"("Chromium";v="158", "Not.A/Brand";v="24", "Google Chrome";v="158")";
 }
 
 UserAgentProps getUserAgentProps()
 {
-    return { "Windows", "Chrome", "142.0.0.0", "10" };
+    return { "Windows", "Chrome", "158.0.0.0", "10" };
+}
+
+// chrome's default: its ui language (the windows one), that language's base, then en-US, en
+static QStringList browserLanguages()
+{
+    // name() drops the script qt 6 puts in ui languages (en-Latn-US)
+    const QString language = QLocale(QLocale::system().uiLanguages().value(0, "en-US")).name().replace('_', '-');
+    QStringList languages;
+    if (!language.isEmpty() && language != "C")
+        languages.append(language);
+    const QString base = language.section('-', 0, 0);
+    for (const QString &fallback : { base, QString("en-US"), QString("en") }) {
+        if (!fallback.isEmpty() && fallback != "C" && !languages.contains(fallback))
+            languages.append(fallback);
+    }
+    return languages;
 }
 
 QString getSystemLocale()
 {
-    static const QString locale = [] {
-        QString name = QLocale::system().name();
-        if (name.isEmpty() || name == "C")
-            return QString("en-US");
-        return name.replace('_', '-');
-    }();
+    static const QString locale = browserLanguages().first();
     return locale;
+}
+
+QByteArray getAcceptLanguage()
+{
+    static const QByteArray header = [] {
+        QByteArray value;
+        int q = 10;
+        for (const QString &language : browserLanguages()) {
+            if (!value.isEmpty())
+                value += ',';
+            value += language.toUtf8();
+            if (q < 10)
+                value += ";q=0." + QByteArray::number(q);
+            q = std::max(q - 1, 1);
+        }
+        return value;
+    }();
+    return header;
 }
 
 void applyCommonOptions(CURL *curl)
@@ -174,9 +214,22 @@ void applyCommonOptions(CURL *curl)
         curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &blob);
     }
 #ifdef IS_CURL_IMPERSONATE
-    curl_easy_impersonate(curl, getImpersonateTarget().toUtf8().constData(), 1);
+    // its default headers are a mac chrome page load, every request builds its own
+    const CURLcode impersonated = curl_easy_impersonate(curl, getImpersonateTarget().toUtf8().constData(), 0);
+    static const bool logged = [impersonated] {
+        if (impersonated == CURLE_OK)
+            qCInfo(LogNetwork) << "Impersonating" << getImpersonateTarget();
+        else
+            qCWarning(LogNetwork) << "curl_easy_impersonate failed:" << curl_easy_strerror(impersonated);
+        return true;
+    }();
+#else
+    static const bool logged = [] {
+        qCWarning(LogNetwork) << "Built without curl-impersonate, TLS does not look like Chrome";
+        return true;
+    }();
 #endif
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, getUserAgent().toUtf8().constData());
+    Q_UNUSED(logged);
 }
 
 void applyProxy(CURL *curl, const Core::ProxyConfig &proxy)
@@ -200,20 +253,134 @@ void applyProxy(CURL *curl, const Core::ProxyConfig &proxy)
     }
 }
 
-void appendDiscordHeaders(curl_slist **headers, const ClientIdentity &identity, const QString &referer)
+static constexpr const char *DiscordOriginHeader = "Origin: https://discord.com";
+
+static curl_slist *toCurlList(const QList<QByteArray> &headers)
 {
-    static const QString tz = QString::fromUtf8(QTimeZone::systemTimeZoneId());
-    const QString locale = identity.discordLocale();
+    curl_slist *list = nullptr;
+    for (const QByteArray &header : headers)
+        list = curl_slist_append(list, header.constData());
+    return list;
+}
+
+// chrome orders these by name, not by when they were set. from captures of fetch() with each of discord's header sets.
+// md5 never met captcha/context in one capture, nor audit log reason the captcha session id
+static qsizetype headerRank(const QByteArray &header)
+{
+    static const QList<QByteArray> order = { "x-captcha-rqtoken", "sec-ch-ua-platform", "authorization", "x-debug-options", "sec-ch-ua", "sec-ch-ua-mobile", "x-discord-timezone", "x-captcha-key", "x-context-properties", "x-discord-original-md5", "x-super-properties", "x-captcha-session-id", "x-audit-log-reason", "x-discord-locale", "user-agent", "content-type", "x-fingerprint" };
+    // "Name;" is curl's empty header
+    const QByteArray name = header.split(':').first().split(';').first().toLower();
+    const qsizetype rank = order.indexOf(name);
+    return rank < 0 ? order.size() : rank;
+}
+
+curl_slist *browserHeaders(const BrowserRequest &request)
+{
+    QList<QByteArray> ranked = request.pageHeaders;
+    ranked.append("sec-ch-ua-platform: \"Windows\"");
+    ranked.append("sec-ch-ua: " + getSecChUa());
+    ranked.append("sec-ch-ua-mobile: ?0");
+    ranked.append("User-Agent: " + getUserAgent().toUtf8());
+    if (!request.contentType.isEmpty())
+        ranked.append("Content-Type: " + request.contentType);
+    std::stable_sort(ranked.begin(), ranked.end(), [](const QByteArray &a, const QByteArray &b) { return headerRank(a) < headerRank(b); });
+
+    QList<QByteArray> headers;
+    if (request.contentLength)
+        headers.append("Content-Length: " + QByteArray::number(*request.contentLength));
+    headers.append(ranked);
+    headers.append("Accept: " + request.accept);
+    if (request.sendsOrigin)
+        headers.append(DiscordOriginHeader);
+    headers.append(QByteArray("Sec-Fetch-Site: ") + (request.crossSite ? "cross-site" : "same-origin"));
+    headers.append("Sec-Fetch-Mode: " + request.mode);
+    headers.append("Sec-Fetch-Dest: " + request.dest);
+    if (!request.referer.isEmpty())
+        headers.append("Referer: " + request.referer);
+    headers.append("Accept-Encoding: " + request.acceptEncoding);
+    headers.append("Accept-Language: " + getAcceptLanguage());
+    if (!request.range.isEmpty())
+        headers.append("Range: " + request.range);
+    if (!request.priority.isEmpty())
+        headers.append("Priority: " + request.priority);
+    return toCurlList(headers);
+}
+
+QList<QByteArray> discordHeaders(const ClientIdentity &identity, const QString &token, const QString &fingerprint)
+{
+    static const QByteArray tz = QTimeZone::systemTimeZoneId();
 
     ClientPropertiesBuildParams params;
     params.includeClientHeartbeatSessionId = true;
-    QByteArray superProperties = identity.buildClientProperties(params).toJson().toBytes().toBase64();
+    const QByteArray superProperties = identity.buildClientProperties(params).toJson().toBytes().toBase64();
 
-    *headers = curl_slist_append(*headers, ("X-Discord-Timezone: " + tz).toUtf8().constData());
-    *headers = curl_slist_append(*headers, ("X-Discord-Locale: " + locale).toUtf8().constData());
-    *headers = curl_slist_append(*headers, ("X-Super-Properties: " + superProperties).constData());
-    *headers = curl_slist_append(*headers, "X-Debug-Options: bugReporterEnabled");
-    *headers = curl_slist_append(*headers, ("Referer: " + referer).toUtf8().constData());
+    QList<QByteArray> headers;
+    if (!token.isEmpty())
+        headers.append("Authorization: " + token.toUtf8());
+    headers.append("X-Super-Properties: " + superProperties);
+    if (!fingerprint.isEmpty())
+        headers.append("X-Fingerprint: " + fingerprint.toUtf8());
+    headers.append("X-Discord-Locale: " + identity.discordLocale().toUtf8());
+    headers.append("X-Discord-Timezone: " + tz);
+    headers.append("X-Debug-Options: bugReporterEnabled");
+    return headers;
+}
+
+// curl can't inflate permessage-deflate frames
+static std::mutex compressingHostsMutex;
+static QSet<QString> compressingHosts;
+
+static bool offersCompressionTo(const QString &host)
+{
+    std::lock_guard lock(compressingHostsMutex);
+    return !compressingHosts.contains(host);
+}
+
+static QByteArray randomWebSocketKey()
+{
+    QByteArray nonce(16, Qt::Uninitialized);
+    QRandomGenerator::system()->generate(nonce.begin(), nonce.end());
+    return nonce.toBase64();
+}
+
+static curl_slist *webSocketHeaders(const QString &host)
+{
+    QList<QByteArray> headers = {
+        "Pragma: no-cache",
+        "Cache-Control: no-cache",
+        "User-Agent: " + getUserAgent().toUtf8(),
+        "Upgrade: websocket",
+        DiscordOriginHeader,
+        "Sec-WebSocket-Version: 13",
+        QByteArray("Accept-Encoding: ") + ChromeAcceptEncoding,
+        "Accept-Language: " + getAcceptLanguage(),
+        // curl-impersonate would put its own key right after Host
+        "Sec-WebSocket-Key: " + randomWebSocketKey(),
+    };
+    if (offersCompressionTo(host))
+        headers.append("Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits");
+    headers.append("Accept:"); // drops curl's default, chrome sends none on a handshake
+    return toCurlList(headers);
+}
+
+CURLcode performWebSocketHandshake(CURL *curl, const QByteArray &url)
+{
+    const QString host = QUrl(QString::fromUtf8(url)).host();
+    curl_slist *headers = webSocketHeaders(host);
+    curl_easy_setopt(curl, CURLOPT_URL, url.constData());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, nullptr);
+    curl_slist_free_all(headers);
+
+    curl_header *extensions = nullptr;
+    if (curl_easy_header(curl, "Sec-WebSocket-Extensions", 0, CURLH_HEADER | CURLH_1XX, -1, &extensions) == CURLHE_OK) {
+        qCWarning(LogNetwork) << host << "accepted WebSocket compression:" << extensions->value << "- no longer offering it there";
+        std::lock_guard lock(compressingHostsMutex);
+        compressingHosts.insert(host);
+        return res == CURLE_OK ? CURLE_UNSUPPORTED_PROTOCOL : res;
+    }
+    return res;
 }
 
 size_t writeToByteArray(char *ptr, size_t size, size_t nmemb, void *userdata)

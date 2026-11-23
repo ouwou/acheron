@@ -3,9 +3,8 @@
 #include <QByteArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QList>
 #include <QString>
-
-#include <curl/curl.h>
 
 #include <functional>
 #include <optional>
@@ -37,13 +36,15 @@ struct CaptchaSolution
     QString rqtoken;
 };
 
-inline void appendCaptchaHeaders(curl_slist *&headers, const CaptchaSolution &solution)
+inline QList<QByteArray> captchaHeaders(const CaptchaSolution &solution)
 {
-    headers = curl_slist_append(headers, ("X-Captcha-Key: " + solution.token).toUtf8().constData());
-    if (!solution.sessionId.isEmpty())
-        headers = curl_slist_append(headers, ("X-Captcha-Session-Id: " + solution.sessionId).toUtf8().constData());
+    QList<QByteArray> headers;
+    headers.append("X-Captcha-Key: " + solution.token.toUtf8());
     if (!solution.rqtoken.isEmpty())
-        headers = curl_slist_append(headers, ("X-Captcha-Rqtoken: " + solution.rqtoken).toUtf8().constData());
+        headers.append("X-Captcha-Rqtoken: " + solution.rqtoken.toUtf8());
+    if (!solution.sessionId.isEmpty())
+        headers.append("X-Captcha-Session-Id: " + solution.sessionId.toUtf8());
+    return headers;
 }
 
 class CaptchaResolver

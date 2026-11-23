@@ -1106,8 +1106,8 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
             });
 
     connect(instance, &Core::ClientInstance::reconnecting, this,
-            [this](int attempt, int maxAttempts) {
-                connectionBanner->showReconnecting(attempt, maxAttempts);
+            [this](int attempt) {
+                connectionBanner->showReconnecting(attempt);
             });
 
     connect(instance, &Core::ClientInstance::stateChanged, this,

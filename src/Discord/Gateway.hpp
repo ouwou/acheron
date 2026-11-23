@@ -5,11 +5,15 @@
 
 #include <curl/curl.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
 
+#include "Backoff.hpp"
 #include "Core/ProxyConfig.hpp"
 #include "Enums.hpp"
 #include "IngestThread.hpp"
@@ -67,7 +71,7 @@ public:
 signals:
     void connected();
     void disconnected(CloseCode code, const QString &reason);
-    void reconnecting(int attempt, int maxAttempts);
+    void reconnecting(int attempt);
 
     // The network loop has exited for good; no reconnection will follow.
     void finished();
@@ -200,13 +204,30 @@ private:
     void handlePresencesReplace(const Inbound &data);
     void handleSessionsReplace(const Inbound &data);
     void handleHello(const Inbound &data);
+    void handleInvalidSession(bool resumable);
+    void resumeOrIdentify();
     void identify();
     void resume();
     bool isFatalCloseCode(CloseCode code) const;
+    void succeedBackoff();
+    void forgetSession();
+    [[nodiscard]] QString connectionUrl();
+
+    enum class ConnectionEnd {
+        Stopped,
+        Fatal,
+        Lost,
+        Reconnect,
+    };
 
     void networkLoop();
     void runConnection();
+    ConnectionEnd readUntilClosed();
+    void sendClose(uint16_t code);
+    void stopHeartbeat();
+    bool waitBeforeReconnect();
     void heartbeatLoop();
+    bool stoppedWhileWaiting(std::chrono::milliseconds delay);
     void sendHeartbeat();
     QoSPayload consumeQoSPayload();
 
@@ -237,22 +258,29 @@ private:
     std::atomic<int> heartbeatInterval = 0;
     std::mutex heartbeatMutex;
     std::condition_variable heartbeatCv;
+    std::mutex heartbeatThreadMutex;
     std::thread heartbeatThread;
+    std::atomic<bool> heartbeatStopping{ false };
+    std::atomic<bool> heartbeatRequested{ false };
+    // 0 before the first one
+    std::atomic<qint64> lastHeartbeatAckMs{ 0 };
 
     std::mutex qosMutex;
     std::optional<QoSPayload> currentQoS;
     std::optional<QoSPayload> upcomingQoS;
     std::atomic<bool> sessionEstablished{ false };
 
+    // main thread and network thread
+    std::mutex sessionMutex;
     QString sessionId;
     QString resumeGatewayUrl;
+    Backoff backoff{ 1000, 60000 };
+    std::deque<std::chrono::steady_clock::time_point> identifyTimes;
 
     std::atomic<bool> heartbeatAckReceived{ true };
     std::atomic<bool> shouldReconnect{ false };
-    bool canResume = false;
-    bool isResuming = false;
-    int reconnectAttempts = 0;
-    static constexpr int maxReconnectAttempts = 5;
+    std::atomic<bool> reconnectImmediately{ false };
+    std::atomic<bool> helloReceived{ false };
 };
 
 } // namespace Discord
