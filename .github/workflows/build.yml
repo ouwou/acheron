@@ -774,6 +774,7 @@ jobs:
           path: Acheron*.AppImage
 
   build-macos:
+    if: github.repository == 'ouwou/acheron'   # fork: skip macOS (runners are scarce; only Windows builds are used)
     runs-on: macos-latest
 
     steps:
