@@ -29,6 +29,28 @@ jobs:
         with:
           submodules: recursive
 
+      # libdave's OverflowAdd has MSVC paths for x64 and x86 only; on ARM64 it falls through to
+      # GCC's __builtin_add_overflow, which MSVC doesn't have. Add a portable MSVC branch.
+      # Skips itself if libdave has already been fixed upstream.
+      - name: Patch libdave for MSVC ARM64
+        shell: pwsh
+        run: |
+          $f = 'vendor/libdave/cpp/src/frame_processors.cpp'
+          $src = [IO.File]::ReadAllText($f)
+          if ($src -match '_M_ARM64' -or $src -notmatch '__builtin_add_overflow') {
+              Write-Host 'libdave already handles MSVC ARM64; nothing to patch.'
+              exit 0
+          }
+          $pattern = '#else(\r?\n)(\s*)bool didOverflow = __builtin_add_overflow'
+          if ($src -notmatch $pattern) { throw "libdave's OverflowAdd changed shape; update this patch step." }
+          $patched = ([regex]$pattern).Replace($src, [Text.RegularExpressions.MatchEvaluator]{
+              param($m)
+              $nl = $m.Groups[1].Value; $ind = $m.Groups[2].Value
+              "#elif defined(_MSC_VER)$nl${ind}res = a + b;$nl${ind}bool didOverflow = res < a;$nl#else$nl${ind}bool didOverflow = __builtin_add_overflow"
+          }, 1)
+          [IO.File]::WriteAllText($f, $patched)
+          Write-Host 'Patched libdave OverflowAdd for MSVC ARM64.'
+
       - name: Read versions from build.yml
         id: versions
         shell: pwsh
