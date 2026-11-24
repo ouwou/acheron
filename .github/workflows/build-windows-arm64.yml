@@ -128,7 +128,7 @@ jobs:
           $ffmpegDir = "${{ github.workspace }}/ffmpeg"
           cmake -B build -S . `
             -G "Ninja Multi-Config" `
-            -DCMAKE_CONFIGURATION_TYPES=$env:BUILD_TYPE `
+            -DCMAKE_CONFIGURATION_TYPES=${{ env.BUILD_TYPE }} `
             -DVCPKG_TARGET_TRIPLET=arm64-windows-static-md `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
             -DCURL_INCLUDE_DIR="$curlDir/include" `
@@ -156,19 +156,19 @@ jobs:
         run: |
           $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
           $env:QT_FORCE_STDERR_LOGGING = "1"
-          ctest --test-dir build -C $env:BUILD_TYPE --output-on-failure --timeout 600
+          ctest --test-dir build -C ${{ env.BUILD_TYPE }} --output-on-failure --timeout 600
 
       - name: Deploy Qt
         shell: pwsh
         run: |
-          $exe = "${{ github.workspace }}/build/$env:BUILD_TYPE/acheron.exe"
+          $exe = "${{ github.workspace }}/build/${{ env.BUILD_TYPE }}/acheron.exe"
           windeployqt --no-translations --no-opengl-sw --no-system-d3d-compiler $exe
 
       - name: Prepare artifact
         shell: pwsh
         run: |
           $out = $env:ARTIFACT
-          $binDir = "build/$env:BUILD_TYPE"
+          $binDir = "build/${{ env.BUILD_TYPE }}"
           $curlDir = "${{ github.workspace }}/curl-impersonate"
           New-Item -ItemType Directory -Path $out -Force | Out-Null
           Copy-Item "$binDir/*" $out -Recurse -Force
