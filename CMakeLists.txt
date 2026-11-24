@@ -521,11 +521,8 @@ else()
     list(APPEND PROJECT_SOURCES vendor/qrcodegen/cpp/qrcodegen.cpp)
 endif()
 
-# Fork: custom icon for windows, taskbar, .exe and tray (see fork/README.md)
-list(APPEND PROJECT_SOURCES fork/fork.qrc)
-if(WIN32)
-    list(APPEND PROJECT_SOURCES fork/acheron.rc)
-endif()
+# Fork: custom icon, Settings > About (see fork/README.md)
+include(fork/fork.cmake)
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 

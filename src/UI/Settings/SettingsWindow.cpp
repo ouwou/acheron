@@ -1,5 +1,6 @@
 #include "SettingsWindow.hpp"
 
+#include "../../../fork/AboutPage.hpp" // fork
 #include "AppearancePage.hpp"
 #include "GeneralPage.hpp"
 
@@ -61,6 +62,8 @@ void SettingsWindow::setupUi()
 #ifdef ACHERON_HAVE_VIDEO
     addPage(tr("Video"), new VideoPage(this));
 #endif
+
+    addPage(tr("About"), new AboutPage(this)); // fork
 
     categoryList->setCurrentRow(0);
 
