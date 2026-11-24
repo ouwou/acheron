@@ -1,0 +1,193 @@
+name: Build Windows ARM64
+
+# Fork-only: a native Windows on ARM build, made on GitHub's ARM64 Windows runner.
+# Kept in its own file (not in upstream's build.yml) so the daily sync with ouwou/acheron
+# never conflicts with it. Qt, ffmpeg and curl-impersonate versions are read from build.yml
+# at run time, so this follows upstream's version bumps without edits here.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-archives
+
+jobs:
+  build-windows-arm64:
+    runs-on: windows-11-arm
+    env:
+      BUILD_TYPE: MinSizeRel
+      ARTIFACT: acheron-windows-arm64-MinSizeRel
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Read versions from build.yml
+        id: versions
+        shell: pwsh
+        run: |
+          $y = Get-Content .github/workflows/build.yml -Raw
+          function Get-EnvValue([string]$Name) {
+              if ($y -match "(?m)^\s+$([regex]::Escape($Name)):\s*(\S+)") { return $Matches[1] }
+              throw "$Name not found in build.yml"
+          }
+          # Qt version of upstream's build-windows job
+          $job = ($y -split '(?m)^  build-windows:\s*$', 2)[1]
+          $job = ($job -split '(?m)^  [A-Za-z0-9_-]+:\s*$', 2)[0]
+          if ($job -notmatch "(?s)jurplel/install-qt-action.*?version:\s*'([^']+)'") { throw 'Qt version not found in build-windows' }
+          $qt = $Matches[1]
+
+          $ffWin = Get-EnvValue 'FFMPEG_WINDOWS_BUILD'
+          $ffArm = $ffWin -replace '-win64-', '-winarm64-'
+          if ($ffArm -eq $ffWin) { throw "Can't derive the ARM64 ffmpeg name from $ffWin" }
+
+          $out = @{
+              qt          = $qt
+              aqt         = Get-EnvValue 'AQT_FOR_WINDOWS_QT6'
+              curl        = Get-EnvValue 'CURL_IMPERSONATE_VERSION'
+              ffmpeg_tag  = Get-EnvValue 'FFMPEG_RELEASE_TAG'
+              ffmpeg_name = $ffArm
+          }
+          $out.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" } | Add-Content $env:GITHUB_OUTPUT
+          $out.GetEnumerator() | ForEach-Object { Write-Host "$($_.Key) = $($_.Value)" }
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ steps.versions.outputs.qt }}
+          host: windows_arm64
+          target: desktop
+          arch: win64_msvc2022_arm64
+          modules: qtimageformats
+          cache: true
+          aqtsource: ${{ steps.versions.outputs.aqt }}
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git -C vendor/vcpkg fetch --unshallow
+          vendor/vcpkg/bootstrap-vcpkg.bat
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - name: Restore vcpkg packages
+        id: vcpkg-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg-archives
+          key: vcpkg-archives-arm64-windows-static-md-qt6-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-archives-arm64-windows-static-md-qt6-
+
+      - name: Install curl-impersonate
+        shell: pwsh
+        run: |
+          $v = "${{ steps.versions.outputs.curl }}"
+          $url = "https://github.com/lexiforest/curl-impersonate/releases/download/$v/libcurl-impersonate-$v.arm64-win32.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile libcurl-impersonate.tar.gz
+          New-Item -ItemType Directory -Path curl-impersonate -Force | Out-Null
+          tar -xzf libcurl-impersonate.tar.gz -C curl-impersonate
+
+      - name: Install ffmpeg
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag  = "${{ steps.versions.outputs.ffmpeg_tag }}"
+          $name = "${{ steps.versions.outputs.ffmpeg_name }}"
+          # build.yml pins the x64 archive's hash; for ARM64, check against the digest GitHub records for the release asset
+          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/tags/$tag" -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+          $asset = $rel.assets | Where-Object { $_.name -eq "$name.zip" } | Select-Object -First 1
+          if (-not $asset) { throw "$name.zip is not in BtbN release $tag" }
+          if (-not $asset.digest) { throw "GitHub has no digest for $name.zip; refusing to use it unverified" }
+          $expected = ($asset.digest -replace '^sha256:', '').ToLower()
+
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+          $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) { throw "ffmpeg archive hash mismatch: expected $expected, got $actual" }
+
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-extract -Force
+          $inner = Get-ChildItem -Path ffmpeg-extract -Directory | Select-Object -First 1
+          Move-Item -Path $inner.FullName -Destination ffmpeg
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          $ffmpegDir = "${{ github.workspace }}/ffmpeg"
+          cmake -B build -S . `
+            -G "Ninja Multi-Config" `
+            -DCMAKE_CONFIGURATION_TYPES=$env:BUILD_TYPE `
+            -DVCPKG_TARGET_TRIPLET=arm64-windows-static-md `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$ffmpegDir" `
+            -DCURL_INCLUDE_DIR="$curlDir/include" `
+            -DCURL_LIBRARY="$curlDir/lib/libcurl-impersonate_imp.lib" `
+            -DBUILD_TESTS=ON
+
+      - name: Prune vcpkg packages
+        id: vcpkg-prune
+        continue-on-error: true
+        shell: bash
+        run: python .github/prune_vcpkg_archives.py build/vcpkg_installed vcpkg-archives vcpkg-archives-arm64-windows-static-md-qt6- >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-prune.outputs.key && steps.vcpkg-prune.outputs.key != steps.vcpkg-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-archives
+          key: ${{ steps.vcpkg-prune.outputs.key }}
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
+
+      - name: Test
+        shell: pwsh
+        run: |
+          $env:PATH = "${{ github.workspace }}/curl-impersonate/lib;$env:PATH"
+          $env:QT_FORCE_STDERR_LOGGING = "1"
+          ctest --test-dir build -C $env:BUILD_TYPE --output-on-failure --timeout 600
+
+      - name: Deploy Qt
+        shell: pwsh
+        run: |
+          $exe = "${{ github.workspace }}/build/$env:BUILD_TYPE/acheron.exe"
+          windeployqt --no-translations --no-opengl-sw --no-system-d3d-compiler $exe
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          $out = $env:ARTIFACT
+          $binDir = "build/$env:BUILD_TYPE"
+          $curlDir = "${{ github.workspace }}/curl-impersonate"
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          Copy-Item "$binDir/*" $out -Recurse -Force
+          Copy-Item "$curlDir/lib/*.dll" $out -Force
+          Remove-Item "$out/Test*.exe","$out/*.pdb","$out/*.lib","$out/styles","$out/generic" `
+            -Recurse -ErrorAction SilentlyContinue
+          Get-ChildItem "$out/sqldrivers" -Exclude qsqlite.dll -ErrorAction SilentlyContinue | Remove-Item
+
+          # Fail loudly if anything in the package isn't ARM64 (an x64 DLL here would break the native build)
+          $bad = foreach ($f in Get-ChildItem $out -Recurse -Include *.exe,*.dll) {
+              $b = [IO.File]::ReadAllBytes($f.FullName)
+              $pe = [BitConverter]::ToInt32($b, 0x3C)
+              $machine = [BitConverter]::ToUInt16($b, $pe + 4)
+              if ($machine -ne 0xAA64 -and $f.Name -ne 'vc_redist.arm64.exe') { "{0} (machine 0x{1:X4})" -f $f.FullName.Substring($out.Length + 1), $machine }
+          }
+          if ($bad) { Write-Host "Non-ARM64 files:"; $bad | ForEach-Object { Write-Host "  $_" }; throw 'Package contains non-ARM64 binaries' }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARTIFACT }}
