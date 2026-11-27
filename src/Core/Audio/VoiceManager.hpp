@@ -23,6 +23,8 @@
 #include "Discord/StreamKey.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
 
+class QTimer;
+
 namespace Acheron {
 namespace Core {
 
@@ -164,6 +166,8 @@ private:
     void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
     void playCue(VoiceCue cue);
+    void playDepartureCue();
+    void stopDepartureCue();
     IAudioBackend *backend() const;
 
 private:
@@ -207,6 +211,10 @@ private:
     VoiceConnection *voiceConnection = nullptr;
     Discord::Voice::VoiceClient *voiceClient = nullptr;
     AudioPipeline *audioPipeline = nullptr;
+
+    // our own leave chime, fed to the output device after the call's audio is gone
+    QTimer *departureTimer = nullptr;
+    int departureFrame = 0;
 
     struct AudioSource
     {
