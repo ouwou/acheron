@@ -224,6 +224,8 @@ void RequestsPage::addRow(const QString &name, const QString &detail, const QLis
     layout->addWidget(label, 1);
     for (const auto &[text, action] : actions) {
         auto *button = new QPushButton(text, row);
+        if (text == tr("View"))
+            button->setToolTip(tr("Open the conversation in a new tab"));
         connect(button, &QPushButton::clicked, this, action);
         layout->addWidget(button);
     }

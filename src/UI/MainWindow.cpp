@@ -1590,7 +1590,17 @@ void MainWindow::setupUi()
     centerSplitter->addWidget(threadPane);
     requestsPage = new RequestsPage(rightSideWidget);
     requestsPage->setVisible(false);
-    connect(requestsPage, &RequestsPage::openChannelRequested, this, &MainWindow::navigateToChannel);
+    // View opens the request in a new tab, so the Requests tab stays put to act on it afterwards
+    connect(requestsPage, &RequestsPage::openChannelRequested, this, [this](Snowflake channelId) {
+        if (!currentInstance)
+            return;
+        ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, currentInstance->accountId());
+        ChannelNode *accountNode = node ? channelTreeModel->getAccountNodeFor(node) : nullptr;
+        if (accountNode)
+            tabBar->openNewTab(makeTabEntry(node, accountNode));
+        else
+            navigateToChannel(channelId);
+    });
     centerSplitter->setStretchFactor(0, 1);
     centerSplitter->setStretchFactor(1, 1);
     centerSplitter->setSizes({ 350, 550 });
