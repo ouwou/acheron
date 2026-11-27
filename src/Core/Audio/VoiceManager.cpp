@@ -775,48 +775,20 @@ void VoiceManager::playAlertSound(VoiceCue cue)
     playOnDevice(cue);
 }
 
-// with no call to mix into, a chime is fed to the output device a frame per tick, then the device is closed
+// with no call to mix into, a chime goes straight to the output device
 void VoiceManager::playOnDevice(VoiceCue cue)
 {
     stopDeviceCue();
     if (selfDeaf || audioPipeline)
         return;
-
-    IAudioBackend *audio = backend();
-    if (!audio->startPlayback())
-        return;
-
-    // a few frames ahead so the device doesn't start on an underrun; the playback buffer holds 8
-    static constexpr int PRIMED_FRAMES = 4;
-    deviceCue = cue;
-    const QVector<QByteArray> &frames = voiceCueFrames(cue);
-    for (deviceCueFrame = 0; deviceCueFrame < std::min(PRIMED_FRAMES, static_cast<int>(frames.size())); deviceCueFrame++)
-        audio->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[deviceCueFrame].constData()));
-
-    deviceCueTimer = new QTimer(this);
-    deviceCueTimer->setTimerType(Qt::PreciseTimer);
-    deviceCueTimer->setInterval(AUDIO_FRAME_DURATION_MS);
-    connect(deviceCueTimer, &QTimer::timeout, this, [this] {
-        const QVector<QByteArray> &frames = voiceCueFrames(deviceCue);
-        if (deviceCueFrame < frames.size())
-            backend()->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[deviceCueFrame].constData()));
-        // once the primed frames have drained too
-        else if (deviceCueFrame >= frames.size() + PRIMED_FRAMES + 1)
-            stopDeviceCue();
-        deviceCueFrame++;
-    });
-    deviceCueTimer->start();
+    deviceCuePlayer.play(backend(), voiceCueFrames(cue));
 }
 
 void VoiceManager::stopDeviceCue()
 {
-    if (!deviceCueTimer)
-        return;
-    delete deviceCueTimer;
-    deviceCueTimer = nullptr;
     // a new call opens the device itself
-    if (!audioPipeline)
-        backend()->stopPlayback();
+    if (deviceCuePlayer.isPlaying())
+        deviceCuePlayer.stop(!audioPipeline);
 }
 
 void VoiceManager::onVoiceClientConnected()

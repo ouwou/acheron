@@ -8,6 +8,9 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QMessageBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -164,6 +167,10 @@ VoicePage::VoicePage(QWidget *parent)
         settings.saveAndApply();
     });
 
+    form->addRow(tr("Join sound"), soundRow(Core::Audio::VoiceCue::Join));
+    form->addRow(tr("Leave sound"), soundRow(Core::Audio::VoiceCue::Leave));
+    form->addRow(tr("Message sound"), soundRow(Core::Audio::VoiceCue::Message));
+
     auto *advanced = new QWidget(this);
     QFormLayout *advancedForm = newForm();
     advanced->setLayout(advancedForm);
@@ -230,6 +237,56 @@ VoicePage::VoicePage(QWidget *parent)
 }
 
 VoicePage::~VoicePage() = default;
+
+// the sound for a cue: the built-in chime or a WAV file, with a button to hear it
+QWidget *VoicePage::soundRow(Core::Audio::VoiceCue cue)
+{
+    using namespace Core::Audio;
+
+    auto *row = new QWidget(this);
+    auto *layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    auto *name = new QLabel(row);
+    auto *choose = new QPushButton(tr("Choose..."), row);
+    auto *reset = new QPushButton(tr("Default"), row);
+    auto *play = new QPushButton(tr("Play"), row);
+    layout->addWidget(name, 1);
+    layout->addWidget(play);
+    layout->addWidget(choose);
+    layout->addWidget(reset);
+
+    auto refresh = [name, reset, cue] {
+        const QString path = voiceCueSoundPath(cue);
+        name->setText(path.isEmpty() ? tr("Built-in") : QFileInfo(path).fileName());
+        name->setToolTip(path);
+        reset->setEnabled(!path.isEmpty());
+    };
+    refresh();
+
+    connect(play, &QPushButton::clicked, this, [this, cue] {
+        testBackend->setOutputDevice(settings.outputDevice);
+        previewPlayer.play(testBackend.get(), voiceCueFrames(cue));
+    });
+    connect(choose, &QPushButton::clicked, this, [this, cue, refresh] {
+        const QString current = voiceCueSoundPath(cue);
+        const QString path = QFileDialog::getOpenFileName(this, tr("Choose a sound"), current.isEmpty() ? QString() : QFileInfo(current).absolutePath(),
+                                                          tr("WAV files (*.wav)"));
+        if (path.isEmpty())
+            return;
+        QString error;
+        if (!setVoiceCueSoundPath(cue, path, &error)) {
+            QMessageBox::warning(this, tr("Can't use this sound"), error);
+            return;
+        }
+        refresh();
+    });
+    connect(reset, &QPushButton::clicked, this, [cue, refresh] {
+        setVoiceCueSoundPath(cue, QString());
+        refresh();
+    });
+    return row;
+}
 
 void VoicePage::hideEvent(QHideEvent *event)
 {
