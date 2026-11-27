@@ -3,7 +3,6 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QScrollArea>
 #include <QVBoxLayout>
 
@@ -54,7 +53,6 @@ void RequestsPage::setInstance(Core::ClientInstance *newInstance)
         disconnect(c);
     connections.clear();
     instance = newInstance;
-    previews.clear();
     status->hide();
     if (instance) {
         connections.append(connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, this, [this] {
@@ -68,63 +66,6 @@ void RequestsPage::setInstance(Core::ClientInstance *newInstance)
     }
     if (isVisible())
         rebuild();
-}
-
-QString RequestsPage::readablePreview(const QString &content) const
-{
-    static const QRegularExpression userMention(QStringLiteral(R"(<@!?(\d+)>)"));
-    static const QRegularExpression customEmoji(QStringLiteral(R"(<a?(:\w+:)\d+>)"));
-    static const QRegularExpression markers(QStringLiteral(R"(\*\*|__|~~|\|\||`)"));
-
-    QString text = content;
-    QString resolved;
-    qsizetype last = 0;
-    for (auto it = userMention.globalMatch(text); it.hasNext();) {
-        const auto match = it.next();
-        resolved += text.mid(last, match.capturedStart() - last);
-        resolved += QLatin1Char('@') + (instance ? instance->users()->getDisplayName(Core::Snowflake(match.captured(1).toULongLong()))
-                                                 : QStringLiteral("user"));
-        last = match.capturedEnd();
-    }
-    resolved += text.mid(last);
-    resolved.replace(customEmoji, QStringLiteral("\\1"));
-    resolved.remove(markers);
-    resolved = resolved.simplified();
-
-    constexpr int MaxChars = 140;
-    if (resolved.size() > MaxChars)
-        resolved = resolved.left(MaxChars).trimmed() + QChar(0x2026);
-    return resolved;
-}
-
-void RequestsPage::fetchPreviews(const QList<Core::Snowflake> &missing)
-{
-    if (fetchingPreviews || !instance)
-        return;
-    const QList<Core::Snowflake> channelIds = missing.mid(0, 25); // the endpoint's limit; the rest follow after
-
-    fetchingPreviews = true;
-    const QPointer<RequestsPage> self(this);
-    const QPointer<Core::ClientInstance> forInstance(instance);
-    instance->discord()->fetchMessageRequestPreviews(channelIds, [self, forInstance, channelIds](const auto &result) {
-        if (!self)
-            return;
-        self->fetchingPreviews = false;
-        if (self->instance != forInstance)
-            return;
-        for (Core::Snowflake channelId : channelIds) {
-            QString text;
-            if (result.success() && result.value->contains(channelId)) {
-                const Discord::Message &msg = result.value->value(channelId);
-                text = msg.content.hasValue() ? self->readablePreview(msg.content.get()) : QString();
-                if (text.isEmpty() && msg.attachments.hasValue() && !msg.attachments->isEmpty())
-                    text = tr("Sent an attachment");
-            }
-            self->previews.insert(channelId, text);
-        }
-        if (self->isVisible())
-            self->rebuild();
-    });
 }
 
 void RequestsPage::showEvent(QShowEvent *event)
@@ -183,12 +124,6 @@ void RequestsPage::rebuild()
     }
 
     const QList<Core::Snowflake> requests = instance->messageRequestChannels();
-    QList<Core::Snowflake> missing;
-    for (Core::Snowflake channelId : requests)
-        if (!previews.contains(channelId))
-            missing.append(channelId);
-    if (!missing.isEmpty())
-        fetchPreviews(missing);
     if (!requests.isEmpty()) {
         addSection(tr("Message requests"));
         for (Core::Snowflake channelId : requests) {
@@ -201,9 +136,7 @@ void RequestsPage::rebuild()
             if (name.isEmpty())
                 name = tr("Unknown user");
 
-            const auto preview = previews.constFind(channelId);
-            const QString detail = preview != previews.cend() ? *preview : tr("Loading message...");
-            addRow(name, detail,
+            addRow(name, QString(),
                    { { tr("View"), [this, channelId] { emit openChannelRequested(channelId); } },
                      { tr("Accept"), [this, client, channelId] {
                           runAction(tr("accept the message request"), [client, channelId](auto done) {
@@ -240,7 +173,7 @@ void RequestsPage::addSection(const QString &title)
 
 void RequestsPage::addRow(const QString &name, const QString &detail, const QList<QPair<QString, std::function<void()>>> &actions)
 {
-    // a card per request: the name in bold with the detail (message preview, spam note) under it in
+    // a row per request: the name in bold, any note (e.g. possible spam) under it in
     // a muted colour, and the buttons centred on the right
     auto *row = new QFrame;
     row->setObjectName("requestRow");

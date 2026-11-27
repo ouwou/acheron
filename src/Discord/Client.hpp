@@ -251,9 +251,6 @@ public:
     // DMs from people you don't share a friendship with can arrive as message requests
     void acceptMessageRequest(Snowflake channelId, ActionCallback callback);
     void rejectMessageRequest(Snowflake channelId, ActionCallback callback);
-    // the message that started each request (up to 25 channels), by channel id
-    using MessageRequestPreviewCallback = std::function<void(const Core::Result<QHash<Snowflake, Message>> &)>;
-    void fetchMessageRequestPreviews(const QList<Snowflake> &channelIds, MessageRequestPreviewCallback callback);
 
     void createRole(Snowflake guildId, ResultCallback<Role> callback);
     void modifyRole(Snowflake guildId, Snowflake roleId, const RoleEdit &edit, ActionCallback callback);
