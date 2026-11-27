@@ -52,6 +52,19 @@ bool RelationshipManager::isBlockedOrIgnored(Snowflake userId) const
            (rel.userIgnored.hasValue() && rel.userIgnored.get());
 }
 
+QList<Discord::Relationship> RelationshipManager::pendingRequests() const
+{
+    QList<Discord::Relationship> pending;
+    for (const auto &rel : store) {
+        if (!rel.type.hasValue())
+            continue;
+        const auto type = rel.type.get();
+        if (type == Discord::RelationshipType::INCOMING_REQUEST || type == Discord::RelationshipType::OUTGOING_REQUEST)
+            pending.append(rel);
+    }
+    return pending;
+}
+
 void RelationshipManager::onRelationshipAdded(const Discord::Relationship &rel)
 {
     if (!rel.id.hasValue())

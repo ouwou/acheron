@@ -58,6 +58,7 @@
 #include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ReactionsPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
+#include "Dialogs/RequestsDialog.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
 #include "StreamPreviewPopup.hpp"
 #ifdef ACHERON_HAVE_VIDEO
@@ -554,6 +555,7 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     disconnect(currentInstance->permissions(), nullptr, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
+    disconnect(currentInstance, &Core::ClientInstance::messageRequestsChanged, this, nullptr);
     disconnect(currentInstance->relationships(), nullptr, this, nullptr);
     disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
     disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -586,6 +588,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
+        disconnect(currentInstance, &Core::ClientInstance::messageRequestsChanged, this, nullptr);
         disconnect(currentInstance->relationships(), nullptr, this, nullptr);
         disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -680,7 +683,12 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
             });
 
     connect(currentInstance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
-            [this](Snowflake userId) { chatModel->refreshUsersInView({ userId }); });
+            [this](Snowflake userId) {
+                chatModel->refreshUsersInView({ userId });
+                updateRequestsAction();
+            });
+    connect(currentInstance, &Core::ClientInstance::messageRequestsChanged, this, &MainWindow::updateRequestsAction);
+    updateRequestsAction();
 
 #ifndef ACHERON_NO_VOICE
     updateVoiceStatusLabel();
@@ -2893,6 +2901,11 @@ void MainWindow::setupMenu()
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
 
+    requestsAction = new QAction(this);
+    connect(requestsAction, &QAction::triggered, this, &MainWindow::openRequestsDialog);
+    viewMenu->addAction(requestsAction);
+    updateRequestsAction();
+
     viewMenu->addSeparator();
 
     channelListToggle = viewMenu->addAction(tr("Channel &List"));
@@ -3610,6 +3623,30 @@ void MainWindow::openThreadBrowser()
     threadBrowser->configure(currentInstance, threadBrowserChannelId, name);
     threadBrowser->show();
     threadBrowser->raise();
+}
+
+void MainWindow::openRequestsDialog()
+{
+    if (!currentInstance)
+        return;
+    if (requestsDialog && requestsDialog->property("accountId").toULongLong() != quint64(currentInstance->accountId()))
+        requestsDialog->close();
+    if (!requestsDialog) {
+        requestsDialog = new RequestsDialog(currentInstance, [this](Snowflake channelId) { navigateToChannel(channelId); }, this);
+        requestsDialog->setProperty("accountId", quint64(currentInstance->accountId()));
+    }
+    requestsDialog->show();
+    requestsDialog->raise();
+    requestsDialog->activateWindow();
+}
+
+void MainWindow::updateRequestsAction()
+{
+    if (!requestsAction)
+        return;
+    const int count = RequestsDialog::pendingCount(currentInstance);
+    requestsAction->setText(count > 0 ? tr("&Requests (%1)").arg(count) : tr("&Requests"));
+    requestsAction->setEnabled(currentInstance != nullptr);
 }
 
 void MainWindow::navigateToChannel(Core::Snowflake channelId)

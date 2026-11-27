@@ -84,6 +84,7 @@ public:
     [[nodiscard]] QList<Discord::Role> getMemberRolesSorted(Snowflake guildId, Snowflake userId);
     [[nodiscard]] std::optional<Discord::Guild> getGuild(Snowflake guildId);
     [[nodiscard]] std::optional<Discord::Channel> getChannel(Snowflake channelId);
+    [[nodiscard]] QList<Snowflake> messageRequestChannels() const; // DMs waiting for accept/ignore
     [[nodiscard]] QList<Discord::Channel> getGuildChannels(Snowflake guildId);
     [[nodiscard]] std::optional<Snowflake> findDmChannelWithUser(Snowflake userId);
     using DmChannelCallback = std::function<void(const Result<Snowflake> &)>;
@@ -135,6 +136,7 @@ signals:
     void channelCreated(const Discord::ChannelCreate &event);
     void channelUpdated(const Discord::ChannelUpdate &update);
     void channelDeleted(const Discord::ChannelDelete &event);
+    void messageRequestsChanged();
     void threadCreated(const Discord::Channel &thread);
     void threadUpdated(const Discord::Channel &thread);
     void threadDeleted(Snowflake threadId, Snowflake parentId, Snowflake guildId);
@@ -219,6 +221,8 @@ private:
     MessageManager *messageManager;
     ForumManager *forumManager;
     UserManager *userManager;
+    QSet<Snowflake> messageRequests;
+    void noteMessageRequest(Snowflake channelId, bool pending);
     Discord::Client *client;
     PermissionManager *permissionManager;
     ReadStateManager *readStateManager;

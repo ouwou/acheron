@@ -320,6 +320,7 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ChannelTopicPopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
+    src/UI/Dialogs/RequestsDialog.cpp
     src/UI/Dialogs/ReactionsPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
     src/UI/Dialogs/ActivityCard.cpp
