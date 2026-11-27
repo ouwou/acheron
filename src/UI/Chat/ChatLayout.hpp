@@ -287,6 +287,7 @@ struct LayoutContext
 
     // Data from model
     bool showHeader;
+    QString username; // the header's name, so only the name itself is clickable
     bool hasSeparator;
     QString htmlContent;
     QList<AttachmentData> attachments;

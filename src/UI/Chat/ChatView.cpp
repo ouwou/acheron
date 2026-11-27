@@ -539,9 +539,14 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
             jumpToMessage(resolved.ctx.replyData.referencedMessageId);
         break;
 
-    case Kind::TextCursor:
     case Kind::Avatar:
     case Kind::UsernameHeader:
+        // the author's profile, like the official client (#159)
+        if (!hasTextSelection())
+            emit userMentionClicked(Core::Snowflake(idx.data(ChatModel::UserIdRole).toULongLong()));
+        break;
+
+    case Kind::TextCursor:
     case Kind::EmbedDescription:
     case Kind::EmbedFieldName:
     case Kind::EmbedFieldValue:
