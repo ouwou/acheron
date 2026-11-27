@@ -389,6 +389,7 @@ if(ENABLE_VOICE)
         src/Core/Audio/OpusDecoder.cpp
         src/Core/Audio/JitterBuffer.cpp
         src/Core/Audio/AudioMixer.cpp
+        src/Core/Audio/VoiceCues.cpp
         src/Core/Audio/NoiseSuppressor.cpp
     )
 endif()
@@ -563,6 +564,11 @@ if(BUILD_TESTS)
     target_link_libraries(TestOrderedJson PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestOrderedJson PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME OrderedJsonTests COMMAND TestOrderedJson)
+
+    qt_add_executable(TestVoiceCues tests/tst_VoiceCues.cpp src/Core/Audio/VoiceCues.cpp)
+    target_link_libraries(TestVoiceCues PRIVATE Qt::Core Qt::Test)
+    target_include_directories(TestVoiceCues PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME VoiceCuesTests COMMAND TestVoiceCues)
 
     qt_add_executable(TestRateLimiter tests/tst_RateLimiter.cpp)
     target_link_libraries(TestRateLimiter PRIVATE Qt::Core Qt::Test)

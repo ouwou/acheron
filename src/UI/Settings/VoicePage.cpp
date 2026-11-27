@@ -156,6 +156,14 @@ VoicePage::VoicePage(QWidget *parent)
     });
 #endif
 
+    auto *joinLeaveSounds = new QCheckBox(tr("Play sounds when people join or leave"), this);
+    joinLeaveSounds->setChecked(settings.joinLeaveSounds);
+    form->addRow(joinLeaveSounds);
+    connect(joinLeaveSounds, &QCheckBox::toggled, this, [this](bool enabled) {
+        settings.joinLeaveSounds = enabled;
+        settings.saveAndApply();
+    });
+
     auto *advanced = new QWidget(this);
     QFormLayout *advancedForm = newForm();
     advanced->setLayout(advancedForm);

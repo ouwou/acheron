@@ -28,6 +28,7 @@ struct VoiceSettings
     int opusSignalType = OPUS_SIGNAL_VOICE;
     bool opusFec = true;
     int opusPacketLossPercent = 0;
+    bool joinLeaveSounds = true;
 
     [[nodiscard]] static VoiceSettings load();
     void saveAndApply() const;

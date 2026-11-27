@@ -191,6 +191,7 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
     if (newChannel != channelId) {
         if (participants.remove(userId)) {
             dropUserAudio(userId);
+            playCue(VoiceCue::Leave);
             emit participantLeft(userId);
         }
     } else {
@@ -202,10 +203,12 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
             updated.speaking = it->speaking;
         participants.insert(userId, updated);
 
-        if (isNew)
+        if (isNew) {
+            playCue(VoiceCue::Join);
             emit participantJoined(userId);
-        else
+        } else {
             emit participantUpdated(userId);
+        }
     }
 }
 
@@ -586,6 +589,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                 VoiceParticipant p;
                 p.userId = userId;
                 participants.insert(userId, p);
+                playCue(VoiceCue::Join);
                 emit participantJoined(userId);
             });
 
@@ -601,6 +605,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                     return;
                 if (!stillInChannel) {
                     participants.erase(participant);
+                    playCue(VoiceCue::Leave);
                     emit participantLeft(userId);
                 } else if (std::exchange(participant->speaking, false)) {
                     emit participantSpeakingChanged(userId, false);
@@ -732,6 +737,15 @@ void VoiceManager::populateParticipantsFromCache()
     }
 }
 
+// only for arrivals and departures as they happen: not for whoever was already there when we connect,
+// nor for a whole channel's states being forgotten at once
+void VoiceManager::playCue(VoiceCue cue)
+{
+    if (!settings.joinLeaveSounds || !audioPipeline)
+        return;
+    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, cue]() { p->playCue(cue); });
+}
+
 void VoiceManager::onVoiceClientConnected()
 {
     if (!audioPipeline)
@@ -753,6 +767,7 @@ void VoiceManager::onVoiceClientConnected()
     });
 
     populateParticipantsFromCache();
+    playCue(VoiceCue::Join);
 
     emit voiceConnected();
     emit voiceStateChanged();

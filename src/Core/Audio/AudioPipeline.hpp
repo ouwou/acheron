@@ -13,6 +13,7 @@
 #include <opus.h>
 
 #include "Core/Snowflake.hpp"
+#include "Core/Audio/VoiceCues.hpp"
 
 class QTimer;
 
@@ -74,6 +75,9 @@ public slots:
     void setOpusFec(bool enabled);
     void setOpusPacketLossPercent(int percent);
 
+    // mixes a chime into what the call plays; dropped while deafened or not playing
+    void playCue(Acheron::Core::Audio::VoiceCue cue);
+
 signals:
     void encodedAudioReady(const QByteArray &opusData);
     void speakingChanged(bool speaking);
@@ -105,6 +109,8 @@ private:
     QHash<Snowflake, float> userVolumes;
 
     bool deafened = false;
+    // frames of chimes still to play, one mixed in per tick
+    QVector<QByteArray> cueFrames;
     bool isSpeaking = false;
     float vadThreshold = 100.0f;
     int vadHoldoffFrames = 25;
