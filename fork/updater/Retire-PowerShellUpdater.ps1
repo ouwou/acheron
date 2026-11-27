@@ -11,12 +11,22 @@
     acheron.exe (pin it to the taskbar or Start); it checks for updates itself.
 #>
 [CmdletBinding()]
-param()
+param(
+    # Acheron's folder; found from the PowerShell updater's settings or shortcut if left out
+    [string]$InstallDir
+)
 
 $ErrorActionPreference = 'Stop'
 $dataDir = Join-Path $env:LOCALAPPDATA 'AcheronUpdater'
-$state = Get-Content (Join-Path $dataDir 'state.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
-$installDir = if ($state -and $state.InstallDir) { [string]$state.InstallDir } else { 'C:\bin\acheron' }
+$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Acheron (auto-update).lnk'
+
+if (-not $InstallDir) {
+    $state = Get-Content (Join-Path $dataDir 'state.json') -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+    if ($state -and $state.InstallDir) { $InstallDir = [string]$state.InstallDir }
+    elseif (Test-Path $shortcut) { $InstallDir = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).WorkingDirectory }
+}
+if (-not $InstallDir) { throw "Couldn't tell where Acheron is installed. Run this again with -InstallDir 'path\to\the\folder\with\acheron.exe'." }
+$installDir = $InstallDir
 
 if (-not (Test-Path (Join-Path $installDir 'acheron-updater.exe'))) {
     throw "acheron-updater.exe isn't in $installDir yet. Update Acheron with Update-Acheron.ps1 first, then run this again."
@@ -25,7 +35,6 @@ if (-not (Test-Path (Join-Path $installDir 'acheron-updater.exe'))) {
 Unregister-ScheduledTask -TaskName 'Acheron Updater' -Confirm:$false -ErrorAction SilentlyContinue
 Write-Host "Removed the 'Acheron Updater' scheduled task (if it was there)."
 
-$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Acheron (auto-update).lnk'
 if (Test-Path $shortcut) { Remove-Item $shortcut -Force; Write-Host "Removed $shortcut" }
 
 $copy = Join-Path $dataDir 'Update-Acheron.ps1'

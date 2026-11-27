@@ -116,6 +116,12 @@ void UpdateChecker::offer(const QJsonObject &build, bool manual)
                                          .arg(build.value(QStringLiteral("label")).toString(),
                                               build.value(QStringLiteral("installed")).toString()),
                                  dialog));
+    const QString notWritable = build.value(QStringLiteral("notWritable")).toString();
+    if (!notWritable.isEmpty()) {
+        auto *warning = new QLabel(notWritable, dialog);
+        warning->setWordWrap(true);
+        layout->addWidget(warning);
+    }
     auto *changes = new QPlainTextEdit(build.value(QStringLiteral("changes")).toString(), dialog);
     changes->setReadOnly(true);
     layout->addWidget(changes, 1);
@@ -125,6 +131,7 @@ void UpdateChecker::offer(const QJsonObject &build, bool manual)
     QPushButton *later = buttons->addButton(tr("Later"), QDialogButtonBox::RejectRole);
     QPushButton *update = buttons->addButton(tr("Update Now"), QDialogButtonBox::AcceptRole);
     update->setDefault(true);
+    update->setEnabled(notWritable.isEmpty());
     layout->addWidget(buttons);
 
     connect(skip, &QPushButton::clicked, dialog, [this, dialog, runId] {

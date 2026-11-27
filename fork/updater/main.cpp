@@ -478,6 +478,24 @@ bool waitForExit(qint64 pid, int timeoutMs)
 #endif
 }
 
+// Acheron can live anywhere; a folder like Program Files needs admin rights to change
+bool installDirWritable()
+{
+    QFile probe(QDir(installDir()).filePath(QStringLiteral(".acheron-updater-probe")));
+    if (!probe.open(QIODevice::WriteOnly))
+        return false;
+    probe.close();
+    probe.remove();
+    return true;
+}
+
+QString notWritableMessage()
+{
+    return QStringLiteral("Acheron's folder (%1) can't be changed without administrator rights. "
+                          "Move Acheron to a folder you own, or run it as administrator to update.")
+            .arg(QDir::toNativeSeparators(installDir()));
+}
+
 void relaunch()
 {
     const QString exe = QDir(installDir()).filePath(ExeName);
@@ -537,6 +555,8 @@ int check(State &state, bool manual)
         out[QStringLiteral("installed")] = installedRun.isEmpty() ? QStringLiteral("unknown")
                                                                   : QStringLiteral("run %1 (commit %2)").arg(installedRun, state.str(QStringLiteral("Sha")).left(7));
         out[QStringLiteral("changes")] = changeSummary(state, *latest);
+        if (!installDirWritable())
+            out[QStringLiteral("notWritable")] = notWritableMessage();
     }
     print(out);
     return 0;
@@ -555,6 +575,8 @@ int fail(State &state, const QString &error, bool relaunchAfter)
 int install(State &state, const QString &runId, qint64 waitPid, bool relaunchAfter)
 {
     log(QStringLiteral("Installing run %1 of %2 (%3) into %4").arg(runId, state.repo(), state.artifact(), installDir()));
+    if (!installDirWritable())
+        return fail(state, notWritableMessage(), relaunchAfter && waitForExit(waitPid, 30000));
     QString error;
     const auto build = buildByRunId(state, runId, &error);
     if (!build)
@@ -641,6 +663,8 @@ int rollback(State &state, qint64 waitPid, bool relaunchAfter)
     const QString backup = dataDir() + QStringLiteral("/previous");
     if (!QFile::exists(QDir(backup).filePath(ExeName)))
         return fail(state, QStringLiteral("There's no previous build to go back to"), relaunchAfter && waitForExit(waitPid, 30000));
+    if (!installDirWritable())
+        return fail(state, notWritableMessage(), relaunchAfter && waitForExit(waitPid, 30000));
     if (!waitForExit(waitPid, 30000))
         return fail(state, QStringLiteral("Acheron didn't close, so nothing was changed"), false);
 
