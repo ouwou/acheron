@@ -220,7 +220,7 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 
         if (ready.privateChannels.hasValue()) {
             for (const auto &channel : ready.privateChannels.get())
-                readStateManager->registerPrivateChannel(channel);
+                readStateManager->registerPrivateChannel(channel, true);
         }
 
         emit detailsUpdated(account);
