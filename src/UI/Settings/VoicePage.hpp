@@ -4,6 +4,7 @@
 
 #include <memory>
 
+#include "Core/Audio/VoiceCues.hpp"
 #include "Core/Audio/VoiceSettings.hpp"
 
 class QComboBox;
@@ -34,6 +35,7 @@ private:
     void fillDevices();
     void setTesting(bool testing);
     void onTestCaptured(const QByteArray &pcm);
+    QWidget *soundRow(Core::Audio::VoiceCue cue);
 
     Core::Audio::VoiceSettings settings;
     std::unique_ptr<Core::Audio::IAudioBackend> testBackend;
@@ -41,6 +43,7 @@ private:
     QComboBox *outputDevice;
     QPushButton *testButton;
     VolumeMeter *testMeter;
+    Core::Audio::DeviceCuePlayer previewPlayer;
 };
 
 } // namespace UI

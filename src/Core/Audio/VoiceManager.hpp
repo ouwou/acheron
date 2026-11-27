@@ -218,9 +218,7 @@ private:
     AudioPipeline *audioPipeline = nullptr;
 
     // a chime fed straight to the output device while there's no call to mix it into (our own leave, a new message)
-    QTimer *deviceCueTimer = nullptr;
-    VoiceCue deviceCue = VoiceCue::Leave;
-    int deviceCueFrame = 0;
+    DeviceCuePlayer deviceCuePlayer;
 
     struct AudioSource
     {

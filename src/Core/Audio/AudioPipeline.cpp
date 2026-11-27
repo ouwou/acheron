@@ -498,7 +498,7 @@ void AudioPipeline::playCue(VoiceCue cue)
         return;
 
     // one starting while another still plays rings over it
-    const QVector<QByteArray> &frames = voiceCueFrames(cue);
+    const QVector<QByteArray> frames = voiceCueFrames(cue);
     for (int i = 0; i < frames.size(); i++) {
         if (i < cueFrames.size())
             cueFrames[i] = AudioMixer::mix({ { cueFrames[i], 1.0f }, { frames[i], 1.0f } });
