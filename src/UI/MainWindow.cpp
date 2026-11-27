@@ -700,7 +700,10 @@ void MainWindow::setViewMode(ViewMode mode)
         currentInstance->forums()->setCurrentForum(
                 mode == ViewMode::TextChannel || mode == ViewMode::Requests ? Core::Snowflake() : currentForumId);
 
-    requestsPage->setVisible(mode == ViewMode::Requests);
+    if (requestsPage)
+        requestsPage->setVisible(mode == ViewMode::Requests);
+    if (callSplitter)
+        callSplitter->setVisible(mode != ViewMode::Requests);
 
     switch (mode) {
     case ViewMode::Requests:
@@ -1588,7 +1591,6 @@ void MainWindow::setupUi()
     requestsPage = new RequestsPage(rightSideWidget);
     requestsPage->setVisible(false);
     connect(requestsPage, &RequestsPage::openChannelRequested, this, &MainWindow::navigateToChannel);
-    centerSplitter->addWidget(requestsPage);
     centerSplitter->setStretchFactor(0, 1);
     centerSplitter->setStretchFactor(1, 1);
     centerSplitter->setSizes({ 350, 550 });
@@ -1615,6 +1617,9 @@ void MainWindow::setupUi()
     });
 
     rightLayout->addWidget(callSplitter, 1);
+    // takes the place of the chat area (and the splitter that holds it) while it's shown, so the
+    // splitter never has to size a pane for it
+    rightLayout->addWidget(requestsPage, 1);
 
     memberListView = new MemberListView(central);
     memberListView->setModel(memberListModel);
