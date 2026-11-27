@@ -1477,6 +1477,7 @@ void MainWindow::setupUi()
     channelToolbar->hide();
 
     chatView = new ChatView(rightSideWidget);
+    chatView->setShowAllTimestamps(QSettings().value("chat/show_all_timestamps", false).toBool());
     chatView->setFont(Core::Theme::Manager::instance().font(Core::Theme::FontRole::Message));
     messageInput = new MessageInput(rightSideWidget);
     memberSearch = new MemberSearch(this);
@@ -3023,6 +3024,7 @@ void MainWindow::openSettingsWindow()
             setChannelListMode(classic ? ChannelListMode::Classic : ChannelListMode::Tree);
         });
         connect(settingsWindow, &SettingsWindow::channelListIndentChanged, this, &MainWindow::applyChannelIndent);
+        connect(settingsWindow, &SettingsWindow::showAllTimestampsChanged, chatView, &ChatView::setShowAllTimestamps);
         connect(settingsWindow, &SettingsWindow::closeToTrayChanged, this, &MainWindow::applyCloseToTray);
         connect(settingsWindow, &SettingsWindow::animateEmojiChanged, this, [this](bool enabled) {
             chatView->frameAnimator()->setEmojiEnabled(enabled);

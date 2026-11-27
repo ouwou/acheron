@@ -52,6 +52,7 @@ void SettingsWindow::setupUi()
     addPage(tr("Appearance"), appearance);
     connect(appearance, &AppearancePage::channelListModeChanged, this, &SettingsWindow::channelListModeChanged);
     connect(appearance, &AppearancePage::channelListIndentChanged, this, &SettingsWindow::channelListIndentChanged);
+    connect(appearance, &AppearancePage::showAllTimestampsChanged, this, &SettingsWindow::showAllTimestampsChanged);
 
 #ifndef ACHERON_NO_VOICE
     voicePage = pages->count();

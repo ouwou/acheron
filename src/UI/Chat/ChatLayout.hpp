@@ -338,6 +338,14 @@ std::optional<HitRegion> hitTest(const ResolvedLayout &resolved, const QPoint &m
 int hitTestCharIndex(const ResolvedLayout &resolved, const QPoint &viewportPos);
 QString getLinkAt(const ResolvedLayout &resolved, const QPoint &mousePos);
 std::optional<QRect> editedMarkerRectAt(const ResolvedLayout &resolved, const QPoint &mousePos);
+
+// the short time: after the username in a header, or in the avatar column beside a message without one
+[[nodiscard]] QString shortTime(const QDateTime &timestamp);
+[[nodiscard]] QFont gutterTimeFont(const QFont &font);
+[[nodiscard]] QRect gutterTimeRect(const MessageLayout &layout, const QFont &font);
+[[nodiscard]] QRect headerTimeRect(const MessageLayout &layout, const QFont &font, const QString &username, const QDateTime &timestamp);
+// where hovering shows the full date and time
+std::optional<QRect> timestampRectAt(const ResolvedLayout &resolved, const QPoint &mousePos, const QString &username, const QDateTime &timestamp);
 int hitTestCharIndex(const QAbstractItemView *view, const QModelIndex &index, const QPoint &viewportPos);
 
 QString formatFileSize(qint64 bytes);

@@ -1,5 +1,6 @@
 #include "ChatView.hpp"
 
+#include <QLocale>
 #include <QMenu>
 #include <QTextDocument>
 #include <QTextCursor>
@@ -609,6 +610,15 @@ bool ChatView::viewportEvent(QEvent *event)
             return true;
         }
 
+        const QDateTime sentTime = idx.data(ChatModel::TimestampRole).toDateTime();
+        const QString username = idx.data(ChatModel::UsernameRole).toString();
+        if (const auto timeRect = ChatLayout::timestampRectAt(resolved, helpEvent->pos(), username, sentTime)) {
+            QToolTip::showText(helpEvent->globalPos(),
+                               QLocale::system().toString(sentTime.toLocalTime(), QLocale::LongFormat),
+                               viewport(), *timeRect);
+            return true;
+        }
+
         QDateTime editedTime = idx.data(ChatModel::EditedTimestampRole).toDateTime();
         if (editedTime.isValid()) {
             auto markerRect = ChatLayout::editedMarkerRectAt(resolved, helpEvent->pos());
@@ -622,6 +632,14 @@ bool ChatView::viewportEvent(QEvent *event)
     }
 
     return QListView::viewportEvent(event);
+}
+
+void ChatView::setShowAllTimestamps(bool show)
+{
+    if (show == showAllTimestamps)
+        return;
+    showAllTimestamps = show;
+    viewport()->update();
 }
 
 std::optional<ChatView::ReactionPill> ChatView::reactionPill(const QModelIndex &index, const ChatLayout::ResolvedLayout &resolved, const std::optional<ChatLayout::HitRegion> &region)

@@ -18,6 +18,7 @@ public:
 signals:
     void channelListModeChanged(bool classic);
     void channelListIndentChanged();
+    void showAllTimestampsChanged(bool show);
     void closeToTrayChanged();
     void animateEmojiChanged(bool enabled);
     void animateStickersChanged(bool enabled);
