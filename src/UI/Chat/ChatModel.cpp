@@ -396,6 +396,11 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
 
         return false;
     }
+    case UnreadMarkerRole: {
+        if (!unreadMarkerAfter.isValid() || index.row() == 0 || msg.id.get() <= unreadMarkerAfter)
+            return false;
+        return messages[index.row() - 1].id.get() <= unreadMarkerAfter;
+    }
     case DateSeparatorRole: {
         if (index.row() == 0)
             return true;
@@ -988,6 +993,22 @@ Snowflake ChatModel::getNewestMessageId() const
     return messages.last().id;
 }
 
+void ChatModel::setUnreadMarker(Snowflake lastReadId)
+{
+    if (unreadMarkerAfter == lastReadId)
+        return;
+    unreadMarkerAfter = lastReadId;
+    if (!messages.isEmpty())
+        emit dataChanged(index(0, 0), index(rowCount() - 1, 0), { UnreadMarkerRole });
+}
+
+int ChatModel::firstRowAfter(Snowflake messageId) const
+{
+    const auto it = std::upper_bound(messages.cbegin(), messages.cend(), messageId,
+                                     [](Snowflake id, const Discord::Message &msg) { return id < msg.id.get(); });
+    return it == messages.cend() ? -1 : static_cast<int>(it - messages.cbegin());
+}
+
 int ChatModel::rowForMessage(Snowflake messageId) const
 {
     for (int row = 0; row < messages.size(); ++row) {
@@ -1303,6 +1324,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
 
     currentChannelId = channelId;
     currentGuildId = guildId;
+    unreadMarkerAfter = Snowflake::Invalid;
     setAtLatest(true);
 
     beginResetModel();

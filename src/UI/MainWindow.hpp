@@ -83,6 +83,10 @@ private slots:
     void onSplitterMoved();
     void onTotalMentionCountChanged(int count, int previousCount);
     void onDirectMessage(Core::ClientInstance *instance, const Discord::Message &message);
+    // channels with unreads open at them (#165)
+    Core::Snowflake activateChannelReadState(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake guildId);
+    void loadChannelMessages(Core::ClientInstance *instance, Core::Snowflake channelId, Core::Snowflake lastReadId);
+    void updateUnreadBar();
     void onSessionReady(const Discord::Ready &ready);
 
 private:

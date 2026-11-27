@@ -429,17 +429,17 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
         return;
     }
 
-    selectedInstance->readState()->setActiveChannel(node->id);
-    selectedInstance->noteChannelSelected(node->id);
-    setViewMode(ViewMode::TextChannel);
-
     ChannelNode *guildNode = ChannelTreeModel::findGuildNode(node);
     Snowflake guildId = guildNode ? guildNode->id : Snowflake::Invalid;
     bool isDm = node->type == ChannelNode::Type::DMChannel;
 
+    const Snowflake lastReadId = activateChannelReadState(selectedInstance, node->id, guildId);
+    selectedInstance->noteChannelSelected(node->id);
+    setViewMode(ViewMode::TextChannel);
+
     applyChannelChrome(selectedInstance, node->id, node->name, isDm, guildId);
     switchChatChannel(node->id, guildId);
-    selectedInstance->messages()->requestLoadChannel(node->id);
+    loadChannelMessages(selectedInstance, node->id, lastReadId);
 
     tabBar->updateCurrentTab(makeTabEntry(node, accountNode));
 
@@ -963,6 +963,10 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
 
     connect(instance, &Core::ClientInstance::directMessageReceived, this,
             [this, instance](const Discord::Message &message) { onDirectMessage(instance, message); });
+    connect(instance, &Core::ClientInstance::readStateChanged, this, [this, instance](Snowflake channelId) {
+        if (instance == currentInstance && channelId == chatModel->getActiveChannelId())
+            updateUnreadBar();
+    });
 
     connect(instance, &Core::ClientInstance::guildCreated, this,
             [this, instance](const Discord::GatewayGuild &guild) {
@@ -1861,6 +1865,15 @@ void MainWindow::setupUi()
         if (currentInstance)
             currentInstance->readState()->setActiveChannelAtBottom(atBottom);
     });
+    connect(chatView, &ChatView::markUnreadAsReadRequested, this, [this]() {
+        if (!currentInstance)
+            return;
+        const Snowflake channelId = chatModel->getActiveChannelId();
+        currentInstance->readState()->markChannelAsRead(channelId, currentInstance->readState()->getChannelLastMessageId(channelId));
+        chatView->hideUnreadBar();
+    });
+    connect(chatModel, &QAbstractItemModel::modelReset, this, &MainWindow::updateUnreadBar);
+    connect(chatModel, &QAbstractItemModel::rowsInserted, this, &MainWindow::updateUnreadBar);
 
     connect(channelTree->selectionModel(), &QItemSelectionModel::currentChanged, this,
             &MainWindow::onChannelSelectionChanged);
@@ -2505,7 +2518,7 @@ void MainWindow::activateChannel(const TabEntry &entry)
         return;
     }
 
-    instance->readState()->setActiveChannel(entry.channelId);
+    const Snowflake lastReadId = activateChannelReadState(instance, entry.channelId, entry.guildId);
     instance->noteChannelSelected(entry.channelId);
     setViewMode(ViewMode::TextChannel);
 
@@ -2516,7 +2529,7 @@ void MainWindow::activateChannel(const TabEntry &entry)
 
     applyChannelChrome(instance, entry.channelId, entry.name, entry.isDm, entry.guildId);
     switchChatChannel(entry.channelId, entry.guildId);
-    instance->messages()->requestLoadChannel(entry.channelId);
+    loadChannelMessages(instance, entry.channelId, lastReadId);
 
     refreshTabReadStates();
 }
@@ -2587,6 +2600,49 @@ void MainWindow::onDirectMessage(Core::ClientInstance *instance, const Discord::
     notifiedAccountId = instance->accountId();
     notifiedChannelId = channelId;
     trayIcon->showMessage(title, body);
+}
+
+Snowflake MainWindow::activateChannelReadState(Core::ClientInstance *instance, Snowflake channelId, Snowflake guildId)
+{
+    auto *readState = instance->readState();
+    const Snowflake lastReadId = readState->hasUnreadOrMentions(channelId) ? readState->effectiveAckId(channelId, guildId)
+                                                                            : Snowflake::Invalid;
+    // opened at its unreads, nothing is marked read until it's scrolled to the bottom
+    readState->setActiveChannel(channelId, !lastReadId.isValid());
+    return lastReadId;
+}
+
+void MainWindow::loadChannelMessages(Core::ClientInstance *instance, Snowflake channelId, Snowflake lastReadId)
+{
+    chatModel->setUnreadMarker(lastReadId);
+    chatView->hideUnreadBar();
+
+    // a message link being followed opens at that message instead
+    const bool followingLink = pendingLinkJump && pendingLinkJump->channelId == channelId;
+    if (lastReadId.isValid() && !followingLink)
+        chatView->jumpToUnread(lastReadId);
+    else
+        instance->messages()->requestLoadChannel(channelId);
+}
+
+void MainWindow::updateUnreadBar()
+{
+    const Snowflake marker = chatModel->unreadMarker();
+    const Snowflake channelId = chatModel->getActiveChannelId();
+    if (!marker.isValid() || !currentInstance || !currentInstance->readState()->hasUnreadOrMentions(channelId)) {
+        chatView->hideUnreadBar();
+        return;
+    }
+
+    const int firstUnread = chatModel->firstRowAfter(marker);
+    if (firstUnread < 0) {
+        chatView->hideUnreadBar();
+        return;
+    }
+
+    const QModelIndex first = chatModel->index(firstUnread, 0);
+    chatView->showUnreadBar(chatModel->rowCount() - firstUnread, !chatModel->isAtLatest(),
+                            first.data(ChatModel::TimestampRole).toDateTime());
 }
 
 void MainWindow::onTotalMentionCountChanged(int count, int previousCount)
