@@ -212,6 +212,7 @@ set(PROJECT_SOURCES
     src/Core/Streams/StreamManager.cpp
     src/Core/Streams/StreamPreviews.cpp
     src/Core/ImageManager.cpp
+    src/Core/BadDomains.cpp
     src/Core/AnimatedImageCache.cpp
     src/Core/ApngDecoder.cpp
     src/Core/LottieDecoder.cpp
@@ -546,6 +547,11 @@ if(BUILD_TESTS)
     target_link_libraries(TestMentionSearch PRIVATE Qt::Core Qt::Test)
     target_include_directories(TestMentionSearch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     add_test(NAME MentionSearchTests COMMAND TestMentionSearch)
+
+    qt_add_executable(TestBadDomains tests/tst_BadDomains.cpp src/Core/BadDomains.cpp)
+    target_link_libraries(TestBadDomains PRIVATE Qt::Core Qt::Network Qt::Test)
+    target_include_directories(TestBadDomains PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    add_test(NAME BadDomainsTests COMMAND TestBadDomains)
 
     qt_add_executable(TestFrecency tests/tst_Frecency.cpp src/Core/Emoji/FrecencyTracker.cpp)
     target_link_libraries(TestFrecency PRIVATE Qt::Core Qt::Test)

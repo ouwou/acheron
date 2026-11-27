@@ -1,4 +1,5 @@
 #include "ChatView.hpp"
+#include "Core/BadDomains.hpp"
 
 #include <QMenu>
 #include <QTextDocument>
@@ -410,6 +411,20 @@ void ChatView::openLink(const QString &url)
             emit messageLinkClicked(link->channelId, link->messageId);
         else
             emit channelMentionClicked(link->channelId);
+        return;
+    }
+
+    // on Discord's list of harmful domains: warn the way the official client does (#137)
+    if (Core::BadDomains::instance()->isHarmful(QUrl(url))) {
+        auto *warning = new ConfirmPopup(tr("Hold Up!"),
+                                         tr("This link goes to <b>%1</b>, which Discord has flagged as a known harmful or "
+                                            "malicious site. It may try to steal your account or install something harmful."
+                                            "<br><br>Are you sure you want to open it?")
+                                                 .arg(QUrl(url).host().toHtmlEscaped()),
+                                         tr("Open Anyway"), this);
+        warning->setAttribute(Qt::WA_DeleteOnClose);
+        connect(warning, &QDialog::accepted, this, [url]() { QDesktopServices::openUrl(QUrl(url)); });
+        warning->open();
         return;
     }
 
