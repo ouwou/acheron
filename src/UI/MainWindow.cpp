@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "Core/BadDomains.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -212,6 +213,8 @@ void applyGifSettings(GifPlayback *gifs)
 
 MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent), session(session)
 {
+    Core::BadDomains::instance()->fetch(); // to warn about harmful links (#137)
+
     auto *captchaResolver = new BrowserCaptchaResolver(this, this);
     session->setCaptchaResolver(captchaResolver);
 
