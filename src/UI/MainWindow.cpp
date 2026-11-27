@@ -476,8 +476,10 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
         chatView->setCanPinMessages(true);
         chatView->setCanManageMessages(false);
         slowModeIndicator->setSlowMode(channelId, 0, false);
-        setMemberListVisible(false);
-        instance->memberList()->clear();
+        const bool groupDm = showGroupDmMembers(instance, channelId);
+        setMemberListVisible(groupDm);
+        if (!groupDm)
+            instance->memberList()->clear();
         return;
     }
 
@@ -514,6 +516,40 @@ void MainWindow::applyChannelChrome(Core::ClientInstance *instance, Core::Snowfl
         setMemberListVisible(true);
         instance->memberList()->setActiveChannel(guildId, isThread ? threadParentId : channelId);
     }
+}
+
+bool MainWindow::showGroupDmMembers(Core::ClientInstance *instance, Core::Snowflake channelId)
+{
+    const auto channel = instance->getChannel(channelId);
+    if (!channel || channel->type != Discord::ChannelType::GROUP_DM)
+        return false;
+
+    QList<Snowflake> userIds = channel->recipientIds.hasValue() ? channel->recipientIds.get() : QList<Snowflake>();
+    if (!userIds.contains(instance->accountId()))
+        userIds.append(instance->accountId()); // the official list includes you
+
+    auto *users = instance->users();
+    QList<Core::MemberListItem> members;
+    members.reserve(userIds.size());
+    for (Snowflake userId : userIds) {
+        Core::MemberListItem item;
+        item.type = Core::MemberListItem::Type::Member;
+        item.userId = userId;
+        item.displayName = users->getDisplayName(userId);
+        Discord::User user;
+        if (auto known = users->getUser(userId))
+            user = *known;
+        else
+            user.id = userId;
+        item.member.user = user;
+        members.append(item);
+    }
+    std::sort(members.begin(), members.end(), [](const auto &a, const auto &b) {
+        return QString::localeAwareCompare(a.displayName, b.displayName) < 0;
+    });
+
+    instance->memberList()->setPrivateChannel(channelId, members);
+    return true;
 }
 
 void MainWindow::switchChatChannel(Core::Snowflake channelId, Core::Snowflake guildId)
@@ -554,6 +590,7 @@ void MainWindow::detachInstance(Core::Snowflake accountId)
     disconnect(currentInstance->permissions(), nullptr, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
     disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
+    disconnect(currentInstance, &Core::ClientInstance::channelRecipientsChanged, this, nullptr);
     disconnect(currentInstance->relationships(), nullptr, this, nullptr);
     disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
     disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -586,6 +623,7 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
         disconnect(currentInstance->permissions(), nullptr, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::membersUpdated, this, nullptr);
         disconnect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, nullptr);
+        disconnect(currentInstance, &Core::ClientInstance::channelRecipientsChanged, this, nullptr);
         disconnect(currentInstance->relationships(), nullptr, this, nullptr);
         disconnect(memberListView, nullptr, currentInstance->memberList(), nullptr);
         disconnect(currentInstance->forums(), nullptr, this, nullptr);
@@ -639,6 +677,11 @@ void MainWindow::switchActiveInstance(Core::ClientInstance *newInstance)
     connect(msgs->pins(), &Core::ChannelPins::unpinFailed, this, &MainWindow::offerUnpinRetry);
     connect(msgs->pins(), &Core::ChannelPins::threadReopenFailed, this, &MainWindow::showThreadReopenFailure);
     connect(currentInstance, &Core::ClientInstance::pinsReadStateChanged, this, &MainWindow::onPinsReadStateChanged);
+    connect(currentInstance, &Core::ClientInstance::channelRecipientsChanged, this, [this](Snowflake channelId) {
+        if (currentInstance && channelId == currentInstance->memberList()->currentChannelId() &&
+            !currentInstance->memberList()->currentGuildId().isValid())
+            showGroupDmMembers(currentInstance, channelId);
+    });
     connect(msgs->reactors(), &Core::MessageReactors::reactorsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::reactionsChanged, chatView, &ChatView::refreshReactionTooltip);
     connect(msgs, &MessageManager::messagesReceived, this,

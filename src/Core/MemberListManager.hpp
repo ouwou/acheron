@@ -63,6 +63,8 @@ public:
                                QObject *parent = nullptr);
 
     void setActiveChannel(Snowflake guildId, Snowflake channelId);
+    // group DMs: the member list is just the recipients, so it is built locally, no subscription
+    void setPrivateChannel(Snowflake channelId, const QList<MemberListItem> &members);
     void clear();
     void clearGuild(Snowflake guildId);
 
@@ -127,6 +129,7 @@ private:
     Storage::RoleRepository &roleRepo;
 
     QHash<Snowflake, GuildListState> guildStates;
+    ListData privateList; // active group DM, used while activeGuildId is invalid
 
     Snowflake activeGuildId;
     Snowflake activeChannelId;

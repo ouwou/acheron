@@ -135,6 +135,7 @@ signals:
     void channelCreated(const Discord::ChannelCreate &event);
     void channelUpdated(const Discord::ChannelUpdate &update);
     void channelDeleted(const Discord::ChannelDelete &event);
+    void channelRecipientsChanged(Snowflake channelId); // someone joined or left a group DM
     void threadCreated(const Discord::Channel &thread);
     void threadUpdated(const Discord::Channel &thread);
     void threadDeleted(Snowflake threadId, Snowflake parentId, Snowflake guildId);
@@ -160,6 +161,7 @@ private slots:
     void onGuildDeleted(const Discord::GuildDelete &event);
     void onChannelCreated(const Discord::ChannelCreate &event);
     void onChannelUpdated(const Discord::ChannelUpdate &event);
+    void onChannelRecipientChanged(const Discord::ChannelRecipientUpdate &event, bool added);
     void onChannelDeleted(const Discord::ChannelDelete &event);
     void onThreadCreated(const Discord::ChannelCreate &event);
     void onThreadUpdated(const Discord::ChannelUpdate &event);

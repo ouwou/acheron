@@ -193,6 +193,21 @@ struct ChannelPinsUpdate : Core::JsonUtils::JsonObject
     }
 };
 
+// CHANNEL_RECIPIENT_ADD / CHANNEL_RECIPIENT_REMOVE: someone joined or left a group DM
+struct ChannelRecipientUpdate : Core::JsonUtils::JsonObject
+{
+    Field<Core::Snowflake> channelId;
+    Field<User> user;
+
+    static ChannelRecipientUpdate fromJson(const QJsonObject &obj)
+    {
+        ChannelRecipientUpdate event;
+        get(obj, "channel_id", event.channelId);
+        get(obj, "user", event.user);
+        return event;
+    }
+};
+
 // another session of this account opened the channel's pins
 struct ChannelPinsAck : Core::JsonUtils::JsonObject
 {

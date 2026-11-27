@@ -88,6 +88,8 @@ signals:
     void gatewayChannelDelete(const ChannelDelete &data);
     void gatewayChannelPinsUpdate(const ChannelPinsUpdate &data);
     void gatewayChannelPinsAck(const ChannelPinsAck &data);
+    void gatewayChannelRecipientAdd(const ChannelRecipientUpdate &data);
+    void gatewayChannelRecipientRemove(const ChannelRecipientUpdate &data);
     void gatewayThreadCreate(const ChannelCreate &data);
     void gatewayThreadUpdate(const ChannelUpdate &data);
     void gatewayThreadDelete(const ThreadDelete &data);
