@@ -743,10 +743,14 @@ jobs:
           # LD_LIBRARY_PATH when resolving DT_NEEDED, and copies what it resolves into
           # AppDir/usr/lib like any other dependency.
           export LD_LIBRARY_PATH="$PWD/ffmpeg/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          # qtkeychain dlopens libsecret, so linuxdeploy never sees it. the system one would
+          # then load against the bundled glib, and a newer distro's libsecret needs symbols
+          # this glib doesn't have (dlopen fails, keychain says "Unknown error")
           # Icon: the .desktop file declares Icon=io.github.ouwou.acheron but no
           # icon is installed by CMake; supply the repo SVG under that name
           ./linuxdeploy-x86_64.AppImage --appdir AppDir \
             --plugin qt \
+            --library /usr/lib/x86_64-linux-gnu/libsecret-1.so.0 \
             --icon-file acheron.svg --icon-filename io.github.ouwou.acheron \
             --output appimage
 
