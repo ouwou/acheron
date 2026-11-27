@@ -13,6 +13,7 @@ public:
     explicit TrayIcon(QObject *parent = nullptr);
 
     void setToolTip(const QString &windowTitle);
+    void addMenuAction(QAction *action); // above Quit
 
 signals:
     void showWindowRequested();

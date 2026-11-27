@@ -322,6 +322,8 @@ private:
     bool savedRailIsHome = true;
     Core::Snowflake savedRailAccountId;
     Core::Snowflake savedRailGuildId;
+
+    class UpdateChecker *updateChecker = nullptr;
 };
 
 } // namespace UI
