@@ -14,6 +14,8 @@ public:
 
     void setToolTip(const QString &windowTitle);
     void showMessage(const QString &title, const QString &body);
+    // above Quit
+    void addMenuAction(QAction *action);
 
 signals:
     void showWindowRequested();

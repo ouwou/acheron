@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "../../fork/UpdateChecker.hpp" // fork
 
 #include <QActionGroup>
 #include <QApplication>
@@ -217,6 +218,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 {
     auto *captchaResolver = new BrowserCaptchaResolver(this, this);
     session->setCaptchaResolver(captchaResolver);
+    updateChecker = new UpdateChecker(this, [this] { quitFromTray(); }); // fork
 
     chatModel = new ChatModel(session->getImageManager(), this);
     channelTreeModel = new ChannelTreeModel(session, this);
@@ -3001,6 +3003,7 @@ void MainWindow::setupMenu()
     auto *settingsAction = new QAction(tr("&Settings"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
+    viewMenu->addAction(updateChecker->checkAction()); // fork
 
     // the account being viewed: its status and custom status (#127)
     QMenu *statusMenu = menuBar->addMenu(tr("S&tatus"));
@@ -3169,6 +3172,7 @@ void MainWindow::applyCloseToTray()
 
     trayIcon = new TrayIcon(this);
     trayIcon->setToolTip(windowTitle());
+    trayIcon->addMenuAction(updateChecker->checkAction()); // fork
     connect(this, &QWidget::windowTitleChanged, trayIcon, &TrayIcon::setToolTip);
     connect(trayIcon, &TrayIcon::showWindowRequested, this, &MainWindow::showFromTray);
     connect(trayIcon, &TrayIcon::quitRequested, this, &MainWindow::quitFromTray);

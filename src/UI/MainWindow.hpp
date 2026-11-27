@@ -52,6 +52,7 @@ class ConnectionBanner;
 class ChannelTopicLine;
 class GuildSettingsWindow;
 class TrayIcon;
+class UpdateChecker;
 #ifndef ACHERON_NO_VOICE
 class VoiceStatusBar;
 class StreamPreviewPopup;
@@ -281,6 +282,7 @@ private:
     AccountsWindow *accountsWindow = nullptr;
     SettingsWindow *settingsWindow = nullptr;
     TrayIcon *trayIcon = nullptr;
+    UpdateChecker *updateChecker = nullptr; // fork
     // the DM the last notification was about, opened when it's clicked
     Core::Snowflake notifiedAccountId;
     Core::Snowflake notifiedChannelId;
