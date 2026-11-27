@@ -57,6 +57,7 @@ private:
     void renderBannerAndBio();
     void renderPronouns();
     void renderBadges();
+    void renderGuildTag();
     void renderConnections();
     void renderMutualServers();
     void renderMutualFriends();
@@ -104,6 +105,10 @@ private:
     QLabel *botBadgeLabel = nullptr;
 
     QWidget *badgesRow = nullptr;
+    QFrame *guildTagPill = nullptr;
+    QLabel *guildTagBadgeLabel = nullptr;
+    QLabel *guildTagLabel = nullptr;
+    static constexpr int GuildTagBadgeSize = 14;
 
     QWidget *bioSection = nullptr;
     MessageTextBrowser *bioView = nullptr;

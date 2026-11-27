@@ -277,6 +277,29 @@ QWidget *UserProfilePopup::buildHeader()
     botBadgeLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     nameRow->addWidget(botBadgeLabel, 0, Qt::AlignVCenter);
 
+    // the server tag the user displays (#122): its badge and up to four characters, in a pill
+    guildTagPill = new QFrame(identityRow);
+    guildTagPill->setObjectName(QStringLiteral("guildTagPill"));
+    guildTagPill->setStyleSheet(QStringLiteral(
+            "#guildTagPill { background-color: rgba(128, 128, 128, 0.25); border-radius: 4px; }"));
+    auto *tagLayout = new QHBoxLayout(guildTagPill);
+    tagLayout->setContentsMargins(4, 1, 5, 1);
+    tagLayout->setSpacing(3);
+    guildTagBadgeLabel = new QLabel(guildTagPill);
+    guildTagBadgeLabel->setFixedSize(GuildTagBadgeSize, GuildTagBadgeSize);
+    tagLayout->addWidget(guildTagBadgeLabel, 0, Qt::AlignVCenter);
+    guildTagLabel = new QLabel(guildTagPill);
+    guildTagLabel->setTextFormat(Qt::PlainText);
+    {
+        QFont f = guildTagLabel->font();
+        f.setBold(true);
+        guildTagLabel->setFont(f);
+    }
+    tagLayout->addWidget(guildTagLabel, 0, Qt::AlignVCenter);
+    guildTagPill->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    guildTagPill->setVisible(false);
+    nameRow->addWidget(guildTagPill, 0, Qt::AlignVCenter);
+
     badgesRow = new QWidget(identityRow);
     auto *badgesLayout = new QHBoxLayout(badgesRow);
     badgesLayout->setContentsMargins(0, 0, 0, 0);
@@ -722,6 +745,7 @@ void UserProfilePopup::renderFromProfile()
     renderBannerAndBio();
     renderPronouns();
     renderBadges();
+    renderGuildTag();
     renderFromCachedData();
     renderConnections();
     renderMutualServers();
@@ -792,6 +816,24 @@ void UserProfilePopup::renderBadges()
         badgesLayout->addWidget(icon);
     }
     badgesRow->setVisible(badgesLayout->count() > 0);
+}
+
+void UserProfilePopup::renderGuildTag()
+{
+    guildTagPill->setVisible(!profile.guildTag.isEmpty());
+    if (profile.guildTag.isEmpty())
+        return;
+    guildTagLabel->setText(profile.guildTag);
+    const QUrl badge = Discord::Cdn::guildTagBadge(profile.guildTagGuildId, profile.guildTagBadge, 32);
+    guildTagBadgeLabel->setVisible(!badge.isEmpty());
+    if (!badge.isEmpty())
+        images->assign(guildTagBadgeLabel, badge, QSize(GuildTagBadgeSize, GuildTagBadgeSize), accountId());
+
+    QString server;
+    if (instance && profile.guildTagGuildId.isValid())
+        if (auto guild = instance->getGuild(profile.guildTagGuildId); guild && guild->name.hasValue())
+            server = guild->name.get();
+    guildTagPill->setToolTip(server.isEmpty() ? tr("Server tag") : tr("Server tag from %1").arg(server));
 }
 
 void UserProfilePopup::renderConnections()

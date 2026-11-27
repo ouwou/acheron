@@ -114,6 +114,15 @@ inline QUrl channelIcon(Core::Snowflake channelId, const QString &hash, int size
                         .arg(QString::number(quint64(channelId)), hash, QString::number(size)));
 }
 
+// the small icon beside a server tag (a user's "primary guild")
+inline QUrl guildTagBadge(Core::Snowflake guildId, const QString &hash, int size = 32)
+{
+    if (!guildId.isValid() || hash.isEmpty())
+        return {};
+    return QUrl(QStringLiteral("https://cdn.discordapp.com/guild-tag-badges/%1/%2.png?size=%3")
+                        .arg(QString::number(guildId), hash, QString::number(size)));
+}
+
 inline QUrl badgeIcon(const QString &hash, int size = 64)
 {
     if (hash.isEmpty())
