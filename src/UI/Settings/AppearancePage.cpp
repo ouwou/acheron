@@ -129,6 +129,18 @@ AppearancePage::AppearancePage(QWidget *parent)
     layoutGroupLayout->addWidget(indentScopeButton);
     outer->addWidget(layoutGroup);
 
+    auto *messagesGroup = new QGroupBox(tr("Messages"), this);
+    auto *messagesLayout = new QVBoxLayout(messagesGroup);
+    auto *allTimestamps = new QCheckBox(tr("Show the time beside every message"), messagesGroup);
+    allTimestamps->setToolTip(tr("Otherwise only messages that start a group show it, and others show it while hovered"));
+    allTimestamps->setChecked(QSettings().value("chat/show_all_timestamps", false).toBool());
+    messagesLayout->addWidget(allTimestamps);
+    outer->addWidget(messagesGroup);
+    connect(allTimestamps, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue("chat/show_all_timestamps", checked);
+        emit showAllTimestampsChanged(checked);
+    });
+
     auto updateIndentControls = [channelListCombo, indentCheck, indentScopeButton]() {
         const bool treeMode = channelListCombo->currentIndex() == 0;
         indentCheck->setEnabled(treeMode);

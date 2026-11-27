@@ -79,6 +79,10 @@ public:
     int hoveredMessageRowAtPaint() const { return hoveredMessage.isValid() ? hoveredMessage.row() : -1; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
 
+    // a time beside every message, not just the hovered one and those with a header
+    void setShowAllTimestamps(bool show);
+    [[nodiscard]] bool showsAllTimestamps() const { return showAllTimestamps; }
+
     // jump flash
     int highlightedRow() const;
     qreal highlightOpacity() const { return highlightAlpha; }
@@ -231,6 +235,7 @@ private:
     JumpToPresentBar *jumpToPresentBar = nullptr;
     MessageActionBar *actionBar = nullptr;
     QPersistentModelIndex hoveredMessage;
+    bool showAllTimestamps = false;
     std::optional<QPoint> hoverHeldAt;
     Core::Snowflake actionBarMessageId = Core::Snowflake::Invalid;
     Core::Snowflake pendingJumpMessageId = Core::Snowflake::Invalid;
