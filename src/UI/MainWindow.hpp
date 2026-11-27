@@ -14,6 +14,9 @@
 #include "MemberList/MemberListModel.hpp"
 #include "MemberList/MemberListDelegate.hpp"
 #include "TabBar/TabBar.hpp"
+#ifndef ACHERON_NO_VOICE
+#include "GlobalHotkeys.hpp"
+#endif
 #include "GuildSettings/GuildSettingsSection.hpp"
 #include "Discord/Client.hpp"
 #include "Discord/Entities.hpp"
@@ -142,6 +145,8 @@ private:
     [[nodiscard]] Core::ClientInstance *instanceInVoice() const;
     void revealCall();
     void openVoiceSettings();
+    void applyVoiceHotkeys();
+    void runVoiceHotkey(GlobalHotkeys::Action action);
 #endif
     void onLiveParticipantHoverChanged(const QModelIndex &proxyIndex);
     void onWatchStreamRequested(const QModelIndex &proxyIndex);
@@ -270,6 +275,10 @@ private:
     VoiceStatusBar *voiceStatusBar;
     StreamPreviewPopup *streamPreviewPopup = nullptr;
     QHash<Core::Snowflake, QPointer<CallView>> callViews;
+    QAction *muteShortcut = nullptr;
+    QAction *deafenShortcut = nullptr;
+    GlobalHotkeys *globalHotkeys = nullptr;
+    qint64 lastVoiceHotkeyMs[GlobalHotkeys::ActionCount] = {};
     CallView *ensureCallView(Core::ClientInstance *instance);
     void removeCallView(Core::Snowflake accountId);
 #endif

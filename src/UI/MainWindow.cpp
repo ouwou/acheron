@@ -76,6 +76,8 @@
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
 #include "Core/Audio/VoiceManager.hpp"
+#include "Core/Audio/VoiceSettings.hpp"
+#include "GlobalHotkeys.hpp"
 #include "VoiceActions.hpp"
 #include "VoiceStatusBar.hpp"
 #endif
@@ -2420,6 +2422,9 @@ void MainWindow::updateVoiceStatusLabel()
         }
     }
     voiceStatusBar->setChannelName(channelName);
+
+    if (globalHotkeys)
+        applyVoiceHotkeys(); // global keys are only held while in a call
 }
 
 Core::ClientInstance *MainWindow::instanceInVoice() const
@@ -2439,6 +2444,42 @@ void MainWindow::revealCall()
     if (view)
         view->reveal();
 #endif
+}
+
+void MainWindow::applyVoiceHotkeys()
+{
+    const auto settings = Core::Audio::VoiceSettings::load();
+    const QKeySequence mute = QKeySequence::fromString(settings.muteHotkey, QKeySequence::PortableText);
+    const QKeySequence deafen = QKeySequence::fromString(settings.deafenHotkey, QKeySequence::PortableText);
+    muteShortcut->setShortcut(mute);
+    deafenShortcut->setShortcut(deafen);
+    // outside a call the keys are left to other programs, except where the desktop asks the user
+    // to confirm them, which shouldn't happen on every call
+    const bool wanted = settings.globalHotkeys && (instanceInVoice() || GlobalHotkeys::confirmedByDesktop());
+    if (wanted)
+        globalHotkeys->setHotkeys(mute, deafen);
+    else
+        globalHotkeys->setHotkeys({}, {});
+}
+
+void MainWindow::runVoiceHotkey(GlobalHotkeys::Action action)
+{
+    // where a global hotkey doesn't swallow the key, the window's shortcut sees the same press;
+    // one toggle per press, not two
+    constexpr qint64 SamePressMs = 300;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    qint64 &last = lastVoiceHotkeyMs[static_cast<int>(action)];
+    if (now - last < SamePressMs)
+        return;
+    last = now;
+
+    ClientInstance *instance = instanceInVoice();
+    if (!instance)
+        return;
+    if (action == GlobalHotkeys::Action::ToggleMute)
+        instance->voice()->toggleSelfMute();
+    else
+        instance->voice()->toggleSelfDeafen();
 }
 
 void MainWindow::openVoiceSettings()
@@ -2919,21 +2960,18 @@ void MainWindow::setupMenu()
     connect(gifPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestGifPicker);
 
 #ifndef ACHERON_NO_VOICE
-    auto *muteShortcut = new QAction(this);
-    muteShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M));
+    // the mute and deafen keys work in the window, and with global hotkeys on, from anywhere (#143)
+    muteShortcut = new QAction(this);
     addAction(muteShortcut);
-    connect(muteShortcut, &QAction::triggered, this, [this] {
-        if (ClientInstance *instance = instanceInVoice())
-            instance->voice()->toggleSelfMute();
-    });
-
-    auto *deafenShortcut = new QAction(this);
-    deafenShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+    connect(muteShortcut, &QAction::triggered, this, [this] { runVoiceHotkey(GlobalHotkeys::Action::ToggleMute); });
+    deafenShortcut = new QAction(this);
     addAction(deafenShortcut);
-    connect(deafenShortcut, &QAction::triggered, this, [this] {
-        if (ClientInstance *instance = instanceInVoice())
-            instance->voice()->toggleSelfDeafen();
-    });
+    connect(deafenShortcut, &QAction::triggered, this, [this] { runVoiceHotkey(GlobalHotkeys::Action::ToggleDeafen); });
+
+    globalHotkeys = new GlobalHotkeys(this);
+    connect(globalHotkeys, &GlobalHotkeys::activated, this, &MainWindow::runVoiceHotkey);
+    connect(Core::Audio::VoiceSettingsNotifier::instance(), &Core::Audio::VoiceSettingsNotifier::changed, this, &MainWindow::applyVoiceHotkeys);
+    applyVoiceHotkeys();
 #endif
 
     // DEBUG: Ctrl+Shift+R to force a Gateway reconnect

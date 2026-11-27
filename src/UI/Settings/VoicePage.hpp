@@ -7,6 +7,7 @@
 #include "Core/Audio/VoiceSettings.hpp"
 
 class QComboBox;
+class QFormLayout;
 class QPushButton;
 
 namespace Acheron {
@@ -32,6 +33,7 @@ protected:
 
 private:
     void fillDevices();
+    void addHotkeySettings(QFormLayout *form);
     void setTesting(bool testing);
     void onTestCaptured(const QByteArray &pcm);
 
