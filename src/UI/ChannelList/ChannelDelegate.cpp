@@ -726,8 +726,10 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
         painter->drawText(badgeRect, Qt::AlignRight | Qt::AlignVCenter, forumBadgeText);
     }
 
-    // mention badge for channels, servers
-    if (node->type != ChannelNode::Type::Category && node->type != ChannelNode::Type::DMHeader && node->mentionCount > 0)
+    // mention badge for channels, servers, and the DM header while it's collapsed (open, each DM shows its own)
+    const bool showsMentions = node->type != ChannelNode::Type::Category &&
+                               (node->type != ChannelNode::Type::DMHeader || !(option.state & QStyle::State_Open));
+    if (showsMentions && node->mentionCount > 0)
         drawMentionBadge(painter, contentOpt, node->mentionCount);
 
     painter->restore();
