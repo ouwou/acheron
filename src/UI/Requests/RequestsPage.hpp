@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QPointer>
+#include <QHash>
 #include <QWidget>
 
 #include <functional>
@@ -42,6 +43,9 @@ private:
 
     QPointer<Core::ClientInstance> instance;
     QList<QMetaObject::Connection> connections;
+    QHash<Core::Snowflake, QString> previews; // message request channel -> first message, while shown
+    bool fetchingPreviews = false;
+    void fetchPreviews(const QList<Core::Snowflake> &channelIds);
     QVBoxLayout *rows = nullptr;
     QLabel *status = nullptr;
 };

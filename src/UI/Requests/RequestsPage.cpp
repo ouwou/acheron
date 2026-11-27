@@ -52,6 +52,7 @@ void RequestsPage::setInstance(Core::ClientInstance *newInstance)
         disconnect(c);
     connections.clear();
     instance = newInstance;
+    previews.clear();
     status->hide();
     if (instance) {
         connections.append(connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, this, [this] {
@@ -65,6 +66,36 @@ void RequestsPage::setInstance(Core::ClientInstance *newInstance)
     }
     if (isVisible())
         rebuild();
+}
+
+void RequestsPage::fetchPreviews(const QList<Core::Snowflake> &missing)
+{
+    if (fetchingPreviews || !instance)
+        return;
+    const QList<Core::Snowflake> channelIds = missing.mid(0, 25); // the endpoint's limit; the rest follow after
+
+    fetchingPreviews = true;
+    const QPointer<RequestsPage> self(this);
+    const QPointer<Core::ClientInstance> forInstance(instance);
+    instance->discord()->fetchMessageRequestPreviews(channelIds, [self, forInstance, channelIds](const auto &result) {
+        if (!self)
+            return;
+        self->fetchingPreviews = false;
+        if (self->instance != forInstance)
+            return;
+        for (Core::Snowflake channelId : channelIds) {
+            QString text;
+            if (result.success() && result.value->contains(channelId)) {
+                const Discord::Message &msg = result.value->value(channelId);
+                text = msg.content.hasValue() ? msg.content.get().simplified() : QString();
+                if (text.isEmpty() && msg.attachments.hasValue() && !msg.attachments->isEmpty())
+                    text = tr("Sent an attachment");
+            }
+            self->previews.insert(channelId, text.isEmpty() ? QString() : text.left(200));
+        }
+        if (self->isVisible())
+            self->rebuild();
+    });
 }
 
 void RequestsPage::showEvent(QShowEvent *event)
@@ -123,6 +154,12 @@ void RequestsPage::rebuild()
     }
 
     const QList<Core::Snowflake> requests = instance->messageRequestChannels();
+    QList<Core::Snowflake> missing;
+    for (Core::Snowflake channelId : requests)
+        if (!previews.contains(channelId))
+            missing.append(channelId);
+    if (!missing.isEmpty())
+        fetchPreviews(missing);
     if (!requests.isEmpty()) {
         addSection(tr("Message requests"));
         for (Core::Snowflake channelId : requests) {
@@ -135,7 +172,9 @@ void RequestsPage::rebuild()
             if (name.isEmpty())
                 name = tr("Unknown user");
 
-            addRow(name, QString(),
+            const auto preview = previews.constFind(channelId);
+            const QString detail = preview != previews.cend() ? *preview : tr("Loading message...");
+            addRow(name, detail,
                    { { tr("View"), [this, channelId] { emit openChannelRequested(channelId); } },
                      { tr("Accept"), [this, client, channelId] {
                           runAction(tr("accept the message request"), [client, channelId](auto done) {
@@ -180,6 +219,7 @@ void RequestsPage::addRow(const QString &name, const QString &detail, const QLis
     auto *label = new QLabel(detail.isEmpty() ? shown.toHtmlEscaped()
                                               : shown.toHtmlEscaped() + QStringLiteral("<br><small>%1</small>").arg(detail.toHtmlEscaped()));
     label->setTextFormat(Qt::RichText);
+    label->setWordWrap(true);
     label->setToolTip(name);
     layout->addWidget(label, 1);
     for (const auto &[text, action] : actions) {

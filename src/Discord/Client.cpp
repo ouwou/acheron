@@ -1231,6 +1231,27 @@ void Client::rejectMessageRequest(Snowflake channelId, ActionCallback callback)
                      actionHandler("Ignoring message request", std::move(callback)));
 }
 
+void Client::fetchMessageRequestPreviews(const QList<Snowflake> &channelIds, MessageRequestPreviewCallback callback)
+{
+    QUrlQuery query;
+    for (Snowflake id : channelIds.mid(0, 25))
+        query.addQueryItem("channel_ids", QString::number(id));
+    httpClient->get("/users/@me/message-requests/supplemental-data", query, [callback](const HttpResponse &response) {
+        if (!response.success) {
+            callback(Core::Result<QHash<Snowflake, Message>>::makeError(response.error));
+            return;
+        }
+        QHash<Snowflake, Message> previews;
+        for (const QJsonValue &value : QJsonDocument::fromJson(response.body).array()) {
+            const QJsonObject obj = value.toObject();
+            const Snowflake channelId(obj.value("channel_id").toString().toULongLong());
+            if (channelId.isValid() && obj.value("message_preview").isObject())
+                previews.insert(channelId, Message::fromJson(obj.value("message_preview").toObject()));
+        }
+        callback(Core::Result<QHash<Snowflake, Message>>::makeOk(previews));
+    });
+}
+
 void Client::ackPins(Snowflake channelId, PinCallback callback)
 {
     httpClient->send(HttpClient::Method::POST, "/channels/" + QString::number(channelId) + "/pins/ack", {}, {}, actionHandler("Acking pins", std::move(callback)));
