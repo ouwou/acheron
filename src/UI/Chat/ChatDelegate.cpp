@@ -47,6 +47,35 @@ static void drawHoverHighlight(QPainter *painter, const QStyleOptionViewItem &op
     painter->fillRect(rect, tint);
 }
 
+// a red line with a NEW tag across the top of the first unread message, as the official client
+static void drawUnreadMarker(QPainter *painter, const QStyleOptionViewItem &option, const QRect &rect)
+{
+    static const QColor Red(242, 63, 67);
+    constexpr int SideMargin = 10;
+
+    QFont tagFont = option.font;
+    tagFont.setPointSizeF(option.font.pointSizeF() * 0.7);
+    tagFont.setBold(true);
+    const QFontMetrics fm(tagFont);
+    const QString tag = QObject::tr("NEW");
+    const int tagHeight = fm.height();
+    const int tagWidth = fm.horizontalAdvance(tag) + tagHeight;
+    const int y = rect.top();
+    const QRect tagRect(rect.right() - SideMargin - tagWidth, y - tagHeight / 2, tagWidth, tagHeight);
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(QPen(Red, 1));
+    painter->drawLine(rect.left() + SideMargin, y, tagRect.left(), y);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(Red);
+    painter->drawRoundedRect(tagRect, tagHeight / 4.0, tagHeight / 4.0);
+    painter->setFont(tagFont);
+    painter->setPen(Qt::white);
+    painter->drawText(tagRect, Qt::AlignCenter, tag);
+    painter->restore();
+}
+
 static constexpr int MentionBarWidth = 2;
 
 static void drawMentionHighlight(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index, const QRect &rect)
@@ -414,6 +443,9 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     drawMentionHighlight(painter, option, index, messageRect);
     drawHoverHighlight(painter, option, chatView, index.row(), messageRect);
     drawHighlightFlash(painter, option, chatView, index.row(), option.rect);
+    // half the tag pokes into the gap above, so keep it inside the row
+    if (index.data(ChatModel::UnreadMarkerRole).toBool())
+        drawUnreadMarker(painter, option, messageRect.adjusted(0, QFontMetrics(option.font).height() / 3, 0, 0));
 
     const QString username = index.data(ChatModel::UsernameRole).toString();
     const QPixmap avatar = qvariant_cast<QPixmap>(index.data(ChatModel::AvatarRole));

@@ -65,7 +65,8 @@ public:
     void onUserGuildSettingsUpdate(const Discord::UserGuildSettings &settings);
     void onNotificationSettingsUpdate(const Discord::NotificationSettings &settings);
 
-    void setActiveChannel(Snowflake channelId);
+    // atBottom false when it opens scrolled up (at its unreads): nothing is marked read until it reaches the bottom
+    void setActiveChannel(Snowflake channelId, bool atBottom = true);
     void setActiveChannelAtBottom(bool atBottom);
     void markChannelAsRead(Snowflake channelId, Snowflake lastMessageId);
     void markChannelsAsRead(const QList<Snowflake> &channelIds);

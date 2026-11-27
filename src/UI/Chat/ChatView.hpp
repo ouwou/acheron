@@ -44,6 +44,28 @@ struct ChatCursor
     }
 };
 
+// across the top while a channel opened at its unreads still has some: how many, since when, and mark as read
+class UnreadBar : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit UnreadBar(QWidget *parent = nullptr);
+    void setSummary(int count, bool more, const QDateTime &since);
+
+signals:
+    void clicked();
+    void markAsReadClicked();
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+
+private:
+    void applyTheme();
+
+    QLabel *label = nullptr;
+    QPushButton *button = nullptr;
+};
+
 class JumpToPresentBar : public QWidget
 {
     Q_OBJECT
@@ -78,6 +100,12 @@ public:
     bool replyBarHoveredAtPaint() const { return hoveredReplyBar; }
     int hoveredMessageRowAtPaint() const { return hoveredMessage.isValid() ? hoveredMessage.row() : -1; }
     int editingRow() const { return currentEditingIndex.isValid() ? currentEditingIndex.row() : -1; }
+
+    // loads around the last read message and scrolls to the first unread, without the jump flash
+    void jumpToUnread(Core::Snowflake lastReadId);
+    bool scrollToUnreadMarker();
+    void showUnreadBar(int count, bool more, const QDateTime &since);
+    void hideUnreadBar();
 
     // jump flash
     int highlightedRow() const;
@@ -133,6 +161,7 @@ signals:
     void jumpRequested(Core::Snowflake messageId);
     void presentRequested();
     void atBottomChanged(bool atBottom);
+    void markUnreadAsReadRequested();
     void editMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId, const QString &currentContent);
     void deleteMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
     void pinMessageRequested(Core::Snowflake channelId, Core::Snowflake messageId);
@@ -234,6 +263,9 @@ private:
     std::optional<QPoint> hoverHeldAt;
     Core::Snowflake actionBarMessageId = Core::Snowflake::Invalid;
     Core::Snowflake pendingJumpMessageId = Core::Snowflake::Invalid;
+    bool pendingJumpIsUnread = false;
+    UnreadBar *unreadBar = nullptr;
+    void positionUnreadBar();
     Core::Snowflake highlightedMessageId = Core::Snowflake::Invalid;
     qreal highlightAlpha = 0.0;
     QSequentialAnimationGroup *highlightAnimation = nullptr;

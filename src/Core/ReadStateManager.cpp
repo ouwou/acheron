@@ -727,14 +727,14 @@ void ReadStateManager::flushOutgoingAck(Snowflake channelId)
     emit ackRequested(channelId, messageId);
 }
 
-void ReadStateManager::setActiveChannel(Snowflake channelId)
+void ReadStateManager::setActiveChannel(Snowflake channelId, bool atBottom)
 {
     if (activeChannelId != channelId) {
         if (channelId.isValid())
             ackIdAtSelect.insert(channelId, effectiveAckId(channelId, guildForChannel(channelId)));
 
         activeChannelId = channelId;
-        activeChannelAtBottom = true;
+        activeChannelAtBottom = atBottom;
     }
 
     tryAckActiveChannel();
