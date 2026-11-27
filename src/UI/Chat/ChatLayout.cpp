@@ -1299,6 +1299,47 @@ std::optional<QRect> editedMarkerRectAt(const ResolvedLayout &resolved, const QP
     return rect.toAlignedRect().translated(resolved.layout.textRect.topLeft());
 }
 
+QString shortTime(const QDateTime &timestamp)
+{
+    return timestamp.toLocalTime().toString(QStringLiteral("hh:mm"));
+}
+
+QFont gutterTimeFont(const QFont &font)
+{
+    QFont smaller = font;
+    smaller.setPointSizeF(font.pointSizeF() * 0.8);
+    smaller.setWeight(QFont::Light);
+    return smaller;
+}
+
+QRect gutterTimeRect(const MessageLayout &layout, const QFont &font)
+{
+    // level with the first line of text
+    return QRect(padding(), layout.textRect.top(), avatarSize(), QFontMetrics(font).height());
+}
+
+QRect headerTimeRect(const MessageLayout &layout, const QFont &font, const QString &username, const QDateTime &timestamp)
+{
+    QFont headerFont = font;
+    headerFont.setBold(true);
+    QFont timeFont = font;
+    timeFont.setWeight(QFont::Light);
+    const int left = layout.headerRect.left() + QFontMetrics(headerFont).horizontalAdvance(username);
+    const int width = QFontMetrics(timeFont).horizontalAdvance(QStringLiteral("  ") + shortTime(timestamp));
+    return QRect(left, layout.headerRect.top(), width, layout.headerRect.height());
+}
+
+std::optional<QRect> timestampRectAt(const ResolvedLayout &resolved, const QPoint &mousePos, const QString &username, const QDateTime &timestamp)
+{
+    if (!timestamp.isValid() || resolved.ctx.isSystemMessage)
+        return std::nullopt;
+    const QRect rect = resolved.layout.showHeader ? headerTimeRect(resolved.layout, resolved.ctx.font, username, timestamp)
+                                                  : gutterTimeRect(resolved.layout, resolved.ctx.font);
+    if (!rect.contains(mousePos))
+        return std::nullopt;
+    return rect;
+}
+
 QPixmap createBlurredPixmap(const QPixmap &source, int blurRadius)
 {
     if (source.isNull())

@@ -560,7 +560,13 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         QRect timestampRect = layout.headerRect.adjusted(usernameWidth, 0, 0, 0);
         painter->setPen(option.palette.text().color().darker(150));
         painter->drawText(timestampRect, Qt::AlignLeft | Qt::AlignTop,
-                          "  " + timestamp.toString("hh:mm"));
+                          "  " + ChatLayout::shortTime(timestamp));
+    } else if (!ctx.isSystemMessage && timestamp.isValid() && chatView &&
+               (chatView->showsAllTimestamps() || chatView->hoveredMessageRowAtPaint() == index.row())) {
+        // a message without a header has no time of its own: show it in the avatar column on hover, or always
+        painter->setFont(ChatLayout::gutterTimeFont(option.font));
+        painter->setPen(option.palette.text().color().darker(150));
+        painter->drawText(ChatLayout::gutterTimeRect(layout, option.font), Qt::AlignCenter, ChatLayout::shortTime(timestamp));
     }
 
     Snowflake msgId = index.data(ChatModel::MessageIdRole).toULongLong();
