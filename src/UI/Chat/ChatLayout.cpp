@@ -719,7 +719,12 @@ MessageLayout calculateMessageLayout(const LayoutContext &ctx)
 
     if (layout.showHeader) {
         layout.hitRegions.append({ HitRegion::Kind::Avatar, layout.avatarRect, -1, -1, {} });
-        layout.hitRegions.append({ HitRegion::Kind::UsernameHeader, layout.headerRect, -1, -1, {} });
+        // the name as drawn in bold (see ChatDelegate), not the time after it
+        QFont headerFont = ctx.font;
+        headerFont.setBold(true);
+        QRect nameRect = layout.headerRect;
+        nameRect.setWidth(std::min(QFontMetrics(headerFont).horizontalAdvance(ctx.username), layout.headerRect.width()));
+        layout.hitRegions.append({ HitRegion::Kind::UsernameHeader, nameRect, -1, -1, {} });
     }
 
     if (!ctx.htmlContent.isEmpty()) {
@@ -1168,6 +1173,7 @@ LayoutContext buildContext(const QModelIndex &index, const QFont &font, const QR
     ctx.rowWidth = rowRect.width();
     ctx.rowTop = rowRect.top();
     ctx.showHeader = index.data(ChatModel::ShowHeaderRole).toBool();
+    ctx.username = index.data(ChatModel::UsernameRole).toString();
     ctx.hasSeparator = index.data(ChatModel::DateSeparatorRole).toBool();
     ctx.htmlContent = index.data(ChatModel::HtmlRole).toString();
     ctx.replyData = index.data(ChatModel::ReplyDataRole).value<ReplyData>();
