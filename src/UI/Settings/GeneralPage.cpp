@@ -59,6 +59,27 @@ GeneralPage::GeneralPage(QWidget *parent)
         emit closeToTrayChanged();
     });
 
+    // automatic Idle status (read by MainWindow on its next check, so no signal is needed)
+    auto *autoIdleRow = new QHBoxLayout();
+    auto *autoIdleCheckbox = new QCheckBox(tr("Show me as Idle after"), this);
+    autoIdleCheckbox->setChecked(QSettings().value("presence/auto_idle", true).toBool());
+    autoIdleCheckbox->setToolTip(tr("Only while your status is Online, and not during voice calls, like the official client."));
+    auto *autoIdleMinutes = new QSpinBox(this);
+    autoIdleMinutes->setRange(1, 720);
+    autoIdleMinutes->setSuffix(tr(" min without keyboard or mouse input"));
+    autoIdleMinutes->setValue(QSettings().value("presence/auto_idle_minutes", 10).toInt());
+    autoIdleMinutes->setEnabled(autoIdleCheckbox->isChecked());
+    autoIdleRow->addWidget(autoIdleCheckbox);
+    autoIdleRow->addWidget(autoIdleMinutes);
+    autoIdleRow->addStretch(1);
+    layout->addLayout(autoIdleRow);
+    connect(autoIdleCheckbox, &QCheckBox::toggled, this, [autoIdleMinutes](bool checked) {
+        QSettings().setValue("presence/auto_idle", checked);
+        autoIdleMinutes->setEnabled(checked);
+    });
+    connect(autoIdleMinutes, qOverload<int>(&QSpinBox::valueChanged), this,
+            [](int minutes) { QSettings().setValue("presence/auto_idle_minutes", minutes); });
+
     animateEmojiCheckbox = new QCheckBox(tr("Animate emoji"), this);
     animateEmojiCheckbox->setChecked(QSettings().value("chat/animate_emoji", true).toBool());
     layout->addWidget(animateEmojiCheckbox);

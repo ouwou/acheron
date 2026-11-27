@@ -237,6 +237,8 @@ public:
     // empty clears it
     void setCustomStatus(const QString &text);
     [[nodiscard]] QString currentStatus() const;
+    // reported as Idle (and away) while there's no input, when the chosen status is Online
+    void setAutoIdle(bool idle);
     [[nodiscard]] QString currentCustomStatus() const;
     [[nodiscard]] const User &getMe() const;
     [[nodiscard]] bool isPremium() const;
@@ -412,6 +414,9 @@ private slots:
     void onGatewayUserSettingsProtoUpdate(const UserSettingsProtoUpdate &event);
 
 private:
+    qint64 autoIdleSinceMs = 0;
+    void sendPresence();
+
     void fetchMessages(Snowflake channelId, QUrlQuery query, int limit, MessagesCallback callback);
     void indexGuildMappings(const GatewayGuild &guild);
     void applyDiscordLocale();

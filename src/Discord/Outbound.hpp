@@ -251,12 +251,14 @@ struct PresenceUpdateData : Core::JsonUtils::JsonObject
     Field<QString> status;
     // empty for none
     Field<QString> customStatus;
+    // when the user went idle (ms since epoch), set only while Acheron reports them idle on its own
+    qint64 idleSinceMs = 0;
 
     Core::OrderedJson toJson() const
     {
         Core::OrderedJson obj;
         insert(obj, "status", status);
-        obj.insert("since", 0);
+        obj.insert("since", idleSinceMs);
         QJsonArray activities;
         if (customStatus.hasValue() && !customStatus->isEmpty()) {
             QJsonObject custom;
@@ -266,7 +268,7 @@ struct PresenceUpdateData : Core::JsonUtils::JsonObject
             activities.append(custom);
         }
         obj.insert("activities", activities);
-        obj.insert("afk", false);
+        obj.insert("afk", idleSinceMs > 0); // away from the computer: Discord pushes notifications to mobile
         return obj;
     }
 };
