@@ -461,6 +461,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         const Discord::Message &visible = msg.contentMessage();
 
         QString html = visible.hidesLinkBehindItsEmbed() ? QString() : visible.parsedContentCached;
+        if (!visible.spoilerHtmlCached.isEmpty())
+            revealTextSpoilers(html, msg.id, visible.spoilerHtmlCached);
 
         if (msg.flags.hasValue() && msg.flags->testFlag(Discord::MessageFlag::HAS_THREAD)) {
             QString sep = html.isEmpty() ? QString() : QStringLiteral("<br>");
@@ -1318,6 +1320,7 @@ void ChatModel::setActiveChannel(Snowflake channelId, Snowflake guildId)
     previewPixmapCache.clear();
     mediaFlagsCache.clear();
     revealedSpoilers.clear();
+    revealedTextSpoilers.clear();
     endResetModel();
 }
 
@@ -1357,6 +1360,41 @@ void ChatModel::revealSpoiler(Snowflake attachmentId)
                 }
             }
         }
+    }
+}
+
+void ChatModel::revealTextSpoiler(Snowflake messageId, int spoilerIndex)
+{
+    auto &revealed = revealedTextSpoilers[messageId];
+    if (revealed.contains(spoilerIndex))
+        return;
+    revealed.insert(spoilerIndex);
+
+    invalidateDocCacheForMessage(messageId);
+    sizeCache.remove(messageId); // revealed text can wrap differently
+    for (int row = 0; row < messages.size(); ++row) {
+        if (messages[row].id == messageId) {
+            QModelIndex idx = index(row, 0);
+            emit dataChanged(idx, idx, { HtmlRole, CachedSizeRole });
+            return;
+        }
+    }
+}
+
+// Swaps each revealed spoiler's hidden link (see Markdown::Parser::toHtml) for its content.
+void ChatModel::revealTextSpoilers(QString &html, Snowflake messageId, const QStringList &spoilerHtml) const
+{
+    const auto it = revealedTextSpoilers.constFind(messageId);
+    if (it == revealedTextSpoilers.cend())
+        return;
+    for (int i : *it) {
+        if (i < 0 || i >= spoilerHtml.size())
+            continue;
+        const int start = html.indexOf(QStringLiteral("<a href=\"acheron://spoiler/%1\"").arg(i));
+        const int end = start < 0 ? -1 : html.indexOf(QLatin1String("</a>"), start);
+        if (end < 0)
+            continue;
+        html.replace(start, end + 4 - start, Core::Markdown::Parser::revealedSpoilerHtml(spoilerHtml[i]));
     }
 }
 

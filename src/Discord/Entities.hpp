@@ -1334,6 +1334,7 @@ struct Message : Core::JsonUtils::JsonObject
 
     // cached data
     QString parsedContentCached;
+    QStringList spoilerHtmlCached; // revealed HTML of each ||spoiler||, empty for most messages
     bool contentIsSingleLink = false;
     QString embedsJson;
     QString reactionsJson;

@@ -87,7 +87,12 @@ public:
     Parser();
 
     QList<AstNode> parse(QString source, ParseState state = {});
-    QString toHtml(const QList<AstNode> &nodes, bool jumboEmoji = false);
+    // Spoilers (||text||) render as hidden links to acheron://spoiler/<n>. When `spoilers` is
+    // given, the revealed HTML of spoiler n is stored at index n so a view can swap it in on click.
+    // Without it, spoilers render already revealed (shaded), since nothing could reveal them.
+    QString toHtml(const QList<AstNode> &nodes, bool jumboEmoji = false, QStringList *spoilers = nullptr);
+
+    static QString revealedSpoilerHtml(const QString &innerHtml);
 
     void setUserResolver(UserResolverFn resolver);
     void setChannelResolver(ChannelResolverFn resolver);
@@ -110,6 +115,7 @@ private:
     ChannelResolverFn channelResolver;
     RoleResolverFn roleResolver;
     ChannelLinkResolverFn channelLinkResolver;
+    QStringList *spoilerSink = nullptr;
 };
 
 } // namespace Markdown

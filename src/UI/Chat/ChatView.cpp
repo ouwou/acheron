@@ -386,7 +386,7 @@ void ChatView::mouseMoveEvent(QMouseEvent *event)
 
 void ChatView::openLink(const QString &url)
 {
-    if (url.isEmpty())
+    if (url.isEmpty() || url.startsWith(QLatin1String("acheron://spoiler/")))
         return;
 
     using IdLinkSignal = void (ChatView::*)(Core::Snowflake);
@@ -529,8 +529,19 @@ void ChatView::mouseReleaseEvent(QMouseEvent *event)
         openLink(region->url);
         break;
 
+    case Kind::TextLink: {
+        static const QLatin1String spoilerPrefix("acheron://spoiler/");
+        if (region->url.startsWith(spoilerPrefix)) {
+            if (chatModel && !hasTextSelection())
+                chatModel->revealTextSpoiler(idx.data(ChatModel::MessageIdRole).toULongLong(),
+                                             region->url.mid(spoilerPrefix.size()).toInt());
+            break;
+        }
+        openLink(region->url);
+        break;
+    }
+
     case Kind::ForwardOrigin:
-    case Kind::TextLink:
         openLink(region->url);
         break;
 

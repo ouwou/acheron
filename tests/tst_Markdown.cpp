@@ -16,6 +16,7 @@ private slots:
     void testSingleLink();
     void testEmojiSequences();
     void testMentions();
+    void testSpoilers();
 };
 
 static QString renderInline(const QString &source)
@@ -168,6 +169,36 @@ void TestMarkdown::testMentions()
     QCOMPARE(parser.toHtml(parser.parse("<@&790>", state)),
              QStringLiteral("<span class=\"mention\" style=\"color: #ff0000; background-color: rgba(255, 0, 0, 0.1);\">@red</span>"));
     QCOMPARE(parser.toHtml(parser.parse("<@&791>", state)), QStringLiteral("@unknown-role"));
+}
+
+void TestMarkdown::testSpoilers()
+{
+    Parser parser;
+    ParseState state;
+    state.isInline = true;
+
+    // Hidden as a numbered link holding only the plain text; the formatted content is kept apart.
+    QStringList spoilers;
+    QString html = parser.toHtml(parser.parse("a ||b **c**|| d ||<e>||", state), false, &spoilers);
+    QCOMPARE(spoilers.size(), 2);
+    QCOMPARE(spoilers[0], QStringLiteral("b <strong>c</strong>"));
+    QCOMPARE(spoilers[1], QStringLiteral("&lt;e&gt;"));
+    QVERIFY(html.startsWith("a <a href=\"acheron://spoiler/0\""));
+    QVERIFY(html.contains("acheron://spoiler/1"));
+    QVERIFY(html.contains(">b c</a> d "));
+    QVERIFY(!html.contains("<strong>"));
+    QVERIFY(html.contains(">&lt;e&gt;</a>"));
+
+    // Re-rendering clears the list.
+    parser.toHtml(parser.parse("plain", state), false, &spoilers);
+    QVERIFY(spoilers.isEmpty());
+
+    // Without a list (embeds, topics) there is no way to reveal, so it renders shaded instead.
+    QCOMPARE(renderInline("||x||"), Parser::revealedSpoilerHtml("x"));
+
+    // Not inside code, and a lone || stays text.
+    QCOMPARE(renderInline("`||x||`"), QStringLiteral("<code>||x||</code>"));
+    QCOMPARE(renderInline("a || b"), QStringLiteral("a || b"));
 }
 
 QTEST_MAIN(TestMarkdown)

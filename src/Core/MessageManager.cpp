@@ -114,7 +114,7 @@ static Markdown::ParseState inlineParseState(Snowflake channelId)
 void MessageManager::cacheParsedContent(Discord::Message &msg, const QString &content, Snowflake channelId) const
 {
     auto ast = parser->parse(content, inlineParseState(channelId));
-    msg.parsedContentCached = parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast));
+    msg.parsedContentCached = parser->toHtml(ast, Markdown::Parser::isEmojiOnly(ast), &msg.spoilerHtmlCached);
     msg.contentIsSingleLink = Markdown::Parser::isSingleLink(ast);
 }
 
@@ -569,7 +569,7 @@ void MessageManager::sendMessage(Snowflake channelId, const QString &content,
 
     auto ast = parser->parse(content, inlineParseState(channelId));
     bool jumbo = Markdown::Parser::isEmojiOnly(ast);
-    preview.parsedContentCached = parser->toHtml(ast, jumbo);
+    preview.parsedContentCached = parser->toHtml(ast, jumbo, &preview.spoilerHtmlCached);
 
     // get our fake preview in
     emit messagesReceived(
