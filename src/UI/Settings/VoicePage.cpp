@@ -9,7 +9,9 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFormLayout>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
@@ -156,6 +158,8 @@ VoicePage::VoicePage(QWidget *parent)
     });
 #endif
 
+    addHotkeySettings(form);
+
     auto *advanced = new QWidget(this);
     QFormLayout *advancedForm = newForm();
     advanced->setLayout(advancedForm);
@@ -222,6 +226,58 @@ VoicePage::VoicePage(QWidget *parent)
 }
 
 VoicePage::~VoicePage() = default;
+
+void VoicePage::addHotkeySettings(QFormLayout *form)
+{
+    auto *title = new QLabel(tr("Hotkeys"), this);
+    QFont titleFont = title->font();
+    titleFont.setBold(true);
+    title->setFont(titleFont);
+    title->setContentsMargins(0, 8, 0, 0);
+    form->addRow(title);
+
+    auto addHotkey = [this, form](const QString &label, QString VoiceSettings::*field) {
+        auto *row = new QWidget(this);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        auto *edit = new QKeySequenceEdit(QKeySequence::fromString(settings.*field, QKeySequence::PortableText), row);
+        auto *clear = new QPushButton(tr("Clear"), row);
+        rowLayout->addWidget(edit, 1);
+        rowLayout->addWidget(clear);
+        form->addRow(label, row);
+
+        connect(edit, &QKeySequenceEdit::editingFinished, this, [this, edit, field] {
+            QKeySequence chosen = edit->keySequence();
+            if (chosen.count() > 1) { // one key with its modifiers, not a chord
+                chosen = QKeySequence(chosen[0]);
+                edit->setKeySequence(chosen);
+            }
+            settings.*field = chosen.toString(QKeySequence::PortableText);
+            settings.saveAndApply();
+        });
+        connect(clear, &QPushButton::clicked, this, [this, edit, field] {
+            edit->clear();
+            (settings.*field).clear();
+            settings.saveAndApply();
+        });
+    };
+    addHotkey(tr("Toggle mute"), &VoiceSettings::muteHotkey);
+    addHotkey(tr("Toggle deafen"), &VoiceSettings::deafenHotkey);
+
+    auto *global = new QCheckBox(tr("Work while Acheron isn't focused (during calls)"), this);
+    global->setChecked(settings.globalHotkeys);
+    global->setToolTip(tr("Keys need Ctrl, Alt or the Windows/Command key unless they're F-keys, so typing elsewhere isn't affected."));
+    form->addRow(global);
+    connect(global, &QCheckBox::toggled, this, [this](bool enabled) {
+        settings.globalHotkeys = enabled;
+        settings.saveAndApply();
+    });
+    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
+        auto *note = new QLabel(tr("On Wayland your desktop may ask you to confirm these keys, and has the final say on them."), this);
+        note->setWordWrap(true);
+        form->addRow(note);
+    }
+}
 
 void VoicePage::hideEvent(QHideEvent *event)
 {

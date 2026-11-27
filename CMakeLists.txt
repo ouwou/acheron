@@ -382,6 +382,7 @@ if(ENABLE_VOICE)
         src/UI/VolumeMeter.cpp
         src/UI/Settings/VoicePage.cpp
         src/Core/Audio/VoiceSettings.cpp
+        src/UI/GlobalHotkeys.cpp
         src/Core/Audio/VoiceManager.cpp
         src/Core/Audio/AudioPipeline.cpp
         src/Core/Audio/IAudioBackend.cpp
@@ -796,6 +797,29 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
 endif()
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
+
+# global hotkeys for the voice toggles (UI/GlobalHotkeys.cpp): Carbon on macOS; on Linux an X11 key
+# grab needs libxcb and Wayland's GlobalShortcuts portal needs Qt DBus, each optional
+if(ENABLE_VOICE)
+    if(APPLE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE "-framework Carbon")
+    elseif(UNIX)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(HOTKEYS_XCB QUIET IMPORTED_TARGET xcb)
+            if(TARGET PkgConfig::HOTKEYS_XCB)
+                target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::HOTKEYS_XCB)
+                target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HOTKEYS_XCB)
+            endif()
+        endif()
+        find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS DBus)
+        if(TARGET Qt::DBus)
+            target_sources(${PROJECT_NAME} PRIVATE src/UI/GlobalHotkeysPortal.cpp)
+            target_link_libraries(${PROJECT_NAME} PRIVATE Qt::DBus)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_HOTKEYS_PORTAL)
+        endif()
+    endif()
+endif()
 
 include(CheckCXXSymbolExists)
 get_target_property(_curl_incs CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
