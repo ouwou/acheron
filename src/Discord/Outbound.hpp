@@ -2,6 +2,9 @@
 
 #include "Objects.hpp"
 
+#include <QJsonArray>
+#include <QJsonObject>
+
 namespace Acheron {
 namespace Discord {
 
@@ -242,6 +245,34 @@ inline UpdateVoiceState voiceStateUpdate(Core::Snowflake guildId, Core::Snowflak
     update.selfVideo = selfVideo;
     return update;
 }
+
+struct PresenceUpdateData : Core::JsonUtils::JsonObject
+{
+    Field<QString> status;
+    // empty for none
+    Field<QString> customStatus;
+    // when the user went idle (ms since epoch), set only while Acheron reports them idle on its own
+    qint64 idleSinceMs = 0;
+
+    Core::OrderedJson toJson() const
+    {
+        Core::OrderedJson obj;
+        insert(obj, "status", status);
+        obj.insert("since", idleSinceMs);
+        QJsonArray activities;
+        if (customStatus.hasValue() && !customStatus->isEmpty()) {
+            QJsonObject custom;
+            custom["name"] = QStringLiteral("Custom Status");
+            custom["type"] = 4;
+            custom["state"] = customStatus.get();
+            activities.append(custom);
+        }
+        obj.insert("activities", activities);
+        obj.insert("afk", idleSinceMs > 0); // away from the computer: Discord pushes notifications to mobile
+        return obj;
+    }
+};
+using PresenceUpdate = Outbound<OpCode::PRESENCE_UPDATE, PresenceUpdateData>;
 
 struct ConnectCallData : Core::JsonUtils::JsonObject
 {

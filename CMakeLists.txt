@@ -249,6 +249,7 @@ set(PROJECT_SOURCES
     src/Core/Media/ClipPlayer.cpp
     src/Core/Media/CurlAvio.cpp
     src/UI/MainWindow.cpp
+    src/UI/IdleMonitor.cpp
     src/UI/BrowserCaptchaResolver.cpp
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
@@ -796,6 +797,18 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
 endif()
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
+
+# how long the user has been away (UI/IdleMonitor.cpp): CoreGraphics on macOS, and on Linux the
+# GNOME/KDE idle services over Qt DBus when it's there (otherwise input to Acheron's own windows)
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "-framework CoreGraphics")
+elseif(UNIX)
+    find_package(Qt${QT_VERSION_MAJOR} QUIET COMPONENTS DBus)
+    if(TARGET Qt::DBus)
+        target_link_libraries(${PROJECT_NAME} PRIVATE Qt::DBus)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ACHERON_IDLE_DBUS)
+    endif()
+endif()
 
 include(CheckCXXSymbolExists)
 get_target_property(_curl_incs CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)

@@ -836,6 +836,15 @@ void Gateway::sendVoiceStateUpdate(Core::Snowflake guildId, Core::Snowflake chan
     sendPayload(voiceStateUpdate(guildId, channelId, selfMute, selfDeaf, selfVideo).toJson());
 }
 
+void Gateway::sendPresenceUpdate(const QString &status, const QString &customStatus, qint64 idleSinceMs)
+{
+    PresenceUpdate msg;
+    msg.status = status;
+    msg.customStatus = customStatus;
+    msg.idleSinceMs = idleSinceMs;
+    sendPayload(msg.toJson());
+}
+
 void Gateway::sendCallConnect(Core::Snowflake channelId)
 {
     ConnectCall msg;

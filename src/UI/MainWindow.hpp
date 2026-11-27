@@ -159,6 +159,9 @@ private:
 private:
     void setupUi();
     void setupMenu();
+    void setupAutoIdle();
+    void checkAutoIdle();
+    void setAutoIdle(bool idle);
 
     [[nodiscard]] TabEntry makeTabEntry(ChannelNode *node, ChannelNode *accountNode) const;
 
@@ -322,6 +325,13 @@ private:
     bool savedRailIsHome = true;
     Core::Snowflake savedRailAccountId;
     Core::Snowflake savedRailGuildId;
+
+    // automatic Idle status
+    static constexpr int AutoIdleCheckMs = 30 * 1000;
+    static constexpr int AutoIdleReturnCheckMs = 3 * 1000;
+    class IdleMonitor *idleMonitor = nullptr;
+    QTimer *idleTimer = nullptr;
+    bool autoIdle = false;
 };
 
 } // namespace UI

@@ -1,5 +1,6 @@
 #include "Client.hpp"
 
+#include <QDateTime>
 #include <QDebug>
 #include <QGuiApplication>
 #include <QJsonObject>
@@ -10,6 +11,7 @@
 #include "Enums.hpp"
 #include "Core/Logging.hpp"
 #include "Proto/ProtoReader.hpp"
+#include "Proto/ProtoWriter.hpp"
 #include "Proto/UserSettings.hpp"
 
 namespace Acheron {
@@ -690,6 +692,8 @@ void Client::onGatewayReady(const Ready &data)
 
     me = data.user;
 
+    if (autoIdleSinceMs > 0 && currentStatus() == QLatin1String("online"))
+        sendPresence(); // a new session starts from the saved status; still away
     emit ready(data);
 }
 
@@ -1497,6 +1501,123 @@ qint64 Client::getMaxUploadSize(Snowflake channelId) const
 void Client::sendVoiceStateUpdate(Snowflake guildId, Snowflake channelId, bool selfMute, bool selfDeaf, bool selfVideo)
 {
     gateway->sendVoiceStateUpdate(guildId, channelId, selfMute, selfDeaf, selfVideo);
+}
+
+namespace {
+
+QString preloadedSettingsEndpoint()
+{
+    return "/users/@me/settings-proto/" + QString::number(int(UserSettingsProtoType::PRELOADED));
+}
+
+// PreloadedUserSettings { 11: StatusSettings { 1: StringValue status, 2: CustomStatus custom_status } }
+QByteArray statusSettingsPatch(const std::optional<QString> &status, const std::optional<Proto::CustomStatus> &custom)
+{
+    Proto::ProtoWriter statusSettings;
+    if (status) {
+        Proto::ProtoWriter value;
+        value.writeString(1, *status);
+        statusSettings.writeBytes(1, value.bytes());
+    }
+    if (custom) {
+        Proto::ProtoWriter customStatus;
+        if (!custom->text.isEmpty())
+            customStatus.writeString(1, custom->text);
+        if (custom->expiresAtMs)
+            customStatus.writeFixed64(4, custom->expiresAtMs);
+        customStatus.writeFixed64(5, custom->createdAtMs);
+        statusSettings.writeBytes(2, customStatus.bytes());
+    }
+    Proto::ProtoWriter settings;
+    settings.writeBytes(11, statusSettings.bytes());
+    return settings.bytes();
+}
+
+bool customStatusShown(const Proto::CustomStatus &custom)
+{
+    return !custom.text.isEmpty() &&
+           (custom.expiresAtMs == 0 || custom.expiresAtMs > static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch()));
+}
+
+} // namespace
+
+QString Client::currentStatus() const
+{
+    if (settings.status && settings.status->status && !settings.status->status->isEmpty())
+        return *settings.status->status;
+    return QStringLiteral("online");
+}
+
+QString Client::currentCustomStatus() const
+{
+    if (settings.status && settings.status->customStatus && customStatusShown(*settings.status->customStatus))
+        return settings.status->customStatus->text;
+    return {};
+}
+
+void Client::setAutoIdle(bool idle)
+{
+    if (idle == (autoIdleSinceMs > 0))
+        return;
+    autoIdleSinceMs = idle ? QDateTime::currentMSecsSinceEpoch() : 0;
+    // only an Online status turns into Idle; Do Not Disturb, Invisible or Idle picked by hand stay put
+    if (currentStatus() == QLatin1String("online"))
+        sendPresence();
+}
+
+void Client::sendPresence()
+{
+    const bool idle = autoIdleSinceMs > 0 && currentStatus() == QLatin1String("online");
+    gateway->sendPresenceUpdate(idle ? QStringLiteral("idle") : currentStatus(), currentCustomStatus(), idle ? autoIdleSinceMs : 0);
+}
+
+void Client::setStatus(const QString &status)
+{
+    if (!settings.status)
+        settings.status = Proto::StatusSettings{};
+    settings.status->status = status;
+    emit settingsChanged();
+
+    const QByteArray patch = statusSettingsPatch(status, std::nullopt);
+    QJsonObject payload;
+    payload["settings"] = QString::fromLatin1(patch.toBase64());
+    httpClient->patch(preloadedSettingsEndpoint(), payload, [](const HttpResponse &response) {
+        if (!response.success)
+            qCWarning(LogDiscord) << "Failed to save status:" << response.statusCode << response.error;
+    });
+    sendPresence();
+}
+
+void Client::setCustomStatus(const QString &text)
+{
+    const uint64_t now = static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch());
+    const QString trimmed = text.trimmed();
+
+    Proto::CustomStatus custom;
+    custom.text = trimmed;
+    custom.createdAtMs = now;
+    if (trimmed.isEmpty()) {
+        // the server merges a partial update into what it has, so an empty one would change nothing: it expires now
+        custom.expiresAtMs = now;
+    } else if (settings.status && settings.status->customStatus && settings.status->customStatus->expiresAtMs) {
+        // likewise "never expires" (0) can't be sent over an old expiry, so it's put out of reach
+        static constexpr uint64_t FarFutureMs = 253402300799000; // 9999-12-31
+        custom.expiresAtMs = FarFutureMs;
+    }
+
+    if (!settings.status)
+        settings.status = Proto::StatusSettings{};
+    settings.status->customStatus = custom;
+    emit settingsChanged();
+
+    const QByteArray patch = statusSettingsPatch(std::nullopt, custom);
+    QJsonObject payload;
+    payload["settings"] = QString::fromLatin1(patch.toBase64());
+    httpClient->patch(preloadedSettingsEndpoint(), payload, [](const HttpResponse &response) {
+        if (!response.success)
+            qCWarning(LogDiscord) << "Failed to save custom status:" << response.statusCode << response.error;
+    });
+    sendPresence();
 }
 
 void Client::sendCallConnect(Snowflake channelId)

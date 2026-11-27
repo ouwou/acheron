@@ -1,8 +1,11 @@
 #include "MainWindow.hpp"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -73,6 +76,7 @@
 #include "Core/MemberListManager.hpp"
 #include "Core/Presence/PresenceManager.hpp"
 #include "Core/Session.hpp"
+#include "IdleMonitor.hpp"
 #include "Core/Theme/Manager.hpp"
 #ifndef ACHERON_NO_VOICE
 #include "Core/Audio/VoiceManager.hpp"
@@ -2881,6 +2885,45 @@ void MainWindow::restoreWindowState()
     }
 }
 
+// Show the accounts as Idle after a while away from the computer, like the official client
+void MainWindow::setupAutoIdle()
+{
+    idleMonitor = new IdleMonitor(this);
+    idleTimer = new QTimer(this);
+    connect(idleTimer, &QTimer::timeout, this, &MainWindow::checkAutoIdle);
+    idleTimer->start(AutoIdleCheckMs);
+}
+
+void MainWindow::checkAutoIdle()
+{
+    QSettings settings;
+    const bool enabled = settings.value("presence/auto_idle", true).toBool();
+    const qint64 afterMs = qint64(qBound(1, settings.value("presence/auto_idle_minutes", 10).toInt(), 720)) * 60 * 1000;
+    if (!enabled) {
+        setAutoIdle(false);
+        return;
+    }
+    const QPointer<MainWindow> self(this);
+    idleMonitor->query([self, afterMs](qint64 idleMs) {
+        if (!self)
+            return;
+        bool inCall = false; // talking without touching the keyboard isn't being away
+        for (const auto &instance : self->session->getClients())
+            inCall = inCall || (instance && instance->isInVoice());
+        self->setAutoIdle(idleMs >= afterMs && !inCall);
+    });
+}
+
+void MainWindow::setAutoIdle(bool idle)
+{
+    autoIdle = idle;
+    for (const auto &instance : session->getClients()) // each skips it if nothing changed, and new accounts catch up
+        if (instance)
+            instance->discord()->setAutoIdle(idle);
+    // while away, look again sooner so coming back shows as Online within seconds
+    idleTimer->setInterval(idle ? AutoIdleReturnCheckMs : AutoIdleCheckMs);
+}
+
 void MainWindow::setupMenu()
 {
     auto *menuBar = this->menuBar();
@@ -2892,6 +2935,48 @@ void MainWindow::setupMenu()
     auto *settingsAction = new QAction(tr("&Settings"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
+
+    // the account being viewed: its status and custom status (#127)
+    QMenu *statusMenu = menuBar->addMenu(tr("S&tatus"));
+    auto *statusGroup = new QActionGroup(statusMenu);
+    const std::pair<const char *, QString> statuses[] = {
+        { "online", tr("&Online") },
+        { "idle", tr("&Idle") },
+        { "dnd", tr("&Do Not Disturb") },
+        { "invisible", tr("In&visible") },
+    };
+    for (const auto &[status, label] : statuses) {
+        QAction *action = statusMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(QString::fromLatin1(status));
+        statusGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, status = QString::fromLatin1(status)]() {
+            if (currentInstance)
+                currentInstance->discord()->setStatus(status);
+        });
+    }
+    statusMenu->addSeparator();
+    setupAutoIdle();
+    QAction *customStatusAction = statusMenu->addAction(tr("Set &Custom Status..."));
+    connect(customStatusAction, &QAction::triggered, this, [this]() {
+        if (!currentInstance)
+            return;
+        bool ok = false;
+        const QString text = QInputDialog::getText(this, tr("Custom Status"),
+                                                   tr("What's happening? Leave it empty to clear it."),
+                                                   QLineEdit::Normal, currentInstance->discord()->currentCustomStatus(), &ok);
+        if (ok && currentInstance)
+            currentInstance->discord()->setCustomStatus(text);
+    });
+    connect(statusMenu, &QMenu::aboutToShow, this, [this, statusGroup, customStatusAction]() {
+        const bool haveAccount = currentInstance != nullptr;
+        const QString current = haveAccount ? currentInstance->discord()->currentStatus() : QString();
+        for (QAction *action : statusGroup->actions()) {
+            action->setEnabled(haveAccount);
+            action->setChecked(action->data().toString() == current);
+        }
+        customStatusAction->setEnabled(haveAccount);
+    });
 
     viewMenu->addSeparator();
 
