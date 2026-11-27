@@ -225,7 +225,7 @@ void ChannelTreeView::contextMenuEvent(QContextMenuEvent *event)
     auto nodeType = static_cast<ChannelNode::Type>(sourceIndex.data(ChannelTreeModel::TypeRole).toInt());
 
     if (nodeType == ChannelNode::Type::Root || nodeType == ChannelNode::Type::Account ||
-        nodeType == ChannelNode::Type::DMHeader)
+        nodeType == ChannelNode::Type::DMHeader || nodeType == ChannelNode::Type::Requests)
         return;
 
     if (nodeType == ChannelNode::Type::VoiceParticipant) {

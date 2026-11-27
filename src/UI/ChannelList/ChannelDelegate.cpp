@@ -655,6 +655,8 @@ void ChannelDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
             drawPadlockOverlay(painter, contentOpt.rect, textColor, rowBg);
     } else if (node->type == ChannelNode::Type::Thread) {
         drawThreadBranchIcon(painter, contentOpt.rect, textColor, isLastThreadSibling(node));
+    } else if (node->type == ChannelNode::Type::Requests) {
+        drawLucideIcon(painter, contentOpt.rect, Core::Theme::Icons::Name::UserPlus, textColor);
     } else if (node->type == ChannelNode::Type::VoiceChannel) {
         drawSpeakerIcon(painter, contentOpt.rect, textColor);
         if (node->isPrivate)

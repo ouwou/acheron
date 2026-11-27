@@ -1,6 +1,5 @@
-#include "RequestsDialog.hpp"
+#include "RequestsPage.hpp"
 
-#include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -15,49 +14,66 @@
 namespace Acheron {
 namespace UI {
 
-RequestsDialog::RequestsDialog(Core::ClientInstance *instance, OpenChannelFn openChannel, QWidget *parent)
-    : QDialog(parent), instance(instance), openChannel(std::move(openChannel))
+RequestsPage::RequestsPage(QWidget *parent)
+    : QWidget(parent)
 {
-    setWindowTitle(tr("Friend and Message Requests"));
-    setAttribute(Qt::WA_DeleteOnClose);
-    resize(420, 360);
-
     auto *layout = new QVBoxLayout(this);
-    auto *scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto *content = new QWidget(scroll);
-    rows = new QVBoxLayout(content);
-    rows->setAlignment(Qt::AlignTop);
-    scroll->setWidget(content);
-    layout->addWidget(scroll, 1);
+    layout->setContentsMargins(24, 16, 24, 16);
+
+    auto *title = new QLabel(tr("Requests"), this);
+    QFont titleFont = title->font();
+    titleFont.setBold(true);
+    titleFont.setPointSizeF(titleFont.pointSizeF() * 1.3);
+    title->setFont(titleFont);
+    layout->addWidget(title);
 
     status = new QLabel(this);
     status->setWordWrap(true);
     status->hide();
     layout->addWidget(status);
 
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    layout->addWidget(buttons);
+    auto *scroll = new QScrollArea(this);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // rows fit the width; long names are elided
+    auto *content = new QWidget(scroll);
+    content->setMaximumWidth(640); // keep the buttons near the names on wide windows
+    rows = new QVBoxLayout(content);
+    rows->setAlignment(Qt::AlignTop);
+    rows->setContentsMargins(0, 8, 0, 0);
+    scroll->setWidget(content);
+    scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    layout->addWidget(scroll, 1);
+}
 
-    connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, this, &RequestsDialog::rebuild);
-    connect(instance, &Core::ClientInstance::messageRequestsChanged, this, &RequestsDialog::rebuild);
+void RequestsPage::setInstance(Core::ClientInstance *newInstance)
+{
+    for (const auto &c : connections)
+        disconnect(c);
+    connections.clear();
+    instance = newInstance;
+    status->hide();
+    if (instance) {
+        connections.append(connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, this, [this] {
+            if (isVisible())
+                rebuild();
+        }));
+        connections.append(connect(instance, &Core::ClientInstance::messageRequestsChanged, this, [this] {
+            if (isVisible())
+                rebuild();
+        }));
+    }
+    if (isVisible())
+        rebuild();
+}
+
+void RequestsPage::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
     rebuild();
 }
 
-int RequestsDialog::pendingCount(Core::ClientInstance *instance)
-{
-    if (!instance)
-        return 0;
-    int count = int(instance->messageRequestChannels().size());
-    for (const auto &rel : instance->relationships()->pendingRequests())
-        if (rel.type.get() == Discord::RelationshipType::INCOMING_REQUEST)
-            ++count;
-    return count;
-}
-
-void RequestsDialog::rebuild()
+void RequestsPage::rebuild()
 {
     while (QLayoutItem *item = rows->takeAt(0)) {
         delete item->widget();
@@ -120,7 +136,7 @@ void RequestsDialog::rebuild()
                 name = tr("Unknown user");
 
             addRow(name, QString(),
-                   { { tr("View"), [this, channelId] { if (openChannel) openChannel(channelId); } },
+                   { { tr("View"), [this, channelId] { emit openChannelRequested(channelId); } },
                      { tr("Accept"), [this, client, channelId] {
                           runAction(tr("accept the message request"), [client, channelId](auto done) {
                               client->acceptMessageRequest(channelId, [done](const auto &r) { done(r.success(), r.error); });
@@ -142,7 +158,8 @@ void RequestsDialog::rebuild()
     }
 }
 
-void RequestsDialog::addSection(const QString &title)
+
+void RequestsPage::addSection(const QString &title)
 {
     auto *label = new QLabel(title.toUpper());
     QFont font = label->font();
@@ -153,14 +170,17 @@ void RequestsDialog::addSection(const QString &title)
     rows->addWidget(label);
 }
 
-void RequestsDialog::addRow(const QString &name, const QString &detail, const QList<QPair<QString, std::function<void()>>> &actions)
+void RequestsPage::addRow(const QString &name, const QString &detail, const QList<QPair<QString, std::function<void()>>> &actions)
 {
     auto *row = new QWidget;
     auto *layout = new QHBoxLayout(row);
     layout->setContentsMargins(0, 2, 0, 2);
-    auto *label = new QLabel(detail.isEmpty() ? name.toHtmlEscaped()
-                                              : name.toHtmlEscaped() + QStringLiteral(" <small>(%1)</small>").arg(detail.toHtmlEscaped()));
+    constexpr int NameWidth = 180;
+    const QString shown = fontMetrics().elidedText(name, Qt::ElideRight, NameWidth);
+    auto *label = new QLabel(detail.isEmpty() ? shown.toHtmlEscaped()
+                                              : shown.toHtmlEscaped() + QStringLiteral("<br><small>%1</small>").arg(detail.toHtmlEscaped()));
     label->setTextFormat(Qt::RichText);
+    label->setToolTip(name);
     layout->addWidget(label, 1);
     for (const auto &[text, action] : actions) {
         auto *button = new QPushButton(text, row);
@@ -170,10 +190,10 @@ void RequestsDialog::addRow(const QString &name, const QString &detail, const QL
     rows->addWidget(row);
 }
 
-void RequestsDialog::runAction(const QString &what, const std::function<void(std::function<void(bool, const QString &)>)> &call)
+void RequestsPage::runAction(const QString &what, const std::function<void(std::function<void(bool, const QString &)>)> &call)
 {
     status->hide();
-    QPointer<RequestsDialog> self(this);
+    QPointer<RequestsPage> self(this);
     call([self, what](bool ok, const QString &error) {
         if (!self || ok)
             return; // the gateway event that follows success rebuilds the list

@@ -313,6 +313,7 @@ set(PROJECT_SOURCES
     src/UI/Forum/NewPostDialog.cpp
     src/UI/ThreadBrowser/ThreadBrowserPopup.cpp
     src/UI/PinnedMessages/PinnedMessagesPopup.cpp
+    src/UI/Requests/RequestsPage.cpp
     src/UI/Dialogs/TokenInputDialog.cpp
     src/UI/Dialogs/ProxyInputDialog.cpp
     src/UI/Dialogs/QRLoginDialog.cpp
@@ -320,7 +321,6 @@ set(PROJECT_SOURCES
     src/UI/Dialogs/BasePopup.cpp
     src/UI/Dialogs/ChannelTopicPopup.cpp
     src/UI/Dialogs/ConfirmPopup.cpp
-    src/UI/Dialogs/RequestsDialog.cpp
     src/UI/Dialogs/ReactionsPopup.cpp
     src/UI/Dialogs/UserProfilePopup.cpp
     src/UI/Dialogs/ActivityCard.cpp

@@ -27,6 +27,7 @@ struct ChannelNode
         VoiceChannel,
         VoiceParticipant,
         DMChannel,
+        Requests, // pending friend and message requests, first under Direct Messages
     };
 
     Core::Snowflake id;
@@ -59,6 +60,7 @@ struct ChannelNode
     int userLimit = 0;
     int forumBadgeCount = 0;
     bool forumBadgeIsNew = false;
+    int requestBadge = 0; // Requests: incoming friend requests + message requests
 
     std::vector<std::unique_ptr<ChannelNode>> children;
     ChannelNode *parent = nullptr;

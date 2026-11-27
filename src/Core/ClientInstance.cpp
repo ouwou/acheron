@@ -761,6 +761,15 @@ QList<Snowflake> ClientInstance::messageRequestChannels() const
     return messageRequests.values();
 }
 
+ClientInstance::RequestCounts ClientInstance::requestCounts() const
+{
+    RequestCounts counts;
+    counts.messages = int(messageRequests.size());
+    for (const auto &rel : relationshipManager->pendingRequests())
+        (rel.type.get() == Discord::RelationshipType::INCOMING_REQUEST ? counts.incoming : counts.outgoing)++;
+    return counts;
+}
+
 bool ClientInstance::isForumParent(Snowflake parentId)
 {
     if (!parentId.isValid())
