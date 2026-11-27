@@ -46,6 +46,7 @@ private:
     QHash<Core::Snowflake, QString> previews; // message request channel -> first message, while shown
     bool fetchingPreviews = false;
     void fetchPreviews(const QList<Core::Snowflake> &channelIds);
+    [[nodiscard]] QString readablePreview(const QString &content) const;
     QVBoxLayout *rows = nullptr;
     QLabel *status = nullptr;
 };

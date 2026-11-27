@@ -3,6 +3,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QVBoxLayout>
 
@@ -39,6 +40,7 @@ RequestsPage::RequestsPage(QWidget *parent)
     auto *content = new QWidget(scroll);
     content->setMaximumWidth(640); // keep the buttons near the names on wide windows
     rows = new QVBoxLayout(content);
+    rows->setSpacing(0);
     rows->setAlignment(Qt::AlignTop);
     rows->setContentsMargins(0, 8, 0, 0);
     scroll->setWidget(content);
@@ -68,6 +70,33 @@ void RequestsPage::setInstance(Core::ClientInstance *newInstance)
         rebuild();
 }
 
+QString RequestsPage::readablePreview(const QString &content) const
+{
+    static const QRegularExpression userMention(QStringLiteral(R"(<@!?(\d+)>)"));
+    static const QRegularExpression customEmoji(QStringLiteral(R"(<a?(:\w+:)\d+>)"));
+    static const QRegularExpression markers(QStringLiteral(R"(\*\*|__|~~|\|\||`)"));
+
+    QString text = content;
+    QString resolved;
+    qsizetype last = 0;
+    for (auto it = userMention.globalMatch(text); it.hasNext();) {
+        const auto match = it.next();
+        resolved += text.mid(last, match.capturedStart() - last);
+        resolved += QLatin1Char('@') + (instance ? instance->users()->getDisplayName(Core::Snowflake(match.captured(1).toULongLong()))
+                                                 : QStringLiteral("user"));
+        last = match.capturedEnd();
+    }
+    resolved += text.mid(last);
+    resolved.replace(customEmoji, QStringLiteral("\\1"));
+    resolved.remove(markers);
+    resolved = resolved.simplified();
+
+    constexpr int MaxChars = 140;
+    if (resolved.size() > MaxChars)
+        resolved = resolved.left(MaxChars).trimmed() + QChar(0x2026);
+    return resolved;
+}
+
 void RequestsPage::fetchPreviews(const QList<Core::Snowflake> &missing)
 {
     if (fetchingPreviews || !instance)
@@ -87,11 +116,11 @@ void RequestsPage::fetchPreviews(const QList<Core::Snowflake> &missing)
             QString text;
             if (result.success() && result.value->contains(channelId)) {
                 const Discord::Message &msg = result.value->value(channelId);
-                text = msg.content.hasValue() ? msg.content.get().simplified() : QString();
+                text = msg.content.hasValue() ? self->readablePreview(msg.content.get()) : QString();
                 if (text.isEmpty() && msg.attachments.hasValue() && !msg.attachments->isEmpty())
                     text = tr("Sent an attachment");
             }
-            self->previews.insert(channelId, text.isEmpty() ? QString() : text.left(200));
+            self->previews.insert(channelId, text);
         }
         if (self->isVisible())
             self->rebuild();
@@ -211,23 +240,41 @@ void RequestsPage::addSection(const QString &title)
 
 void RequestsPage::addRow(const QString &name, const QString &detail, const QList<QPair<QString, std::function<void()>>> &actions)
 {
-    auto *row = new QWidget;
+    // a card per request: the name in bold with the detail (message preview, spam note) under it in
+    // a muted colour, and the buttons centred on the right
+    auto *row = new QFrame;
+    row->setObjectName("requestRow");
+    row->setStyleSheet(QStringLiteral("#requestRow { border-bottom: 1px solid rgba(128, 128, 128, 0.2); }"));
     auto *layout = new QHBoxLayout(row);
-    layout->setContentsMargins(0, 2, 0, 2);
-    constexpr int NameWidth = 180;
-    const QString shown = fontMetrics().elidedText(name, Qt::ElideRight, NameWidth);
-    auto *label = new QLabel(detail.isEmpty() ? shown.toHtmlEscaped()
-                                              : shown.toHtmlEscaped() + QStringLiteral("<br><small>%1</small>").arg(detail.toHtmlEscaped()));
-    label->setTextFormat(Qt::RichText);
-    label->setWordWrap(true);
-    label->setToolTip(name);
-    layout->addWidget(label, 1);
+    layout->setContentsMargins(4, 8, 4, 8);
+    layout->setSpacing(12);
+
+    auto *text = new QVBoxLayout;
+    text->setSpacing(2);
+    auto *nameLabel = new QLabel(row);
+    nameLabel->setTextFormat(Qt::PlainText);
+    QFont bold = nameLabel->font();
+    bold.setBold(true);
+    nameLabel->setFont(bold);
+    nameLabel->setText(QFontMetrics(bold).elidedText(name, Qt::ElideRight, 260));
+    nameLabel->setToolTip(name);
+    text->addWidget(nameLabel);
+    if (!detail.isEmpty()) {
+        auto *detailLabel = new QLabel(detail, row);
+        detailLabel->setTextFormat(Qt::PlainText);
+        detailLabel->setWordWrap(true);
+        QPalette pal = detailLabel->palette();
+        pal.setColor(QPalette::WindowText, pal.color(QPalette::PlaceholderText));
+        detailLabel->setPalette(pal);
+        text->addWidget(detailLabel);
+    }
+    layout->addLayout(text, 1);
     for (const auto &[text, action] : actions) {
         auto *button = new QPushButton(text, row);
         if (text == tr("View"))
             button->setToolTip(tr("Open the conversation in a new tab"));
         connect(button, &QPushButton::clicked, this, action);
-        layout->addWidget(button);
+        layout->addWidget(button, 0, Qt::AlignVCenter);
     }
     rows->addWidget(row);
 }
