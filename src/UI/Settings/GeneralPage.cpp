@@ -67,6 +67,21 @@ GeneralPage::GeneralPage(QWidget *parent)
     animateStickersCheckbox->setChecked(QSettings().value("chat/animate_stickers", true).toBool());
     layout->addWidget(animateStickersCheckbox);
 
+    // animated avatars (#119): in chat while the message is hovered, in profiles while open
+    auto *avatarRow = new QHBoxLayout();
+    avatarRow->addWidget(new QLabel(tr("Animated avatars"), this));
+    auto *avatarCombo = new QComboBox(this);
+    avatarCombo->addItem(tr("Play on hover"), "hover");
+    avatarCombo->addItem(tr("Always play"), "always");
+    avatarCombo->addItem(tr("Never play"), "never");
+    avatarCombo->setCurrentIndex(qMax(0, avatarCombo->findData(QSettings().value("chat/avatar_animation", "hover").toString())));
+    avatarRow->addWidget(avatarCombo, 1);
+    layout->addLayout(avatarRow);
+    connect(avatarCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this, avatarCombo](int index) {
+        QSettings().setValue("chat/avatar_animation", avatarCombo->itemData(index).toString());
+        emit avatarAnimationChanged();
+    });
+
     auto *gifRow = new QHBoxLayout();
     gifRow->addWidget(new QLabel(tr("GIFs"), this));
     auto *gifPlayModeCombo = new QComboBox(this);

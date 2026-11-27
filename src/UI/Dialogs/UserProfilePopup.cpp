@@ -1,4 +1,5 @@
 #include "UserProfilePopup.hpp"
+#include "UI/Chat/FrameAnimator.hpp"
 
 #include <QApplication>
 #include <QDesktopServices>
@@ -541,6 +542,60 @@ void UserProfilePopup::showEvent(QShowEvent *event)
     QDialog::showEvent(event);
     positionOverParent();
     updateActivityTicker();
+    if (avatarFrames)
+        showAvatarFrame();
+}
+
+void UserProfilePopup::setAnimatedImages(Core::AnimatedImageCache *cache)
+{
+    animatedImages = cache;
+    if (!cache)
+        return;
+    connect(cache, &Core::AnimatedImageCache::framesReady, this,
+            [this](const QUrl &url, const QSize &logicalSize, const Core::AnimatedFramesPtr &frames) {
+                if (url == avatarAnimatedUrl && logicalSize == QSize(AvatarSize, AvatarSize))
+                    playAvatar(frames);
+            });
+    startAvatarAnimation();
+}
+
+void UserProfilePopup::startAvatarAnimation()
+{
+    if (!animatedImages || avatarAnimationSetting() == AvatarAnimation::Never)
+        return;
+    const QUrl url = Discord::Cdn::animatedAssetUrl(resolvedAvatarUrl(256));
+    if (url == avatarAnimatedUrl)
+        return;
+    avatarAnimatedUrl = url;
+    avatarFrames.reset();
+    if (avatarTimer)
+        avatarTimer->stop();
+    if (url.isValid())
+        playAvatar(animatedImages->get(url, QSize(AvatarSize, AvatarSize), accountId()));
+}
+
+void UserProfilePopup::playAvatar(const Core::AnimatedFramesPtr &frames)
+{
+    if (!frames || frames->isStatic() || frames->loopMs() <= 0)
+        return; // not decoded yet (framesReady brings it), or nothing to animate
+    avatarFrames = frames;
+    if (!avatarTimer) {
+        avatarTimer = new QTimer(this);
+        avatarTimer->setSingleShot(true);
+        connect(avatarTimer, &QTimer::timeout, this, &UserProfilePopup::showAvatarFrame);
+    }
+    avatarClock.start();
+    showAvatarFrame();
+}
+
+void UserProfilePopup::showAvatarFrame()
+{
+    if (!avatarFrames || !isVisible())
+        return; // resumes from showEvent
+    const qint64 phase = avatarClock.elapsed() % avatarFrames->loopMs();
+    const int index = avatarFrames->frameAt(phase);
+    avatarLabel->setPixmap(avatarFrames->frames[index]);
+    avatarTimer->start(int(qMax<qint64>(10, avatarFrames->frameEndMs[index] - phase)));
 }
 
 void UserProfilePopup::renderPresence()
@@ -658,6 +713,8 @@ void UserProfilePopup::hideEvent(QHideEvent *event)
 {
     if (activityTicker)
         activityTicker->stop();
+    if (avatarTimer)
+        avatarTimer->stop();
     QDialog::hideEvent(event);
 }
 
@@ -684,6 +741,7 @@ void UserProfilePopup::renderFromCachedData()
     }
 
     images->assign(avatarLabel, resolvedAvatarUrl(256), QSize(AvatarSize, AvatarSize), accountId());
+    startAvatarAnimation(); // guild view and full profile can change which avatar it is
 
     discordJoinLabel->setText(tr("Joined Discord on %1").arg(formatDate(userId.toDateTime())));
 
