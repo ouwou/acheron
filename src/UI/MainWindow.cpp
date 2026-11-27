@@ -1,8 +1,11 @@
 #include "MainWindow.hpp"
 
+#include <QActionGroup>
 #include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -2892,6 +2895,47 @@ void MainWindow::setupMenu()
     auto *settingsAction = new QAction(tr("&Settings"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
+
+    // the account being viewed: its status and custom status (#127)
+    QMenu *statusMenu = menuBar->addMenu(tr("S&tatus"));
+    auto *statusGroup = new QActionGroup(statusMenu);
+    const std::pair<const char *, QString> statuses[] = {
+        { "online", tr("&Online") },
+        { "idle", tr("&Idle") },
+        { "dnd", tr("&Do Not Disturb") },
+        { "invisible", tr("In&visible") },
+    };
+    for (const auto &[status, label] : statuses) {
+        QAction *action = statusMenu->addAction(label);
+        action->setCheckable(true);
+        action->setData(QString::fromLatin1(status));
+        statusGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, status = QString::fromLatin1(status)]() {
+            if (currentInstance)
+                currentInstance->discord()->setStatus(status);
+        });
+    }
+    statusMenu->addSeparator();
+    QAction *customStatusAction = statusMenu->addAction(tr("Set &Custom Status..."));
+    connect(customStatusAction, &QAction::triggered, this, [this]() {
+        if (!currentInstance)
+            return;
+        bool ok = false;
+        const QString text = QInputDialog::getText(this, tr("Custom Status"),
+                                                   tr("What's happening? Leave it empty to clear it."),
+                                                   QLineEdit::Normal, currentInstance->discord()->currentCustomStatus(), &ok);
+        if (ok && currentInstance)
+            currentInstance->discord()->setCustomStatus(text);
+    });
+    connect(statusMenu, &QMenu::aboutToShow, this, [this, statusGroup, customStatusAction]() {
+        const bool haveAccount = currentInstance != nullptr;
+        const QString current = haveAccount ? currentInstance->discord()->currentStatus() : QString();
+        for (QAction *action : statusGroup->actions()) {
+            action->setEnabled(haveAccount);
+            action->setChecked(action->data().toString() == current);
+        }
+        customStatusAction->setEnabled(haveAccount);
+    });
 
     viewMenu->addSeparator();
 
