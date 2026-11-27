@@ -187,8 +187,8 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
                 result += revealedSpoilerHtml(inner);
                 continue;
             }
-            result += QStringLiteral("<a href=\"acheron://spoiler/%1\" style=\"color: #202225; "
-                                     "background-color: #202225; text-decoration: none;\">%2</a>")
+            result += QStringLiteral("<a href=\"acheron://spoiler/%1\" style=\"color: #6d6f78; "
+                                     "background-color: #6d6f78; text-decoration: none;\">%2</a>")
                               .arg(sink->size())
                               .arg(spoilerPlainText(node.children).toHtmlEscaped());
             sink->append(inner);
