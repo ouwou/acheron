@@ -61,6 +61,11 @@ TrayIcon::TrayIcon(QObject *parent) : QObject(parent), icon(applicationIcon())
     icon.show();
 }
 
+void TrayIcon::addMenuAction(QAction *action)
+{
+    menu.insertAction(menu.actions().value(1), action);
+}
+
 void TrayIcon::showMessage(const QString &title, const QString &body)
 {
     static constexpr int SHOWN_MS = 8000;
