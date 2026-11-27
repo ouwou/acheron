@@ -2,7 +2,9 @@
 
 #include <QDebug>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonObject>
+#include <QUrlQuery>
 #include <QPointer>
 #include <QtMath>
 
@@ -532,6 +534,51 @@ void Client::fetchMessagePins(Snowflake channelId, int limit, std::optional<QDat
             page.newestFirst.append(MessagePin::fromJson(val.toObject()));
         page.hasMore = obj.value("has_more").toBool();
         callback(Core::Result<MessagePinsPage>::makeOk(page));
+    });
+}
+
+void Client::searchMessages(const MessageSearchQuery &search, MessageSearchCallback callback)
+{
+    const QString endpoint = search.guildId.isValid()
+                                     ? "/guilds/" + QString::number(search.guildId) + "/messages/search"
+                                     : "/channels/" + QString::number(search.channelId) + "/messages/search";
+    QUrlQuery query;
+    if (!search.content.isEmpty())
+        query.addQueryItem("content", search.content);
+    if (search.guildId.isValid() && search.channelId.isValid())
+        query.addQueryItem("channel_id", QString::number(search.channelId));
+    for (const QString &has : search.has)
+        query.addQueryItem("has", has);
+    if (search.offset > 0)
+        query.addQueryItem("offset", QString::number(search.offset));
+
+    httpClient->get(endpoint, query, [callback](const HttpResponse &response) {
+        if (!response.success) {
+            const ApiError error = ApiError::fromResponse(response);
+            qCWarning(LogDiscord) << "Message search failed with status" << response.statusCode << ":" << error.message;
+            callback(Core::Result<MessageSearchPage>::makeError(error.message, error.code));
+            return;
+        }
+
+        const QJsonObject obj = QJsonDocument::fromJson(response.body).object();
+        MessageSearchPage page;
+        if (response.statusCode == 202) { // not indexed yet
+            page.indexingRetryMs = qMax(1000, int(obj.value("retry_after").toDouble() * 1000));
+            callback(Core::Result<MessageSearchPage>::makeOk(page));
+            return;
+        }
+        page.totalResults = obj.value("total_results").toInt();
+        for (const QJsonValue &group : obj.value("messages").toArray()) {
+            // each entry used to carry surrounding context; the match is the one marked "hit"
+            const QJsonArray context = group.toArray();
+            QJsonObject hit = context.isEmpty() ? QJsonObject() : context.first().toObject();
+            for (const QJsonValue &candidate : context)
+                if (candidate.toObject().value("hit").toBool())
+                    hit = candidate.toObject();
+            if (!hit.isEmpty())
+                page.messages.append(Message::fromJson(hit));
+        }
+        callback(Core::Result<MessageSearchPage>::makeOk(page));
     });
 }
 

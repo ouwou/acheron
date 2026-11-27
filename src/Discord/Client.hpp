@@ -121,6 +121,24 @@ public:
     using MessagePinsCallback = std::function<void(const Core::Result<MessagePinsPage> &)>;
     void fetchMessagePins(Snowflake channelId, int limit, std::optional<QDateTime> pinnedBefore, MessagePinsCallback callback);
 
+    struct MessageSearchQuery
+    {
+        QString content;
+        Snowflake guildId; // invalid: search the private channel `channelId`
+        Snowflake channelId; // in a guild: limit to this channel, or invalid for the whole guild
+        QStringList has; // link, image, file, video, embed, sound, sticker, poll
+        int offset = 0;
+    };
+    struct MessageSearchPage
+    {
+        int totalResults = 0;
+        QList<Message> messages; // newest first
+        int indexingRetryMs = -1; // >= 0: Discord is still indexing, try again after this long
+    };
+    static constexpr int MessageSearchPageSize = 25;
+    using MessageSearchCallback = std::function<void(const Core::Result<MessageSearchPage> &)>;
+    void searchMessages(const MessageSearchQuery &search, MessageSearchCallback callback);
+
     using RefreshedUrlsCallback = std::function<void(const Core::Result<QHash<QUrl, QUrl>> &)>;
     void refreshAttachmentUrls(const QList<QUrl> &urls, RefreshedUrlsCallback callback);
 
