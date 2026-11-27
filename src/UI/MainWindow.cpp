@@ -24,6 +24,7 @@
 #include "Forum/NewPostDialog.hpp"
 #include "ThreadBrowser/ThreadBrowserPopup.hpp"
 #include "PinnedMessages/PinnedMessagesPopup.hpp"
+#include "Search/MessageSearchPopup.hpp"
 #include "Core/ForumManager.hpp"
 #include "ChannelList/ChannelTreeModel.hpp"
 #include "ChannelList/ChannelFilterProxyModel.hpp"
@@ -1452,6 +1453,16 @@ void MainWindow::setupUi()
     pinsButton->setAutoRaise(true);
     pinsButton->setCursor(Qt::PointingHandCursor);
     connect(pinsButton, &QToolButton::clicked, this, &MainWindow::openPinnedMessages);
+    searchButton = new QToolButton(rightSideWidget);
+    searchButton->setText(tr("Search"));
+    searchButton->setIcon(Core::Theme::Icons::icon(Core::Theme::Icons::Name::Search, Core::Theme::Token::PrimaryText));
+    searchButton->setIconSize(QSize(16, 16));
+    searchButton->setToolTip(tr("Search messages (Ctrl+F)"));
+    searchButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    searchButton->setAutoRaise(true);
+    searchButton->setCursor(Qt::PointingHandCursor);
+    connect(searchButton, &QToolButton::clicked, this, &MainWindow::openMessageSearch);
+
     pinsUnreadDot = new UnreadDot(pinsButton);
     pinsUnreadDot->move(14, 2);
     pinsUnreadDot->hide();
@@ -1467,6 +1478,7 @@ void MainWindow::setupUi()
     channelToolbarLayout->addWidget(channelTopicLine, 1);
     channelToolbarLayout->addWidget(threadBrowserButton, 0);
     channelToolbarLayout->addWidget(pinsButton, 0);
+    channelToolbarLayout->addWidget(searchButton, 0);
     channelToolbar->setStyleSheet(
             "#channelToolbar { border-bottom: 1px solid rgba(128, 128, 128, 0.25); }");
     channelToolbar->hide();
@@ -2913,6 +2925,11 @@ void MainWindow::setupMenu()
     addAction(emojiPickerShortcut);
     connect(emojiPickerShortcut, &QAction::triggered, messageInput, &MessageInput::requestEmojiPicker);
 
+    auto *searchShortcut = new QAction(this);
+    searchShortcut->setShortcut(QKeySequence::Find);
+    addAction(searchShortcut);
+    connect(searchShortcut, &QAction::triggered, this, &MainWindow::openMessageSearch);
+
     auto *gifPickerShortcut = new QAction(this);
     gifPickerShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_G));
     addAction(gifPickerShortcut);
@@ -3475,6 +3492,27 @@ void MainWindow::openPinnedMessagesOf(Core::Snowflake channelId)
         navigateToChannel(channelId);
     if (channelId == pinsChannelId)
         openPinnedMessages();
+}
+
+void MainWindow::openMessageSearch()
+{
+    const Core::Snowflake channelId = chatModel->getActiveChannelId();
+    if (!currentInstance || !channelId.isValid() || !channelToolbar->isVisible())
+        return;
+
+    if (!messageSearch) {
+        messageSearch = new MessageSearchPopup(session->getImageManager(), this);
+        connect(messageSearch, &MessageSearchPopup::messageActivated, this, &MainWindow::jumpToMessageLink);
+        connect(messageSearch, &MessageSearchPopup::linkActivated, chatView, &ChatView::openLink);
+    }
+
+    const Core::Snowflake guildId = currentInstance->discord()->getGuildIdForChannel(channelId);
+    QString name;
+    if (auto ch = currentInstance->getChannel(channelId); ch && ch->name.hasValue())
+        name = ch->name.get();
+    messageSearch->configure(currentInstance, guildId, channelId, name);
+    messageSearch->show();
+    messageSearch->raise();
 }
 
 void MainWindow::openPinnedMessages()

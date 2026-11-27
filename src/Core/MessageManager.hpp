@@ -50,6 +50,7 @@ public:
 
     [[nodiscard]] QString channelTopicHtml(const QString &topic, Snowflake channelId) const;
     [[nodiscard]] QString profileBioHtml(const QString &bio) const;
+    void prepareForDisplay(Discord::Message &msg) { parseMessageContent(msg); } // for messages fetched outside a channel view
 
     void requestLoadChannel(Snowflake channelId);
     void requestLoadHistory(Snowflake channelId, Snowflake beforeId);
