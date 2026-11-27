@@ -1,5 +1,6 @@
 #include "ChatView.hpp"
 
+#include <QLocale>
 #include <QMenu>
 #include <QTextDocument>
 #include <QTextCursor>
@@ -142,6 +143,11 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
     jumpToPresentBar->setVisible(false);
     connect(jumpToPresentBar, &JumpToPresentBar::clicked, this, &ChatView::jumpToPresent);
 
+    unreadBar = new UnreadBar(this);
+    unreadBar->setVisible(false);
+    connect(unreadBar, &UnreadBar::clicked, this, &ChatView::scrollToUnreadMarker);
+    connect(unreadBar, &UnreadBar::markAsReadClicked, this, &ChatView::markUnreadAsReadRequested);
+
     actionBar = new MessageActionBar(viewport());
     connect(actionBar, &MessageActionBar::shiftHeldChanged, this, &ChatView::updateHoveredMessage);
     connect(actionBar, &MessageActionBar::triggered, this, &ChatView::onActionBarTriggered);
@@ -172,6 +178,13 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
 
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, &ChatView::onScrollBarValueChanged);
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, &ChatView::updateJumpToPresentBar);
+    // the content settling without the scroll position moving can still leave the view at the bottom,
+    // e.g. a channel opened at its unreads whose messages all fit; only ever turns it on, so following
+    // the bottom as images grow is left to the scroll handling
+    connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int max) {
+        if (!atBottom && verticalScrollBar()->value() >= max && modelAtLatest())
+            setAtBottom(true);
+    });
 }
 
 void ChatView::setImageManager(Core::ImageManager *manager)
@@ -226,6 +239,7 @@ void ChatView::resizeEvent(QResizeEvent *event)
 
     QListView::resizeEvent(event);
     positionJumpToPresentBar();
+    positionUnreadBar();
 }
 
 void ChatView::updateGeometries()
@@ -695,18 +709,24 @@ void ChatView::onModelReset()
     anchorIndex = QPersistentModelIndex();
 
     auto *chatModel = qobject_cast<ChatModel *>(model());
+    // an unread jump's anchor is the last read message, which may be gone; any unread after it will do
     bool hasJumpTarget = pendingJumpMessageId.isValid() && chatModel &&
-                         chatModel->rowForMessage(pendingJumpMessageId) >= 0;
-    if (!hasJumpTarget)
+                         (pendingJumpIsUnread ? chatModel->firstRowAfter(pendingJumpMessageId) >= 0
+                                              : chatModel->rowForMessage(pendingJumpMessageId) >= 0);
+    if (!hasJumpTarget) {
         pendingJumpMessageId = Core::Snowflake::Invalid;
+        pendingJumpIsUnread = false;
+    }
 
     setAtBottom(!hasJumpTarget && modelAtLatest());
 
     QTimer::singleShot(0, this, [this]() {
         Core::Snowflake target = pendingJumpMessageId;
+        const bool toUnread = std::exchange(pendingJumpIsUnread, false);
         pendingJumpMessageId = Core::Snowflake::Invalid;
-        if (target.isValid() && scrollToMessage(target)) {
+        if (target.isValid() && (toUnread ? scrollToUnreadMarker() : scrollToMessage(target))) {
             maybeRequestFuture();
+            updateScrollState();
             return;
         }
         scrollToBottom();
@@ -719,6 +739,12 @@ void ChatView::onAtLatestChanged(bool atLatest)
 {
     if (atLatest) {
         updateScrollState();
+        // and once the rows that brought it are laid out
+        QTimer::singleShot(0, this, [this] {
+            auto *bar = verticalScrollBar();
+            if (!atBottom && bar->value() >= bar->maximum() && modelAtLatest())
+                setAtBottom(true);
+        });
         return;
     }
     setAtBottom(false);
@@ -782,7 +808,10 @@ void ChatView::onDataChanged(const QModelIndex &topLeft, const QModelIndex &bott
 
 void ChatView::setAtBottom(bool value)
 {
-    if (atBottom == value)
+    // being at the bottom is passed on even when it hasn't changed: opening a channel tells the read
+    // state it isn't at the bottom yet, while this view may still be at the bottom of the last one,
+    // and the unreads would then wait for a scroll (the receiver ignores a repeat)
+    if (atBottom == value && !value)
         return;
     atBottom = value;
     emit atBottomChanged(value);
@@ -860,9 +889,65 @@ void ChatView::jumpToMessage(Core::Snowflake messageId)
     emit jumpRequested(messageId);
 }
 
+void ChatView::jumpToUnread(Core::Snowflake lastReadId)
+{
+    if (!lastReadId.isValid())
+        return;
+    pendingJumpMessageId = lastReadId;
+    pendingJumpIsUnread = true;
+    emit jumpRequested(lastReadId);
+}
+
+bool ChatView::scrollToUnreadMarker()
+{
+    auto *chatModel = qobject_cast<ChatModel *>(model());
+    if (!chatModel || !chatModel->unreadMarker().isValid())
+        return false;
+
+    const int row = chatModel->firstRowAfter(chatModel->unreadMarker());
+    if (row < 0)
+        return false;
+
+    // the first unread near the top, a little of what was already read above it
+    scrollTo(chatModel->index(row, 0), QAbstractItemView::PositionAtTop);
+    auto *bar = verticalScrollBar();
+    // when everything from the first unread down already fits on screen, stay at the bottom: all of
+    // it is in view, so it's read (moving up for context would leave it unread until a scroll)
+    if (bar->value() >= bar->maximum())
+        return true;
+    bar->setValue(bar->value() - viewport()->height() / 6);
+    return true;
+}
+
+void ChatView::showUnreadBar(int count, bool more, const QDateTime &since)
+{
+    unreadBar->setSummary(count, more, since);
+    positionUnreadBar();
+    unreadBar->raise();
+    unreadBar->show();
+}
+
+void ChatView::hideUnreadBar()
+{
+    unreadBar->hide();
+}
+
+void ChatView::positionUnreadBar()
+{
+    constexpr int SideMargin = 16;
+    constexpr int TopMargin = 8;
+
+    unreadBar->ensurePolished();
+    const QSize hint = unreadBar->sizeHint();
+    const QRect area = viewport()->geometry();
+    unreadBar->setGeometry(area.left() + SideMargin, area.top() + TopMargin,
+                           std::max(0, area.width() - 2 * SideMargin), hint.height());
+}
+
 void ChatView::jumpToPresent()
 {
     pendingJumpMessageId = Core::Snowflake::Invalid;
+    pendingJumpIsUnread = false;
 
     if (modelAtLatest())
         scrollToBottom();
@@ -1150,6 +1235,63 @@ void ChatView::releaseHoverHold(const QPoint &globalPos)
 {
     if (hoverHeldAt && *hoverHeldAt != globalPos && !QApplication::activePopupWidget())
         hoverHeldAt.reset();
+}
+
+UnreadBar::UnreadBar(QWidget *parent) : QWidget(parent)
+{
+    setObjectName("unreadBar");
+    setAttribute(Qt::WA_StyledBackground);
+    setCursor(Qt::PointingHandCursor);
+
+    auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(12, 4, 6, 4);
+    layout->setSpacing(12);
+
+    label = new QLabel(this);
+    label->setAttribute(Qt::WA_TransparentForMouseEvents);
+    layout->addWidget(label, 1);
+
+    button = new QPushButton(tr("Mark As Read"), this);
+    button->setObjectName("unreadBarButton");
+    button->setCursor(Qt::PointingHandCursor);
+    button->setFocusPolicy(Qt::NoFocus);
+    layout->addWidget(button, 0);
+    connect(button, &QPushButton::clicked, this, &UnreadBar::markAsReadClicked);
+
+    applyTheme();
+    connect(&Core::Theme::Manager::instance(), &Core::Theme::Manager::themeChanged, this, &UnreadBar::applyTheme);
+}
+
+void UnreadBar::setSummary(int count, bool more, const QDateTime &since)
+{
+    const QString amount = more ? tr("%1+").arg(count) : QString::number(count);
+    const QString text = count == 1 && !more ? tr("1 new message") : tr("%1 new messages").arg(amount);
+    label->setText(since.isValid()
+                           ? tr("%1 since %2").arg(text, QLocale::system().toString(since.toLocalTime(), QLocale::ShortFormat))
+                           : text);
+}
+
+void UnreadBar::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        emit clicked();
+    QWidget::mousePressEvent(event);
+}
+
+void UnreadBar::applyTheme()
+{
+    using namespace Core::Theme;
+    const auto &theme = Manager::instance();
+    QColor accent = theme.color(Token::Highlight);
+    QColor accentText = theme.color(Token::HighlightedText);
+
+    setStyleSheet(QStringLiteral(
+                          "#unreadBar { background: %1; border-radius: 6px; }"
+                          "#unreadBar QLabel { color: %2; font-weight: 600; background: transparent; }"
+                          "#unreadBarButton { background: transparent; color: %2; border: none; padding: 2px 8px; font-weight: 600; }"
+                          "#unreadBarButton:hover { text-decoration: underline; }")
+                          .arg(accent.name(), accentText.name()));
+    adjustSize();
 }
 
 JumpToPresentBar::JumpToPresentBar(QWidget *parent) : QWidget(parent)

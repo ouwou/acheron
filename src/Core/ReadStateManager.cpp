@@ -506,9 +506,12 @@ void ReadStateManager::registerChannel(const Discord::Channel &channel, Snowflak
         resourceChannels.remove(channelId);
 }
 
-void ReadStateManager::registerPrivateChannel(const Discord::Channel &channel)
+void ReadStateManager::registerPrivateChannel(const Discord::Channel &channel, bool atReady)
 {
     Snowflake channelId = channel.id.get();
+
+    if (atReady && channel.lastMessageId.hasValue() && !channelReadStates.contains(channelId))
+        entryFor(channelId).lastMessageId = channel.lastMessageId.get(); // read up to here, locally only
 
     if (channel.isPendingMessageRequest())
         messageRequestChannels.insert(channelId);
@@ -727,14 +730,14 @@ void ReadStateManager::flushOutgoingAck(Snowflake channelId)
     emit ackRequested(channelId, messageId);
 }
 
-void ReadStateManager::setActiveChannel(Snowflake channelId)
+void ReadStateManager::setActiveChannel(Snowflake channelId, bool atBottom)
 {
     if (activeChannelId != channelId) {
         if (channelId.isValid())
             ackIdAtSelect.insert(channelId, effectiveAckId(channelId, guildForChannel(channelId)));
 
         activeChannelId = channelId;
-        activeChannelAtBottom = true;
+        activeChannelAtBottom = atBottom;
     }
 
     tryAckActiveChannel();

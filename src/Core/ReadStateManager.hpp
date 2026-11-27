@@ -33,7 +33,9 @@ public:
     void updateGuildDefaults(Snowflake guildId, Discord::MessageNotificationLevel defaultMessageNotifications, bool isCommunity);
     void registerChannelGuild(Snowflake channelId, Snowflake guildId);
     void registerChannel(const Discord::Channel &channel, Snowflake guildId);
-    void registerPrivateChannel(const Discord::Channel &channel);
+    // atReady: Discord sends no read state for a DM nothing new has come into since it was last
+    // read (often an old one), and the official client counts those as read, so Acheron does too
+    void registerPrivateChannel(const Discord::Channel &channel, bool atReady = false);
     void registerThreadParent(Snowflake threadId, Snowflake parentId);
     void removeGuild(Snowflake guildId);
 
@@ -65,7 +67,8 @@ public:
     void onUserGuildSettingsUpdate(const Discord::UserGuildSettings &settings);
     void onNotificationSettingsUpdate(const Discord::NotificationSettings &settings);
 
-    void setActiveChannel(Snowflake channelId);
+    // atBottom false when it opens scrolled up (at its unreads): nothing is marked read until it reaches the bottom
+    void setActiveChannel(Snowflake channelId, bool atBottom = true);
     void setActiveChannelAtBottom(bool atBottom);
     void markChannelAsRead(Snowflake channelId, Snowflake lastMessageId);
     void markChannelsAsRead(const QList<Snowflake> &channelIds);

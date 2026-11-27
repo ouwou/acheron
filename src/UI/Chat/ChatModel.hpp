@@ -253,6 +253,8 @@ public:
         StickersRole,
         IsPinnedRole,
         IsMentionedRole,
+        // the first message after the last one read when the channel was opened
+        UnreadMarkerRole,
     };
 
     void setAccount(Snowflake accountId);
@@ -289,6 +291,12 @@ public:
     [[nodiscard]] bool isSpoilerRevealed(Snowflake attachmentId) const;
 
     [[nodiscard]] bool isAtLatest() const { return atLatest; }
+
+    // the last message read when the channel was opened; the messages after it are its unreads
+    void setUnreadMarker(Snowflake lastReadId);
+    [[nodiscard]] Snowflake unreadMarker() const { return unreadMarkerAfter; }
+    // the first loaded message newer than messageId, or -1
+    [[nodiscard]] int firstRowAfter(Snowflake messageId) const;
 
     void setVideoNativeSize(Snowflake attachmentId, const QSize &size);
 
@@ -344,6 +352,7 @@ private:
     Snowflake currentGuildId = Snowflake::Invalid;
     Snowflake currentAccountId;
     bool atLatest = true;
+    Snowflake unreadMarkerAfter;
 
     AvatarUrlResolver avatarUrlResolver;
     DisplayNameResolver displayNameResolver;
