@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "UpdateChecker.hpp"
 
 #include <QApplication>
 #include <QClipboard>
@@ -214,6 +215,7 @@ MainWindow::MainWindow(Session *session, QWidget *parent) : QMainWindow(parent),
 {
     auto *captchaResolver = new BrowserCaptchaResolver(this, this);
     session->setCaptchaResolver(captchaResolver);
+    updateChecker = new UpdateChecker(this, [this] { quitFromTray(); });
 
     chatModel = new ChatModel(session->getImageManager(), this);
     channelTreeModel = new ChannelTreeModel(session, this);
@@ -2892,6 +2894,7 @@ void MainWindow::setupMenu()
     auto *settingsAction = new QAction(tr("&Settings"), this);
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettingsWindow);
     viewMenu->addAction(settingsAction);
+    viewMenu->addAction(updateChecker->checkAction()); // hidden when this build can't update itself
 
     viewMenu->addSeparator();
 
@@ -3015,6 +3018,7 @@ void MainWindow::applyCloseToTray()
 
     trayIcon = new TrayIcon(this);
     trayIcon->setToolTip(windowTitle());
+    trayIcon->addMenuAction(updateChecker->checkAction());
     connect(this, &QWidget::windowTitleChanged, trayIcon, &TrayIcon::setToolTip);
     connect(trayIcon, &TrayIcon::showWindowRequested, this, &MainWindow::showFromTray);
     connect(trayIcon, &TrayIcon::quitRequested, this, &MainWindow::quitFromTray);

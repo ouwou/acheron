@@ -48,6 +48,11 @@ TrayIcon::TrayIcon(QObject *parent) : QObject(parent), icon(applicationIcon())
     icon.show();
 }
 
+void TrayIcon::addMenuAction(QAction *action)
+{
+    menu.insertAction(menu.actions().value(1), action);
+}
+
 void TrayIcon::setToolTip(const QString &windowTitle)
 {
     icon.setToolTip(windowTitle.isEmpty() ? QGuiApplication::applicationDisplayName() : windowTitle);

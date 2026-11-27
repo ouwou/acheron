@@ -249,6 +249,7 @@ set(PROJECT_SOURCES
     src/Core/Media/ClipPlayer.cpp
     src/Core/Media/CurlAvio.cpp
     src/UI/MainWindow.cpp
+    src/UI/UpdateChecker.cpp
     src/UI/BrowserCaptchaResolver.cpp
     src/UI/TypingIndicator.cpp
     src/UI/SlowModeIndicator.cpp
@@ -796,6 +797,29 @@ else()
     target_link_libraries(${PROJECT_NAME} PRIVATE QtZlibCompat)
 endif()
 target_precompile_headers(${PROJECT_NAME} PUBLIC src/pch.h)
+
+# built-in updater for the nightly Windows builds (#169): acheron-updater sits next to acheron.exe and
+# installs newer builds from the repository's Actions artifacts; UI/UpdateChecker asks it. Builds made
+# outside GitHub Actions have no run to compare against, so they never offer updates.
+if(WIN32)
+    set(ACHERON_UPDATE_REPO "$ENV{GITHUB_REPOSITORY}")
+    if(NOT ACHERON_UPDATE_REPO)
+        set(ACHERON_UPDATE_REPO "ouwou/acheron")
+    endif()
+    add_executable(acheron-updater WIN32 src/Updater/main.cpp)
+    target_link_libraries(acheron-updater PRIVATE Qt::Core Qt::Network)
+    target_compile_definitions(acheron-updater PRIVATE ACHERON_UPDATE_REPO="${ACHERON_UPDATE_REPO}")
+    set_target_properties(acheron-updater PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    if(MSVC)
+        # windowless, so no console flashes up when Acheron runs it, but still a plain main()
+        target_compile_definitions(acheron-updater PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_link_options(acheron-updater PRIVATE /ENTRY:mainCRTStartup)
+    endif()
+    add_dependencies(${PROJECT_NAME} acheron-updater)
+    set_source_files_properties(src/UI/UpdateChecker.cpp PROPERTIES
+        SKIP_PRECOMPILE_HEADERS ON
+        COMPILE_DEFINITIONS "ACHERON_BUILD_RUN_ID=\"$ENV{GITHUB_RUN_ID}\";ACHERON_BUILD_SHA=\"$ENV{GITHUB_SHA}\"")
+endif()
 
 include(CheckCXXSymbolExists)
 get_target_property(_curl_incs CURL::libcurl INTERFACE_INCLUDE_DIRECTORIES)
