@@ -521,6 +521,12 @@ else()
     list(APPEND PROJECT_SOURCES vendor/qrcodegen/cpp/qrcodegen.cpp)
 endif()
 
+# the app icon, as IDI_ICON1: Qt's Windows platform plugin uses that resource for every window's icon
+# (title bar, taskbar, Alt+Tab) when none is set, and Explorer shows it for the .exe
+if(WIN32)
+    list(APPEND PROJECT_SOURCES acheron.rc)
+endif()
+
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE vendor/emoji-segmenter)
