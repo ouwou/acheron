@@ -808,7 +808,10 @@ void ChatView::onDataChanged(const QModelIndex &topLeft, const QModelIndex &bott
 
 void ChatView::setAtBottom(bool value)
 {
-    if (atBottom == value)
+    // being at the bottom is passed on even when it hasn't changed: opening a channel tells the read
+    // state it isn't at the bottom yet, while this view may still be at the bottom of the last one,
+    // and the unreads would then wait for a scroll (the receiver ignores a repeat)
+    if (atBottom == value && !value)
         return;
     atBottom = value;
     emit atBottomChanged(value);
