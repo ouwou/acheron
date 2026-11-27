@@ -1710,7 +1710,7 @@ Core::ChannelReadState ChannelTreeModel::computeNodeReadState(ChannelNode *node,
     case ChannelNode::Type::DMChannel:
         return readState->computeDMReadState(node->id);
     case ChannelNode::Type::Requests:
-        state.mentionCount = node->requestBadge; // counts toward the badges like Discord's
+        state.mentionCount = node->requestBadge; // shown on the row only, not added to Direct Messages
         return state;
     case ChannelNode::Type::Thread: {
         Snowflake categoryId = node->parent ? node->parent->parentId : Snowflake::Invalid;
@@ -1737,6 +1737,8 @@ void ChannelTreeModel::aggregateChildren(ChannelNode *node)
     node->mentionCount = node->self.mentionCount;
     node->countsForGuildUnread = node->self.countsForGuildUnread;
     for (const auto &child : node->children) {
+        if (child->type == ChannelNode::Type::Requests)
+            continue; // its badge is its own; Direct Messages counts unread messages
         if (child->isUnread && !child->isMuted)
             node->isUnread = true;
         if (child->countsForGuildUnread)
