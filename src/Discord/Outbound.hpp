@@ -2,6 +2,9 @@
 
 #include "Objects.hpp"
 
+#include <QJsonArray>
+#include <QJsonObject>
+
 namespace Acheron {
 namespace Discord {
 
@@ -242,6 +245,32 @@ inline UpdateVoiceState voiceStateUpdate(Core::Snowflake guildId, Core::Snowflak
     update.selfVideo = selfVideo;
     return update;
 }
+
+struct PresenceUpdateData : Core::JsonUtils::JsonObject
+{
+    Field<QString> status;
+    // empty for none
+    Field<QString> customStatus;
+
+    Core::OrderedJson toJson() const
+    {
+        Core::OrderedJson obj;
+        insert(obj, "status", status);
+        obj.insert("since", 0);
+        QJsonArray activities;
+        if (customStatus.hasValue() && !customStatus->isEmpty()) {
+            QJsonObject custom;
+            custom["name"] = QStringLiteral("Custom Status");
+            custom["type"] = 4;
+            custom["state"] = customStatus.get();
+            activities.append(custom);
+        }
+        obj.insert("activities", activities);
+        obj.insert("afk", false);
+        return obj;
+    }
+};
+using PresenceUpdate = Outbound<OpCode::PRESENCE_UPDATE, PresenceUpdateData>;
 
 struct ConnectCallData : Core::JsonUtils::JsonObject
 {

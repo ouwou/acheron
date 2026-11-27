@@ -15,6 +15,7 @@ class ProtoWriter
 public:
     void writeVarint(uint32_t fieldNumber, uint64_t value);
     void writeInt32(uint32_t fieldNumber, int32_t value);
+    void writeFixed64(uint32_t fieldNumber, uint64_t value);
     void writeString(uint32_t fieldNumber, const QString &value);
     void writeBytes(uint32_t fieldNumber, const QByteArray &value);
     void writePackedVarints(uint32_t fieldNumber, const QList<uint64_t> &values);
