@@ -17,6 +17,7 @@
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
+#include "Core/Audio/VoiceCues.hpp"
 #include "Core/Audio/VoiceSettings.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/StreamKey.hpp"
@@ -162,6 +163,7 @@ private:
     void feedAudioSourceToPipeline(quint32 source);
     void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
+    void playCue(VoiceCue cue);
     IAudioBackend *backend() const;
 
 private:
