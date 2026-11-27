@@ -173,6 +173,7 @@ VoicePage::VoicePage(QWidget *parent)
     auto *application = new QComboBox(advanced);
     application->addItem(tr("VoIP"), OPUS_APPLICATION_VOIP);
     application->addItem(tr("Audio"), OPUS_APPLICATION_AUDIO);
+    application->addItem(tr("Low latency (experimental)"), OPUS_APPLICATION_RESTRICTED_LOWDELAY);
     application->setCurrentIndex(qMax(0, application->findData(settings.opusApplication)));
     advancedForm->addRow(tr("Opus application"), application);
     connect(application, qOverload<int>(&QComboBox::activated), this, [this, application](int index) {
@@ -213,6 +214,94 @@ VoicePage::VoicePage(QWidget *parent)
     connect(packetLoss, &QSlider::valueChanged, this, [this](int percent) {
         settings.opusPacketLossPercent = percent;
         settings.saveAndApply();
+    });
+
+    auto *dtx = new QCheckBox(tr("Discontinuous transmission (DTX)"), advanced);
+    dtx->setChecked(settings.opusDtx);
+    advancedForm->addRow(dtx);
+    connect(dtx, &QCheckBox::toggled, this, [this](bool enabled) {
+        settings.opusDtx = enabled;
+        settings.saveAndApply();
+    });
+
+    auto *bitrateMode = new QComboBox(advanced);
+    bitrateMode->addItem(tr("Variable"), VoiceSettings::BITRATE_MODE_VBR);
+    bitrateMode->addItem(tr("Constrained variable"), VoiceSettings::BITRATE_MODE_CONSTRAINED_VBR);
+    bitrateMode->addItem(tr("Constant"), VoiceSettings::BITRATE_MODE_CBR);
+    bitrateMode->setCurrentIndex(qMax(0, bitrateMode->findData(settings.opusBitrateMode)));
+    advancedForm->addRow(tr("Bitrate mode"), bitrateMode);
+    connect(bitrateMode, qOverload<int>(&QComboBox::activated), this, [this, bitrateMode](int index) {
+        settings.opusBitrateMode = bitrateMode->itemData(index).toInt();
+        settings.saveAndApply();
+    });
+
+    auto *maxBandwidth = new QComboBox(advanced);
+    maxBandwidth->addItem(tr("Full band (20 kHz)"), OPUS_BANDWIDTH_FULLBAND);
+    maxBandwidth->addItem(tr("Super-wideband (12 kHz)"), OPUS_BANDWIDTH_SUPERWIDEBAND);
+    maxBandwidth->addItem(tr("Wideband (8 kHz)"), OPUS_BANDWIDTH_WIDEBAND);
+    maxBandwidth->addItem(tr("Medium-band (6 kHz)"), OPUS_BANDWIDTH_MEDIUMBAND);
+    maxBandwidth->addItem(tr("Narrowband (4 kHz)"), OPUS_BANDWIDTH_NARROWBAND);
+    maxBandwidth->setCurrentIndex(qMax(0, maxBandwidth->findData(settings.opusMaxBandwidth)));
+    advancedForm->addRow(tr("Max bandwidth"), maxBandwidth);
+    connect(maxBandwidth, qOverload<int>(&QComboBox::activated), this, [this, maxBandwidth](int index) {
+        settings.opusMaxBandwidth = maxBandwidth->itemData(index).toInt();
+        settings.saveAndApply();
+    });
+
+    // the 20 ms capture packetization cannot change here, so only frame sizes matching it can be forced
+    auto *frameDuration = new QComboBox(advanced);
+    frameDuration->addItem(tr("Default"), OPUS_FRAMESIZE_ARG);
+    frameDuration->addItem(tr("20 ms (forced)"), OPUS_FRAMESIZE_20_MS);
+    frameDuration->setCurrentIndex(qMax(0, frameDuration->findData(settings.opusFrameDuration)));
+    advancedForm->addRow(tr("Frame duration"), frameDuration);
+    connect(frameDuration, qOverload<int>(&QComboBox::activated), this, [this, frameDuration](int index) {
+        settings.opusFrameDuration = frameDuration->itemData(index).toInt();
+        settings.saveAndApply();
+    });
+
+    auto *lsbDepth = new QComboBox(advanced);
+    lsbDepth->addItem(tr("16 bit"), 16);
+    lsbDepth->addItem(tr("12 bit"), 12);
+    lsbDepth->addItem(tr("24 bit"), 24);
+    lsbDepth->setCurrentIndex(qMax(0, lsbDepth->findData(settings.opusLsbDepth)));
+    advancedForm->addRow(tr("Input bit depth"), lsbDepth);
+    connect(lsbDepth, qOverload<int>(&QComboBox::activated), this, [this, lsbDepth](int index) {
+        settings.opusLsbDepth = lsbDepth->itemData(index).toInt();
+        settings.saveAndApply();
+    });
+
+    auto *resetCodec = new QPushButton(tr("Reset to Defaults"), advanced);
+    resetCodec->setToolTip(tr("Restores the codec options above to their defaults."));
+    advancedForm->addRow(resetCodec);
+
+    auto refreshCodecWidgets = [this, application, bitrate, complexity, signal, fec, packetLoss, dtx, bitrateMode, maxBandwidth, frameDuration, lsbDepth] {
+        application->setCurrentIndex(qMax(0, application->findData(settings.opusApplication)));
+        bitrate->setValue(settings.opusBitrateKbps);
+        complexity->setValue(settings.opusComplexity);
+        signal->setCurrentIndex(qMax(0, signal->findData(settings.opusSignalType)));
+        fec->setChecked(settings.opusFec);
+        packetLoss->setValue(settings.opusPacketLossPercent);
+        dtx->setChecked(settings.opusDtx);
+        bitrateMode->setCurrentIndex(qMax(0, bitrateMode->findData(settings.opusBitrateMode)));
+        maxBandwidth->setCurrentIndex(qMax(0, maxBandwidth->findData(settings.opusMaxBandwidth)));
+        frameDuration->setCurrentIndex(qMax(0, frameDuration->findData(settings.opusFrameDuration)));
+        lsbDepth->setCurrentIndex(qMax(0, lsbDepth->findData(settings.opusLsbDepth)));
+    };
+    connect(resetCodec, &QPushButton::clicked, this, [this, refreshCodecWidgets] {
+        const VoiceSettings defaults;
+        settings.opusApplication = defaults.opusApplication;
+        settings.opusBitrateKbps = defaults.opusBitrateKbps;
+        settings.opusComplexity = defaults.opusComplexity;
+        settings.opusSignalType = defaults.opusSignalType;
+        settings.opusFec = defaults.opusFec;
+        settings.opusPacketLossPercent = defaults.opusPacketLossPercent;
+        settings.opusDtx = defaults.opusDtx;
+        settings.opusBitrateMode = defaults.opusBitrateMode;
+        settings.opusMaxBandwidth = defaults.opusMaxBandwidth;
+        settings.opusFrameDuration = defaults.opusFrameDuration;
+        settings.opusLsbDepth = defaults.opusLsbDepth;
+        settings.saveAndApply();
+        refreshCodecWidgets();
     });
 
     layout->addWidget(makeAdvancedToggle(advanced, this));
