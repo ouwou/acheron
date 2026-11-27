@@ -218,10 +218,15 @@ ClientInstance::ClientInstance(const AccountInfo &info,
 
         forumManager->loadFromReady(ready.guilds.get());
 
+        messageRequests.clear();
         if (ready.privateChannels.hasValue()) {
-            for (const auto &channel : ready.privateChannels.get())
+            for (const auto &channel : ready.privateChannels.get()) {
                 readStateManager->registerPrivateChannel(channel);
+                if (channel.isMessageRequest.valueOr(false))
+                    messageRequests.insert(channel.id.get());
+            }
         }
+        emit messageRequestsChanged();
 
         emit detailsUpdated(account);
         emit this->ready(ready);
@@ -663,6 +668,7 @@ void ClientInstance::onChannelCreated(const Discord::ChannelCreate &event)
 
     if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
         readStateManager->registerPrivateChannel(channel);
+        noteMessageRequest(channelId, channel.isMessageRequest.valueOr(false));
     } else {
         if (channel.guildId.hasValue())
             readStateManager->registerChannel(channel, channel.guildId.get());
@@ -705,6 +711,8 @@ void ClientInstance::onChannelUpdated(const Discord::ChannelUpdate &event)
         emit readStateChanged(channelId);
     } else if (channel.type == Discord::ChannelType::DM || channel.type == Discord::ChannelType::GROUP_DM) {
         readStateManager->registerPrivateChannel(channel);
+        if (channel.isMessageRequest.hasValue())
+            noteMessageRequest(channelId, channel.isMessageRequest.get());
         emit readStateChanged(channelId);
     }
 
@@ -732,8 +740,34 @@ void ClientInstance::onChannelDeleted(const Discord::ChannelDelete &event)
 
     permissionManager->invalidateChannelCache(channelId);
     forumParentCache.remove(channelId);
+    noteMessageRequest(channelId, false);
 
     emit channelDeleted(event);
+}
+
+void ClientInstance::noteMessageRequest(Snowflake channelId, bool pending)
+{
+    if (pending == messageRequests.contains(channelId))
+        return;
+    if (pending)
+        messageRequests.insert(channelId);
+    else
+        messageRequests.remove(channelId);
+    emit messageRequestsChanged();
+}
+
+QList<Snowflake> ClientInstance::messageRequestChannels() const
+{
+    return messageRequests.values();
+}
+
+ClientInstance::RequestCounts ClientInstance::requestCounts() const
+{
+    RequestCounts counts;
+    counts.messages = int(messageRequests.size());
+    for (const auto &rel : relationshipManager->pendingRequests())
+        (rel.type.get() == Discord::RelationshipType::INCOMING_REQUEST ? counts.incoming : counts.outgoing)++;
+    return counts;
 }
 
 bool ClientInstance::isForumParent(Snowflake parentId)

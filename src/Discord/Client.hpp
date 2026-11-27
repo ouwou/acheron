@@ -244,6 +244,14 @@ public:
     void modifyGuild(Snowflake guildId, const GuildEdit &edit, const QMap<QString, QByteArray> &originalMd5s, ActionCallback callback);
     void deleteGuild(Snowflake guildId, ActionCallback callback);
 
+    // friend requests: accepting an incoming one makes you friends; removing ignores an incoming
+    // request, cancels an outgoing one, or unfriends
+    void acceptFriendRequest(Snowflake userId, ActionCallback callback);
+    void removeRelationship(Snowflake userId, ActionCallback callback);
+    // DMs from people you don't share a friendship with can arrive as message requests
+    void acceptMessageRequest(Snowflake channelId, ActionCallback callback);
+    void rejectMessageRequest(Snowflake channelId, ActionCallback callback);
+
     void createRole(Snowflake guildId, ResultCallback<Role> callback);
     void modifyRole(Snowflake guildId, Snowflake roleId, const RoleEdit &edit, ActionCallback callback);
     void modifyRolePositions(Snowflake guildId, const QList<QPair<Snowflake, int>> &positions, ActionCallback callback);

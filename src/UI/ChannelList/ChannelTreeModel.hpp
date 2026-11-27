@@ -65,6 +65,7 @@ public:
 
     void populateFromReady(const Discord::Ready &ready);
     [[nodiscard]] bool listsGuildsOrPrivateChannels(Snowflake accountId) const;
+    void refreshRequests(Snowflake accountId); // add, update or remove the Requests row
 
     static ChannelNode *getAccountNodeFor(ChannelNode *node);
     static ChannelNode *findGuildNode(ChannelNode *node);

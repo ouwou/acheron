@@ -1207,6 +1207,30 @@ void Client::reopenThread(Snowflake threadId, ThreadReopenCallback callback)
     });
 }
 
+void Client::acceptFriendRequest(Snowflake userId, ActionCallback callback)
+{
+    httpClient->send(HttpClient::Method::PUT, "/users/@me/relationships/" + QString::number(userId), "{}", {},
+                     actionHandler("Accepting friend request", std::move(callback)));
+}
+
+void Client::removeRelationship(Snowflake userId, ActionCallback callback)
+{
+    httpClient->send(HttpClient::Method::DELETE_, "/users/@me/relationships/" + QString::number(userId), {}, {},
+                     actionHandler("Removing relationship", std::move(callback)));
+}
+
+void Client::acceptMessageRequest(Snowflake channelId, ActionCallback callback)
+{
+    httpClient->send(HttpClient::Method::PUT, "/channels/" + QString::number(channelId) + "/recipients/@me",
+                     R"({"consent_status":2})", {}, actionHandler("Accepting message request", std::move(callback)));
+}
+
+void Client::rejectMessageRequest(Snowflake channelId, ActionCallback callback)
+{
+    httpClient->send(HttpClient::Method::DELETE_, "/channels/" + QString::number(channelId) + "/recipients/@me", {}, {},
+                     actionHandler("Ignoring message request", std::move(callback)));
+}
+
 void Client::ackPins(Snowflake channelId, PinCallback callback)
 {
     httpClient->send(HttpClient::Method::POST, "/channels/" + QString::number(channelId) + "/pins/ack", {}, {}, actionHandler("Acking pins", std::move(callback)));

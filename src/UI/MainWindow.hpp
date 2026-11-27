@@ -30,6 +30,7 @@ struct TypingStart;
 }
 namespace UI {
 class ChatView;
+class RequestsPage;
 class ChatModel;
 class MemberSearch;
 class ForumBrowser;
@@ -165,7 +166,8 @@ private:
     enum class ViewMode { TextChannel,
                           ForumBrowse,
                           ForumSplit,
-                          ThreadPopout };
+                          ThreadPopout,
+                          Requests };
     void setViewMode(ViewMode mode);
     void setMemberListVisible(bool visible);
     void updateMemberListVisibility();
@@ -179,6 +181,8 @@ private:
 
     void openThreadBrowser();
     void navigateToChannel(Core::Snowflake channelId);
+    void showRequestsPage(ChannelNode *node);
+    void showRequestsPage(Core::Snowflake accountId);
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
     void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
     void openPinnedMessages();
@@ -277,6 +281,7 @@ private:
     SettingsWindow *settingsWindow = nullptr;
     TrayIcon *trayIcon = nullptr;
     QHash<QPair<Core::Snowflake, Core::Snowflake>, QPointer<GuildSettingsWindow>> guildSettingsWindows;
+    RequestsPage *requestsPage = nullptr;
 
 private slots:
     void openAccountsWindow();

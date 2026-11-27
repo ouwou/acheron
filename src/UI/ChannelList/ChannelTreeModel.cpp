@@ -1,6 +1,7 @@
 #include "ChannelTreeModel.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <functional>
 #include <utility>
 
@@ -446,8 +447,8 @@ void ChannelTreeModel::populateFromReady(const Discord::Ready &ready)
         const auto &dms = ready.privateChannels.get();
 
         QModelIndex dmHeaderIndex = indexForNode(dmHeader);
-        int dmStartRow = 0;
-        int dmEndRow = dms.size() - 1;
+        const int dmStartRow = static_cast<int>(dmHeader->children.size()); // after the Requests row, if any
+        const int dmEndRow = dmStartRow + static_cast<int>(dms.size()) - 1;
 
         beginInsertRows(dmHeaderIndex, dmStartRow, dmEndRow);
         for (const auto &channel : dms) {
@@ -502,7 +503,9 @@ bool ChannelTreeModel::listsGuildsOrPrivateChannels(Snowflake accountId) const
         return false;
 
     return std::any_of(accNode->children.begin(), accNode->children.end(), [](const auto &child) {
-        return child->type != ChannelNode::Type::DMHeader || !child->children.empty();
+        return child->type != ChannelNode::Type::DMHeader ||
+               std::any_of(child->children.begin(), child->children.end(),
+                           [](const auto &dm) { return dm->type != ChannelNode::Type::Requests; });
     });
 }
 
@@ -1706,6 +1709,9 @@ Core::ChannelReadState ChannelTreeModel::computeNodeReadState(ChannelNode *node,
         return state;
     case ChannelNode::Type::DMChannel:
         return readState->computeDMReadState(node->id);
+    case ChannelNode::Type::Requests:
+        state.mentionCount = node->requestBadge; // shown on the row only, not added to Direct Messages
+        return state;
     case ChannelNode::Type::Thread: {
         Snowflake categoryId = node->parent ? node->parent->parentId : Snowflake::Invalid;
         if (node->parent && node->parent->type == ChannelNode::Type::Forum)
@@ -1731,6 +1737,8 @@ void ChannelTreeModel::aggregateChildren(ChannelNode *node)
     node->mentionCount = node->self.mentionCount;
     node->countsForGuildUnread = node->self.countsForGuildUnread;
     for (const auto &child : node->children) {
+        if (child->type == ChannelNode::Type::Requests)
+            continue; // its badge is its own; Direct Messages counts unread messages
         if (child->isUnread && !child->isMuted)
             node->isUnread = true;
         if (child->countsForGuildUnread)
@@ -1759,6 +1767,54 @@ void ChannelTreeModel::updateNodeAggregates(ChannelNode *node)
             return;
     }
     publishTotalMentionCount();
+}
+
+void ChannelTreeModel::refreshRequests(Snowflake accountId)
+{
+    ChannelNode *accNode = accountNodes.value(accountId, nullptr);
+    auto *instance = session->client(accountId);
+    if (!accNode || !instance)
+        return;
+    ChannelNode *dmHeader = nullptr;
+    for (const auto &child : accNode->children)
+        if (child->type == ChannelNode::Type::DMHeader)
+            dmHeader = child.get();
+    if (!dmHeader)
+        return;
+
+    auto &kids = dmHeader->children;
+    const auto it = std::find_if(kids.begin(), kids.end(), [](const auto &n) { return n->type == ChannelNode::Type::Requests; });
+    const auto counts = instance->requestCounts();
+    const QModelIndex headerIndex = indexForNode(dmHeader);
+
+    if (!counts.any()) {
+        if (it == kids.end())
+            return;
+        const int row = static_cast<int>(it - kids.begin());
+        beginRemoveRows(headerIndex, row, row);
+        kids.erase(it);
+        endRemoveRows();
+        updateNodeAggregates(dmHeader);
+        return;
+    }
+
+    ChannelNode *node = it != kids.end() ? it->get() : nullptr;
+    if (!node) {
+        auto created = std::make_unique<ChannelNode>();
+        created->type = ChannelNode::Type::Requests;
+        created->name = tr("Requests");
+        created->lastMessageId = Snowflake(std::numeric_limits<quint64>::max()); // DM sorting keeps it first
+        created->parent = dmHeader;
+        beginInsertRows(headerIndex, 0, 0);
+        node = kids.insert(kids.begin(), std::move(created))->get();
+        endInsertRows();
+    }
+
+    node->requestBadge = counts.incoming + counts.messages;
+    Core::ChannelReadState before = shownReadState(node);
+    setSelfReadState(node, computeNodeReadState(node, instance));
+    notifyIfReadStateChanged(node, before);
+    updateNodeAggregates(dmHeader);
 }
 
 void ChannelTreeModel::publishTotalMentionCount()

@@ -26,6 +26,7 @@ public:
 
     [[nodiscard]] bool isFriend(Snowflake userId) const;
     [[nodiscard]] bool isBlockedOrIgnored(Snowflake userId) const;
+    [[nodiscard]] QList<Discord::Relationship> pendingRequests() const; // incoming and outgoing friend requests
 
 public slots:
     void onRelationshipAdded(const Discord::Relationship &rel);

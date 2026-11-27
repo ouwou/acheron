@@ -23,6 +23,7 @@ struct TabEntry
     QUrl iconUrl;
     bool isDm = false;
     bool isForum = false;
+    bool isRequests = false; // the account's friend and message requests page
 
     bool operator==(const TabEntry &o) const { return channelId == o.channelId; }
 };

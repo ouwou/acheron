@@ -58,6 +58,7 @@
 #include "Dialogs/ChannelTopicPopup.hpp"
 #include "Dialogs/ReactionsPopup.hpp"
 #include "Dialogs/ConfirmPopup.hpp"
+#include "Requests/RequestsPage.hpp"
 #include "Dialogs/UserProfilePopup.hpp"
 #include "StreamPreviewPopup.hpp"
 #ifdef ACHERON_HAVE_VIDEO
@@ -383,6 +384,10 @@ void MainWindow::onChannelSelectionChanged(const QModelIndex &current, const QMo
     QModelIndex sourceIndex = channelFilterProxy->mapToSource(current);
     auto node = static_cast<ChannelNode *>(sourceIndex.internalPointer());
 
+    if (node && node->type == ChannelNode::Type::Requests) {
+        showRequestsPage(node);
+        return;
+    }
     if (!node || !node->opensChat())
         return;
 
@@ -693,9 +698,19 @@ void MainWindow::setViewMode(ViewMode mode)
 
     if (currentInstance)
         currentInstance->forums()->setCurrentForum(
-                mode == ViewMode::TextChannel ? Core::Snowflake() : currentForumId);
+                mode == ViewMode::TextChannel || mode == ViewMode::Requests ? Core::Snowflake() : currentForumId);
+
+    if (requestsPage)
+        requestsPage->setVisible(mode == ViewMode::Requests);
+    if (callSplitter)
+        callSplitter->setVisible(mode != ViewMode::Requests);
 
     switch (mode) {
+    case ViewMode::Requests:
+        forumBrowser->setVisible(false);
+        threadPane->setVisible(false);
+        threadHeader->setVisible(false);
+        break;
     case ViewMode::TextChannel:
         forumBrowser->setVisible(false);
         threadPane->setVisible(true);
@@ -986,6 +1001,13 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                                      tr("Could not leave <b>%1</b>.<br>Error: %2")
                                              .arg(guildName.toHtmlEscaped(), error));
             });
+
+    // the Requests row under Direct Messages, for every account in the tree; tied to the tree
+    // model rather than this window, which drops its relationship connections on account switches
+    const Snowflake requestsAccountId = instance->accountId();
+    auto refreshRequests = [model = channelTreeModel, requestsAccountId] { model->refreshRequests(requestsAccountId); };
+    connect(instance, &Core::ClientInstance::messageRequestsChanged, channelTreeModel, refreshRequests);
+    connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, channelTreeModel, refreshRequests);
 
     connect(instance, &Core::ClientInstance::channelCreated, this,
             [this, instance](const Discord::ChannelCreate &event) {
@@ -1566,6 +1588,19 @@ void MainWindow::setupUi()
     centerSplitter = new QSplitter(Qt::Horizontal, rightSideWidget);
     centerSplitter->addWidget(forumBrowser);
     centerSplitter->addWidget(threadPane);
+    requestsPage = new RequestsPage(rightSideWidget);
+    requestsPage->setVisible(false);
+    // View opens the request in a new tab, so the Requests tab stays put to act on it afterwards
+    connect(requestsPage, &RequestsPage::openChannelRequested, this, [this](Snowflake channelId) {
+        if (!currentInstance)
+            return;
+        ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, currentInstance->accountId());
+        ChannelNode *accountNode = node ? channelTreeModel->getAccountNodeFor(node) : nullptr;
+        if (accountNode)
+            tabBar->openNewTab(makeTabEntry(node, accountNode));
+        else
+            navigateToChannel(channelId);
+    });
     centerSplitter->setStretchFactor(0, 1);
     centerSplitter->setStretchFactor(1, 1);
     centerSplitter->setSizes({ 350, 550 });
@@ -1592,6 +1627,9 @@ void MainWindow::setupUi()
     });
 
     rightLayout->addWidget(callSplitter, 1);
+    // takes the place of the chat area (and the splitter that holds it) while it's shown, so the
+    // splitter never has to size a pane for it
+    rightLayout->addWidget(requestsPage, 1);
 
     memberListView = new MemberListView(central);
     memberListView->setModel(memberListModel);
@@ -2458,6 +2496,16 @@ void MainWindow::switchToTabEntry(const TabEntry &entry)
 
 void MainWindow::activateChannel(const TabEntry &entry)
 {
+    if (entry.isRequests) {
+        {
+            QSignalBlocker blocker(channelTree->selectionModel());
+            channelTree->selectionModel()->clearSelection();
+            channelTree->selectionModel()->clearCurrentIndex();
+        }
+        showRequestsPage(entry.accountId);
+        return;
+    }
+
     channelTreeModel->clearTemporaryThread(entry.channelId);
 
     // update the proxy selected channel so the delegate highlights correctly,
@@ -2690,6 +2738,7 @@ void MainWindow::onSessionReady(const Discord::Ready &ready)
     }
 
     channelTreeModel->populateFromReady(ready);
+    channelTreeModel->refreshRequests(accountId);
     if (channelListMode == ChannelListMode::Tree)
         channelTree->performDefaultExpansion();
     applyTreeState();
@@ -2774,6 +2823,7 @@ void MainWindow::saveWindowState()
         settings.setValue("iconUrl", entry.iconUrl);
         settings.setValue("isDm", entry.isDm);
         settings.setValue("isForum", entry.isForum);
+        settings.setValue("isRequests", entry.isRequests);
     }
     settings.endArray();
     settings.setValue("layout/activeTab", newActive);
@@ -2868,6 +2918,7 @@ void MainWindow::restoreWindowState()
         entry.iconUrl = settings.value("iconUrl").toUrl();
         entry.isDm = settings.value("isDm").toBool();
         entry.isForum = settings.value("isForum").toBool();
+        entry.isRequests = settings.value("isRequests").toBool();
         if (entry.channelId.isValid())
             entries.append(entry);
     }
@@ -3610,6 +3661,37 @@ void MainWindow::openThreadBrowser()
     threadBrowser->configure(currentInstance, threadBrowserChannelId, name);
     threadBrowser->show();
     threadBrowser->raise();
+}
+
+void MainWindow::showRequestsPage(ChannelNode *node)
+{
+    ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
+    if (accountNode)
+        showRequestsPage(accountNode->id);
+}
+
+void MainWindow::showRequestsPage(Core::Snowflake accountId)
+{
+    ClientInstance *instance = session->client(accountId);
+    if (!instance)
+        return;
+    if (instance != currentInstance)
+        switchActiveInstance(instance);
+
+    // nothing is being read while the requests are shown
+    instance->readState()->setActiveChannel(Snowflake::Invalid);
+    channelFilterProxy->setSelectedChannel(Snowflake::Invalid, accountId);
+    channelTree->viewport()->update();
+    setChannelToolbarTargets(Snowflake::Invalid, Snowflake::Invalid);
+    requestsPage->setInstance(instance);
+    setViewMode(ViewMode::Requests);
+
+    TabEntry entry;
+    entry.channelId = accountId; // one Requests tab per account; never a channel id
+    entry.accountId = accountId;
+    entry.name = tr("Requests");
+    entry.isRequests = true;
+    tabBar->updateCurrentTab(entry);
 }
 
 void MainWindow::navigateToChannel(Core::Snowflake channelId)
