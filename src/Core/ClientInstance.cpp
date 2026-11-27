@@ -1364,6 +1364,10 @@ void ClientInstance::onMessageCreated(const Discord::Message &msg)
     readStateManager->handleMessageCreated(channelId, messageId, fromSelf, isMention);
 
     emit channelLastMessageUpdated(channelId, messageId);
+
+    // for private channels, isMessageMentioningMe is the official client's rule for a DM that notifies
+    if (isMention && !msg.guildId.hasValue())
+        emit directMessageReceived(msg);
 }
 
 bool ClientInstance::isMessageMentioningMe(const Discord::Message &msg) const

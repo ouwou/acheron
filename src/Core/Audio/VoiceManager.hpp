@@ -88,6 +88,10 @@ public:
     void setEncodableVideoCodecs(const QList<Discord::Voice::VideoCodec> &codecs);
 
     // as the official client: deafening also mutes, and unmuting a deafened account undeafens it
+    // a sound for something outside the call (a new direct message): mixed into the call when in one,
+    // otherwise played straight to the output device; nothing while deafened
+    void playAlertSound(VoiceCue cue);
+
     void toggleSelfMute();
     void toggleSelfDeafen();
     // without telling the gateway, which the caller is about to
@@ -167,7 +171,8 @@ private:
     void populateParticipantsFromCache();
     void playCue(VoiceCue cue);
     void playDepartureCue();
-    void stopDepartureCue();
+    void playOnDevice(VoiceCue cue);
+    void stopDeviceCue();
     IAudioBackend *backend() const;
 
 private:
@@ -212,9 +217,10 @@ private:
     Discord::Voice::VoiceClient *voiceClient = nullptr;
     AudioPipeline *audioPipeline = nullptr;
 
-    // our own leave chime, fed to the output device after the call's audio is gone
-    QTimer *departureTimer = nullptr;
-    int departureFrame = 0;
+    // a chime fed straight to the output device while there's no call to mix it into (our own leave, a new message)
+    QTimer *deviceCueTimer = nullptr;
+    VoiceCue deviceCue = VoiceCue::Leave;
+    int deviceCueFrame = 0;
 
     struct AudioSource
     {

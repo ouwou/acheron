@@ -44,8 +44,16 @@ TrayIcon::TrayIcon(QObject *parent) : QObject(parent), icon(applicationIcon())
             emit showWindowRequested();
     });
 
+    connect(&icon, &QSystemTrayIcon::messageClicked, this, &TrayIcon::messageClicked);
+
     setToolTip({});
     icon.show();
+}
+
+void TrayIcon::showMessage(const QString &title, const QString &body)
+{
+    static constexpr int SHOWN_MS = 8000;
+    icon.showMessage(title, body, icon.icon(), SHOWN_MS);
 }
 
 void TrayIcon::setToolTip(const QString &windowTitle)

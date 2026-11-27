@@ -59,6 +59,24 @@ GeneralPage::GeneralPage(QWidget *parent)
         emit closeToTrayChanged();
     });
 
+    auto *dmPopupCheckbox = new QCheckBox(tr("Show a notification for new direct messages"), this);
+    dmPopupCheckbox->setChecked(QSettings().value("notifications/dm_popup", true).toBool());
+    dmPopupCheckbox->setEnabled(QSystemTrayIcon::isSystemTrayAvailable());
+    layout->addWidget(dmPopupCheckbox);
+    connect(dmPopupCheckbox, &QCheckBox::toggled, this, [this](bool checked) {
+        QSettings().setValue("notifications/dm_popup", checked);
+        // notifications are shown through the tray icon
+        emit closeToTrayChanged();
+    });
+
+#ifndef ACHERON_NO_VOICE
+    auto *dmSoundCheckbox = new QCheckBox(tr("Play a sound for new direct messages"), this);
+    dmSoundCheckbox->setChecked(QSettings().value("notifications/dm_sound", true).toBool());
+    layout->addWidget(dmSoundCheckbox);
+    connect(dmSoundCheckbox, &QCheckBox::toggled, this,
+            [](bool checked) { QSettings().setValue("notifications/dm_sound", checked); });
+#endif
+
     animateEmojiCheckbox = new QCheckBox(tr("Animate emoji"), this);
     animateEmojiCheckbox->setChecked(QSettings().value("chat/animate_emoji", true).toBool());
     layout->addWidget(animateEmojiCheckbox);
