@@ -1762,11 +1762,21 @@ struct UserProfile : Core::JsonUtils::JsonObject
     Field<GuildMemberProfile, true> guildMemberProfile;
     Field<QList<UserProfileBadge>> badges;
     Field<QString, true, true> legacyUsername;
+    // the server tag shown beside the name (user.primary_guild), when the user displays one
+    QString guildTag;
+    Core::Snowflake guildTagGuildId;
+    QString guildTagBadge;
 
     static UserProfile fromJson(const QJsonObject &obj)
     {
         UserProfile p;
         get(obj, "user", p.user);
+        const QJsonObject tag = obj.value("user").toObject().value("primary_guild").toObject();
+        if (tag.value("identity_enabled").toBool() && !tag.value("tag").toString().isEmpty()) {
+            p.guildTag = tag.value("tag").toString();
+            p.guildTagGuildId = Core::Snowflake(tag.value("identity_guild_id").toString().toULongLong());
+            p.guildTagBadge = tag.value("badge").toString();
+        }
         get(obj, "user_profile", p.userProfile);
         get(obj, "premium_type", p.premiumType);
         get(obj, "premium_since", p.premiumSince);
