@@ -999,11 +999,12 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
                                              .arg(guildName.toHtmlEscaped(), error));
             });
 
-    // the Requests row under Direct Messages, for every account in the tree
-    connect(instance, &Core::ClientInstance::messageRequestsChanged, this,
-            [this, instance] { channelTreeModel->refreshRequests(instance->accountId()); });
-    connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, this,
-            [this, instance] { channelTreeModel->refreshRequests(instance->accountId()); });
+    // the Requests row under Direct Messages, for every account in the tree; tied to the tree
+    // model rather than this window, which drops its relationship connections on account switches
+    const Snowflake requestsAccountId = instance->accountId();
+    auto refreshRequests = [model = channelTreeModel, requestsAccountId] { model->refreshRequests(requestsAccountId); };
+    connect(instance, &Core::ClientInstance::messageRequestsChanged, channelTreeModel, refreshRequests);
+    connect(instance->relationships(), &Core::RelationshipManager::relationshipChanged, channelTreeModel, refreshRequests);
 
     connect(instance, &Core::ClientInstance::channelCreated, this,
             [this, instance](const Discord::ChannelCreate &event) {
