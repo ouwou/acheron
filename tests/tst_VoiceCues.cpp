@@ -59,6 +59,7 @@ private slots:
     void testJoinRisesLeaveFalls();
     void testSameFramesEachTime();
     void testMessageIsHigher();
+    void testMessageIsPlucked();
 };
 
 void TestVoiceCues::testFrameFormat_data()
@@ -155,7 +156,26 @@ void TestVoiceCues::testMessageIsHigher()
     // told apart from a join by pitch: its first note is above the join's last
     const std::vector<int16_t> join = leftChannel(voiceCueFrames(VoiceCue::Join));
     const std::vector<int16_t> message = leftChannel(voiceCueFrames(VoiceCue::Message));
-    QVERIFY(pitchBetween(message, 0.005, 0.05) > pitchBetween(join, 0.15, 0.22));
+    QVERIFY(pitchBetween(message, 0.005, 0.04) > pitchBetween(join, 0.15, 0.22));
+}
+
+void TestVoiceCues::testMessageIsPlucked()
+{
+    // and by shape: three short plucks, so it goes nearly quiet between notes where a join keeps ringing
+    const std::vector<int16_t> message = leftChannel(voiceCueFrames(VoiceCue::Message));
+    const std::vector<int16_t> join = leftChannel(voiceCueFrames(VoiceCue::Join));
+    auto peakBetween = [](const std::vector<int16_t> &samples, double from, double to) {
+        int peak = 0;
+        for (auto i = static_cast<size_t>(from * AUDIO_SAMPLE_RATE); i < static_cast<size_t>(to * AUDIO_SAMPLE_RATE) && i < samples.size(); i++)
+            peak = std::max(peak, std::abs(static_cast<int>(samples[i])));
+        return peak;
+    };
+    // just before the second pluck, against its own start
+    QVERIFY(peakBetween(message, 0.045, 0.054) * 4 < peakBetween(message, 0.0, 0.02));
+    // a join at the same moment is still ringing
+    QVERIFY(peakBetween(join, 0.045, 0.054) * 4 > peakBetween(join, 0.0, 0.02));
+    // and it's over sooner
+    QVERIFY(voiceCueFrames(VoiceCue::Message).size() < voiceCueFrames(VoiceCue::Join).size());
 }
 
 QTEST_GUILESS_MAIN(TestVoiceCues)
