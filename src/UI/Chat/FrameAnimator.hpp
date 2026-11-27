@@ -26,7 +26,18 @@ class ChatView;
 enum class AnimatedKind {
     Emoji,
     Sticker,
+    Avatar,
 };
+
+// when animated avatars play (#119); Never keeps them still
+enum class AvatarAnimation {
+    OnHover,
+    Always,
+    Never,
+};
+
+[[nodiscard]] AvatarAnimation avatarAnimationSetting(); // chat/avatar_animation
+
 
 class FrameAnimator : public QObject
 {
@@ -39,6 +50,8 @@ public:
     [[nodiscard]] bool emojiEnabled() const { return animateEmoji; }
     void setStickersEnabled(bool enabled);
     [[nodiscard]] bool stickersEnabled() const { return animateStickers; }
+    void setAvatarAnimation(AvatarAnimation mode);
+    [[nodiscard]] AvatarAnimation avatarAnimation() const { return avatars; }
     void setViewVisible(bool visible);
 
     void attachModel(QAbstractItemModel *model);
@@ -129,6 +142,7 @@ private:
 
     bool animateEmoji = true;
     bool animateStickers = true;
+    AvatarAnimation avatars = AvatarAnimation::OnHover;
     bool focused = true;
     bool viewVisible = false;
     bool wasRunning = false;

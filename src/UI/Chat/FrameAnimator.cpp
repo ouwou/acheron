@@ -2,6 +2,7 @@
 
 #include <QAbstractItemModel>
 #include <QGuiApplication>
+#include <QSettings>
 
 #include <algorithm>
 #include <limits>
@@ -47,6 +48,26 @@ void FrameAnimator::setEmojiEnabled(bool value)
 void FrameAnimator::setStickersEnabled(bool value)
 {
     applySetting(animateStickers, value);
+}
+
+AvatarAnimation avatarAnimationSetting()
+{
+    const QString mode = QSettings().value(QStringLiteral("chat/avatar_animation"), QStringLiteral("hover")).toString();
+    if (mode == QLatin1String("always"))
+        return AvatarAnimation::Always;
+    if (mode == QLatin1String("never"))
+        return AvatarAnimation::Never;
+    return AvatarAnimation::OnHover;
+}
+
+void FrameAnimator::setAvatarAnimation(AvatarAnimation mode)
+{
+    if (avatars == mode)
+        return;
+    avatars = mode;
+    visible.clear();
+    updateRunning();
+    view->viewport()->update();
 }
 
 void FrameAnimator::applySetting(bool &setting, bool value)
@@ -125,7 +146,9 @@ void FrameAnimator::endRow()
 
 QPixmap FrameAnimator::frame(const QUrl &url, const QSize &size, Core::Snowflake accountId, const QRect &viewportRect, AnimatedKind kind)
 {
-    const bool animates = kind == AnimatedKind::Sticker ? animateStickers : animateEmoji;
+    const bool animates = kind == AnimatedKind::Sticker  ? animateStickers
+                          : kind == AnimatedKind::Avatar ? avatars != AvatarAnimation::Never
+                                                         : animateEmoji;
     if (!animates || !cache)
         return {};
 
@@ -222,7 +245,7 @@ std::optional<QList<FrameAnimator::StickerRepaint>> FrameAnimator::stickerOnlyRe
 
 bool FrameAnimator::running() const
 {
-    return (animateEmoji || animateStickers) && focused && viewVisible && cache;
+    return (animateEmoji || animateStickers || avatars != AvatarAnimation::Never) && focused && viewVisible && cache;
 }
 
 qint64 FrameAnimator::now() const

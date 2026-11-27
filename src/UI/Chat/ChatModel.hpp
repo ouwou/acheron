@@ -232,6 +232,7 @@ public:
         UsernameRole,
         UserIdRole,
         AvatarRole,
+        AnimatedAvatarUrlRole, // the moving version of an animated avatar, or empty
         TimestampRole,
         EditedTimestampRole,
         CachedSizeRole,

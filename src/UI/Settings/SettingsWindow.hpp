@@ -21,6 +21,7 @@ signals:
     void closeToTrayChanged();
     void animateEmojiChanged(bool enabled);
     void animateStickersChanged(bool enabled);
+    void avatarAnimationChanged();
     void gifSettingsChanged();
     void animationCacheLimitChanged(int megabytes);
     void animationSizeLimitChanged(int megabytes);

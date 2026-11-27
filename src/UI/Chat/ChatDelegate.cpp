@@ -533,7 +533,18 @@ void ChatDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
         drawSystemMessageIcon(painter, option, ctx.messageType, layout.systemIconRect);
 
     if (layout.showHeader) {
-        if (!avatar.isNull())
+        // an animated avatar plays while its message is hovered, or always, as set (#119)
+        QPixmap avatarFrame;
+        if (animator && chatModel && animator->avatarAnimation() != AvatarAnimation::Never &&
+            (animator->avatarAnimation() == AvatarAnimation::Always || (chatView && chatView->hoveredRowAtPaint() == index.row()))) {
+            const QUrl animated = index.data(ChatModel::AnimatedAvatarUrlRole).toUrl();
+            if (animated.isValid())
+                avatarFrame = animator->frame(animated, layout.avatarRect.size(), chatModel->getAccountId(), layout.avatarRect,
+                                              AnimatedKind::Avatar);
+        }
+        if (!avatarFrame.isNull())
+            painter->drawPixmap(layout.avatarRect, avatarFrame);
+        else if (!avatar.isNull())
             painter->drawPixmap(layout.avatarRect, avatar);
 
         QFont headerFont = option.font;

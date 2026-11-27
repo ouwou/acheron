@@ -3,6 +3,7 @@
 #include <QSize>
 #include <QString>
 #include <QUrl>
+#include <QUrlQuery>
 
 #include "Core/Snowflake.hpp"
 #include "Discord/Enums.hpp"
@@ -11,9 +12,27 @@ namespace Acheron {
 namespace Discord {
 namespace Cdn {
 
-inline QString assetExtension(const QString &hash)
+// still images: an animated asset ("a_" hash) as its first frame, so showing it doesn't fetch the
+// whole animation; animatedAssetUrl() gives the moving version for when it actually plays (#119)
+inline QString assetExtension(const QString &)
 {
-    return hash.startsWith(QStringLiteral("a_")) ? QStringLiteral("gif") : QStringLiteral("png");
+    return QStringLiteral("png");
+}
+
+// the animated version of an avatar, server icon or banner URL above, or empty if it isn't animated
+inline QUrl animatedAssetUrl(const QUrl &stillUrl)
+{
+    const QString file = stillUrl.fileName();
+    if (!file.startsWith(QStringLiteral("a_")) || !file.endsWith(QStringLiteral(".png")))
+        return {};
+    QUrl animated = stillUrl;
+    QString path = animated.path();
+    path.chop(4);
+    animated.setPath(path + QStringLiteral(".webp"));
+    QUrlQuery query(animated);
+    query.addQueryItem(QStringLiteral("animated"), QStringLiteral("true"));
+    animated.setQuery(query);
+    return animated;
 }
 
 inline QUrl defaultUserAvatar(Core::Snowflake userId, int size = 128)

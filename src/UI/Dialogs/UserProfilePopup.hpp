@@ -3,8 +3,11 @@
 #include <optional>
 
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QPointer>
+#include <QUrl>
 
+#include "Core/AnimatedImageCache.hpp"
 #include "Core/Snowflake.hpp"
 #include "Discord/Entities.hpp"
 #include "UI/Dialogs/ActivityCard.hpp"
@@ -36,6 +39,9 @@ public:
                      Core::Snowflake userId, Core::Snowflake guildId,
                      QWidget *parent = nullptr);
     ~UserProfilePopup() override;
+
+    // plays an animated avatar while the profile is open, unless avatar animation is off (#119)
+    void setAnimatedImages(Core::AnimatedImageCache *cache);
 
 signals:
     void linkActivated(const QString &url);
@@ -116,6 +122,15 @@ private:
     QVBoxLayout *activityLayout = nullptr;
     QList<ActivityCard *> activityCards;
     QTimer *activityTicker = nullptr;
+
+    void startAvatarAnimation();
+    void playAvatar(const Core::AnimatedFramesPtr &frames);
+    void showAvatarFrame();
+    Core::AnimatedImageCache *animatedImages = nullptr;
+    QUrl avatarAnimatedUrl;
+    Core::AnimatedFramesPtr avatarFrames;
+    QTimer *avatarTimer = nullptr;
+    QElapsedTimer avatarClock;
 
     QPushButton *viewToggle = nullptr;
 

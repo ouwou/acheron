@@ -364,6 +364,8 @@ QVariant ChatModel::data(const QModelIndex &index, int role) const
         QUrl url = avatarUrlResolver(msg.author.get(), currentGuildId);
         return avatarTracker.fetch(imageManager, url, desiredSize, index, currentAccountId, Core::PinGroup::ChatView);
     }
+    case AnimatedAvatarUrlRole:
+        return avatarUrlResolver ? Discord::Cdn::animatedAssetUrl(avatarUrlResolver(msg.author.get(), currentGuildId)) : QUrl();
     case TimestampRole:
         return msg.timestamp;
     case EditedTimestampRole:
