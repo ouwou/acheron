@@ -9,6 +9,10 @@
 #include "Core/Video/SendQuality.hpp"
 #endif
 
+#include <QTimer>
+
+#include <algorithm>
+
 #ifdef Q_OS_WIN
 #include <objbase.h>
 #endif
@@ -53,6 +57,7 @@ VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObjec
 
 VoiceManager::~VoiceManager()
 {
+    stopDepartureCue();
     closeVoiceConnection();
 }
 
@@ -331,7 +336,10 @@ void VoiceManager::forgetChannelVoiceStates(Snowflake targetChannelId)
 
 void VoiceManager::disconnect()
 {
+    const bool wasConnected = isConnected();
     closeVoiceConnection();
+    if (wasConnected)
+        playDepartureCue();
     pending = {};
     emit voiceDisconnected();
     emit voiceStateChanged();
@@ -509,6 +517,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
     }
 
     closeVoiceConnection();
+    stopDepartureCue();
 
     qCInfo(LogVoice) << "Opening voice connection to endpoint" << endpoint
                      << "guild" << guildId << "channel" << channelId;
@@ -744,6 +753,49 @@ void VoiceManager::playCue(VoiceCue cue)
     if (!settings.joinLeaveSounds || !audioPipeline)
         return;
     QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, cue]() { p->playCue(cue); });
+}
+
+// leaving tears the pipeline down at once, so our own leave chime goes straight to the output device, a frame per tick
+void VoiceManager::playDepartureCue()
+{
+    stopDepartureCue();
+    if (!settings.joinLeaveSounds || selfDeaf)
+        return;
+
+    IAudioBackend *audio = backend();
+    if (!audio->startPlayback())
+        return;
+
+    // a few frames ahead so the device doesn't start on an underrun; the playback buffer holds 8
+    static constexpr int PRIMED_FRAMES = 4;
+    const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
+    for (departureFrame = 0; departureFrame < std::min(PRIMED_FRAMES, static_cast<int>(frames.size())); departureFrame++)
+        audio->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
+
+    departureTimer = new QTimer(this);
+    departureTimer->setTimerType(Qt::PreciseTimer);
+    departureTimer->setInterval(AUDIO_FRAME_DURATION_MS);
+    connect(departureTimer, &QTimer::timeout, this, [this] {
+        const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
+        if (departureFrame < frames.size())
+            backend()->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
+        // once the primed frames have drained too
+        else if (departureFrame >= frames.size() + PRIMED_FRAMES + 1)
+            stopDepartureCue();
+        departureFrame++;
+    });
+    departureTimer->start();
+}
+
+void VoiceManager::stopDepartureCue()
+{
+    if (!departureTimer)
+        return;
+    delete departureTimer;
+    departureTimer = nullptr;
+    // a new call opens the device itself
+    if (!audioPipeline)
+        backend()->stopPlayback();
 }
 
 void VoiceManager::onVoiceClientConnected()
