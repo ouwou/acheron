@@ -178,6 +178,13 @@ ChatView::ChatView(QWidget *parent) : QListView(parent), hoveredRow(-1), hovered
 
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, &ChatView::onScrollBarValueChanged);
     connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, &ChatView::updateJumpToPresentBar);
+    // the content settling without the scroll position moving can still leave the view at the bottom,
+    // e.g. a channel opened at its unreads whose messages all fit; only ever turns it on, so following
+    // the bottom as images grow is left to the scroll handling
+    connect(verticalScrollBar(), &QScrollBar::rangeChanged, this, [this](int, int max) {
+        if (!atBottom && verticalScrollBar()->value() >= max && modelAtLatest())
+            setAtBottom(true);
+    });
 }
 
 void ChatView::setImageManager(Core::ImageManager *manager)
@@ -732,6 +739,12 @@ void ChatView::onAtLatestChanged(bool atLatest)
 {
     if (atLatest) {
         updateScrollState();
+        // and once the rows that brought it are laid out
+        QTimer::singleShot(0, this, [this] {
+            auto *bar = verticalScrollBar();
+            if (!atBottom && bar->value() >= bar->maximum() && modelAtLatest())
+                setAtBottom(true);
+        });
         return;
     }
     setAtBottom(false);
