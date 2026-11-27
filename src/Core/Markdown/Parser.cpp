@@ -7,6 +7,8 @@
 #include <QStringList>
 #include <QUrl>
 
+#include <utility>
+
 using Acheron::Core::countUnicodeEmojisSegmented;
 
 namespace Acheron {
@@ -108,9 +110,37 @@ QList<AstNode> Parser::parse(QString source, ParseState state)
     return result;
 }
 
-QString Parser::toHtml(const QList<AstNode> &nodes, bool jumboEmoji)
+QString Parser::toHtml(const QList<AstNode> &nodes, bool jumboEmoji, QStringList *spoilers)
 {
-    return toHtmlInternal(nodes, jumboEmoji);
+    if (spoilers)
+        spoilers->clear();
+    spoilerSink = spoilers;
+    QString html = toHtmlInternal(nodes, jumboEmoji);
+    spoilerSink = nullptr;
+    return html;
+}
+
+QString Parser::revealedSpoilerHtml(const QString &innerHtml)
+{
+    return QStringLiteral("<span style=\"background-color: #40808080;\">%1</span>").arg(innerHtml);
+}
+
+// Plain text of a subtree, used as the hidden spoiler's (invisible) text so its width roughly
+// matches and nothing inside it (mention colours, emoji images, links) can show through.
+static QString spoilerPlainText(const QList<AstNode> &nodes)
+{
+    QString text;
+    for (const auto &node : nodes) {
+        if (node.type == "br" || node.type == "newline")
+            text += QLatin1Char(' ');
+        else if (node.type == "customEmoji")
+            text += QLatin1Char(':') + node.attributes.value("name").toString() + QLatin1Char(':');
+        else if (!node.children.isEmpty())
+            text += spoilerPlainText(node.children);
+        else
+            text += node.content;
+    }
+    return text;
 }
 
 bool Parser::isEmojiOnly(const QList<AstNode> &nodes, int maxEmojis)
@@ -149,6 +179,22 @@ QString Parser::toHtmlInternal(const QList<AstNode> &nodes, bool jumboEmoji)
 {
     QString result;
     for (const auto &node : nodes) {
+        if (node.type == "spoiler") {
+            QStringList *sink = std::exchange(spoilerSink, nullptr); // spoilers don't nest
+            const QString inner = toHtmlInternal(node.children, jumboEmoji);
+            spoilerSink = sink;
+            if (!sink) {
+                result += revealedSpoilerHtml(inner);
+                continue;
+            }
+            result += QStringLiteral("<a href=\"acheron://spoiler/%1\" style=\"color: #6d6f78; "
+                                     "background-color: #6d6f78; text-decoration: none;\">%2</a>")
+                              .arg(sink->size())
+                              .arg(spoilerPlainText(node.children).toHtmlEscaped());
+            sink->append(inner);
+            continue;
+        }
+
         // todo i dont really like this. i think this should still belong in MarkdownRule somehow. its ok for now
         if (node.type == "user") {
             QString displayName;
@@ -675,6 +721,23 @@ void Parser::setupDefaultRules()
         return QString("<s>%1</s>").arg(renderChildren(node.children));
     };
     rules.append(strike);
+
+    MarkdownRule spoiler;
+    spoiler.name = "spoiler";
+    spoiler.order = 22;
+    spoiler.regex = QRegularExpression(R"(^\|\|([\s\S]+?)\|\|)");
+    spoiler.match = inlineRegex(spoiler.regex);
+    spoiler.parse = [](const Capture &match, NestedParseFn nestedParse,
+                       ParseState state) -> AstNode {
+        AstNode node;
+        node.type = "spoiler";
+        ParseState childState = state;
+        childState.isInline = true;
+        node.children = nestedParse(match.captured(1), childState);
+        return node;
+    };
+    // .html handled in toHtmlInternal(), which tracks the spoilers for click-to-reveal
+    rules.append(spoiler);
 
     MarkdownRule inlineCode;
     inlineCode.name = "inlineCode";

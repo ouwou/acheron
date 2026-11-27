@@ -309,6 +309,7 @@ public slots:
     void handleUploadProgress(const QString &nonce, int fileIndex, qint64 sent, qint64 total);
     void refreshUsersInView(const QList<Snowflake> &userIds);
     void revealSpoiler(Snowflake attachmentId);
+    void revealTextSpoiler(Snowflake messageId, int spoilerIndex);
 
     void triggerResize(int row)
     {
@@ -359,6 +360,8 @@ private:
     mutable QHash<QUrl, QPixmap> localPixmapCache; // file previews
     mutable QHash<Snowflake, QPixmap> previewPixmapCache; // pasted bitmap previews by attachment id
     mutable QSet<Snowflake> revealedSpoilers;
+    QHash<Snowflake, QSet<int>> revealedTextSpoilers; // ||text|| spoilers clicked, by message
+    void revealTextSpoilers(QString &html, Snowflake messageId, const QStringList &spoilerHtml) const;
     QHash<Snowflake, QSize> videoNativeSizes;
 
     struct MediaFlags
