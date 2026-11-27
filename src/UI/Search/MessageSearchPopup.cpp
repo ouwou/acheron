@@ -61,7 +61,7 @@ MessageSearchPopup::MessageSearchPopup(Core::ImageManager *images, QWidget *pare
     connect(input, &QLineEdit::returnPressed, this, &MessageSearchPopup::startSearch);
     bar->addWidget(input, 1);
     scope = new QComboBox(c);
-    connect(scope, &QComboBox::activated, this, [this] {
+    connect(scope, qOverload<int>(&QComboBox::activated), this, [this](int) { // Qt 5 also has a QString overload
         if (!input->text().trimmed().isEmpty())
             startSearch();
     });
