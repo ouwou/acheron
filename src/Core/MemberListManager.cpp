@@ -58,6 +58,8 @@ const GuildListState *MemberListManager::activeGuildState() const
 
 ListData *MemberListManager::activeListData()
 {
+    if (!activeGuildId.isValid())
+        return activeChannelId.isValid() ? &privateList : nullptr;
     auto *gs = activeGuildState();
     if (!gs || listId.isEmpty())
         return nullptr;
@@ -69,6 +71,8 @@ ListData *MemberListManager::activeListData()
 
 const ListData *MemberListManager::activeListData() const
 {
+    if (!activeGuildId.isValid())
+        return activeChannelId.isValid() ? &privateList : nullptr;
     const auto *gs = activeGuildState();
     if (!gs || listId.isEmpty())
         return nullptr;
@@ -137,6 +141,35 @@ void MemberListManager::setActiveChannel(Snowflake guildId, Snowflake channelId)
     emit subscriptionRequested(activeGuildId, activeChannelId, ranges);
 }
 
+void MemberListManager::setPrivateChannel(Snowflake channelId, const QList<MemberListItem> &members)
+{
+    responseTimer.stop();
+    awaitingResponse = false;
+    hasPendingRanges = false;
+
+    emit listAboutToReset();
+    activeGuildId = Snowflake::Invalid;
+    activeChannelId = channelId;
+    listId.clear();
+    ranges.clear();
+
+    Discord::GuildMemberListUpdate::Group group;
+    group.id = QStringLiteral("members");
+    group.count = int(members.size());
+    privateList = {};
+    privateList.groups = { group };
+
+    MemberListItem header;
+    header.type = MemberListItem::Type::Group;
+    header.groupId = group.id.get();
+    header.groupName = tr("Members");
+    header.groupCount = group.count.get();
+    privateList.items.insert(0, header);
+    for (int i = 0; i < members.size(); ++i)
+        privateList.items.insert(i + 1, members[i]);
+    emit listReset();
+}
+
 void MemberListManager::clear()
 {
     ML_LOG << "[ML] clear (was guild:" << activeGuildId << "list:" << listId << ")";
@@ -149,6 +182,7 @@ void MemberListManager::clear()
     activeChannelId = Snowflake::Invalid;
     listId.clear();
     ranges.clear();
+    privateList = {};
     emit listReset();
 }
 

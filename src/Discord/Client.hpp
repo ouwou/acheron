@@ -313,6 +313,8 @@ signals:
     void channelDeleted(const ChannelDelete &event);
     void channelPinsUpdated(const ChannelPinsUpdate &event);
     void channelPinsAcked(const ChannelPinsAck &event);
+    void channelRecipientAdded(const ChannelRecipientUpdate &event);
+    void channelRecipientRemoved(const ChannelRecipientUpdate &event);
     void threadCreated(const ChannelCreate &event);
     void threadUpdated(const ChannelUpdate &event);
     void threadDeleted(const ThreadDelete &event);

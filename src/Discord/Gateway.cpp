@@ -214,6 +214,12 @@ void Gateway::handleDispatch(const Inbound &data)
     case GatewayEvent::CHANNEL_PINS_ACK:
         emit gatewayChannelPinsAck(data.getData<ChannelPinsAck>());
         break;
+    case GatewayEvent::CHANNEL_RECIPIENT_ADD:
+        emit gatewayChannelRecipientAdd(data.getData<ChannelRecipientUpdate>());
+        break;
+    case GatewayEvent::CHANNEL_RECIPIENT_REMOVE:
+        emit gatewayChannelRecipientRemove(data.getData<ChannelRecipientUpdate>());
+        break;
     case GatewayEvent::THREAD_CREATE:
         handleThreadCreate(data);
         break;

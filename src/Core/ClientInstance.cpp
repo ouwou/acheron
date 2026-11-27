@@ -304,6 +304,10 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(client, &Discord::Client::guildDeleted, this, &ClientInstance::onGuildDeleted);
     connect(client, &Discord::Client::channelCreated, this, &ClientInstance::onChannelCreated);
     connect(client, &Discord::Client::channelUpdated, this, &ClientInstance::onChannelUpdated);
+    connect(client, &Discord::Client::channelRecipientAdded, this,
+            [this](const Discord::ChannelRecipientUpdate &event) { onChannelRecipientChanged(event, true); });
+    connect(client, &Discord::Client::channelRecipientRemoved, this,
+            [this](const Discord::ChannelRecipientUpdate &event) { onChannelRecipientChanged(event, false); });
     connect(client, &Discord::Client::channelDeleted, this, &ClientInstance::onChannelDeleted);
     connect(client, &Discord::Client::guildRoleCreated, this, &ClientInstance::onGuildRoleCreated);
     connect(client, &Discord::Client::guildRoleUpdated, this, &ClientInstance::onGuildRoleUpdated);
@@ -709,6 +713,34 @@ void ClientInstance::onChannelUpdated(const Discord::ChannelUpdate &event)
     }
 
     emit channelUpdated(event);
+}
+
+void ClientInstance::onChannelRecipientChanged(const Discord::ChannelRecipientUpdate &event, bool added)
+{
+    if (!event.channelId.hasValue() || !event.user.hasValue())
+        return;
+
+    const Snowflake channelId = event.channelId.get();
+    const Discord::User &user = event.user.get();
+    if (added)
+        userManager->saveUser(user);
+
+    QList<Snowflake> recipientIds = channelRepo.getChannelRecipientIds(channelId);
+    const bool present = recipientIds.contains(user.id.get());
+    if (added == present)
+        return;
+    if (added)
+        recipientIds.append(user.id.get());
+    else
+        recipientIds.removeAll(user.id.get());
+
+    QString connName = Storage::DatabaseManager::instance().getCacheConnectionName(account.id);
+    QSqlDatabase db = QSqlDatabase::database(connName);
+    Storage::Transaction txn(db);
+    channelRepo.saveChannelRecipients(channelId, recipientIds, db);
+    txn.commit();
+
+    emit channelRecipientsChanged(channelId);
 }
 
 void ClientInstance::onChannelDeleted(const Discord::ChannelDelete &event)

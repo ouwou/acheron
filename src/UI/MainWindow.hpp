@@ -175,6 +175,7 @@ private:
     void syncPaneToggleActions();
     void openForumChannel(Core::ClientInstance *instance, Core::Snowflake forumId, Core::Snowflake guildId);
     void applyChannelChrome(Core::ClientInstance *instance, Core::Snowflake channelId, const QString &name, bool isDm, Core::Snowflake guildId);
+    bool showGroupDmMembers(Core::ClientInstance *instance, Core::Snowflake channelId);
     void switchChatChannel(Core::Snowflake channelId, Core::Snowflake guildId);
 
     void openThreadBrowser();

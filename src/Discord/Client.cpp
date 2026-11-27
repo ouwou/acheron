@@ -162,6 +162,8 @@ Client::Client(const QString &token, const QString &gatewayUrl, const QString &b
     connect(gateway, &Gateway::gatewayChannelUpdate, this, &Client::onGatewayChannelUpdate);
     connect(gateway, &Gateway::gatewayChannelDelete, this, &Client::onGatewayChannelDelete);
     connect(gateway, &Gateway::gatewayChannelPinsUpdate, this, &Client::onGatewayChannelPinsUpdate);
+    connect(gateway, &Gateway::gatewayChannelRecipientAdd, this, &Client::channelRecipientAdded);
+    connect(gateway, &Gateway::gatewayChannelRecipientRemove, this, &Client::channelRecipientRemoved);
     connect(gateway, &Gateway::gatewayChannelPinsAck, this, &Client::onGatewayChannelPinsAck);
     connect(gateway, &Gateway::gatewayThreadCreate, this, &Client::onGatewayThreadCreate);
     connect(gateway, &Gateway::gatewayThreadUpdate, this, &Client::onGatewayThreadUpdate);
