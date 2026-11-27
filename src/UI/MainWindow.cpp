@@ -2481,6 +2481,16 @@ void MainWindow::switchToTabEntry(const TabEntry &entry)
 
 void MainWindow::activateChannel(const TabEntry &entry)
 {
+    if (entry.isRequests) {
+        {
+            QSignalBlocker blocker(channelTree->selectionModel());
+            channelTree->selectionModel()->clearSelection();
+            channelTree->selectionModel()->clearCurrentIndex();
+        }
+        showRequestsPage(entry.accountId);
+        return;
+    }
+
     channelTreeModel->clearTemporaryThread(entry.channelId);
 
     // update the proxy selected channel so the delegate highlights correctly,
@@ -2798,6 +2808,7 @@ void MainWindow::saveWindowState()
         settings.setValue("iconUrl", entry.iconUrl);
         settings.setValue("isDm", entry.isDm);
         settings.setValue("isForum", entry.isForum);
+        settings.setValue("isRequests", entry.isRequests);
     }
     settings.endArray();
     settings.setValue("layout/activeTab", newActive);
@@ -2892,6 +2903,7 @@ void MainWindow::restoreWindowState()
         entry.iconUrl = settings.value("iconUrl").toUrl();
         entry.isDm = settings.value("isDm").toBool();
         entry.isForum = settings.value("isForum").toBool();
+        entry.isRequests = settings.value("isRequests").toBool();
         if (entry.channelId.isValid())
             entries.append(entry);
     }
@@ -3639,7 +3651,13 @@ void MainWindow::openThreadBrowser()
 void MainWindow::showRequestsPage(ChannelNode *node)
 {
     ChannelNode *accountNode = channelTreeModel->getAccountNodeFor(node);
-    ClientInstance *instance = accountNode ? session->client(accountNode->id) : nullptr;
+    if (accountNode)
+        showRequestsPage(accountNode->id);
+}
+
+void MainWindow::showRequestsPage(Core::Snowflake accountId)
+{
+    ClientInstance *instance = session->client(accountId);
     if (!instance)
         return;
     if (instance != currentInstance)
@@ -3647,10 +3665,18 @@ void MainWindow::showRequestsPage(ChannelNode *node)
 
     // nothing is being read while the requests are shown
     instance->readState()->setActiveChannel(Snowflake::Invalid);
-    channelFilterProxy->setSelectedChannel(Snowflake::Invalid, accountNode->id);
+    channelFilterProxy->setSelectedChannel(Snowflake::Invalid, accountId);
+    channelTree->viewport()->update();
     setChannelToolbarTargets(Snowflake::Invalid, Snowflake::Invalid);
     requestsPage->setInstance(instance);
     setViewMode(ViewMode::Requests);
+
+    TabEntry entry;
+    entry.channelId = accountId; // one Requests tab per account; never a channel id
+    entry.accountId = accountId;
+    entry.name = tr("Requests");
+    entry.isRequests = true;
+    tabBar->updateCurrentTab(entry);
 }
 
 void MainWindow::navigateToChannel(Core::Snowflake channelId)

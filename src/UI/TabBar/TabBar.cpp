@@ -314,6 +314,10 @@ void TabBar::paintEvent(QPaintEvent *)
                                                               isActive ? highlight : dimText,
                                                               iconDpr);
             p.drawPixmap(iconRect, dmIcon);
+        } else if (entry.isRequests) {
+            const qreal iconDpr = p.device() ? p.device()->devicePixelRatioF() : 1.0;
+            p.drawPixmap(iconRect, Core::Theme::Icons::pixmap(Core::Theme::Icons::Name::UserPlus, IconSize,
+                                                              isActive ? highlight : dimText, iconDpr));
         } else if (!entry.iconUrl.isEmpty()) {
             QPixmap icon = imageManager->get(entry.iconUrl,
                                              QSize(IconSize * 2, IconSize * 2),

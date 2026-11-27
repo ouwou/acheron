@@ -182,6 +182,7 @@ private:
     void openThreadBrowser();
     void navigateToChannel(Core::Snowflake channelId);
     void showRequestsPage(ChannelNode *node);
+    void showRequestsPage(Core::Snowflake accountId);
     void jumpToMessageLink(Core::Snowflake channelId, Core::Snowflake messageId);
     void setChannelToolbarTargets(Core::Snowflake threadBrowserChannel, Core::Snowflake pinsChannel);
     void openPinnedMessages();
