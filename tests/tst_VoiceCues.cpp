@@ -58,6 +58,7 @@ private slots:
     void testStereoChannelsMatch();
     void testJoinRisesLeaveFalls();
     void testSameFramesEachTime();
+    void testMessageIsHigher();
 };
 
 void TestVoiceCues::testFrameFormat_data()
@@ -65,6 +66,7 @@ void TestVoiceCues::testFrameFormat_data()
     QTest::addColumn<VoiceCue>("cue");
     QTest::newRow("join") << VoiceCue::Join;
     QTest::newRow("leave") << VoiceCue::Leave;
+    QTest::newRow("message") << VoiceCue::Message;
 }
 
 void TestVoiceCues::testFrameFormat()
@@ -116,7 +118,7 @@ void TestVoiceCues::testStartsAndEndsSilent()
 
 void TestVoiceCues::testStereoChannelsMatch()
 {
-    for (VoiceCue cue : { VoiceCue::Join, VoiceCue::Leave }) {
+    for (VoiceCue cue : { VoiceCue::Join, VoiceCue::Leave, VoiceCue::Message }) {
         for (const QByteArray &frame : voiceCueFrames(cue)) {
             const auto *pcm = reinterpret_cast<const int16_t *>(frame.constData());
             for (int i = 0; i < AUDIO_FRAME_SAMPLES; i++)
@@ -145,6 +147,15 @@ void TestVoiceCues::testSameFramesEachTime()
     // generated once and shared
     QCOMPARE(&voiceCueFrames(VoiceCue::Join), &voiceCueFrames(VoiceCue::Join));
     QVERIFY(voiceCueFrames(VoiceCue::Join) != voiceCueFrames(VoiceCue::Leave));
+    QVERIFY(voiceCueFrames(VoiceCue::Message) != voiceCueFrames(VoiceCue::Join));
+}
+
+void TestVoiceCues::testMessageIsHigher()
+{
+    // told apart from a join by pitch: its first note is above the join's last
+    const std::vector<int16_t> join = leftChannel(voiceCueFrames(VoiceCue::Join));
+    const std::vector<int16_t> message = leftChannel(voiceCueFrames(VoiceCue::Message));
+    QVERIFY(pitchBetween(message, 0.005, 0.05) > pitchBetween(join, 0.15, 0.22));
 }
 
 QTEST_GUILESS_MAIN(TestVoiceCues)

@@ -151,6 +151,8 @@ signals:
     void forumJoinedPostsChanged(Snowflake forumId);
     void guildSettingsChanged(Snowflake guildId);
     void channelLastMessageUpdated(Snowflake channelId, Snowflake messageId);
+    // someone else's message in a direct or group DM that counts as unread for us (not muted, not blocked)
+    void directMessageReceived(const Discord::Message &message);
     void voiceStateChanged(Snowflake channelId, Snowflake guildId);
     void authenticationFailed(const AccountInfo &info);
 

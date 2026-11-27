@@ -82,6 +82,7 @@ private slots:
     void onChannelPermissionsChanged(Core::Snowflake channelId);
     void onSplitterMoved();
     void onTotalMentionCountChanged(int count, int previousCount);
+    void onDirectMessage(Core::ClientInstance *instance, const Discord::Message &message);
     void onSessionReady(const Discord::Ready &ready);
 
 private:
@@ -276,6 +277,9 @@ private:
     AccountsWindow *accountsWindow = nullptr;
     SettingsWindow *settingsWindow = nullptr;
     TrayIcon *trayIcon = nullptr;
+    // the DM the last notification was about, opened when it's clicked
+    Core::Snowflake notifiedAccountId;
+    Core::Snowflake notifiedChannelId;
     QHash<QPair<Core::Snowflake, Core::Snowflake>, QPointer<GuildSettingsWindow>> guildSettingsWindows;
 
 private slots:

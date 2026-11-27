@@ -349,7 +349,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     saveWindowState();
 
-    const bool reachableFromTray = trayIcon && QSystemTrayIcon::isSystemTrayAvailable();
+    // the tray icon can also be there just for notifications
+    const bool reachableFromTray = trayIcon && QSystemTrayIcon::isSystemTrayAvailable() &&
+                                   QSettings().value("general/close_to_tray", false).toBool();
     qApp->setQuitOnLastWindowClosed(!reachableFromTray);
     hide();
 
@@ -958,6 +960,9 @@ void MainWindow::setupPermanentConnections(Core::ClientInstance *instance)
     if (instancesSignalsConnected.contains(instance->accountId()))
         return;
     instancesSignalsConnected.insert(instance->accountId());
+
+    connect(instance, &Core::ClientInstance::directMessageReceived, this,
+            [this, instance](const Discord::Message &message) { onDirectMessage(instance, message); });
 
     connect(instance, &Core::ClientInstance::guildCreated, this,
             [this, instance](const Discord::GatewayGuild &guild) {
@@ -2539,6 +2544,50 @@ void MainWindow::refreshTabReadStates()
     }
 }
 
+void MainWindow::onDirectMessage(Core::ClientInstance *instance, const Discord::Message &message)
+{
+    const Core::Snowflake channelId = message.channelId.get();
+
+    // already reading it
+    if (isActiveWindow() && !isMinimized() && instance == currentInstance && chatModel->getActiveChannelId() == channelId)
+        return;
+
+    const QSettings stored;
+
+#ifndef ACHERON_NO_VOICE
+    if (stored.value("notifications/dm_sound", true).toBool() && instance->voice())
+        instance->voice()->playAlertSound(Core::Audio::VoiceCue::Message);
+#endif
+
+    if (!trayIcon || !stored.value("notifications/dm_popup", true).toBool())
+        return;
+
+    const QString author = message.author.hasValue() ? message.author->getDisplayName() : tr("Someone");
+    QString title = author;
+    const auto channel = instance->getChannel(channelId);
+    if (channel && channel->type.hasValue() && channel->type.get() == Discord::ChannelType::GROUP_DM) {
+        if (ChannelNode *node = channelTreeModel->findChannelTreeNode(channelId, instance->accountId()))
+            title = tr("%1 in %2").arg(author, node->name);
+    }
+
+    static constexpr int PREVIEW_CHARS = 200;
+    QString body = message.content.hasValue() ? message.content->simplified() : QString();
+    if (body.size() > PREVIEW_CHARS)
+        body = body.left(PREVIEW_CHARS - 1) + QChar(0x2026);
+    if (body.isEmpty()) {
+        if (message.attachments.hasValue() && !message.attachments->isEmpty())
+            body = tr("Sent an attachment");
+        else if (message.stickerItems.hasValue() && !message.stickerItems->isEmpty())
+            body = tr("Sent a sticker");
+        else
+            body = tr("Sent a message");
+    }
+
+    notifiedAccountId = instance->accountId();
+    notifiedChannelId = channelId;
+    trayIcon->showMessage(title, body);
+}
+
 void MainWindow::onTotalMentionCountChanged(int count, int previousCount)
 {
     const QString appName = QGuiApplication::applicationDisplayName();
@@ -3001,7 +3050,10 @@ void MainWindow::openSettingsWindow()
 
 void MainWindow::applyCloseToTray()
 {
-    const bool wanted = QSettings().value("general/close_to_tray", false).toBool();
+    // DM notifications are shown through the tray icon, so it's there for either
+    const QSettings stored;
+    const bool wanted = stored.value("general/close_to_tray", false).toBool() ||
+                        stored.value("notifications/dm_popup", true).toBool();
     if (wanted == (trayIcon != nullptr))
         return;
 
@@ -3018,6 +3070,11 @@ void MainWindow::applyCloseToTray()
     connect(this, &QWidget::windowTitleChanged, trayIcon, &TrayIcon::setToolTip);
     connect(trayIcon, &TrayIcon::showWindowRequested, this, &MainWindow::showFromTray);
     connect(trayIcon, &TrayIcon::quitRequested, this, &MainWindow::quitFromTray);
+    connect(trayIcon, &TrayIcon::messageClicked, this, [this] {
+        showFromTray();
+        if (notifiedChannelId.isValid())
+            selectChannelInTree(notifiedAccountId, notifiedChannelId);
+    });
 }
 
 void MainWindow::showFromTray()

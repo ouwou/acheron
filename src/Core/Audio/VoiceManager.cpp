@@ -57,7 +57,7 @@ VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObjec
 
 VoiceManager::~VoiceManager()
 {
-    stopDepartureCue();
+    stopDeviceCue();
     closeVoiceConnection();
 }
 
@@ -517,7 +517,7 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
     }
 
     closeVoiceConnection();
-    stopDepartureCue();
+    stopDeviceCue();
 
     qCInfo(LogVoice) << "Opening voice connection to endpoint" << endpoint
                      << "guild" << guildId << "channel" << channelId;
@@ -755,11 +755,31 @@ void VoiceManager::playCue(VoiceCue cue)
     QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, cue]() { p->playCue(cue); });
 }
 
-// leaving tears the pipeline down at once, so our own leave chime goes straight to the output device, a frame per tick
+// leaving tears the pipeline down at once, so our own leave chime goes straight to the output device
 void VoiceManager::playDepartureCue()
 {
-    stopDepartureCue();
-    if (!settings.joinLeaveSounds || selfDeaf)
+    if (settings.joinLeaveSounds)
+        playOnDevice(VoiceCue::Leave);
+}
+
+void VoiceManager::playAlertSound(VoiceCue cue)
+{
+    if (selfDeaf)
+        return;
+    if (audioPipeline) {
+        // still connecting: the device is about to be the call's, and the chime would be dropped anyway
+        if (isConnected())
+            QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, cue]() { p->playCue(cue); });
+        return;
+    }
+    playOnDevice(cue);
+}
+
+// with no call to mix into, a chime is fed to the output device a frame per tick, then the device is closed
+void VoiceManager::playOnDevice(VoiceCue cue)
+{
+    stopDeviceCue();
+    if (selfDeaf || audioPipeline)
         return;
 
     IAudioBackend *audio = backend();
@@ -768,31 +788,32 @@ void VoiceManager::playDepartureCue()
 
     // a few frames ahead so the device doesn't start on an underrun; the playback buffer holds 8
     static constexpr int PRIMED_FRAMES = 4;
-    const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
-    for (departureFrame = 0; departureFrame < std::min(PRIMED_FRAMES, static_cast<int>(frames.size())); departureFrame++)
-        audio->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
+    deviceCue = cue;
+    const QVector<QByteArray> &frames = voiceCueFrames(cue);
+    for (deviceCueFrame = 0; deviceCueFrame < std::min(PRIMED_FRAMES, static_cast<int>(frames.size())); deviceCueFrame++)
+        audio->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[deviceCueFrame].constData()));
 
-    departureTimer = new QTimer(this);
-    departureTimer->setTimerType(Qt::PreciseTimer);
-    departureTimer->setInterval(AUDIO_FRAME_DURATION_MS);
-    connect(departureTimer, &QTimer::timeout, this, [this] {
-        const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
-        if (departureFrame < frames.size())
-            backend()->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
+    deviceCueTimer = new QTimer(this);
+    deviceCueTimer->setTimerType(Qt::PreciseTimer);
+    deviceCueTimer->setInterval(AUDIO_FRAME_DURATION_MS);
+    connect(deviceCueTimer, &QTimer::timeout, this, [this] {
+        const QVector<QByteArray> &frames = voiceCueFrames(deviceCue);
+        if (deviceCueFrame < frames.size())
+            backend()->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[deviceCueFrame].constData()));
         // once the primed frames have drained too
-        else if (departureFrame >= frames.size() + PRIMED_FRAMES + 1)
-            stopDepartureCue();
-        departureFrame++;
+        else if (deviceCueFrame >= frames.size() + PRIMED_FRAMES + 1)
+            stopDeviceCue();
+        deviceCueFrame++;
     });
-    departureTimer->start();
+    deviceCueTimer->start();
 }
 
-void VoiceManager::stopDepartureCue()
+void VoiceManager::stopDeviceCue()
 {
-    if (!departureTimer)
+    if (!deviceCueTimer)
         return;
-    delete departureTimer;
-    departureTimer = nullptr;
+    delete deviceCueTimer;
+    deviceCueTimer = nullptr;
     // a new call opens the device itself
     if (!audioPipeline)
         backend()->stopPlayback();

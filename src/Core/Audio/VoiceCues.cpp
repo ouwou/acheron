@@ -24,6 +24,10 @@ struct Note
 // two soft bell-like notes: rising for a join, falling for a leave
 constexpr double LOW_NOTE = 659.25;  // E5
 constexpr double HIGH_NOTE = 880.0;  // A5
+// a quicker, brighter pair for messages, so it isn't mistaken for someone joining
+constexpr double MESSAGE_LOW_NOTE = 1046.5;  // C6
+constexpr double MESSAGE_HIGH_NOTE = 1568.0; // G6
+constexpr double MESSAGE_SPACING = 0.06;
 constexpr double NOTE_SPACING = 0.085;
 constexpr double NOTE_LENGTH = 0.16;
 constexpr double ATTACK = 0.006;
@@ -77,7 +81,16 @@ const QVector<QByteArray> &voiceCueFrames(VoiceCue cue)
 {
     static const QVector<QByteArray> join = render({ { LOW_NOTE, 0.0 }, { HIGH_NOTE, NOTE_SPACING } });
     static const QVector<QByteArray> leave = render({ { HIGH_NOTE, 0.0 }, { LOW_NOTE, NOTE_SPACING } });
-    return cue == VoiceCue::Join ? join : leave;
+    static const QVector<QByteArray> message = render({ { MESSAGE_LOW_NOTE, 0.0 }, { MESSAGE_HIGH_NOTE, MESSAGE_SPACING } });
+    switch (cue) {
+    case VoiceCue::Join:
+        return join;
+    case VoiceCue::Leave:
+        return leave;
+    case VoiceCue::Message:
+        break;
+    }
+    return message;
 }
 
 } // namespace Audio
