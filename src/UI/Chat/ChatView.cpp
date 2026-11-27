@@ -908,6 +908,10 @@ bool ChatView::scrollToUnreadMarker()
     // the first unread near the top, a little of what was already read above it
     scrollTo(chatModel->index(row, 0), QAbstractItemView::PositionAtTop);
     auto *bar = verticalScrollBar();
+    // when everything from the first unread down already fits on screen, stay at the bottom: all of
+    // it is in view, so it's read (moving up for context would leave it unread until a scroll)
+    if (bar->value() >= bar->maximum())
+        return true;
     bar->setValue(bar->value() - viewport()->height() / 6);
     return true;
 }
