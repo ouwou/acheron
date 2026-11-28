@@ -31,6 +31,13 @@ void ProtoWriter::writeInt32(uint32_t fieldNumber, int32_t value)
     writeVarint(fieldNumber, static_cast<uint64_t>(static_cast<int64_t>(value)));
 }
 
+void ProtoWriter::writeFixed64(uint32_t fieldNumber, uint64_t value)
+{
+    writeTag(fieldNumber, WireType::FIXED64);
+    for (int i = 0; i < 8; i++)
+        buffer.append(static_cast<char>((value >> (8 * i)) & 0xFF));
+}
+
 void ProtoWriter::writeString(uint32_t fieldNumber, const QString &value)
 {
     writeBytes(fieldNumber, value.toUtf8());
