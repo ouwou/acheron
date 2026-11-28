@@ -9,10 +9,6 @@
 #include "Core/Video/SendQuality.hpp"
 #endif
 
-#include <QTimer>
-
-#include <algorithm>
-
 #ifdef Q_OS_WIN
 #include <objbase.h>
 #endif
@@ -57,8 +53,14 @@ VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObjec
 
 VoiceManager::~VoiceManager()
 {
-    stopDepartureCue();
+    // the backend goes with us, it would be cut off at once
+    disconnectSoundOnClose = false;
     closeVoiceConnection();
+}
+
+void VoiceManager::setChannelKindLookup(std::function<VoiceChannelKind(Snowflake channelId)> lookup)
+{
+    channelKindLookup = std::move(lookup);
 }
 
 IAudioBackend *VoiceManager::backend() const
@@ -71,6 +73,21 @@ IAudioBackend *VoiceManager::backend() const
 }
 
 void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
+{
+    handleVoiceStates({ state });
+}
+
+// one change for all of them, as the official client takes a whole payload's states
+void VoiceManager::handleVoiceStates(const QList<Discord::VoiceState> &states)
+{
+    const Snowflake channelBefore = channelId;
+    const int othersBefore = othersInChannel();
+    for (const Discord::VoiceState &state : states)
+        applyVoiceState(state);
+    playJoinLeaveSound(channelBefore, othersBefore);
+}
+
+void VoiceManager::applyVoiceState(const Discord::VoiceState &state)
 {
     Snowflake userId = state.userId.get();
     bool isMe = (userId == accountId);
@@ -196,7 +213,6 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
     if (newChannel != channelId) {
         if (participants.remove(userId)) {
             dropUserAudio(userId);
-            playCue(VoiceCue::Leave);
             emit participantLeft(userId);
         }
     } else {
@@ -208,12 +224,10 @@ void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
             updated.speaking = it->speaking;
         participants.insert(userId, updated);
 
-        if (isNew) {
-            playCue(VoiceCue::Join);
+        if (isNew)
             emit participantJoined(userId);
-        } else {
+        else
             emit participantUpdated(userId);
-        }
     }
 }
 
@@ -317,6 +331,7 @@ void VoiceManager::setGatewaySessionId(const QString &sessionId)
 
 void VoiceManager::forgetChannelVoiceStates(Snowflake targetChannelId)
 {
+    const int othersBefore = othersInChannel();
     QList<Snowflake> gone;
     for (auto it = knownVoiceStates.constBegin(); it != knownVoiceStates.constEnd(); ++it) {
         if (it->channel() == targetChannelId)
@@ -332,14 +347,12 @@ void VoiceManager::forgetChannelVoiceStates(Snowflake targetChannelId)
             emit participantLeft(userId);
         }
     }
+    playJoinLeaveSound(channelId, othersBefore);
 }
 
 void VoiceManager::disconnect()
 {
-    const bool wasConnected = isConnected();
     closeVoiceConnection();
-    if (wasConnected)
-        playDepartureCue();
     pending = {};
     emit voiceDisconnected();
     emit voiceStateChanged();
@@ -517,7 +530,6 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
     }
 
     closeVoiceConnection();
-    stopDepartureCue();
 
     qCInfo(LogVoice) << "Opening voice connection to endpoint" << endpoint
                      << "guild" << guildId << "channel" << channelId;
@@ -598,7 +610,6 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                 VoiceParticipant p;
                 p.userId = userId;
                 participants.insert(userId, p);
-                playCue(VoiceCue::Join);
                 emit participantJoined(userId);
             });
 
@@ -614,7 +625,6 @@ void VoiceManager::connectToVoiceServer(const QString &endpoint, const QString &
                     return;
                 if (!stillInChannel) {
                     participants.erase(participant);
-                    playCue(VoiceCue::Leave);
                     emit participantLeft(userId);
                 } else if (std::exchange(participant->speaking, false)) {
                     emit participantSpeakingChanged(userId, false);
@@ -711,6 +721,10 @@ void VoiceManager::closeVoiceConnection()
     if (!voiceConnection)
         return;
 
+    // queued ahead of the stop, so the call's open output carries it
+    if (std::exchange(disconnectSoundOnClose, false))
+        playSound(Sound::Disconnect);
+
     emit rtcConnectionClosing();
     bool hadParticipants = !participants.isEmpty();
     participants.clear();
@@ -746,56 +760,42 @@ void VoiceManager::populateParticipantsFromCache()
     }
 }
 
-// only for arrivals and departures as they happen: not for whoever was already there when we connect,
-// nor for a whole channel's states being forgotten at once
-void VoiceManager::playCue(VoiceCue cue)
+int VoiceManager::othersInChannel() const
 {
-    if (!settings.joinLeaveSounds || !audioPipeline)
-        return;
-    QMetaObject::invokeMethod(audioPipeline, [p = audioPipeline, cue]() { p->playCue(cue); });
+    return channelId.isValid() ? channelVoiceUserCount(channelId) - 1 : 0;
 }
 
-// leaving tears the pipeline down at once, so our own leave chime goes straight to the output device, a frame per tick
-void VoiceManager::playDepartureCue()
+VoiceChannelKind VoiceManager::channelKind(Snowflake targetChannelId) const
 {
-    stopDepartureCue();
-    if (!settings.joinLeaveSounds || selfDeaf)
+    return channelKindLookup ? channelKindLookup(targetChannelId) : VoiceChannelKind{};
+}
+
+// as the official client, nothing when we're the one who moved
+void VoiceManager::playJoinLeaveSound(Snowflake channelBefore, int othersBefore)
+{
+    if (!channelId.isValid() || channelId != channelBefore)
+        return;
+
+    const std::optional<Sound> sound = joinLeaveSound(othersBefore, othersInChannel());
+    if (!sound)
+        return;
+    const VoiceChannelKind kind = channelKind(channelId);
+    if (!kind.stage && !kind.afk)
+        playSound(*sound);
+}
+
+void VoiceManager::playSound(Sound sound)
+{
+    if (!settings.joinLeaveSounds)
+        return;
+    std::shared_ptr<const SoundClip> clip = loadSound(sound);
+    if (!clip)
         return;
 
     IAudioBackend *audio = backend();
-    if (!audio->startPlayback())
-        return;
-
-    // a few frames ahead so the device doesn't start on an underrun; the playback buffer holds 8
-    static constexpr int PRIMED_FRAMES = 4;
-    const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
-    for (departureFrame = 0; departureFrame < std::min(PRIMED_FRAMES, static_cast<int>(frames.size())); departureFrame++)
-        audio->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
-
-    departureTimer = new QTimer(this);
-    departureTimer->setTimerType(Qt::PreciseTimer);
-    departureTimer->setInterval(AUDIO_FRAME_DURATION_MS);
-    connect(departureTimer, &QTimer::timeout, this, [this] {
-        const QVector<QByteArray> &frames = voiceCueFrames(VoiceCue::Leave);
-        if (departureFrame < frames.size())
-            backend()->pushPlaybackFrame(reinterpret_cast<const int16_t *>(frames[departureFrame].constData()));
-        // once the primed frames have drained too
-        else if (departureFrame >= frames.size() + PRIMED_FRAMES + 1)
-            stopDepartureCue();
-        departureFrame++;
+    QMetaObject::invokeMethod(audio, [audio, clip = std::move(clip), device = settings.outputDevice, volume = settings.outputVolume]() {
+        playSoundOn(*audio, clip, device, volume);
     });
-    departureTimer->start();
-}
-
-void VoiceManager::stopDepartureCue()
-{
-    if (!departureTimer)
-        return;
-    delete departureTimer;
-    departureTimer = nullptr;
-    // a new call opens the device itself
-    if (!audioPipeline)
-        backend()->stopPlayback();
 }
 
 void VoiceManager::onVoiceClientConnected()
@@ -819,7 +819,12 @@ void VoiceManager::onVoiceClientConnected()
     });
 
     populateParticipantsFromCache();
-    playCue(VoiceCue::Join);
+
+    // the official client has no sounds of its own for stage channels
+    const bool stage = channelKind(channelId).stage;
+    if (!stage)
+        playSound(Sound::UserJoin);
+    disconnectSoundOnClose = !stage;
 
     emit voiceConnected();
     emit voiceStateChanged();

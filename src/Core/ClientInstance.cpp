@@ -121,6 +121,18 @@ ClientInstance::ClientInstance(const AccountInfo &info,
     connect(voiceManager, &Audio::VoiceManager::voiceConnected, this, &ClientInstance::onVoiceConnected);
     connect(voiceManager, &Audio::VoiceManager::voiceDisconnected, this, &ClientInstance::onVoiceDisconnected);
     connect(voiceManager, &Audio::VoiceManager::selfAudioToggled, this, &ClientInstance::onSelfAudioToggled);
+    voiceManager->setChannelKindLookup([this](Snowflake channelId) {
+        Audio::VoiceChannelKind kind;
+        const std::optional<Discord::Channel> channel = getChannel(channelId);
+        if (!channel)
+            return kind;
+        kind.stage = channel->type.get() == Discord::ChannelType::GUILD_STAGE_VOICE;
+        if (channel->guildId.hasValue()) {
+            const std::optional<Discord::Guild> guild = getGuild(channel->guildId.get());
+            kind.afk = guild && guild->afkChannelId.hasValue() && guild->afkChannelId.get() == channelId;
+        }
+        return kind;
+    });
 #endif
 #ifdef ACHERON_HAVE_VIDEO
     streamWatch = new StreamWatcher(client, streamManager, voiceManager, this);
@@ -254,15 +266,17 @@ ClientInstance::ClientInstance(const AccountInfo &info,
                 }
 
 #ifndef ACHERON_NO_VOICE
+                QList<Discord::VoiceState> voiceStates;
                 for (const auto &guild : data.guilds.get()) {
                     if (!guild.voiceStates.hasValue())
                         continue;
                     for (auto vs : guild.voiceStates.get()) {
                         if (!vs.guildId.hasValue())
                             vs.guildId = guild.id.get();
-                        voiceManager->handleVoiceStateUpdate(vs);
+                        voiceStates.append(vs);
                     }
                 }
+                voiceManager->handleVoiceStates(voiceStates);
 #endif
             });
 

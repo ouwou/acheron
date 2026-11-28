@@ -94,7 +94,6 @@ void AudioPipeline::stop()
     speakers.clear();
     ssrcToUser.clear();
     pendingUserRms.clear();
-    cueFrames.clear();
     for (const Snowflake userId : lastVoiceMs.keys())
         stopSpeaking(userId);
 
@@ -404,10 +403,8 @@ void AudioPipeline::onAudioCaptured(const QByteArray &pcmData)
 void AudioPipeline::onMixTick()
 {
     expireRemoteSpeaking();
-    if (deafened || !audioBackend) {
-        cueFrames.clear();
+    if (deafened || !audioBackend)
         return;
-    }
 
     QVector<std::pair<QByteArray, float>> streams;
 
@@ -478,9 +475,6 @@ void AudioPipeline::onMixTick()
         userRmsThrottleTimer.restart();
     }
 
-    if (!cueFrames.isEmpty())
-        streams.append({ cueFrames.takeFirst(), 1.0f });
-
     if (streams.isEmpty())
         return;
 
@@ -489,22 +483,6 @@ void AudioPipeline::onMixTick()
         return;
 
     audioBackend->pushPlaybackFrame(reinterpret_cast<const int16_t *>(mixed.constData()));
-}
-
-void AudioPipeline::playCue(VoiceCue cue)
-{
-    // a chime queued before playback starts or while deafened would come out late
-    if (!mixTimer || deafened)
-        return;
-
-    // one starting while another still plays rings over it
-    const QVector<QByteArray> &frames = voiceCueFrames(cue);
-    for (int i = 0; i < frames.size(); i++) {
-        if (i < cueFrames.size())
-            cueFrames[i] = AudioMixer::mix({ { cueFrames[i], 1.0f }, { frames[i], 1.0f } });
-        else
-            cueFrames.append(frames[i]);
-    }
 }
 
 bool AudioPipeline::detectVoiceActivity(const QByteArray &pcmFrame, float &outRms) const

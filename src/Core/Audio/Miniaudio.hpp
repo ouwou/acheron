@@ -4,7 +4,7 @@
 #pragma warning(push, 0)
 #endif
 
-#define MA_NO_DECODING
+// decoding left on for the call sounds (wav, mp3, flac)
 #define MA_NO_ENCODING
 #define MA_NO_GENERATION
 #define MA_NO_RESOURCE_MANAGER

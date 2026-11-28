@@ -17,13 +17,11 @@
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
-#include "Core/Audio/VoiceCues.hpp"
+#include "Core/Audio/Sounds.hpp"
 #include "Core/Audio/VoiceSettings.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/StreamKey.hpp"
 #include "Discord/Voice/VoiceClient.hpp"
-
-class QTimer;
 
 namespace Acheron {
 namespace Core {
@@ -54,6 +52,13 @@ struct VoiceParticipant
     [[nodiscard]] bool operator==(const VoiceParticipant &) const = default;
 };
 
+// the official client plays nothing in stage channels and no join/leave in the afk channel
+struct VoiceChannelKind
+{
+    bool stage = false;
+    bool afk = false;
+};
+
 class VoiceManager : public QObject
 {
     Q_OBJECT
@@ -62,9 +67,11 @@ public:
     ~VoiceManager() override;
 
     void handleVoiceStateUpdate(const Discord::VoiceState &state);
+    void handleVoiceStates(const QList<Discord::VoiceState> &states);
     void handleVoiceServerUpdate(const Discord::VoiceServerUpdate &event);
 
     void setGatewaySessionId(const QString &sessionId);
+    void setChannelKindLookup(std::function<VoiceChannelKind(Snowflake channelId)> lookup);
 
     void forgetChannelVoiceStates(Snowflake channelId);
 
@@ -155,6 +162,7 @@ private slots:
     void onDevicesChanged(const QList<AudioDeviceInfo> &inputs, const QList<AudioDeviceInfo> &outputs);
 
 private:
+    void applyVoiceState(const Discord::VoiceState &state);
     void forgetOwnVoiceState();
     void adopt(const VoiceSettings &chosen);
     void setSelfAudio(bool muted, bool deafened);
@@ -165,9 +173,10 @@ private:
     void feedAudioSourceToPipeline(quint32 source);
     void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
-    void playCue(VoiceCue cue);
-    void playDepartureCue();
-    void stopDepartureCue();
+    [[nodiscard]] int othersInChannel() const;
+    [[nodiscard]] VoiceChannelKind channelKind(Snowflake targetChannelId) const;
+    void playJoinLeaveSound(Snowflake channelBefore, int othersBefore);
+    void playSound(Sound sound);
     IAudioBackend *backend() const;
 
 private:
@@ -212,10 +221,6 @@ private:
     Discord::Voice::VoiceClient *voiceClient = nullptr;
     AudioPipeline *audioPipeline = nullptr;
 
-    // our own leave chime, fed to the output device after the call's audio is gone
-    QTimer *departureTimer = nullptr;
-    int departureFrame = 0;
-
     struct AudioSource
     {
         QPointer<Discord::Voice::VoiceClient> client;
@@ -224,6 +229,9 @@ private:
     QHash<quint32, AudioSource> audioSources;
     quint32 addedAudioSources = 0;
     CallVideo *callVideo = nullptr;
+
+    std::function<VoiceChannelKind(Snowflake)> channelKindLookup;
+    bool disconnectSoundOnClose = false;
 
     mutable std::unique_ptr<IAudioBackend> audioBackend;
 };
