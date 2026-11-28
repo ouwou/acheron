@@ -4,7 +4,10 @@
 
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <vector>
 
+class QTimer;
 struct ma_device;
 
 namespace Acheron {
@@ -43,11 +46,17 @@ public:
     void setOutputVolume(float volume) override;
 
     bool pushPlaybackFrame(const int16_t *frame) override;
+    void playSound(std::shared_ptr<const SoundClip> clip, float gain) override;
 
 private:
+    bool openPlayback();
+    void closePlayback();
+    void closePlaybackOnceSoundsEnd();
+
     // audio thread callbacks
     void handleCapturedFrames(const void *input, unsigned int frameCount);
     void handlePlaybackFrames(void *output, unsigned int frameCount);
+    void mixSounds(int16_t *output, unsigned int frameCount);
 
     friend void OnCapture(ma_device *, void *, const void *, uint32_t);
     friend void OnPlayback(ma_device *, void *, const void *, uint32_t);
@@ -63,6 +72,18 @@ private:
     std::atomic<float> inputGain{ 1.0f };
     std::atomic<float> outputVolume{ 1.0f };
     std::shared_ptr<PlayedSound> played;
+
+    bool callWantsPlayback = false;
+
+    struct PlayingSound
+    {
+        std::shared_ptr<const SoundClip> clip;
+        int position = 0;
+        float gain = 1.0f;
+    };
+    std::mutex soundsMutex;
+    std::vector<PlayingSound> sounds;
+    QTimer *soundsEnded = nullptr;
 };
 
 } // namespace Audio

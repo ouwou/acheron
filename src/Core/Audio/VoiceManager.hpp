@@ -17,6 +17,7 @@
 #include "Core/ProxyConfig.hpp"
 #include "Core/Snowflake.hpp"
 #include "Core/Audio/IAudioBackend.hpp"
+#include "Core/Audio/Sounds.hpp"
 #include "Core/Audio/VoiceSettings.hpp"
 #include "Discord/Events.hpp"
 #include "Discord/StreamKey.hpp"
@@ -51,6 +52,13 @@ struct VoiceParticipant
     [[nodiscard]] bool operator==(const VoiceParticipant &) const = default;
 };
 
+// the official client plays nothing in stage channels and no join/leave in the afk channel
+struct VoiceChannelKind
+{
+    bool stage = false;
+    bool afk = false;
+};
+
 class VoiceManager : public QObject
 {
     Q_OBJECT
@@ -59,9 +67,11 @@ public:
     ~VoiceManager() override;
 
     void handleVoiceStateUpdate(const Discord::VoiceState &state);
+    void handleVoiceStates(const QList<Discord::VoiceState> &states);
     void handleVoiceServerUpdate(const Discord::VoiceServerUpdate &event);
 
     void setGatewaySessionId(const QString &sessionId);
+    void setChannelKindLookup(std::function<VoiceChannelKind(Snowflake channelId)> lookup);
 
     void forgetChannelVoiceStates(Snowflake channelId);
 
@@ -152,6 +162,7 @@ private slots:
     void onDevicesChanged(const QList<AudioDeviceInfo> &inputs, const QList<AudioDeviceInfo> &outputs);
 
 private:
+    void applyVoiceState(const Discord::VoiceState &state);
     void forgetOwnVoiceState();
     void adopt(const VoiceSettings &chosen);
     void setSelfAudio(bool muted, bool deafened);
@@ -162,6 +173,10 @@ private:
     void feedAudioSourceToPipeline(quint32 source);
     void dropUserAudio(Snowflake userId);
     void populateParticipantsFromCache();
+    [[nodiscard]] int othersInChannel() const;
+    [[nodiscard]] VoiceChannelKind channelKind(Snowflake targetChannelId) const;
+    void playJoinLeaveSound(Snowflake channelBefore, int othersBefore);
+    void playSound(Sound sound);
     IAudioBackend *backend() const;
 
 private:
@@ -214,6 +229,9 @@ private:
     QHash<quint32, AudioSource> audioSources;
     quint32 addedAudioSources = 0;
     CallVideo *callVideo = nullptr;
+
+    std::function<VoiceChannelKind(Snowflake)> channelKindLookup;
+    bool disconnectSoundOnClose = false;
 
     mutable std::unique_ptr<IAudioBackend> audioBackend;
 };

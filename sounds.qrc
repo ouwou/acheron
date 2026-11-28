@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/sounds">
+        <file alias="user_join.wav">resources/sounds/user_join.wav</file>
+        <file alias="user_leave.wav">resources/sounds/user_leave.wav</file>
+        <file alias="disconnect.wav">resources/sounds/disconnect.wav</file>
+    </qresource>
+</RCC>

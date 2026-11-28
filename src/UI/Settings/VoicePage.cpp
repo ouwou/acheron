@@ -8,11 +8,16 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSlider>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -23,6 +28,7 @@ namespace UI {
 namespace {
 
 using Core::Audio::AudioDeviceInfo;
+using Core::Audio::Sound;
 using Core::Audio::VoiceSettings;
 namespace VolumeCurve = Core::Audio::VolumeCurve;
 
@@ -75,6 +81,34 @@ void fillDeviceCombo(QComboBox *combo, const QList<AudioDeviceInfo> &devices, co
     for (const AudioDeviceInfo &device : devices)
         combo->addItem(device.description, device.id);
     combo->setCurrentIndex(qMax(0, combo->findData(chosen)));
+}
+
+QString soundTitle(Sound sound)
+{
+    switch (sound) {
+    case Sound::UserJoin:
+        return VoicePage::tr("User join");
+    case Sound::UserLeave:
+        return VoicePage::tr("User leave");
+    case Sound::Disconnect:
+        return VoicePage::tr("Disconnect");
+    }
+    return {};
+}
+
+QString problemText(Core::Audio::SoundFileProblem problem)
+{
+    switch (problem) {
+    case Core::Audio::SoundFileProblem::NotWavMp3OrFlac:
+        return VoicePage::tr("Pick a WAV, MP3 or FLAC file.");
+    case Core::Audio::SoundFileProblem::TooBig:
+        return VoicePage::tr("That file is over %1 MB.").arg(Core::Audio::MAX_SOUND_FILE_MB);
+    case Core::Audio::SoundFileProblem::NotASound:
+        return VoicePage::tr("That file can't be read as a sound.");
+    case Core::Audio::SoundFileProblem::NotSaved:
+        return VoicePage::tr("The sounds folder can't be written to.");
+    }
+    return {};
 }
 
 QLabel *restartNote(QWidget *parent)
@@ -156,6 +190,34 @@ VoicePage::VoicePage(QWidget *parent)
     });
 #endif
 
+    auto *joinLeaveSounds = new QCheckBox(tr("Play join and leave sounds"), this);
+    joinLeaveSounds->setChecked(settings.joinLeaveSounds);
+    form->addRow(joinLeaveSounds);
+
+    auto *sounds = new QWidget(this);
+    QFormLayout *soundsForm = newForm();
+    sounds->setLayout(soundsForm);
+    for (Sound sound : Core::Audio::ALL_SOUNDS)
+        addSoundRow(soundsForm, sounds, sound);
+    auto *openSounds = new QPushButton(tr("Open sounds folder"), sounds);
+    openSounds->setToolTip(tr("A .wav, .mp3 or .flac named user_join, user_leave or disconnect here plays instead of the built-in one"));
+    auto *openSoundsRow = new QHBoxLayout();
+    openSoundsRow->addWidget(openSounds);
+    openSoundsRow->addStretch(1);
+    soundsForm->addRow(openSoundsRow);
+    connect(openSounds, &QPushButton::clicked, this, [] {
+        const QString folder = Core::Audio::customSoundsFolder();
+        QDir().mkpath(folder);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+    });
+    sounds->setEnabled(settings.joinLeaveSounds);
+    form->addRow(sounds);
+    connect(joinLeaveSounds, &QCheckBox::toggled, this, [this, sounds](bool enabled) {
+        settings.joinLeaveSounds = enabled;
+        sounds->setEnabled(enabled);
+        settings.saveAndApply();
+    });
+
     auto *advanced = new QWidget(this);
     QFormLayout *advancedForm = newForm();
     advanced->setLayout(advancedForm);
@@ -222,6 +284,61 @@ VoicePage::VoicePage(QWidget *parent)
 }
 
 VoicePage::~VoicePage() = default;
+
+void VoicePage::addSoundRow(QFormLayout *form, QWidget *parent, Sound sound)
+{
+    auto *field = new QWidget(parent);
+    auto *row = new QHBoxLayout(field);
+    row->setContentsMargins(0, 0, 0, 0);
+    auto *file = new QLabel(field);
+    row->addWidget(file, 1);
+    auto *play = new QPushButton(tr("Play"), field);
+    row->addWidget(play);
+    auto *change = new QPushButton(tr("Change…"), field);
+    row->addWidget(change);
+    auto *reset = new QPushButton(tr("Reset"), field);
+    row->addWidget(reset);
+    form->addRow(soundTitle(sound), field);
+
+    auto refresh = [sound, file, reset] {
+        const QString custom = Core::Audio::customSoundFile(sound);
+        file->setText(custom.isEmpty() ? tr("Built-in") : QFileInfo(custom).fileName());
+        file->setToolTip(QDir::toNativeSeparators(custom));
+        reset->setEnabled(!custom.isEmpty());
+    };
+    refresh();
+    soundRowRefreshers.push_back(refresh);
+
+    connect(play, &QPushButton::clicked, this, [this, sound] { playSound(sound); });
+    connect(reset, &QPushButton::clicked, this, [sound, refresh] {
+        Core::Audio::resetCustomSound(sound);
+        refresh();
+    });
+    connect(change, &QPushButton::clicked, this, [this, sound, file, refresh] {
+        auto *dialog = new QFileDialog(this, tr("Choose a sound"), QString(), tr("Sounds (*.wav *.mp3 *.flac)"));
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setFileMode(QFileDialog::ExistingFile);
+        connect(dialog, &QFileDialog::fileSelected, this, [sound, file, refresh](const QString &path) {
+            const std::optional<Core::Audio::SoundFileProblem> problem = Core::Audio::setCustomSound(sound, path);
+            refresh();
+            if (problem)
+                file->setText(problemText(*problem));
+        });
+        dialog->open();
+    });
+}
+
+void VoicePage::playSound(Sound sound)
+{
+    Core::Audio::playSoundOn(*testBackend, Core::Audio::loadSound(sound), settings.outputDevice, settings.outputVolume);
+}
+
+void VoicePage::showEvent(QShowEvent *event)
+{
+    for (const std::function<void()> &refresh : soundRowRefreshers)
+        refresh();
+    QWidget::showEvent(event);
+}
 
 void VoicePage::hideEvent(QHideEvent *event)
 {

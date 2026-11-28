@@ -389,7 +389,9 @@ if(ENABLE_VOICE)
         src/Core/Audio/OpusDecoder.cpp
         src/Core/Audio/JitterBuffer.cpp
         src/Core/Audio/AudioMixer.cpp
+        src/Core/Audio/Sounds.cpp
         src/Core/Audio/NoiseSuppressor.cpp
+        sounds.qrc
     )
 endif()
 
@@ -643,6 +645,11 @@ if(BUILD_TESTS)
         add_media_test(TestVoiceClient VoiceClientTests tests/tst_VoiceClient.cpp)
         add_media_test(TestBrowserHeaders BrowserHeadersTests tests/tst_BrowserHeaders.cpp
             src/Discord/HttpClient.cpp src/Discord/RequestWorker.cpp src/Discord/ContextProperties.cpp)
+
+        qt_add_executable(TestSounds tests/tst_Sounds.cpp src/Core/Audio/Sounds.cpp src/Core/Audio/MiniaudioImpl.cpp sounds.qrc)
+        target_link_libraries(TestSounds PRIVATE Qt::Core Qt::Test)
+        target_include_directories(TestSounds PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio")
+        add_test(NAME SoundsTests COMMAND TestSounds)
 
         if(ACHERON_HAVE_VIDEO)
             target_compile_definitions(TestVoiceClient PRIVATE ACHERON_HAVE_VIDEO)

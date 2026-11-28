@@ -6,6 +6,8 @@
 #include "Core/Audio/PlayedSound.hpp"
 #include "Core/Logging.hpp"
 
+#include <QTimer>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -126,12 +128,19 @@ MiniaudioAudioBackend::MiniaudioAudioBackend(QObject *parent)
         qCWarning(LogVoice) << "Failed to init playback ring buffer";
     else
         ma->playbackRBInit = true;
+
+    soundsEnded = new QTimer(this);
+    soundsEnded->setSingleShot(true);
+    connect(soundsEnded, &QTimer::timeout, this, [this] {
+        if (!callWantsPlayback)
+            closePlayback();
+    });
 }
 
 MiniaudioAudioBackend::~MiniaudioAudioBackend()
 {
     stopCapture();
-    stopPlayback();
+    closePlayback();
 
     if (ma->playbackRBInit)
         ma_pcm_rb_uninit(&ma->playbackRB);
@@ -180,8 +189,9 @@ void MiniaudioAudioBackend::setOutputDevice(const QByteArray &deviceId)
     qCInfo(LogVoice) << "Output device changed";
 
     if (ma->playbackDeviceInit) {
-        stopPlayback();
-        startPlayback();
+        closePlayback();
+        if (callWantsPlayback)
+            openPlayback();
     }
 }
 
@@ -240,6 +250,49 @@ void MiniaudioAudioBackend::stopCapture()
 
 bool MiniaudioAudioBackend::startPlayback()
 {
+    callWantsPlayback = true;
+    return openPlayback();
+}
+
+void MiniaudioAudioBackend::stopPlayback()
+{
+    callWantsPlayback = false;
+    closePlaybackOnceSoundsEnd();
+}
+
+void MiniaudioAudioBackend::playSound(std::shared_ptr<const SoundClip> clip, float gain)
+{
+    if (!clip || clip->frameCount() == 0 || !openPlayback())
+        return;
+    {
+        std::lock_guard lock(soundsMutex);
+        sounds.push_back({ std::move(clip), 0, gain });
+    }
+    closePlaybackOnceSoundsEnd();
+}
+
+void MiniaudioAudioBackend::closePlaybackOnceSoundsEnd()
+{
+    if (callWantsPlayback)
+        return;
+
+    int framesLeft = 0;
+    {
+        std::lock_guard lock(soundsMutex);
+        for (const PlayingSound &sound : sounds)
+            framesLeft = std::max(framesLeft, sound.clip->frameCount() - sound.position);
+    }
+    if (framesLeft == 0) {
+        closePlayback();
+        return;
+    }
+
+    static constexpr int DEVICE_BUFFERED_MS = 100;
+    soundsEnded->start(static_cast<int>(static_cast<qint64>(framesLeft) * 1000 / AUDIO_SAMPLE_RATE) + DEVICE_BUFFERED_MS);
+}
+
+bool MiniaudioAudioBackend::openPlayback()
+{
     if (ma->playbackDeviceInit)
         return true;
 
@@ -281,8 +334,9 @@ bool MiniaudioAudioBackend::startPlayback()
     return true;
 }
 
-void MiniaudioAudioBackend::stopPlayback()
+void MiniaudioAudioBackend::closePlayback()
 {
+    soundsEnded->stop();
     if (!ma->playbackDeviceInit)
         return;
 
@@ -290,6 +344,10 @@ void MiniaudioAudioBackend::stopPlayback()
     ma_device_uninit(&ma->playbackDevice);
     ma->playbackDeviceInit = false;
     played.reset();
+    {
+        std::lock_guard lock(soundsMutex);
+        sounds.clear();
+    }
 
     qCInfo(LogVoice) << "Miniaudio playback stopped";
 }
@@ -395,6 +453,8 @@ void MiniaudioAudioBackend::handlePlaybackFrames(void *output, unsigned int fram
         remaining -= toRead;
     }
 
+    mixSounds(static_cast<int16_t *>(output), frameCount);
+
     float vol = outputVolume.load(std::memory_order_relaxed);
     if (vol != 1.0f) {
         auto *samples = static_cast<int16_t *>(output);
@@ -407,6 +467,24 @@ void MiniaudioAudioBackend::handlePlaybackFrames(void *output, unsigned int fram
         }
     }
     played->record(static_cast<const int16_t *>(output), static_cast<int>(frameCount), PlayedSound::now());
+}
+
+void MiniaudioAudioBackend::mixSounds(int16_t *output, unsigned int frameCount)
+{
+    std::lock_guard lock(soundsMutex);
+    for (auto sound = sounds.begin(); sound != sounds.end();) {
+        const int frames = std::min(static_cast<int>(frameCount), sound->clip->frameCount() - sound->position);
+        const auto *pcm = reinterpret_cast<const int16_t *>(sound->clip->pcm.constData()) + sound->position * AUDIO_CHANNELS;
+        for (int i = 0; i < frames * AUDIO_CHANNELS; i++) {
+            const int32_t mixed = output[i] + static_cast<int32_t>(std::lround(pcm[i] * sound->gain));
+            output[i] = static_cast<int16_t>(std::clamp(mixed, static_cast<int32_t>(INT16_MIN), static_cast<int32_t>(INT16_MAX)));
+        }
+        sound->position += frames;
+        if (sound->position >= sound->clip->frameCount())
+            sound = sounds.erase(sound);
+        else
+            ++sound;
+    }
 }
 
 } // namespace Audio

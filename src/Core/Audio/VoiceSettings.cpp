@@ -21,6 +21,7 @@ const char *const OPUS_COMPLEXITY_KEY = "voice/codec/complexity";
 const char *const OPUS_SIGNAL_TYPE_KEY = "voice/codec/signal_type";
 const char *const OPUS_FEC_KEY = "voice/codec/fec";
 const char *const OPUS_PACKET_LOSS_KEY = "voice/codec/packet_loss";
+const char *const JOIN_LEAVE_SOUNDS_KEY = "voice/join_leave_sounds";
 const char *const USER_VOLUMES_GROUP = "voice/user_volumes";
 const char *const USER_MUTES_GROUP = "voice/user_mutes";
 
@@ -57,6 +58,7 @@ VoiceSettings VoiceSettings::load()
     settings.opusSignalType = stored.value(OPUS_SIGNAL_TYPE_KEY, defaults.opusSignalType).toInt();
     settings.opusFec = stored.value(OPUS_FEC_KEY, defaults.opusFec).toBool();
     settings.opusPacketLossPercent = stored.value(OPUS_PACKET_LOSS_KEY, defaults.opusPacketLossPercent).toInt();
+    settings.joinLeaveSounds = stored.value(JOIN_LEAVE_SOUNDS_KEY, defaults.joinLeaveSounds).toBool();
     return settings;
 }
 
@@ -76,6 +78,7 @@ void VoiceSettings::saveAndApply() const
     stored.setValue(OPUS_SIGNAL_TYPE_KEY, opusSignalType);
     stored.setValue(OPUS_FEC_KEY, opusFec);
     stored.setValue(OPUS_PACKET_LOSS_KEY, opusPacketLossPercent);
+    stored.setValue(JOIN_LEAVE_SOUNDS_KEY, joinLeaveSounds);
     VoiceSettingsNotifier *notifier = VoiceSettingsNotifier::instance();
     emit notifier->changed();
 }

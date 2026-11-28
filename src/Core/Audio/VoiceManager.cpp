@@ -53,7 +53,14 @@ VoiceManager::VoiceManager(Snowflake accountId, const ProxyConfig &proxy, QObjec
 
 VoiceManager::~VoiceManager()
 {
+    // the backend goes with us, it would be cut off at once
+    disconnectSoundOnClose = false;
     closeVoiceConnection();
+}
+
+void VoiceManager::setChannelKindLookup(std::function<VoiceChannelKind(Snowflake channelId)> lookup)
+{
+    channelKindLookup = std::move(lookup);
 }
 
 IAudioBackend *VoiceManager::backend() const
@@ -66,6 +73,21 @@ IAudioBackend *VoiceManager::backend() const
 }
 
 void VoiceManager::handleVoiceStateUpdate(const Discord::VoiceState &state)
+{
+    handleVoiceStates({ state });
+}
+
+// one change for all of them, as the official client takes a whole payload's states
+void VoiceManager::handleVoiceStates(const QList<Discord::VoiceState> &states)
+{
+    const Snowflake channelBefore = channelId;
+    const int othersBefore = othersInChannel();
+    for (const Discord::VoiceState &state : states)
+        applyVoiceState(state);
+    playJoinLeaveSound(channelBefore, othersBefore);
+}
+
+void VoiceManager::applyVoiceState(const Discord::VoiceState &state)
 {
     Snowflake userId = state.userId.get();
     bool isMe = (userId == accountId);
@@ -309,6 +331,7 @@ void VoiceManager::setGatewaySessionId(const QString &sessionId)
 
 void VoiceManager::forgetChannelVoiceStates(Snowflake targetChannelId)
 {
+    const int othersBefore = othersInChannel();
     QList<Snowflake> gone;
     for (auto it = knownVoiceStates.constBegin(); it != knownVoiceStates.constEnd(); ++it) {
         if (it->channel() == targetChannelId)
@@ -324,6 +347,7 @@ void VoiceManager::forgetChannelVoiceStates(Snowflake targetChannelId)
             emit participantLeft(userId);
         }
     }
+    playJoinLeaveSound(channelId, othersBefore);
 }
 
 void VoiceManager::disconnect()
@@ -697,6 +721,10 @@ void VoiceManager::closeVoiceConnection()
     if (!voiceConnection)
         return;
 
+    // queued ahead of the stop, so the call's open output carries it
+    if (std::exchange(disconnectSoundOnClose, false))
+        playSound(Sound::Disconnect);
+
     emit rtcConnectionClosing();
     bool hadParticipants = !participants.isEmpty();
     participants.clear();
@@ -732,6 +760,44 @@ void VoiceManager::populateParticipantsFromCache()
     }
 }
 
+int VoiceManager::othersInChannel() const
+{
+    return channelId.isValid() ? channelVoiceUserCount(channelId) - 1 : 0;
+}
+
+VoiceChannelKind VoiceManager::channelKind(Snowflake targetChannelId) const
+{
+    return channelKindLookup ? channelKindLookup(targetChannelId) : VoiceChannelKind{};
+}
+
+// as the official client, nothing when we're the one who moved
+void VoiceManager::playJoinLeaveSound(Snowflake channelBefore, int othersBefore)
+{
+    if (!channelId.isValid() || channelId != channelBefore)
+        return;
+
+    const std::optional<Sound> sound = joinLeaveSound(othersBefore, othersInChannel());
+    if (!sound)
+        return;
+    const VoiceChannelKind kind = channelKind(channelId);
+    if (!kind.stage && !kind.afk)
+        playSound(*sound);
+}
+
+void VoiceManager::playSound(Sound sound)
+{
+    if (!settings.joinLeaveSounds)
+        return;
+    std::shared_ptr<const SoundClip> clip = loadSound(sound);
+    if (!clip)
+        return;
+
+    IAudioBackend *audio = backend();
+    QMetaObject::invokeMethod(audio, [audio, clip = std::move(clip), device = settings.outputDevice, volume = settings.outputVolume]() {
+        playSoundOn(*audio, clip, device, volume);
+    });
+}
+
 void VoiceManager::onVoiceClientConnected()
 {
     if (!audioPipeline)
@@ -753,6 +819,12 @@ void VoiceManager::onVoiceClientConnected()
     });
 
     populateParticipantsFromCache();
+
+    // the official client has no sounds of its own for stage channels
+    const bool stage = channelKind(channelId).stage;
+    if (!stage)
+        playSound(Sound::UserJoin);
+    disconnectSoundOnClose = !stage;
 
     emit voiceConnected();
     emit voiceStateChanged();

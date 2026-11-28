@@ -43,6 +43,14 @@ inline constexpr int AUDIO_FRAME_SIZE = AUDIO_FRAME_SAMPLES * AUDIO_CHANNELS * A
     return count > 0 ? static_cast<float>(std::sqrt(sum / count)) : 0.0f;
 }
 
+// s16 stereo at AUDIO_SAMPLE_RATE, as the device plays
+struct SoundClip
+{
+    QByteArray pcm;
+
+    [[nodiscard]] int frameCount() const { return static_cast<int>(pcm.size()) / (AUDIO_CHANNELS * AUDIO_SAMPLE_BYTES); }
+};
+
 struct AudioDeviceInfo
 {
     QByteArray id;
@@ -81,6 +89,8 @@ public:
     virtual void setOutputVolume(float volume) = 0;
 
     virtual bool pushPlaybackFrame(const int16_t *frame) = 0;
+    // mixed over the call's audio; opens the output if it has to and keeps it until the sound ends
+    virtual void playSound(std::shared_ptr<const SoundClip> clip, float gain) = 0;
 
 signals:
     void audioCaptured(const QByteArray &pcmData);
